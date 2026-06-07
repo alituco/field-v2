@@ -561,6 +561,7 @@ class ClanCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rank = clan.rank;
+    final theme = clan.theme;
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
@@ -587,25 +588,38 @@ class ClanCard extends StatelessWidget {
                 width: 56,
                 height: 56,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
-                    colors: [Color(0xFF34D399), Color(0xFF059669)],
+                    colors: [theme.from, theme.to],
                   ),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: fieldEmerald500.withValues(alpha: 0.28),
+                      color: theme.from.withValues(alpha: 0.28),
                       blurRadius: 14,
                       offset: const Offset(0, 8),
                     ),
                   ],
                 ),
-                child: Center(
-                  child: Text(
-                    clan.emblem,
-                    style: const TextStyle(fontSize: 30),
-                  ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: PatternPainter(
+                          pattern: clan.patternId,
+                          color: theme.accent,
+                        ),
+                      ),
+                    ),
+                    Center(
+                      child: Text(
+                        clan.emblem,
+                        style: const TextStyle(fontSize: 30),
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: 16),
@@ -1041,14 +1055,15 @@ class PatternPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (pattern == 'solid') return;
 
-    final paint = Paint()..color = color.withValues(alpha: 0.28);
-
     if (pattern == 'stripes') {
+      final paint = Paint()..color = color.withValues(alpha: 0.38);
       for (double x = 0; x < size.width + 24; x += 32) {
         canvas.drawRect(Rect.fromLTWH(x, 0, 12, size.height), paint);
       }
       return;
     }
+
+    final paint = Paint()..color = color.withValues(alpha: 0.28);
 
     if (pattern == 'sash') {
       final path = Path()

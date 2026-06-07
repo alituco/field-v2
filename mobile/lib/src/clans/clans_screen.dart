@@ -164,8 +164,10 @@ class _ClansScreenState extends State<ClansScreen> {
                         onTap: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (context) =>
-                                  ClanDetailScreen(clan: filteredClans[i]),
+                              builder: (context) => ClanDetailScreen(
+                                clan: filteredClans[i],
+                                clanRepository: widget.clanRepository,
+                              ),
                             ),
                           );
                         },

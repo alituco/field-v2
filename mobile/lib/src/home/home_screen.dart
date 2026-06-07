@@ -60,40 +60,144 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),
-      bottomNavigationBar: NavigationBar(
+      bottomNavigationBar: _FieldBottomNav(
         selectedIndex: _selectedIndex,
-        height: 68,
-        indicatorColor: const Color(0xFFD1FAE5),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        onDestinationSelected: (index) =>
-            setState(() => _selectedIndex = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded),
-            label: 'Home',
+        onSelected: (index) => setState(() => _selectedIndex = index),
+      ),
+    );
+  }
+}
+
+class _FieldBottomNav extends StatelessWidget {
+  const _FieldBottomNav({
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  static const _items = [
+    _FieldBottomNavItem(
+      icon: Icons.home_outlined,
+      selectedIcon: Icons.home_rounded,
+      label: 'Home',
+    ),
+    _FieldBottomNavItem(
+      icon: Icons.calendar_month_outlined,
+      selectedIcon: Icons.calendar_month_rounded,
+      label: 'Fixtures',
+    ),
+    _FieldBottomNavItem(
+      icon: Icons.shield_outlined,
+      selectedIcon: Icons.shield_rounded,
+      label: 'Clans',
+    ),
+    _FieldBottomNavItem(
+      icon: Icons.emoji_events_outlined,
+      selectedIcon: Icons.emoji_events_rounded,
+      label: 'Ranks',
+    ),
+    _FieldBottomNavItem(
+      icon: Icons.person_outline_rounded,
+      selectedIcon: Icons.person_rounded,
+      label: 'Profile',
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: fieldGray200)),
+      ),
+      child: SizedBox(
+        height: 66,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+          child: Row(
+            children: [
+              for (var i = 0; i < _items.length; i++)
+                Expanded(
+                  child: _FieldBottomNavButton(
+                    item: _items[i],
+                    isActive: selectedIndex == i,
+                    onTap: () => onSelected(i),
+                  ),
+                ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.calendar_month_outlined),
-            selectedIcon: Icon(Icons.calendar_month_rounded),
-            label: 'Fixtures',
+        ),
+      ),
+    );
+  }
+}
+
+class _FieldBottomNavItem {
+  const _FieldBottomNavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
+}
+
+class _FieldBottomNavButton extends StatelessWidget {
+  const _FieldBottomNavButton({
+    required this.item,
+    required this.isActive,
+    required this.onTap,
+  });
+
+  final _FieldBottomNavItem item;
+  final bool isActive;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isActive ? fieldEmerald600 : fieldGray500;
+
+    return Semantics(
+      selected: isActive,
+      button: true,
+      label: item.label,
+      child: InkWell(
+        onTap: onTap,
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        child: AnimatedDefaultTextStyle(
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+            height: 1,
+            fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+            letterSpacing: 0,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.shield_outlined),
-            selectedIcon: Icon(Icons.shield_rounded),
-            label: 'Clans',
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            curve: Curves.easeOut,
+            height: double.infinity,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  isActive ? item.selectedIcon : item.icon,
+                  size: 24,
+                  color: color,
+                  weight: isActive ? 2.5 : 2,
+                ),
+                const SizedBox(height: 2),
+                Text(item.label, maxLines: 1, overflow: TextOverflow.fade),
+              ],
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.emoji_events_outlined),
-            selectedIcon: Icon(Icons.emoji_events_rounded),
-            label: 'Ranks',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline_rounded),
-            selectedIcon: Icon(Icons.person_rounded),
-            label: 'Profile',
-          ),
-        ],
+        ),
       ),
     );
   }

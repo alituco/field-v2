@@ -5,6 +5,8 @@ import 'clan.dart';
 abstract class ClanRepository {
   Future<List<Clan>> listClans();
 
+  Future<List<ClanMember>> listClanMembers(String clanId);
+
   Future<Clan> createClan({
     required String name,
     required String tag,
@@ -25,6 +27,21 @@ class SupabaseClanRepository implements ClanRepository {
 
     return [
       for (final row in rows) Clan.fromJson(Map<String, dynamic>.from(row)),
+    ];
+  }
+
+  @override
+  Future<List<ClanMember>> listClanMembers(String clanId) async {
+    final response = await _client
+        .from('clan_members')
+        .select('profile_id, role, created_at, profiles(display_name, phone)')
+        .eq('clan_id', clanId)
+        .order('created_at');
+    final rows = response as List<dynamic>;
+
+    return [
+      for (final row in rows)
+        ClanMember.fromJson(Map<String, dynamic>.from(row as Map)),
     ];
   }
 

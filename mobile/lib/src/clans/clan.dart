@@ -53,6 +53,49 @@ class ClanPattern {
   final String description;
 }
 
+class ClanMember {
+  const ClanMember({
+    required this.profileId,
+    required this.displayName,
+    required this.role,
+    this.phone,
+    this.joinedAt,
+  });
+
+  final String profileId;
+  final String displayName;
+  final String role;
+  final String? phone;
+  final DateTime? joinedAt;
+
+  bool get isOwner => role == 'owner';
+
+  String get roleLabel => isOwner ? 'Owner' : 'Member';
+
+  String get initials {
+    final words = displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return '?';
+    return words.take(2).map((word) => word[0]).join().toUpperCase();
+  }
+
+  factory ClanMember.fromJson(Map<String, dynamic> json) {
+    final profile = _profileFromJson(json['profiles']);
+    final displayName = (profile['display_name'] as String? ?? '').trim();
+
+    return ClanMember(
+      profileId: json['profile_id'] as String? ?? '',
+      displayName: displayName.isEmpty ? 'Player' : displayName,
+      role: json['role'] as String? ?? 'member',
+      phone: profile['phone'] as String?,
+      joinedAt: _asDateTime(json['created_at']),
+    );
+  }
+}
+
 class Clan {
   const Clan({
     required this.id,
@@ -271,6 +314,17 @@ Color tierEndColor(ClanTier tier) {
     ClanTier.diamond => const Color(0xFF0C2D6B),
     ClanTier.champion => const Color(0xFF581C87),
   };
+}
+
+Map<String, dynamic> _profileFromJson(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  if (value is List && value.isNotEmpty) {
+    final first = value.first;
+    if (first is Map<String, dynamic>) return first;
+    if (first is Map) return Map<String, dynamic>.from(first);
+  }
+  return const {};
 }
 
 int _asInt(Object? value, {int fallback = 0}) {

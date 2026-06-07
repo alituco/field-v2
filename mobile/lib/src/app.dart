@@ -19,6 +19,9 @@ class FieldApp extends StatelessWidget {
     return MaterialApp(
       title: 'Field',
       debugShowCheckedModeBanner: false,
+      builder: (context, child) {
+        return _KeyboardDismissRegion(child: child ?? const SizedBox.shrink());
+      },
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
@@ -43,6 +46,23 @@ class FieldApp extends StatelessWidget {
       home: hasSupabaseConfig
           ? AuthGate(authRepository: SupabaseAuthRepository())
           : const ConfigurationScreen(),
+    );
+  }
+}
+
+class _KeyboardDismissRegion extends StatelessWidget {
+  const _KeyboardDismissRegion({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      child: child,
     );
   }
 }

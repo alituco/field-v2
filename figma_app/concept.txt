@@ -1,0 +1,665 @@
+Field - Backend Specification Document
+Executive Summary
+
+Field is a mobile-first competitive sports community app where players form Clans (teams), challenge each other to matches, and climb a gamified Skill Rating (SR) ladder across four competitive tiers. The app focuses on soccer/football with a bold, energetic gaming aesthetic featuring pitch greens, electric blues, and gradient-heavy UI.
+
+For V1, the app operates with mock data and localStorage on the frontend. This document outlines what a production backend needs to support.
+Core Entities & Data Model
+1. Player (User)
+
+Represents an individual user account.
+
+Schema:
+
+Player {
+  id: string (UUID)
+  username: string (unique, alphanumeric + underscore)
+  name: string (display name)
+  email: string (unique, for authentication)
+  avatar?: string (URL or base64)
+  clanId?: string (nullable FK to Clan)
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+Notes:
+
+    Players can belong to zero or one clan at a time
+    Username must be globally unique (used for @mentions and profiles)
+    Avatar is optional; frontend generates initials as fallback
+
+2. Clan (Team)
+
+A group of players competing together. Each clan has one owner and can have multiple members.
+
+Schema:
+
+Clan {
+  id: string (UUID)
+  name: string (max 24 chars)
+  tag: string (2-5 chars, uppercase, unique)
+  sport: enum Sport ('SOCCER')
+  emblem: string (emoji unicode)
+  ownerId: string (FK to Player)
+  memberIds: string[] (array of Player IDs)
+  skillRating: integer (SR points, default 1500)
+  wins: integer (default 0)
+  losses: integer (default 0)
+  motto?: string (max 60 chars, optional)
+  
+  // Customization (kit design)
+  colorThemeId: string (e.g., 'pitch', 'electric', 'royal')
+  patternId: string (e.g., 'solid', 'stripes', 'sash', 'chevron', 'pitch')
+  
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+Business Rules:
+
+    tag must be globally unique (used like clan code)
+    ownerId must be in memberIds
+    Maximum members: 11 players (full soccer squad)
+    Minimum members: 1 (owner)
+    Only clan owner can create fixtures, manage roster
+    Skill Rating affects tier/division placement
+
+Derived Fields (computed on read):
+
+    rank: { tier, division } — computed from skillRating (see Tier System below)
+    winRate: float — wins / (wins + losses)
+    goalDifference: int — sum of (goalsFor - goalsAgainst) from all FINAL fixtures
+
+3. Fixture (Match)
+
+Represents a scheduled or completed match between two clans.
+
+Schema:
+
+Fixture {
+  id: string (UUID)
+  status: enum FixtureStatus
+  homeClanId: string (FK to Clan)
+  awayClanId?: string (nullable FK to Clan, null when OPEN)
+  venue: string (e.g., 'Central Sports Complex')
+  day: enum DayOfWeek ('TUESDAY' | 'THURSDAY')
+  timeSlot: enum TimeSlot ('7:00 PM - 8:00 PM' | '8:30 PM - 9:30 PM')
+  date: string (ISO date 'YYYY-MM-DD')
+  
+  // Match results (only when LIVE or FINAL)
+  homeScore?: integer
+  awayScore?: integer
+  winnerId?: string (FK to Clan, or null for draw)
+  homeSrChange?: integer (e.g., +24, -18)
+  awaySrChange?: integer
+  
+  // Optional media
+  videoUrl?: string (YouTube embed URL)
+  scorers?: Scorer[] (array of goal events)
+  
+  createdAt: timestamp
+  updatedAt: timestamp
+}
+
+FixtureStatus Enum:
+
+    OPEN — Fixture created by home clan, awaiting opponent to join
+    SCHEDULED — Both clans confirmed, match locked in
+    LIVE — Match currently in progress
+    FINAL — Match completed, results recorded
+
+Scorer Subschema:
+
+Scorer {
+  playerId: string (FK to Player)
+  minute: integer (0-90+)
+  clanId: string (FK to Clan, which team scored)
+  assistPlayerId?: string (nullable FK to Player)
+}
+
+Business Rules:
+
+    Matches only on Tuesdays and Thursdays (configurable constraint)
+    Two time slots: Early (7-8 PM) and Late (8:30-9:30 PM)
+    When status = OPEN, awayClanId is null
+    When opponent joins, status → SCHEDULED, payment triggers
+    After match completion, compute SR changes using ELO-style algorithm
+    winnerId is null if homeScore == awayScore (draw)
+
+4. Payment / Transaction (for Match Fees)
+
+Each fixture has an associated payment of 20 BHD when created or joined.
+
+Schema:
+
+Payment {
+  id: string (UUID)
+  fixtureId: string (FK to Fixture)
+  clanId: string (FK to Clan, who paid)
+  amount: decimal (20.00 BHD)
+  status: enum ('PENDING' | 'COMPLETED' | 'FAILED')
+  paymentMethod: string ('apple_pay', 'credit_card', etc.)
+  transactionRef?: string (external payment gateway ID)
+  createdAt: timestamp
+  completedAt?: timestamp
+}
+
+Workflow:
+
+    Owner creates fixture → Payment for home clan
+    Opponent joins → Payment for away clan
+    Both payments must succeed before fixture locks to SCHEDULED
+
+Skill Rating (SR) & Tier System
+Tier Structure
+
+Field uses a 4-tier, 12-division ranking system:
+Tier	SR Range	Divisions	Theme
+Silver	0 – 899	III, II, I	Silvery gray
+Gold	900 – 1799	III, II, I	Gold/amber
+Diamond	1800 – 2699	III, II, I	Cyan/blue
+Champion	2700+	(none)	Rose/fuchsia
+
+Division Calculation:
+
+    Each tier (except Champion) is split into 3 divisions
+    Division III = lowest third, Division II = middle, Division I = highest
+    Example: Gold III = 900-999 SR, Gold II = 1000-1199, Gold I = 1200-1799
+
+Rank Display:
+
+    Format: "Silver III", "Gold I", "Diamond II", "Champion"
+    Badges show Roman numerals (III, II, I)
+
+SR Changes After Matches
+
+Use an ELO-style algorithm:
+
+Expected Win% for Clan A = 1 / (1 + 10^((SR_B - SR_A) / 400))
+
+K-factor = 32 (base, can scale by tier)
+
+SR_change_A = K × (Actual - Expected)
+
+    Win: Actual = 1
+    Draw: Actual = 0.5
+    Loss: Actual = 0
+
+Example:
+
+    Clan A (1850 SR) defeats Clan B (2650 SR)
+    Expected: 10%
+    Actual: 100%
+    Change: +29 SR for A, -29 for B (approx)
+
+Backend must:
+
+    Compute SR changes when fixture status → FINAL
+    Update both clans' skillRating, wins, losses
+    Store homeSrChange and awaySrChange in Fixture record
+
+Seasons (Leaderboard Context)
+
+The app organizes competition into seasons (currently 3 months each).
+
+Schema (optional table):
+
+Season {
+  id: integer
+  label: string ('Season 1', 'Season 2')
+  startDate: date
+  endDate: date
+  isActive: boolean
+}
+
+Leaderboard Logic:
+
+    Top 10 clans by skillRating for current season
+    Players can view past seasons (historical data)
+    Seasons reset records (wins/losses) but could preserve lifetime stats
+
+UI shows:
+
+    Season selector with prev/next navigation
+    Live indicator on active season
+    Top scorers and assisters per season
+
+Pages & Workflows
+1. Home Page
+
+Data Needed:
+
+    Current player profile
+    Player's clan (if member)
+    Upcoming fixtures involving player's clan (next 3)
+    Clan stats: SR, wins, losses, current streak
+
+Permissions:
+
+    Only clan owner can access "Create Match" flow
+    Regular members see disabled state
+
+2. Profile Page
+
+Data Needed:
+
+    Player details
+    Current clan membership
+    Clan rank/tier badge
+    Personal stats:
+        Appearances (matches played)
+        Goals (from scorers array)
+        Assists (from assistPlayerId)
+    Clan stats (wins, losses, win rate)
+    Recent form (last 5 match results: W/L/D)
+    SR trend chart (historical SR over time)
+    Achievements (badge unlocks based on milestones)
+    Squad members (teammates in clan)
+
+Achievements System: Unlock badges based on:
+
+    First Win
+    Hat-Trick (3+ goals in career)
+    5-Win Streak
+    Reach Top 10 leaderboard
+    Reach Champion tier
+    Score 10+ goals (Sharpshooter)
+
+Store in separate PlayerAchievements table:
+
+Achievement {
+  playerId: string
+  achievementId: string
+  unlockedAt: timestamp
+}
+
+3. Create Clan Workflow
+
+Steps:
+
+    Identity: Clan name, tag, motto
+    Emblem: Choose emoji icon
+    Kit Design: Pick color theme + pattern
+    Confirmation: Create clan, show celebration
+
+Backend Endpoints:
+
+POST /clans
+Body: { name, tag, motto?, emblem, colorThemeId, patternId }
+Response: { clan: Clan }
+
+Validation:
+
+    tag must be unique
+    name max 24 chars
+    Creator becomes owner and first member
+    Initial SR: 1500
+
+4. Create/Join Match Workflow
+
+Flow A: Host a New Match
+
+    Select date (calendar, only Tuesdays/Thursdays allowed)
+    Select time slot (Early or Late)
+    Checkout summary (20 BHD payment)
+    Apple Pay processing
+    Fixture created with status = OPEN
+
+Flow B: Join an Open Match
+
+    Browse open fixtures (next 14 days)
+    Select opponent's fixture
+    Checkout (20 BHD)
+    Payment success → Fixture status = SCHEDULED, awayClanId set
+
+Backend Endpoints:
+
+POST /fixtures
+Body: { homeClanId, venue, day, timeSlot, date }
+Response: { fixture: Fixture, payment: Payment }
+
+POST /fixtures/:fixtureId/join
+Body: { awayClanId }
+Response: { fixture: Fixture, payment: Payment }
+
+Business Logic:
+
+    Prevent double-booking (clan can't have 2+ matches same day/time)
+    Lock fixture once both payments complete
+    Calendar disables past dates and non-Tuesday/Thursday
+
+5. Fixtures Page
+
+Features:
+
+    Filter by status: All, Open, Scheduled, Live, Final
+    Display match cards with:
+        Clan emblems, names, tags
+        Date, time, venue
+        Score (if Live/Final)
+        Status badge
+    Click to view Fixture Detail
+
+Endpoints:
+
+GET /fixtures?status={OPEN|SCHEDULED|LIVE|FINAL}
+Response: { fixtures: Fixture[] }
+
+6. Fixture Detail Page
+
+Data Shown:
+
+    Clan matchup with emblems and tier badges
+    Score (if Live/Final)
+    Match info: Date, time, venue
+    SR changes (if Final)
+    Match timeline (goals with minute stamps)
+    Video player (YouTube embed or countdown for upcoming)
+
+Real-time Updates (for Live matches):
+
+    WebSocket or polling to update score
+    Show "LIVE NOW" badge with pulsing animation
+
+Endpoints:
+
+GET /fixtures/:fixtureId
+Response: { fixture: Fixture, homeClan: Clan, awayClan: Clan }
+
+7. Clans Page
+
+Features:
+
+    Search clans by name or tag
+    Display all clans as cards showing:
+        Emblem, name, tag
+        SR, tier badge
+        Wins/losses
+        Member count
+    Click to view Clan Detail
+
+Endpoints:
+
+GET /clans?search={query}
+Response: { clans: Clan[] }
+
+8. Clan Detail Page
+
+Tabs:
+
+Overview Tab:
+
+    Clan header with tier-themed background
+    SR progress bar to next division
+    Next match countdown
+    Top scorer & top assister for clan
+    Goals for/against/difference
+    Roster with owner badge
+
+Matches Tab:
+
+    Upcoming fixtures
+    Past match history with results
+
+Actions:
+
+    Owner: "Schedule a Match" button
+    Member: "Leave Clan" button
+    Non-member: "Request to Join" button
+
+Endpoints:
+
+GET /clans/:clanId
+Response: { clan: Clan, members: Player[], fixtures: Fixture[] }
+
+POST /clans/:clanId/join-request
+Body: { playerId }
+
+POST /clans/:clanId/leave
+Body: { playerId }
+
+9. Leaderboard Page
+
+Features:
+
+    Season selector (past/current/future)
+    Top 10 clans by SR
+    Highlight current player's clan
+    Top 5 scorers (goals)
+    Top 5 assisters
+
+Endpoints:
+
+GET /leaderboard?seasonId={id}
+Response: {
+  clans: { clan: Clan, rank: number }[],
+  topScorers: { player: Player, goals: number }[],
+  topAssisters: { player: Player, assists: number }[]
+}
+
+Computation:
+
+    Aggregate goals/assists from Fixture.scorers where status = FINAL
+    Filter by season date range
+
+Additional Features & Considerations
+Celebrations & Animations
+
+Rank-Up Overlay:
+
+    When a clan's SR crosses a division or tier boundary, trigger celebration
+    Frontend shows modal with confetti, new badge, congrats message
+    Backend signals via WebSocket or poll-based check
+
+Match Creation Success:
+
+    Confetti animation on fixture creation/join success
+
+Notifications (Future V2)
+
+Players should receive:
+
+    Match Reminder: 1 day before scheduled fixture
+    Rank Up: When clan reaches new tier/division
+    Join Request: When someone wants to join your clan
+    Match Result: When fixture goes FINAL
+
+Schema:
+
+Notification {
+  id: string
+  playerId: string
+  type: enum ('MATCH_REMINDER' | 'RANK_UP' | 'JOIN_REQUEST' | 'RESULT')
+  title: string
+  body: string
+  relatedId?: string (fixture/clan ID)
+  read: boolean
+  createdAt: timestamp
+}
+
+Customization Options
+
+Color Themes (8 presets):
+
+    Pitch Green, Electric Blue, Royal Purple, Sunset Strike, Crimson Fury, Golden Age, Shadow Realm, Arctic Mint
+
+Patterns (5 options):
+
+    Solid, Stripes, Sash, Chevron, Pitch (soccer field lines)
+
+Store as:
+
+ClanCustomization {
+  clanId: string (FK)
+  colorThemeId: string
+  patternId: string
+}
+
+Frontend renders kit cards with gradients and SVG overlays.
+Match Day Constraints
+
+    Days: Only Tuesday & Thursday (configurable)
+    Time Slots: 7-8 PM (Early), 8:30-9:30 PM (Late)
+    Booking Window: Next 14 days
+    Prevent Conflicts: Clan can't book overlapping fixtures
+
+Video Integration
+
+    Live Matches: Stream via YouTube/Twitch embed
+    VODs: Upload match replay links
+    Admin Panel: Upload video after match completion
+
+Schema addition:
+
+Fixture {
+  ...
+  videoUrl?: string
+  streamProvider?: enum ('youtube' | 'twitch')
+}
+
+API Endpoint Summary
+Authentication
+
+POST /auth/register
+POST /auth/login
+POST /auth/logout
+GET  /auth/me
+
+Players
+
+GET    /players/:playerId
+PUT    /players/:playerId
+GET    /players/:playerId/stats
+
+Clans
+
+GET    /clans
+GET    /clans/:clanId
+POST   /clans
+PUT    /clans/:clanId
+DELETE /clans/:clanId
+POST   /clans/:clanId/join-request
+POST   /clans/:clanId/leave
+GET    /clans/:clanId/fixtures
+
+Fixtures
+
+GET    /fixtures
+GET    /fixtures/:fixtureId
+POST   /fixtures (create OPEN match)
+POST   /fixtures/:fixtureId/join (away clan joins)
+PUT    /fixtures/:fixtureId (update score, status)
+POST   /fixtures/:fixtureId/finalize (compute SR, set FINAL)
+
+Leaderboard
+
+GET /leaderboard?seasonId={id}
+GET /leaderboard/players (top scorers/assisters)
+
+Payments
+
+POST /payments (initiate payment)
+GET  /payments/:paymentId/status
+
+Seasons
+
+GET /seasons
+GET /seasons/:seasonId
+
+Database Schema Summary
+
+Tables:
+
+    players — User accounts
+    clans — Teams with SR, customization
+    fixtures — Matches with status, scores, SR changes
+    scorers — Goal events (embedded or separate table)
+    payments — Match fee transactions
+    seasons — Competition periods
+    achievements — Player badge unlocks
+    notifications — In-app alerts (future)
+
+Indexes:
+
+    players.username (unique)
+    clans.tag (unique)
+    clans.skillRating (for leaderboard sorting)
+    fixtures.status (filter queries)
+    fixtures.date (chronological sorting)
+
+Real-Time Features
+Live Match Updates
+
+    WebSocket Channel: /fixtures/:fixtureId
+    Events: SCORE_UPDATE, STATUS_CHANGE, GOAL_EVENT
+    Frontend subscribes when viewing live match detail
+
+Rank Changes
+
+    When SR updates after match, broadcast to all clan members
+    Show "Rank Up" overlay if tier/division changed
+
+Security & Permissions
+
+Authorization Rules:
+
+    Only clan owner can:
+        Create fixtures
+        Edit clan details
+        Manage roster (approve joins, kick members)
+    Only clan members can:
+        View clan-specific private data
+    Any authenticated user can:
+        View public leaderboards
+        Browse fixtures and clans
+        Create their own clan
+
+Rate Limiting:
+
+    Prevent spam fixture creation (max 5 fixtures/day per clan)
+    Join request cooldown (1 per clan per week)
+
+Testing & Edge Cases
+
+    Concurrent Joins: Two clans try to join same OPEN fixture
+        Use database transaction locks
+    Payment Failure: Rollback fixture state if payment fails
+    Clan Deletion: What happens to fixtures? Archive or orphan?
+    SR Boundary: Clan exactly at 900 SR (tier boundary)
+        Ensure division calculation is inclusive of min, exclusive of max+1
+    Draw Matches: Ensure winnerId = null and equal SR adjustments
+    Season Transition: Archive current season stats, reset?
+
+Future Enhancements (V2+)
+
+    Chat: In-clan messaging
+    Tournaments: Bracket-style multi-fixture events
+    Replays: Upload match highlights
+    Player Transfers: Move between clans with approval
+    Clan Rivalries: Track head-to-head records
+    Achievements 2.0: Seasonal badges, league titles
+    Mobile App: Native iOS/Android with push notifications
+
+Tech Stack Recommendations
+
+Backend:
+
+    Node.js + Express or NestJS
+    PostgreSQL (relational data with JSONB for scorers array)
+    Redis (caching leaderboards, session management)
+    Supabase (auth, real-time, storage)
+
+Real-Time:
+
+    Socket.io or Supabase Realtime for live match updates
+
+Payments:
+
+    Stripe or local BHD payment gateway
+    Apple Pay / Google Pay integration
+
+File Storage:
+
+    AWS S3 or Supabase Storage for avatars, emblems, videos
+
+This spec should give your backend team everything they need to design the database schema, API contracts, and business logic for Field! Let me know if you want me to elaborate on any specific area
