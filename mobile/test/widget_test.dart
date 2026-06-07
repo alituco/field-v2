@@ -10,7 +10,7 @@ void main() {
 
     expect(find.text('Supabase config missing'), findsOneWidget);
     expect(
-      find.textContaining('--dart-define-from-file=../.env'),
+      find.textContaining('--dart-define-from-file=.env.mobile'),
       findsOneWidget,
     );
   });
@@ -18,6 +18,11 @@ void main() {
   group('normalizePhoneNumber', () {
     test('keeps E.164 phone numbers', () {
       expect(normalizePhoneNumber('+15551234567'), '+15551234567');
+    });
+
+    test('keeps Bahrain E.164 phone numbers with spaces', () {
+      expect(normalizePhoneNumber('+973 3333 3333'), '+97333333333');
+      expect(isValidE164PhoneNumber('+97333333333'), isTrue);
     });
 
     test('converts a 10 digit US number to E.164', () {

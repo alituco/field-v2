@@ -37,7 +37,7 @@ class ConfigurationScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     const Text(
-                      'Run the app with --dart-define-from-file=../.env from the mobile directory.',
+                      'Run the app with --dart-define-from-file=.env.mobile from the mobile directory.',
                     ),
                   ],
                 ),

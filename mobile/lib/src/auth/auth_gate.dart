@@ -4,9 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../home/home_screen.dart';
+import 'auth_flow_screen.dart';
 import 'auth_repository.dart';
-import 'sign_in_screen.dart';
-import 'verify_otp_screen.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key, required this.authRepository});
@@ -20,7 +19,6 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   StreamSubscription<AuthState>? _authSubscription;
   Session? _session;
-  String? _pendingPhone;
 
   @override
   void initState() {
@@ -30,9 +28,6 @@ class _AuthGateState extends State<AuthGate> {
       if (!mounted) return;
       setState(() {
         _session = state.session;
-        if (state.session != null) {
-          _pendingPhone = null;
-        }
       });
     });
   }
@@ -45,22 +40,22 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_session != null) {
+    if (_session != null &&
+        _hasDisplayName(widget.authRepository.currentUser)) {
       return HomeScreen(authRepository: widget.authRepository);
     }
 
-    final pendingPhone = _pendingPhone;
-    if (pendingPhone != null) {
-      return VerifyOtpScreen(
-        authRepository: widget.authRepository,
-        phone: pendingPhone,
-        onBack: () => setState(() => _pendingPhone = null),
-      );
-    }
-
-    return SignInScreen(
+    return AuthFlowScreen(
       authRepository: widget.authRepository,
-      onOtpSent: (phone) => setState(() => _pendingPhone = phone),
+      initialStep: _session == null ? AuthStep.welcome : AuthStep.name,
+      onNameSaved: () =>
+          setState(() => _session = widget.authRepository.currentSession),
     );
+  }
+
+  bool _hasDisplayName(User? user) {
+    final metadata = user?.userMetadata;
+    final displayName = metadata?['display_name'] ?? metadata?['name'];
+    return displayName is String && displayName.trim().isNotEmpty;
   }
 }

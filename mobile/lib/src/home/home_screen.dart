@@ -28,6 +28,11 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final user = widget.authRepository.currentUser;
+    final metadata = user?.userMetadata;
+    final displayName = metadata?['display_name'] ?? metadata?['name'];
+    final name = displayName is String && displayName.trim().isNotEmpty
+        ? displayName.trim()
+        : null;
     final phone = user?.phone ?? 'Signed in';
     final colorScheme = Theme.of(context).colorScheme;
 
@@ -76,11 +81,20 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    phone,
+                    name ?? phone,
                     style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: const Color(0xFF52635B),
                     ),
                   ),
+                  if (name != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      phone,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: const Color(0xFF7A8A82),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 18),
                   const Text(
                     'Next up: create the profile table and collect username, display name, and avatar after first sign-in.',
