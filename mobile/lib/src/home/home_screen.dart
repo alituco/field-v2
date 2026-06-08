@@ -4,6 +4,8 @@ import '../auth/auth_repository.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
+import '../fixtures/fixture_repository.dart';
+import '../fixtures/fixtures_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.authRepository});
@@ -16,6 +18,7 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final ClanRepository _clanRepository = SupabaseClanRepository();
+  final FixtureRepository _fixtureRepository = SupabaseFixtureRepository();
   int _selectedIndex = 0;
   bool _isSigningOut = false;
 
@@ -39,11 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onSignOut: _signOut,
         onOpenClans: () => setState(() => _selectedIndex = 2),
       ),
-      const _ComingSoonScreen(
-        title: 'Fixtures',
-        icon: Icons.calendar_month_rounded,
-        message: 'Match scheduling lands after clans are in place.',
-      ),
+      FixturesScreen(fixtureRepository: _fixtureRepository),
       ClansScreen(clanRepository: _clanRepository),
       const _ComingSoonScreen(
         title: 'Ranks',
@@ -222,84 +221,80 @@ class _DashboardHome extends StatelessWidget {
     final name = _displayName(authRepository);
     final phone = user?.phone ?? 'Signed in';
 
-    return Column(
-      children: [
-        FieldPageHeader(
-          title: 'Field',
-          rightAction: IconButton(
-            onPressed: isSigningOut ? null : onSignOut,
-            tooltip: 'Sign out',
-            icon: isSigningOut
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.logout_rounded),
-          ),
+    return FieldHeaderOverlay(
+      header: FieldPageHeader(
+        title: 'Field',
+        rightAction: IconButton(
+          onPressed: isSigningOut ? null : onSignOut,
+          tooltip: 'Sign out',
+          icon: isSigningOut
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.logout_rounded),
         ),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              FieldHeroBanner(
-                eyebrow: 'Field FC',
-                title: 'The pitch is calling.',
-                subtitle: 'Rally your clan and take the field.',
-                icon: Icons.sports_soccer_rounded,
-                chips: const [
-                  HeroChip(label: 'Live', value: 'Auth'),
-                  HeroChip(label: 'Next', value: 'Clans'),
-                ],
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: fieldGray200),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Welcome back',
-                      style: TextStyle(
-                        color: fieldGray900,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      name ?? phone,
-                      style: const TextStyle(
-                        color: fieldGray600,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    if (name != null) ...[
-                      const SizedBox(height: 2),
-                      Text(phone, style: const TextStyle(color: fieldGray500)),
-                    ],
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: onOpenClans,
-                        icon: const Icon(Icons.shield_rounded),
-                        label: const Text('Open Clans'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+      ),
+      child: ListView(
+        padding: fieldHeaderAwarePadding(context, top: 24, bottom: 16),
+        children: [
+          FieldHeroBanner(
+            eyebrow: 'Field FC',
+            title: 'The pitch is calling.',
+            subtitle: 'Rally your clan and take the field.',
+            icon: Icons.sports_soccer_rounded,
+            chips: const [
+              HeroChip(label: 'Live', value: 'Auth'),
+              HeroChip(label: 'Next', value: 'Clans'),
             ],
           ),
-        ),
-      ],
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: fieldGray200),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Welcome back',
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  name ?? phone,
+                  style: const TextStyle(
+                    color: fieldGray600,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (name != null) ...[
+                  const SizedBox(height: 2),
+                  Text(phone, style: const TextStyle(color: fieldGray500)),
+                ],
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: onOpenClans,
+                    icon: const Icon(Icons.shield_rounded),
+                    label: const Text('Open Clans'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -317,42 +312,38 @@ class _ComingSoonScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        FieldPageHeader(title: title),
-        Expanded(
-          child: Center(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(icon, color: fieldEmerald600, size: 42),
-                  const SizedBox(height: 14),
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: fieldGray900,
-                      fontSize: 24,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    message,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: fieldGray500,
-                      fontSize: 15,
-                      height: 1.4,
-                    ),
-                  ),
-                ],
+    return FieldHeaderOverlay(
+      header: FieldPageHeader(title: title),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: fieldEmerald600, size: 42),
+              const SizedBox(height: 14),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-            ),
+              const SizedBox(height: 8),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: fieldGray500,
+                  fontSize: 15,
+                  height: 1.4,
+                ),
+              ),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -373,85 +364,78 @@ class _ProfileScreen extends StatelessWidget {
     final name = _displayName(authRepository) ?? 'Player';
     final phone = authRepository.currentUser?.phone ?? '';
 
-    return Column(
-      children: [
-        FieldPageHeader(title: 'Profile'),
-        Expanded(
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Container(
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: fieldGray200),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 56,
-                      height: 56,
-                      decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [fieldEmerald500, fieldBlue600],
-                        ),
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: Center(
-                        child: Text(
-                          name.characters.first.toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
+    return FieldHeaderOverlay(
+      header: const FieldPageHeader(title: 'Profile'),
+      child: ListView(
+        padding: fieldHeaderAwarePadding(context, top: 24, bottom: 16),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: fieldGray200),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [fieldEmerald500, fieldBlue600],
+                    ),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Center(
+                    child: Text(
+                      name.characters.first.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            name,
-                            style: const TextStyle(
-                              color: fieldGray900,
-                              fontSize: 18,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            phone,
-                            style: const TextStyle(color: fieldGray500),
-                          ),
-                        ],
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        style: const TextStyle(
+                          color: fieldGray900,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 3),
+                      Text(phone, style: const TextStyle(color: fieldGray500)),
+                    ],
+                  ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: OutlinedButton.icon(
-                  onPressed: isSigningOut ? null : onSignOut,
-                  icon: isSigningOut
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.logout_rounded),
-                  label: const Text('Sign out'),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
-      ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: isSigningOut ? null : onSignOut,
+              icon: isSigningOut
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.logout_rounded),
+              label: const Text('Sign out'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

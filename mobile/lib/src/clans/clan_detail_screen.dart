@@ -66,55 +66,51 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
 
     return Scaffold(
       backgroundColor: fieldBackground,
-      body: Column(
-        children: [
-          FieldPageHeader(title: clan.name, showBack: true),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 116),
-              children: [
-                _ClanHero(clan: clan, detail: detail),
-                const SizedBox(height: 24),
-                _SegmentedTabs(
-                  selectedIndex: _tabIndex,
-                  onChanged: (index) => setState(() => _tabIndex = index),
-                ),
-                const SizedBox(height: 16),
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, 0.03),
-                          end: Offset.zero,
-                        ).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: _tabIndex == 0
-                      ? _OverviewTab(
-                          key: const ValueKey('overview'),
-                          clan: clan,
-                          detail: detail,
-                          isLoadingMembers: _isLoadingMembers,
-                          membersErrorText: _membersErrorText,
-                          onRetryMembers: _loadMembers,
-                        )
-                      : _MatchesTab(
-                          key: const ValueKey('matches'),
-                          clan: clan,
-                          detail: detail,
-                        ),
-                ),
-              ],
+      body: FieldHeaderOverlay(
+        header: FieldPageHeader(title: clan.name, showBack: true),
+        child: ListView(
+          padding: fieldHeaderAwarePadding(context, bottom: 116),
+          children: [
+            _ClanHero(clan: clan, detail: detail),
+            const SizedBox(height: 24),
+            _SegmentedTabs(
+              selectedIndex: _tabIndex,
+              onChanged: (index) => setState(() => _tabIndex = index),
             ),
-          ),
-        ],
+            const SizedBox(height: 16),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.03),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
+                  ),
+                );
+              },
+              child: _tabIndex == 0
+                  ? _OverviewTab(
+                      key: const ValueKey('overview'),
+                      clan: clan,
+                      detail: detail,
+                      isLoadingMembers: _isLoadingMembers,
+                      membersErrorText: _membersErrorText,
+                      onRetryMembers: _loadMembers,
+                    )
+                  : _MatchesTab(
+                      key: const ValueKey('matches'),
+                      clan: clan,
+                      detail: detail,
+                    ),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: _ClanActionBar(
         isOwner: _isOwner,

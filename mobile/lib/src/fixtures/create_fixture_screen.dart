@@ -1,0 +1,1359 @@
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+
+import '../clans/clan_widgets.dart';
+import 'fixture.dart';
+import 'fixture_repository.dart';
+import 'fixture_widgets.dart';
+
+enum _CreateFixtureStep { chooseAction, selectTime, summary, success }
+
+class CreateFixtureScreen extends StatefulWidget {
+  const CreateFixtureScreen({
+    super.key,
+    required this.fixtureRepository,
+    required this.myClanMembership,
+  });
+
+  final FixtureRepository fixtureRepository;
+  final MyClanMembership? myClanMembership;
+
+  @override
+  State<CreateFixtureScreen> createState() => _CreateFixtureScreenState();
+}
+
+class _CreateFixtureScreenState extends State<CreateFixtureScreen>
+    with SingleTickerProviderStateMixin {
+  _CreateFixtureStep _step = _CreateFixtureStep.chooseAction;
+  List<Fixture> _fixtures = const [];
+  List<Fixture> _openFixtures = const [];
+  Fixture? _selectedFixtureToJoin;
+  DateTime? _selectedDate;
+  FixtureTimeSlot? _selectedTimeSlot;
+  bool _isLoadingOpenFixtures = true;
+  bool _isSubmitting = false;
+  String? _errorText;
+  late final AnimationController _successController;
+
+  bool get _canAct => widget.myClanMembership?.isOwner == true;
+
+  @override
+  void initState() {
+    super.initState();
+    _successController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2600),
+    );
+    _loadOpenFixtures();
+  }
+
+  @override
+  void dispose() {
+    _successController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadOpenFixtures() async {
+    setState(() {
+      _isLoadingOpenFixtures = true;
+      _errorText = null;
+    });
+
+    try {
+      final fixtures = await widget.fixtureRepository.listFixtures();
+      if (!mounted) return;
+      setState(() {
+        _fixtures = fixtures;
+        _openFixtures = fixtures
+            .where((fixture) => fixture.status == FixtureStatus.open)
+            .toList();
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _errorText = 'Could not load open matches.');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingOpenFixtures = false);
+      }
+    }
+  }
+
+  void _startHosting() {
+    if (!_canAct) {
+      _showOwnerSnack();
+      return;
+    }
+    setState(() {
+      _selectedFixtureToJoin = null;
+      _selectedDate = null;
+      _selectedTimeSlot = null;
+      _step = _CreateFixtureStep.selectTime;
+    });
+  }
+
+  void _startJoining(Fixture fixture) {
+    if (!_canAct) {
+      _showOwnerSnack();
+      return;
+    }
+
+    if (fixture.homeClanId == widget.myClanMembership?.clan.id) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Your clan is already hosting this match.'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _selectedFixtureToJoin = fixture;
+      _selectedDate = fixture.matchDate;
+      _selectedTimeSlot = FixtureTimeSlot.values.firstWhere(
+        (slot) => slot.label == fixture.timeSlot,
+        orElse: () => FixtureTimeSlot.early,
+      );
+      _step = _CreateFixtureStep.summary;
+    });
+  }
+
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final firstDate = DateTime(now.year, now.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _nextMatchDay(firstDate),
+      firstDate: firstDate,
+      lastDate: firstDate.add(const Duration(days: 90)),
+      selectableDayPredicate: _isMatchDay,
+    );
+
+    if (picked == null) return;
+    setState(() {
+      _selectedDate = picked;
+      if (_selectedTimeSlot != null &&
+          !_isSlotAvailable(picked, _selectedTimeSlot!)) {
+        _selectedTimeSlot = null;
+      }
+    });
+  }
+
+  void _continueToSummary() {
+    if (_selectedDate == null || _selectedTimeSlot == null) return;
+    setState(() => _step = _CreateFixtureStep.summary);
+  }
+
+  Future<void> _submit() async {
+    final membership = widget.myClanMembership;
+    final date = _selectedDate;
+    final timeSlot = _selectedTimeSlot;
+    if (membership == null || date == null || timeSlot == null) return;
+
+    setState(() {
+      _isSubmitting = true;
+      _errorText = null;
+    });
+
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      if (_selectedFixtureToJoin == null) {
+        await widget.fixtureRepository.createFixture(
+          homeClanId: membership.clan.id,
+          venue: 'Central Sports Complex',
+          matchDate: date,
+          timeSlot: timeSlot,
+        );
+      } else {
+        await widget.fixtureRepository.joinFixture(
+          fixtureId: _selectedFixtureToJoin!.id,
+          awayClanId: membership.clan.id,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _step = _CreateFixtureStep.success);
+      _successController.forward(from: 0);
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  bool _isSlotAvailable(DateTime date, FixtureTimeSlot slot) {
+    return !_fixtures.any((fixture) {
+      final sameDate =
+          fixture.matchDate.year == date.year &&
+          fixture.matchDate.month == date.month &&
+          fixture.matchDate.day == date.day;
+      final active =
+          fixture.status == FixtureStatus.open ||
+          fixture.status == FixtureStatus.scheduled ||
+          fixture.status == FixtureStatus.live;
+      return sameDate && active && fixture.timeSlot == slot.label;
+    });
+  }
+
+  void _showOwnerSnack() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Only a clan owner can schedule matches.')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: fieldBackground,
+      body: FieldHeaderOverlay(
+        header: FieldPageHeader(
+          title: _headerTitle,
+          showBack: true,
+          onBack: _handleBack,
+        ),
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 230),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, animation) {
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0.04, 0),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: _buildStep(),
+        ),
+      ),
+      bottomNavigationBar: _buildBottomAction(),
+    );
+  }
+
+  String get _headerTitle {
+    return switch (_step) {
+      _CreateFixtureStep.chooseAction => 'Play',
+      _CreateFixtureStep.selectTime => 'Select Time',
+      _CreateFixtureStep.summary => 'Confirm Match',
+      _CreateFixtureStep.success => 'Success',
+    };
+  }
+
+  void _handleBack() {
+    if (_step == _CreateFixtureStep.chooseAction) {
+      Navigator.of(context).pop(false);
+      return;
+    }
+    if (_step == _CreateFixtureStep.success) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _errorText = null;
+      if (_step == _CreateFixtureStep.summary) {
+        _step = _selectedFixtureToJoin == null
+            ? _CreateFixtureStep.selectTime
+            : _CreateFixtureStep.chooseAction;
+      } else {
+        _step = _CreateFixtureStep.chooseAction;
+      }
+    });
+  }
+
+  Widget _buildStep() {
+    return switch (_step) {
+      _CreateFixtureStep.chooseAction => _ChooseActionStep(
+        key: const ValueKey('choose'),
+        openFixtures: _openFixtures,
+        isLoading: _isLoadingOpenFixtures,
+        errorText: _errorText,
+        onRetry: _loadOpenFixtures,
+        onHost: _startHosting,
+        onJoin: _startJoining,
+      ),
+      _CreateFixtureStep.selectTime => _SelectTimeStep(
+        key: const ValueKey('time'),
+        selectedDate: _selectedDate,
+        selectedTimeSlot: _selectedTimeSlot,
+        fixtures: _fixtures,
+        onPickDate: _pickDate,
+        onSelectTimeSlot: (slot) => setState(() => _selectedTimeSlot = slot),
+      ),
+      _CreateFixtureStep.summary => _SummaryStep(
+        key: const ValueKey('summary'),
+        fixtureToJoin: _selectedFixtureToJoin,
+        date: _selectedDate!,
+        timeSlot: _selectedTimeSlot!,
+        errorText: _errorText,
+      ),
+      _CreateFixtureStep.success => _SuccessStep(
+        key: const ValueKey('success'),
+        controller: _successController,
+        joined: _selectedFixtureToJoin != null,
+      ),
+    };
+  }
+
+  Widget? _buildBottomAction() {
+    if (_step == _CreateFixtureStep.selectTime) {
+      return _BottomAction(
+        child: FilledButton(
+          onPressed: _selectedDate == null || _selectedTimeSlot == null
+              ? null
+              : _continueToSummary,
+          style: FilledButton.styleFrom(
+            backgroundColor: fieldEmerald600,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Continue'),
+        ),
+      );
+    }
+
+    if (_step == _CreateFixtureStep.summary) {
+      return _BottomAction(
+        child: FilledButton.icon(
+          onPressed: _isSubmitting ? null : _submit,
+          icon: _isSubmitting
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.apple_rounded),
+          label: Text(_isSubmitting ? 'Processing...' : 'Pay 20 BHD'),
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.black,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      );
+    }
+
+    if (_step == _CreateFixtureStep.success) {
+      return _BottomAction(
+        child: FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          style: FilledButton.styleFrom(
+            backgroundColor: fieldEmerald600,
+            foregroundColor: Colors.white,
+          ),
+          child: const Text('Back to Fixtures'),
+        ),
+      );
+    }
+
+    return null;
+  }
+}
+
+class _ChooseActionStep extends StatelessWidget {
+  const _ChooseActionStep({
+    super.key,
+    required this.openFixtures,
+    required this.isLoading,
+    required this.errorText,
+    required this.onRetry,
+    required this.onHost,
+    required this.onJoin,
+  });
+
+  final List<Fixture> openFixtures;
+  final bool isLoading;
+  final String? errorText;
+  final VoidCallback onRetry;
+  final VoidCallback onHost;
+  final ValueChanged<Fixture> onJoin;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: fieldHeaderAwarePadding(context, bottom: 120),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFF059669), Color(0xFF14B8A6)],
+            ),
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: fieldEmerald600.withValues(alpha: 0.28),
+                blurRadius: 24,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            children: [
+              Positioned(
+                right: -22,
+                bottom: -26,
+                child: Icon(
+                  Icons.sports_mma_rounded,
+                  color: Colors.white.withValues(alpha: 0.12),
+                  size: 112,
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Ready to Clash?',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Challenge open teams or host a new match to climb the ranks.',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.86),
+                      fontSize: 14,
+                      height: 1.35,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 52,
+                    child: FilledButton.icon(
+                      onPressed: onHost,
+                      icon: const Icon(Icons.add_rounded),
+                      label: const Text('Host a Match'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: fieldEmerald600,
+                        textStyle: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'OPEN MATCHES',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 19,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFECFDF5),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: const Text(
+                'NEXT 14 DAYS',
+                style: TextStyle(
+                  color: fieldEmerald600,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (isLoading)
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 28),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else if (errorText != null)
+          _SimplePanel(
+            icon: Icons.warning_rounded,
+            title: 'Could not load matches',
+            message: errorText!,
+            actionLabel: 'Try Again',
+            onAction: onRetry,
+          )
+        else if (openFixtures.isEmpty)
+          const _SimplePanel(
+            icon: Icons.shield_rounded,
+            title: 'No open matches',
+            message: 'Host one to get the ball rolling.',
+          )
+        else
+          for (var i = 0; i < openFixtures.length; i++) ...[
+            _JoinFixtureCard(fixture: openFixtures[i], onJoin: onJoin),
+            if (i != openFixtures.length - 1) const SizedBox(height: 14),
+          ],
+      ],
+    );
+  }
+}
+
+class _JoinFixtureCard extends StatelessWidget {
+  const _JoinFixtureCard({required this.fixture, required this.onJoin});
+
+  final Fixture fixture;
+  final ValueChanged<Fixture> onJoin;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          FixtureCard(fixture: fixture),
+          Container(
+            padding: const EdgeInsets.all(12),
+            color: fieldGray100.withValues(alpha: 0.66),
+            child: SizedBox(
+              width: double.infinity,
+              height: 44,
+              child: FilledButton(
+                onPressed: () => onJoin(fixture),
+                style: FilledButton.styleFrom(
+                  backgroundColor: Colors.black,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Join Match'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SelectTimeStep extends StatelessWidget {
+  const _SelectTimeStep({
+    super.key,
+    required this.selectedDate,
+    required this.selectedTimeSlot,
+    required this.fixtures,
+    required this.onPickDate,
+    required this.onSelectTimeSlot,
+  });
+
+  final DateTime? selectedDate;
+  final FixtureTimeSlot? selectedTimeSlot;
+  final List<Fixture> fixtures;
+  final VoidCallback onPickDate;
+  final ValueChanged<FixtureTimeSlot> onSelectTimeSlot;
+
+  @override
+  Widget build(BuildContext context) {
+    final availableSlots = selectedDate == null
+        ? const <FixtureTimeSlot>[]
+        : FixtureTimeSlot.values
+              .where((slot) => !_isBooked(fixtures, selectedDate!, slot))
+              .toList();
+
+    return ListView(
+      padding: fieldHeaderAwarePadding(context, top: 18, bottom: 120),
+      children: [
+        const Text(
+          'Pick a Date',
+          style: TextStyle(
+            color: fieldGray900,
+            fontSize: 21,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Choose a Tuesday or Thursday first, then pick one available time.',
+          style: TextStyle(
+            color: fieldGray500,
+            fontSize: 14,
+            height: 1.35,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 14),
+        InkWell(
+          onTap: onPickDate,
+          borderRadius: BorderRadius.circular(16),
+          child: Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: fieldGray100),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.calendar_month_rounded,
+                    color: fieldEmerald600,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    selectedDate == null
+                        ? 'Choose a match date'
+                        : _formatLongDate(selectedDate!),
+                    style: const TextStyle(
+                      color: fieldGray900,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const Icon(Icons.chevron_right_rounded, color: fieldGray400),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 28),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          child: selectedDate == null
+              ? const _WaitingForDatePanel(key: ValueKey('wait-date'))
+              : Column(
+                  key: ValueKey('slots-${selectedDate!.toIso8601String()}'),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Available Options',
+                      style: TextStyle(
+                        color: fieldGray900,
+                        fontSize: 21,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      availableSlots.length == 1
+                          ? '1 slot open for this date.'
+                          : '${availableSlots.length} slots open for this date.',
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (availableSlots.isEmpty)
+                      const _NoSlotsPanel()
+                    else
+                      for (final slot in FixtureTimeSlot.values) ...[
+                        _TimeSlotTile(
+                          slot: slot,
+                          selected: selectedTimeSlot == slot,
+                          available: availableSlots.contains(slot),
+                          onTap: () => onSelectTimeSlot(slot),
+                        ),
+                        if (slot != FixtureTimeSlot.values.last)
+                          const SizedBox(height: 10),
+                      ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _WaitingForDatePanel extends StatelessWidget {
+  const _WaitingForDatePanel({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.touch_app_rounded, color: fieldGray400),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'Pick a date to check the available kickoff options.',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 14,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoSlotsPanel extends StatelessWidget {
+  const _NoSlotsPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.event_busy_rounded, color: Color(0xFFEA580C)),
+          SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              'This date is fully booked. Pick another Tuesday or Thursday.',
+              style: TextStyle(
+                color: Color(0xFF9A3412),
+                fontSize: 14,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TimeSlotTile extends StatelessWidget {
+  const _TimeSlotTile({
+    required this.slot,
+    required this.selected,
+    required this.available,
+    required this.onTap,
+  });
+
+  final FixtureTimeSlot slot;
+  final bool selected;
+  final bool available;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: available ? onTap : null,
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 170),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: !available
+              ? fieldGray100.withValues(alpha: 0.72)
+              : selected
+              ? const Color(0xFFECFDF5)
+              : Colors.white,
+          border: Border.all(
+            color: selected ? fieldEmerald500 : fieldGray200,
+            width: selected ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.access_time_rounded,
+              color: !available
+                  ? fieldGray300
+                  : selected
+                  ? fieldEmerald600
+                  : fieldGray400,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    slot.label,
+                    style: TextStyle(
+                      color: !available
+                          ? fieldGray400
+                          : selected
+                          ? const Color(0xFF064E3B)
+                          : fieldGray700,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    available ? 'Available' : 'Booked',
+                    style: TextStyle(
+                      color: available ? fieldEmerald600 : fieldGray400,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              width: 22,
+              height: 22,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: selected ? fieldEmerald500 : fieldGray300,
+                  width: 2,
+                ),
+              ),
+              child: selected
+                  ? Center(
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: fieldEmerald500,
+                        ),
+                      ),
+                    )
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryStep extends StatelessWidget {
+  const _SummaryStep({
+    super.key,
+    required this.fixtureToJoin,
+    required this.date,
+    required this.timeSlot,
+    required this.errorText,
+  });
+
+  final Fixture? fixtureToJoin;
+  final DateTime date;
+  final FixtureTimeSlot timeSlot;
+  final String? errorText;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: fieldHeaderAwarePadding(context, top: 18, bottom: 120),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: fieldGray100),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                fixtureToJoin == null ? 'Match Summary' : 'Join Match Summary',
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 18),
+              _SummaryRow(
+                icon: Icons.calendar_month_rounded,
+                iconColor: fieldBlue600,
+                iconBackground: const Color(0xFFEFF6FF),
+                label: 'Date',
+                value: _formatLongDate(date),
+              ),
+              const SizedBox(height: 16),
+              _SummaryRow(
+                icon: Icons.access_time_rounded,
+                iconColor: const Color(0xFFEA580C),
+                iconBackground: const Color(0xFFFFF7ED),
+                label: 'Time',
+                value: timeSlot.label,
+              ),
+              const SizedBox(height: 16),
+              _SummaryRow(
+                icon: Icons.location_on_rounded,
+                iconColor: fieldEmerald600,
+                iconBackground: const Color(0xFFECFDF5),
+                label: 'Venue',
+                value: fixtureToJoin?.venue ?? 'Central Sports Complex',
+              ),
+              const SizedBox(height: 18),
+              const Divider(color: fieldGray100),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Total Amount',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      '20 BHD',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: const Color(0xFFECFDF5),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Text(
+            fixtureToJoin == null
+                ? 'This match will be listed as open for other clans to challenge.'
+                : 'Your clan will be locked in as the away team for this fixture.',
+            style: const TextStyle(
+              color: Color(0xFF065F46),
+              fontSize: 13,
+              height: 1.35,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        if (errorText != null) ...[
+          const SizedBox(height: 14),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFEF2F2),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              errorText!,
+              style: const TextStyle(
+                color: Color(0xFF991B1B),
+                fontSize: 13,
+                height: 1.35,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  const _SummaryRow({
+    required this.icon,
+    required this.iconColor,
+    required this.iconBackground,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final Color iconBackground;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: iconBackground,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(icon, color: iconColor, size: 20),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  color: fieldGray500,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SuccessStep extends StatelessWidget {
+  const _SuccessStep({
+    super.key,
+    required this.controller,
+    required this.joined,
+  });
+
+  final AnimationController controller;
+  final bool joined;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: AnimatedBuilder(
+            animation: controller,
+            builder: (context, child) {
+              return CustomPaint(
+                painter: _ConfettiPainter(progress: controller.value),
+              );
+            },
+          ),
+        ),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ScaleTransition(
+                  scale: CurvedAnimation(
+                    parent: controller,
+                    curve: const Interval(0, 0.42, curve: Curves.elasticOut),
+                  ),
+                  child: Container(
+                    width: 96,
+                    height: 96,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [fieldEmerald500, Color(0xFF14B8A6)],
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                      boxShadow: [
+                        BoxShadow(
+                          color: fieldEmerald500.withValues(alpha: 0.32),
+                          blurRadius: 24,
+                          offset: const Offset(0, 12),
+                        ),
+                      ],
+                    ),
+                    child: const Icon(
+                      Icons.check_circle_rounded,
+                      color: Colors.white,
+                      size: 50,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                Text(
+                  joined ? 'Match Joined!' : 'Match Created!',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: fieldGray900,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  joined
+                      ? 'Your game is on the board. Get ready for battle.'
+                      : 'Your match is now open for challenges.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: fieldGray500,
+                    fontSize: 16,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConfettiPainter extends CustomPainter {
+  const _ConfettiPainter({required this.progress});
+
+  final double progress;
+
+  static const _colors = [
+    fieldEmerald500,
+    Color(0xFF14B8A6),
+    Color(0xFFF59E0B),
+    Color(0xFFEF4444),
+    Color(0xFF3B82F6),
+    Color(0xFFA855F7),
+  ];
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (progress <= 0) return;
+
+    final eased = Curves.easeOutCubic.transform(progress.clamp(0, 1));
+    final fade = (1 - progress).clamp(0, 1).toDouble();
+
+    for (var i = 0; i < 42; i++) {
+      final fromLeft = i.isEven;
+      final seed = i + 1.0;
+      final startX = fromLeft ? size.width * 0.18 : size.width * 0.82;
+      final startY = size.height * 0.30;
+      final direction = fromLeft ? 1.0 : -1.0;
+      final spreadX = direction * (48 + ((i % 7) * 18));
+      final lift = 84 + ((i % 5) * 24);
+      final fall = 190 * progress * progress;
+      final wobble = math.sin(seed * 1.7 + progress * 8) * 18;
+      final x = startX + (spreadX * eased) + wobble;
+      final y = startY - (lift * eased) + fall;
+      final width = 5.0 + (i % 3);
+      final height = 9.0 + (i % 4);
+      final paint = Paint()
+        ..color = _colors[i % _colors.length].withValues(alpha: fade);
+
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate((seed * 0.7) + (progress * 5));
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset.zero, width: width, height: height),
+          const Radius.circular(2),
+        ),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter oldDelegate) {
+    return oldDelegate.progress != progress;
+  }
+}
+
+class _BottomAction extends StatelessWidget {
+  const _BottomAction({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.90),
+          border: const Border(top: BorderSide(color: fieldGray100)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, -6),
+            ),
+          ],
+        ),
+        child: SizedBox(width: double.infinity, height: 54, child: child),
+      ),
+    );
+  }
+}
+
+class _SimplePanel extends StatelessWidget {
+  const _SimplePanel({
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray200),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: fieldGray300, size: 38),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            style: const TextStyle(
+              color: fieldGray900,
+              fontSize: 18,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 14),
+            FilledButton(onPressed: onAction, child: Text(actionLabel!)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+DateTime _nextMatchDay(DateTime start) {
+  var date = start;
+  while (!_isMatchDay(date)) {
+    date = date.add(const Duration(days: 1));
+  }
+  return date;
+}
+
+bool _isMatchDay(DateTime date) {
+  return date.weekday == DateTime.tuesday || date.weekday == DateTime.thursday;
+}
+
+bool _isBooked(List<Fixture> fixtures, DateTime date, FixtureTimeSlot slot) {
+  return fixtures.any((fixture) {
+    final sameDate =
+        fixture.matchDate.year == date.year &&
+        fixture.matchDate.month == date.month &&
+        fixture.matchDate.day == date.day;
+    final active =
+        fixture.status == FixtureStatus.open ||
+        fixture.status == FixtureStatus.scheduled ||
+        fixture.status == FixtureStatus.live;
+    return sameDate && active && fixture.timeSlot == slot.label;
+  });
+}
+
+String _formatLongDate(DateTime date) {
+  const weekdays = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} ${date.day}, ${date.year}';
+}

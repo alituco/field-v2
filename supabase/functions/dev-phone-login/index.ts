@@ -1,5 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 
+type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
@@ -12,6 +14,16 @@ type JsonBody = {
   token?: string;
 };
 
+type DevUser = {
+  phone: string;
+  displayName: string;
+};
+
+type ConfiguredDevUsers = {
+  users: DevUser[];
+  error?: string;
+};
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -22,12 +34,16 @@ Deno.serve(async (request) => {
   }
 
   const enabled = Deno.env.get("DEV_OTP_ENABLED") === "true";
-  const allowedPhone = Deno.env.get("DEV_OTP_PHONE");
+  const configuredDevUsers = getConfiguredDevUsers();
   const allowedCode = Deno.env.get("DEV_OTP_CODE") ?? "000000";
   const devPassword = Deno.env.get("DEV_OTP_PASSWORD");
   const validUntil = Deno.env.get("DEV_OTP_VALID_UNTIL");
 
-  if (!enabled || !allowedPhone || !devPassword) {
+  if (configuredDevUsers.error) {
+    return json({ error: configuredDevUsers.error }, 500);
+  }
+
+  if (!enabled || configuredDevUsers.users.length === 0 || !devPassword) {
     return json({ error: "Dev login is not configured." }, 404);
   }
 
@@ -42,7 +58,9 @@ Deno.serve(async (request) => {
     return json({ error: "Invalid request body." }, 400);
   }
 
-  if (body.phone !== allowedPhone || body.token !== allowedCode) {
+  const devUser = findConfiguredDevUser(configuredDevUsers.users, body.phone);
+
+  if (!devUser || body.token !== allowedCode) {
     return json({ error: "Invalid verification code." }, 401);
   }
 
@@ -56,25 +74,24 @@ Deno.serve(async (request) => {
 
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
-  });
+  }) as SupabaseAnyClient;
   const authClient = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
-  });
+  }) as SupabaseAnyClient;
 
   try {
-    const profileName = "Dev Player";
     const userId = await ensureDevUser({
       admin,
-      phone: allowedPhone,
+      phone: devUser.phone,
       password: devPassword,
-      displayName: profileName,
+      displayName: devUser.displayName,
     });
 
     const { error: profileError } = await admin.from("profiles").upsert(
       {
         id: userId,
-        phone: allowedPhone,
-        display_name: profileName,
+        phone: devUser.phone,
+        display_name: devUser.displayName,
       },
       { onConflict: "id" },
     );
@@ -86,7 +103,7 @@ Deno.serve(async (request) => {
     const { data: signInData, error: signInError } =
       await signInDevUserWithPassword({
         authClient,
-        phone: allowedPhone,
+        phone: devUser.phone,
         password: devPassword,
       });
 
@@ -114,7 +131,7 @@ async function ensureDevUser({
   password,
   displayName,
 }: {
-  admin: ReturnType<typeof createClient>;
+  admin: SupabaseAnyClient;
   phone: string;
   password: string;
   displayName: string;
@@ -167,7 +184,7 @@ async function signInDevUserWithPassword({
   phone,
   password,
 }: {
-  authClient: ReturnType<typeof createClient>;
+  authClient: SupabaseAnyClient;
   phone: string;
   password: string;
 }) {
@@ -188,7 +205,7 @@ async function signInDevUserWithPassword({
 }
 
 async function findUserByPhone(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseAnyClient,
   phone: string,
 ) {
   const phoneDigits = normalizePhoneDigits(phone);
@@ -209,6 +226,81 @@ async function findUserByPhone(
   }
 
   return null;
+}
+
+function getConfiguredDevUsers(): ConfiguredDevUsers {
+  const users: DevUser[] = [];
+  const legacyPhone = Deno.env.get("DEV_OTP_PHONE");
+  const legacyName = Deno.env.get("DEV_OTP_NAME") ?? "Dev Player";
+  const usersJson = Deno.env.get("DEV_OTP_USERS_JSON");
+
+  if (legacyPhone) {
+    users.push({
+      phone: legacyPhone,
+      displayName: normalizeDisplayName(legacyName),
+    });
+  }
+
+  if (usersJson) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(usersJson);
+    } catch {
+      return { users: [], error: "DEV_OTP_USERS_JSON is not valid JSON." };
+    }
+
+    if (!isRecord(parsed)) {
+      return {
+        users: [],
+        error: "DEV_OTP_USERS_JSON must be an object of phone/name pairs.",
+      };
+    }
+
+    for (const [phone, displayName] of Object.entries(parsed)) {
+      if (typeof displayName !== "string") {
+        return {
+          users: [],
+          error: "DEV_OTP_USERS_JSON values must be display-name strings.",
+        };
+      }
+
+      users.push({
+        phone,
+        displayName: normalizeDisplayName(displayName),
+      });
+    }
+  }
+
+  return { users: uniqueDevUsers(users) };
+}
+
+function findConfiguredDevUser(users: DevUser[], phone?: string) {
+  if (!phone) return null;
+  const phoneDigits = normalizePhoneDigits(phone);
+  return users.find((user) =>
+    normalizePhoneDigits(user.phone) === phoneDigits
+  ) ??
+    null;
+}
+
+function uniqueDevUsers(users: DevUser[]) {
+  const byPhoneDigits = new Map<string, DevUser>();
+  for (const user of users) {
+    const phoneDigits = normalizePhoneDigits(user.phone);
+    if (!phoneDigits) continue;
+    byPhoneDigits.set(phoneDigits, user);
+  }
+  return [...byPhoneDigits.values()];
+}
+
+function normalizeDisplayName(displayName: string) {
+  const trimmed = displayName.trim();
+  if (trimmed.length >= 2 && trimmed.length <= 24) return trimmed;
+  return "Dev Player";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function normalizePhoneDigits(phone: string) {

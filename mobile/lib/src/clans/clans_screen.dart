@@ -84,104 +84,100 @@ class _ClansScreenState extends State<ClansScreen> {
         .where((clan) => clan.memberCount < 11)
         .length;
 
-    return Column(
-      children: [
-        FieldPageHeader(
-          title: 'Clans',
-          rightAction: HeaderActionButton(
-            icon: Icons.add_rounded,
-            label: 'New',
-            onPressed: _openCreateClan,
-          ),
+    return FieldHeaderOverlay(
+      header: FieldPageHeader(
+        title: 'Clans',
+        rightAction: HeaderActionButton(
+          icon: Icons.add_rounded,
+          label: 'New',
+          onPressed: _openCreateClan,
         ),
-        Expanded(
-          child: RefreshIndicator(
-            color: fieldEmerald600,
-            onRefresh: _loadClans,
-            child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 28),
-              children: [
-                FieldHeroBanner(
-                  eyebrow: 'Squads · Brotherhoods · Rivals',
-                  title: 'Find your tribe.',
-                  subtitle:
-                      'Join an elite squad or forge a new dynasty of your own.',
-                  icon: Icons.shield_rounded,
-                  chips: [
-                    HeroChip(label: 'Clans', value: _clans.length.toString()),
-                    HeroChip(
-                      label: 'Recruiting',
-                      value: recruitingCount.toString(),
-                    ),
-                  ],
+      ),
+      child: RefreshIndicator(
+        color: fieldEmerald600,
+        edgeOffset: fieldPageHeaderExtent(context),
+        onRefresh: _loadClans,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: fieldHeaderAwarePadding(context, top: 24, bottom: 28),
+          children: [
+            FieldHeroBanner(
+              eyebrow: 'Squads · Brotherhoods · Rivals',
+              title: 'Find your tribe.',
+              subtitle:
+                  'Join an elite squad or forge a new dynasty of your own.',
+              icon: Icons.shield_rounded,
+              chips: [
+                HeroChip(label: 'Clans', value: _clans.length.toString()),
+                HeroChip(
+                  label: 'Recruiting',
+                  value: recruitingCount.toString(),
                 ),
-                const SizedBox(height: 24),
-                _SearchBox(controller: _searchController),
-                const SizedBox(height: 24),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      '${filteredClans.length} Clan${filteredClans.length == 1 ? '' : 's'}'
-                          .toUpperCase(),
-                      style: const TextStyle(
-                        color: fieldGray600,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 0.7,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                if (_isLoading)
-                  const _ClansLoadingState()
-                else if (_errorText != null)
-                  _ClansErrorState(message: _errorText!, onRetry: _loadClans)
-                else if (filteredClans.isEmpty)
-                  _ClansEmptyState(
-                    hasSearch: _searchController.text.trim().isNotEmpty,
-                    onCreate: _openCreateClan,
-                  )
-                else ...[
-                  for (var i = 0; i < filteredClans.length; i++) ...[
-                    TweenAnimationBuilder<double>(
-                      tween: Tween(begin: 0, end: 1),
-                      duration: Duration(milliseconds: 280 + (i * 45)),
-                      curve: Curves.easeOutCubic,
-                      builder: (context, value, child) {
-                        return Opacity(
-                          opacity: value,
-                          child: Transform.translate(
-                            offset: Offset(0, 10 * (1 - value)),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: ClanCard(
-                        clan: filteredClans[i],
-                        onTap: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (context) => ClanDetailScreen(
-                                clan: filteredClans[i],
-                                clanRepository: widget.clanRepository,
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                    if (i != filteredClans.length - 1)
-                      const SizedBox(height: 12),
-                  ],
-                ],
               ],
             ),
-          ),
+            const SizedBox(height: 24),
+            _SearchBox(controller: _searchController),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${filteredClans.length} Clan${filteredClans.length == 1 ? '' : 's'}'
+                      .toUpperCase(),
+                  style: const TextStyle(
+                    color: fieldGray600,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.7,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_isLoading)
+              const _ClansLoadingState()
+            else if (_errorText != null)
+              _ClansErrorState(message: _errorText!, onRetry: _loadClans)
+            else if (filteredClans.isEmpty)
+              _ClansEmptyState(
+                hasSearch: _searchController.text.trim().isNotEmpty,
+                onCreate: _openCreateClan,
+              )
+            else ...[
+              for (var i = 0; i < filteredClans.length; i++) ...[
+                TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: 1),
+                  duration: Duration(milliseconds: 280 + (i * 45)),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, value, child) {
+                    return Opacity(
+                      opacity: value,
+                      child: Transform.translate(
+                        offset: Offset(0, 10 * (1 - value)),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: ClanCard(
+                    clan: filteredClans[i],
+                    onTap: () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => ClanDetailScreen(
+                            clan: filteredClans[i],
+                            clanRepository: widget.clanRepository,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                if (i != filteredClans.length - 1) const SizedBox(height: 12),
+              ],
+            ],
+          ],
         ),
-      ],
+      ),
     );
   }
 }

@@ -12,7 +12,17 @@ abstract class AuthRepository {
 }
 
 class SupabaseAuthRepository implements AuthRepository {
-  static const _devOtpPhone = '+97338883670';
+  static const _devOtpPhones = {
+    '+97338883670',
+    '+97338883671',
+    '+97338883672',
+    '+97338883673',
+    '+97338883674',
+    '+97338883675',
+    '+97338883676',
+    '+97338883677',
+    '+97338883678',
+  };
   static const _devOtpToken = '000000';
 
   SupabaseClient get _client => Supabase.instance.client;
@@ -81,7 +91,7 @@ class SupabaseAuthRepository implements AuthRepository {
     }
   }
 
-  bool _isDevOtpPhone(String phone) => phone == _devOtpPhone;
+  bool _isDevOtpPhone(String phone) => _devOtpPhones.contains(phone);
 
   @override
   Future<void> updateDisplayName(String displayName) async {

@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -163,85 +164,79 @@ class _CreateClanScreenState extends State<CreateClanScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: fieldBackground,
-      body: Column(
-        children: [
-          _CreateClanHeader(
-            step: _step,
-            onBack: _back,
-            onRandomize: _step < 2 ? _randomize : null,
-          ),
-          Expanded(
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  child: SingleChildScrollView(
-                    padding: EdgeInsets.fromLTRB(
-                      16,
-                      16,
-                      16,
-                      _step == 3 ? 112 : 148,
-                    ),
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 320),
-                      switchInCurve: Curves.easeOutCubic,
-                      switchOutCurve: Curves.easeInCubic,
-                      transitionBuilder: (child, animation) {
-                        final slide = Tween<Offset>(
-                          begin: Offset(_direction * 0.08, 0),
-                          end: Offset.zero,
-                        ).animate(animation);
-                        return FadeTransition(
-                          opacity: animation,
-                          child: SlideTransition(position: slide, child: child),
-                        );
-                      },
-                      child: KeyedSubtree(
-                        key: ValueKey(_step),
-                        child: _buildStep(),
-                      ),
-                    ),
+      body: FieldHeaderOverlay(
+        header: _CreateClanHeader(
+          step: _step,
+          onBack: _back,
+          onRandomize: _step < 2 ? _randomize : null,
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: SingleChildScrollView(
+                padding: fieldHeaderAwarePadding(
+                  context,
+                  bottom: _step == 3 ? 112 : 148,
+                ),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 320),
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeInCubic,
+                  transitionBuilder: (child, animation) {
+                    final slide = Tween<Offset>(
+                      begin: Offset(_direction * 0.08, 0),
+                      end: Offset.zero,
+                    ).animate(animation);
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(position: slide, child: child),
+                    );
+                  },
+                  child: KeyedSubtree(
+                    key: ValueKey(_step),
+                    child: _buildStep(),
                   ),
                 ),
-                if (_step == 3)
-                  Positioned.fill(
-                    child: IgnorePointer(
-                      child: AnimatedBuilder(
-                        animation: _confettiController,
-                        builder: (context, _) {
-                          return CustomPaint(
-                            painter: _ConfettiPainter(
-                              progress: _confettiController.value,
-                              colors: [
-                                _theme.from,
-                                _theme.to,
-                                _theme.accent,
-                                const Color(0xFFF59E0B),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 0,
-                  child: SafeArea(
-                    top: false,
-                    child: _CreateClanBottomBar(
-                      step: _step,
-                      canAdvance: _canAdvance,
-                      isSaving: _isSaving,
-                      theme: _theme,
-                      onPressed: _handlePrimaryAction,
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
-          ),
-        ],
+            if (_step == 3)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _confettiController,
+                    builder: (context, _) {
+                      return CustomPaint(
+                        painter: _ConfettiPainter(
+                          progress: _confettiController.value,
+                          colors: [
+                            _theme.from,
+                            _theme.to,
+                            _theme.accent,
+                            const Color(0xFFF59E0B),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: SafeArea(
+                top: false,
+                child: _CreateClanBottomBar(
+                  step: _step,
+                  canAdvance: _canAdvance,
+                  isSaving: _isSaving,
+                  theme: _theme,
+                  onPressed: _handlePrimaryAction,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -304,93 +299,117 @@ class _CreateClanHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      bottom: false,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.95),
-          border: const Border(bottom: BorderSide(color: fieldGray100)),
-        ),
-        child: Column(
-          children: [
-            SizedBox(
-              height: 52,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      onPressed: onBack,
-                      icon: const Icon(Icons.chevron_left_rounded),
-                      style: IconButton.styleFrom(
-                        backgroundColor: fieldGray100,
-                        foregroundColor: fieldGray700,
+    final topInset = MediaQuery.paddingOf(context).top;
+
+    return SizedBox(
+      height: topInset + 70,
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.38),
+              border: Border(
+                bottom: BorderSide(color: Colors.white.withValues(alpha: 0.28)),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: fieldGray900.withValues(alpha: 0.035),
+                  blurRadius: 18,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: EdgeInsets.only(top: topInset),
+              child: Column(
+                children: [
+                  SizedBox(
+                    height: 52,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          IconButton(
+                            onPressed: onBack,
+                            icon: const Icon(Icons.chevron_left_rounded),
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.white.withValues(
+                                alpha: 0.62,
+                              ),
+                              foregroundColor: fieldGray700,
+                            ),
+                          ),
+                          Text(
+                            labels[step].toUpperCase(),
+                            style: const TextStyle(
+                              color: fieldGray700,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 2.6,
+                            ),
+                          ),
+                          SizedBox(
+                            width: 72,
+                            child: onRandomize == null
+                                ? const SizedBox()
+                                : TextButton.icon(
+                                    onPressed: onRandomize,
+                                    icon: const Icon(
+                                      Icons.shuffle_rounded,
+                                      size: 14,
+                                    ),
+                                    label: const Text('Random'),
+                                    style: TextButton.styleFrom(
+                                      foregroundColor: fieldEmerald600,
+                                      textStyle: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.5,
+                                      ),
+                                      padding: EdgeInsets.zero,
+                                    ),
+                                  ),
+                          ),
+                        ],
                       ),
                     ),
-                    Text(
-                      labels[step].toUpperCase(),
-                      style: const TextStyle(
-                        color: fieldGray700,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 2.6,
-                      ),
-                    ),
-                    SizedBox(
-                      width: 72,
-                      child: onRandomize == null
-                          ? const SizedBox()
-                          : TextButton.icon(
-                              onPressed: onRandomize,
-                              icon: const Icon(Icons.shuffle_rounded, size: 14),
-                              label: const Text('Random'),
-                              style: TextButton.styleFrom(
-                                foregroundColor: fieldEmerald600,
-                                textStyle: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0.5,
-                                ),
-                                padding: EdgeInsets.zero,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Row(
+                      children: [
+                        for (var i = 0; i < labels.length; i++) ...[
+                          Expanded(
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 280),
+                              curve: Curves.easeOutCubic,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: i < step
+                                    ? fieldEmerald500
+                                    : i == step
+                                    ? null
+                                    : fieldGray200,
+                                gradient: i == step
+                                    ? const LinearGradient(
+                                        colors: [fieldEmerald500, fieldBlue600],
+                                      )
+                                    : null,
+                                borderRadius: BorderRadius.circular(999),
                               ),
                             ),
+                          ),
+                          if (i != labels.length - 1) const SizedBox(width: 6),
+                        ],
+                      ],
                     ),
-                  ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Row(
-                children: [
-                  for (var i = 0; i < labels.length; i++) ...[
-                    Expanded(
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 280),
-                        curve: Curves.easeOutCubic,
-                        height: 6,
-                        decoration: BoxDecoration(
-                          color: i < step
-                              ? fieldEmerald500
-                              : i == step
-                              ? null
-                              : fieldGray200,
-                          gradient: i == step
-                              ? const LinearGradient(
-                                  colors: [fieldEmerald500, fieldBlue600],
-                                )
-                              : null,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    if (i != labels.length - 1) const SizedBox(width: 6),
-                  ],
+                  ),
                 ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );

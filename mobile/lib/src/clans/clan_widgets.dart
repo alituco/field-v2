@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -17,6 +18,8 @@ const fieldEmerald600 = Color(0xFF059669);
 const fieldEmerald500 = Color(0xFF10B981);
 const fieldBlue600 = Color(0xFF2563EB);
 
+enum HeaderActionTone { blue, pink }
+
 class FieldPageHeader extends StatelessWidget {
   const FieldPageHeader({
     super.key,
@@ -33,42 +36,59 @@ class FieldPageHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SafeArea(
-      bottom: false,
-      child: SizedBox(
-        height: 64,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.86),
-                  border: Border(
-                    bottom: BorderSide(
-                      color: fieldGray200.withValues(alpha: 0.70),
+    final topInset = MediaQuery.paddingOf(context).top;
+
+    return SizedBox(
+      height: topInset + 64,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ClipRect(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.38),
+                    border: Border(
+                      bottom: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.28),
+                      ),
                     ),
-                  ),
-                ),
-              ),
-            ),
-            const Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.transparent,
-                      Color(0x9910B981),
-                      Colors.transparent,
+                    boxShadow: [
+                      BoxShadow(
+                        color: fieldGray900.withValues(alpha: 0.035),
+                        blurRadius: 18,
+                        offset: const Offset(0, 8),
+                      ),
                     ],
                   ),
                 ),
-                child: SizedBox(height: 2),
               ),
             ),
-            Padding(
+          ),
+          const Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    Colors.transparent,
+                    Color(0x9910B981),
+                    Colors.transparent,
+                  ],
+                ),
+              ),
+              child: SizedBox(height: 2),
+            ),
+          ),
+          Positioned(
+            top: topInset,
+            left: 0,
+            right: 0,
+            height: 64,
+            child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -114,11 +134,51 @@ class FieldPageHeader extends StatelessWidget {
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
+}
+
+class FieldHeaderOverlay extends StatelessWidget {
+  const FieldHeaderOverlay({
+    super.key,
+    required this.header,
+    required this.child,
+  });
+
+  final Widget header;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(child: child),
+        Positioned(top: 0, left: 0, right: 0, child: header),
+      ],
+    );
+  }
+}
+
+double fieldPageHeaderExtent(BuildContext context) {
+  return MediaQuery.paddingOf(context).top + 64;
+}
+
+EdgeInsets fieldHeaderAwarePadding(
+  BuildContext context, {
+  double left = 16,
+  double top = 16,
+  double right = 16,
+  double bottom = 28,
+}) {
+  return EdgeInsets.fromLTRB(
+    left,
+    fieldPageHeaderExtent(context) + top,
+    right,
+    bottom,
+  );
 }
 
 class _HeaderBackButton extends StatelessWidget {
@@ -161,11 +221,13 @@ class HeaderActionButton extends StatefulWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.tone = HeaderActionTone.blue,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final HeaderActionTone tone;
 
   @override
   State<HeaderActionButton> createState() => _HeaderActionButtonState();
@@ -193,6 +255,23 @@ class _HeaderActionButtonState extends State<HeaderActionButton>
 
   @override
   Widget build(BuildContext context) {
+    final colors = switch (widget.tone) {
+      HeaderActionTone.blue => const [
+        Color(0xFF3B82F6),
+        Color(0xFF6366F1),
+        Color(0xFF7C3AED),
+      ],
+      HeaderActionTone.pink => const [
+        Color(0xFFFF2D7D),
+        Color(0xFFFF3366),
+        Color(0xFFFF6B1A),
+      ],
+    };
+    final shadowColor = switch (widget.tone) {
+      HeaderActionTone.blue => const Color(0xFF3B82F6),
+      HeaderActionTone.pink => const Color(0xFFFF2D7D),
+    };
+
     return GestureDetector(
       onTapDown: (_) => setState(() => _pressed = true),
       onTapCancel: () => setState(() => _pressed = false),
@@ -204,59 +283,56 @@ class _HeaderActionButtonState extends State<HeaderActionButton>
         child: Stack(
           alignment: Alignment.center,
           children: [
-            AnimatedBuilder(
-              animation: _pulseController,
-              builder: (context, child) {
-                final phase = math.sin(_pulseController.value * math.pi);
-                return Transform.scale(
-                  scale: 1 + (phase * 0.18),
-                  child: Opacity(opacity: 0.6 * (1 - phase), child: child),
-                );
-              },
-              child: Container(
-                height: 40,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: 0.5),
+            Positioned.fill(
+              child: AnimatedBuilder(
+                animation: _pulseController,
+                builder: (context, child) {
+                  final phase = math.sin(_pulseController.value * math.pi);
+                  return Transform.scale(
+                    scale: 1 + (phase * 0.18),
+                    child: Opacity(opacity: 0.6 * (1 - phase), child: child),
+                  );
+                },
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.5),
+                    ),
                   ),
                 ),
               ),
             ),
             Container(
-              height: 40,
-              padding: const EdgeInsets.only(left: 12, right: 16),
+              height: 46,
+              padding: const EdgeInsets.only(left: 14, right: 18),
               decoration: BoxDecoration(
-                gradient: const LinearGradient(
+                gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF3B82F6),
-                    Color(0xFF6366F1),
-                    Color(0xFF7C3AED),
-                  ],
+                  colors: colors,
                 ),
                 borderRadius: BorderRadius.circular(999),
                 boxShadow: [
                   BoxShadow(
-                    color: const Color(0xFF3B82F6).withValues(alpha: 0.42),
-                    blurRadius: 14,
-                    offset: const Offset(0, 6),
+                    color: shadowColor.withValues(alpha: 0.38),
+                    blurRadius: 18,
+                    offset: const Offset(0, 8),
                   ),
                 ],
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(widget.icon, color: Colors.white, size: 18),
-                  const SizedBox(width: 6),
+                  Icon(widget.icon, color: Colors.white, size: 22),
+                  const SizedBox(width: 8),
                   Text(
                     widget.label.toUpperCase(),
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.6,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
                     ),
                   ),
                 ],
