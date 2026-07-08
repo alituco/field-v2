@@ -40,6 +40,8 @@ class SupabaseFixtureRepository implements FixtureRepository {
     home_sr_change,
     away_sr_change,
     video_url,
+    cancelled_at,
+    cancellation_reason,
     created_by,
     created_at,
     updated_at,
@@ -65,9 +67,12 @@ class SupabaseFixtureRepository implements FixtureRepository {
 
   @override
   Future<List<Fixture>> listFixtures() async {
+    await _cancelUnderfilledFixtures();
+
     final response = await _client
         .from('fixtures')
         .select(_fixtureSelect)
+        .neq('status', fixtureStatusToWire(FixtureStatus.cancelled))
         .order('match_date')
         .order('time_slot');
     final rows = response as List<dynamic>;
@@ -153,6 +158,8 @@ class SupabaseFixtureRepository implements FixtureRepository {
   }
 
   Future<Fixture> _fetchFixture(String fixtureId) async {
+    await _cancelUnderfilledFixtures();
+
     final response = await _client
         .from('fixtures')
         .select(_fixtureSelect)
@@ -160,6 +167,10 @@ class SupabaseFixtureRepository implements FixtureRepository {
         .single();
 
     return Fixture.fromJson(Map<String, dynamic>.from(response));
+  }
+
+  Future<void> _cancelUnderfilledFixtures() async {
+    await _client.rpc('cancel_underfilled_fixtures');
   }
 
   String _dateParam(DateTime date) {

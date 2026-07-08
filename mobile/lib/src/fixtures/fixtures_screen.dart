@@ -114,7 +114,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
         onRefresh: _load,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
-          padding: fieldHeaderAwarePadding(context, top: 24, bottom: 28),
+          padding: fieldHeaderAwarePadding(context, top: 24, bottom: 124),
           children: [
             FixtureHeroBanner(fixtures: _fixtures),
             const SizedBox(height: 24),
@@ -199,11 +199,56 @@ class _FixturesLoadingState extends StatelessWidget {
             height: 156,
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border.all(color: fieldGray200),
-              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: fieldGray100),
+              borderRadius: BorderRadius.circular(18),
+              boxShadow: [
+                BoxShadow(
+                  color: fieldGray900.withValues(alpha: 0.025),
+                  blurRadius: 10,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
-            child: const Center(
-              child: CircularProgressIndicator(strokeWidth: 2),
+            child: const Padding(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      FieldSkeletonBox(
+                        width: 86,
+                        height: 24,
+                        borderRadius: 999,
+                      ),
+                      Spacer(),
+                      FieldSkeletonBox(
+                        width: 74,
+                        height: 20,
+                        borderRadius: 999,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FieldSkeletonBox(height: 18, borderRadius: 6),
+                      ),
+                      SizedBox(width: 24),
+                      FieldSkeletonBox(width: 34, height: 18, borderRadius: 6),
+                      SizedBox(width: 24),
+                      Expanded(
+                        child: FieldSkeletonBox(height: 18, borderRadius: 6),
+                      ),
+                    ],
+                  ),
+                  Spacer(),
+                  FieldSkeletonBox(height: 14, borderRadius: 6),
+                  SizedBox(height: 10),
+                  FieldSkeletonBox(width: 180, height: 12, borderRadius: 6),
+                ],
+              ),
             ),
           ),
           if (i != 2) const SizedBox(height: 12),

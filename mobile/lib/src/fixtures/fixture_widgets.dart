@@ -835,5 +835,9 @@ class _DetailIconText extends StatelessWidget {
       background: fieldGray100,
       foreground: fieldGray700,
     ),
+    FixtureStatus.cancelled => (
+      background: const Color(0xFFFFF7ED),
+      foreground: const Color(0xFFB45309),
+    ),
   };
 }

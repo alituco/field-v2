@@ -15,12 +15,7 @@ class ClanRank {
       ClanTier.diamond => 'Diamond',
       ClanTier.champion => 'Champion',
     };
-    final divisionLabel = switch (division) {
-      3 => ' III',
-      2 => ' II',
-      1 => ' I',
-      _ => '',
-    };
+    final divisionLabel = division == null ? '' : ' $division';
     return '$tierName$divisionLabel';
   }
 }
@@ -92,6 +87,22 @@ class ClanMember {
       role: json['role'] as String? ?? 'member',
       phone: profile['phone'] as String?,
       joinedAt: _asDateTime(json['created_at']),
+    );
+  }
+}
+
+class ClanMembership {
+  const ClanMembership({required this.clanId, required this.role});
+
+  final String clanId;
+  final String role;
+
+  bool get isOwner => role == 'owner';
+
+  factory ClanMembership.fromJson(Map<String, dynamic> json) {
+    return ClanMembership(
+      clanId: json['clan_id'] as String? ?? '',
+      role: json['role'] as String? ?? 'member',
     );
   }
 }

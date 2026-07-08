@@ -1,8 +1,13 @@
 # Supabase Dev Data
 
-This project uses the hosted Supabase dev project for fake users and clans. Keep
-service-role secrets only in the repo-root `.env`. Never put a service-role key
-in `mobile/.env.mobile` or any Flutter build config.
+This project uses the hosted Supabase dev project for fake users, profiles,
+follows, clans, fixtures, and scorer stats. Keep service-role secrets only in
+the repo-root `.env`. Never put a service-role key in `mobile/.env.mobile` or
+any Flutter build config.
+
+Profile photos use Supabase Storage bucket `profile-avatars`. The migration
+creates the bucket and storage policies. Users can upload only into a folder
+named after their own auth user id.
 
 ## Root `.env`
 
@@ -17,7 +22,7 @@ DEV_SEED_PASSWORD=
 `DEV_SEED_PASSWORD` can be any strong throwaway password with at least 6
 characters. It is only used for the fake auth users created by the seed script.
 
-## Seed Fake Users And Clans
+## Seed Fake Users And App Data
 
 Apply migrations before seeding:
 
@@ -32,8 +37,8 @@ deno run --allow-env --allow-net --env-file=.env supabase/scripts/seed_dev_data.
 ```
 
 The command is idempotent. It reuses existing fake auth users by phone,
-refreshes their profiles, removes seeded fake clan data, and recreates the
-seeded clans and fixtures.
+refreshes their profiles, removes seeded follows, profile highlights, career
+rows, fake clan data, fixture scorer rows, and recreates the seeded app data.
 
 Seeded fake users:
 
@@ -56,8 +61,12 @@ MMAV  Mint Mavericks
 CDRF  Crimson Drift
 ```
 
-Seeded fake fixtures include open, scheduled, live, and final match states so
-the fixtures board and detail screens have data immediately.
+Seeded fake fixtures include open, scheduled, live, and final match states.
+Final fixtures include scorers and assists so the profile stats and future
+leaderboard data have real rows to read immediately.
+
+Seeded fake follows connect the fake users so the Profile screen's Following
+and Fans counts open populated People lists.
 
 ## Fixed-Code Dev Login
 

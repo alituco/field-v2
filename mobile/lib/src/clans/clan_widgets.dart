@@ -20,6 +20,109 @@ const fieldBlue600 = Color(0xFF2563EB);
 
 enum HeaderActionTone { blue, pink }
 
+class FieldSkeletonBox extends StatefulWidget {
+  const FieldSkeletonBox({
+    super.key,
+    this.width,
+    required this.height,
+    this.borderRadius = 12,
+  });
+
+  final double? width;
+  final double height;
+  final double borderRadius;
+
+  @override
+  State<FieldSkeletonBox> createState() => _FieldSkeletonBoxState();
+}
+
+class _FieldSkeletonBoxState extends State<FieldSkeletonBox>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1300),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(widget.borderRadius),
+      child: SizedBox(
+        width: widget.width ?? double.infinity,
+        height: widget.height,
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment(-1.8 + (_controller.value * 3.6), 0),
+                  end: Alignment(-0.4 + (_controller.value * 3.6), 0),
+                  colors: const [fieldGray100, Color(0xFFF9FAFB), fieldGray100],
+                  stops: const [0.1, 0.5, 0.9],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class FieldSkeletonCard extends StatelessWidget {
+  const FieldSkeletonCard({
+    super.key,
+    required this.height,
+    this.borderRadius = 16,
+    this.padding = const EdgeInsets.all(16),
+    this.children = const [],
+  });
+
+  final double height;
+  final double borderRadius;
+  final EdgeInsetsGeometry padding;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: height,
+      padding: padding,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(borderRadius),
+        boxShadow: [
+          BoxShadow(
+            color: fieldGray900.withValues(alpha: 0.025),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: children.isEmpty
+          ? const FieldSkeletonBox(height: double.infinity)
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: children,
+            ),
+    );
+  }
+}
+
 class FieldPageHeader extends StatelessWidget {
   const FieldPageHeader({
     super.key,
@@ -91,46 +194,56 @@ class FieldPageHeader extends StatelessWidget {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Row(
-                    children: [
-                      if (showBack)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: _HeaderBackButton(
-                            onPressed:
-                                onBack ?? () => Navigator.of(context).pop(),
-                          ),
-                        ),
-                      const SizedBox(
-                        width: 4,
-                        height: 24,
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [fieldEmerald500, fieldBlue600],
+                  Expanded(
+                    child: Row(
+                      children: [
+                        if (showBack)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _HeaderBackButton(
+                              onPressed:
+                                  onBack ?? () => Navigator.of(context).pop(),
                             ),
-                            borderRadius: BorderRadius.all(Radius.circular(99)),
+                          ),
+                        const SizedBox(
+                          width: 4,
+                          height: 24,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [fieldEmerald500, fieldBlue600],
+                              ),
+                              borderRadius: BorderRadius.all(
+                                Radius.circular(99),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        title.toUpperCase(),
-                        style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 20,
-                          height: 1,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0,
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: Text(
+                            title.toUpperCase(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: fieldGray900,
+                              fontSize: 20,
+                              height: 1,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0,
+                            ),
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
-                  if (rightAction != null) rightAction!,
+                  if (rightAction != null) ...[
+                    const SizedBox(width: 12),
+                    rightAction!,
+                  ],
                 ],
               ),
             ),
@@ -909,6 +1022,77 @@ class TierBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+class TierLabelBadge extends StatelessWidget {
+  const TierLabelBadge({super.key, required this.rank, this.small = false});
+
+  final ClanRank rank;
+  final bool small;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = _tierLabelForeground(rank.tier);
+    final background = _tierLabelBackground(rank.tier);
+    return Container(
+      padding: EdgeInsets.symmetric(
+        horizontal: small ? 8 : 10,
+        vertical: small ? 5 : 7,
+      ),
+      decoration: BoxDecoration(
+        color: background,
+        border: Border.all(color: foreground.withValues(alpha: 0.28)),
+        borderRadius: BorderRadius.circular(999),
+        boxShadow: [
+          BoxShadow(
+            color: foreground.withValues(alpha: 0.10),
+            blurRadius: small ? 8 : 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            rank.tier == ClanTier.champion
+                ? Icons.workspace_premium_rounded
+                : Icons.shield_rounded,
+            color: foreground,
+            size: small ? 13 : 15,
+          ),
+          SizedBox(width: small ? 4 : 6),
+          Text(
+            rank.label.toUpperCase(),
+            style: TextStyle(
+              color: foreground,
+              fontSize: small ? 10 : 12,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Color _tierLabelForeground(ClanTier tier) {
+  return switch (tier) {
+    ClanTier.silver => const Color(0xFF475569),
+    ClanTier.gold => const Color(0xFFD97706),
+    ClanTier.diamond => const Color(0xFF0284C7),
+    ClanTier.champion => const Color(0xFFE11D48),
+  };
+}
+
+Color _tierLabelBackground(ClanTier tier) {
+  return switch (tier) {
+    ClanTier.silver => const Color(0xFFF1F5F9),
+    ClanTier.gold => const Color(0xFFFFFBEB),
+    ClanTier.diamond => const Color(0xFFECFEFF),
+    ClanTier.champion => const Color(0xFFFFF1F2),
+  };
 }
 
 class KitCard extends StatelessWidget {

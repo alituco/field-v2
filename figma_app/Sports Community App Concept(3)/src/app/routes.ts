@@ -7,6 +7,7 @@ import Fixtures from './pages/Fixtures';
 import FixtureDetail from './pages/FixtureDetail';
 import Leaderboard from './pages/Leaderboard';
 import Profile from './pages/Profile';
+import Connections from './pages/Connections';
 import CreateMatch from './pages/CreateMatch';
 import CreateClan from './pages/CreateClan';
 import Auth from './pages/Auth';
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
       { path: 'fixtures/:fixtureId', Component: FixtureDetail },
       { path: 'leaderboard', Component: Leaderboard },
       { path: 'profile', Component: Profile },
+      { path: 'connections', Component: Connections },
       { path: 'create-match', Component: CreateMatch },
       { path: 'create-clan', Component: CreateClan }
     ]

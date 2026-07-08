@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../auth/auth_repository.dart';
@@ -6,6 +8,8 @@ import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../fixtures/fixtures_screen.dart';
+import '../profile/profile_repository.dart';
+import '../profile/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.authRepository});
@@ -19,8 +23,19 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final ClanRepository _clanRepository = SupabaseClanRepository();
   final FixtureRepository _fixtureRepository = SupabaseFixtureRepository();
+  final ProfileRepository _profileRepository = SupabaseProfileRepository();
   int _selectedIndex = 0;
+  int _clansActivationTick = 0;
   bool _isSigningOut = false;
+
+  void _selectTab(int index) {
+    setState(() {
+      if (index == 2) {
+        _clansActivationTick++;
+      }
+      _selectedIndex = index;
+    });
+  }
 
   Future<void> _signOut() async {
     setState(() => _isSigningOut = true);
@@ -40,28 +55,33 @@ class _HomeScreenState extends State<HomeScreen> {
         authRepository: widget.authRepository,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
-        onOpenClans: () => setState(() => _selectedIndex = 2),
+        onOpenClans: () => _selectTab(2),
       ),
       FixturesScreen(fixtureRepository: _fixtureRepository),
-      ClansScreen(clanRepository: _clanRepository),
+      ClansScreen(
+        clanRepository: _clanRepository,
+        fixtureRepository: _fixtureRepository,
+        activationTick: _clansActivationTick,
+      ),
       const _ComingSoonScreen(
         title: 'Ranks',
         icon: Icons.emoji_events_rounded,
         message: 'Clan leaderboards will use the same skill rating system.',
       ),
-      _ProfileScreen(
-        authRepository: widget.authRepository,
+      ProfileScreen(
+        profileRepository: _profileRepository,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
       ),
     ];
 
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: _FieldBottomNav(
         selectedIndex: _selectedIndex,
-        onSelected: (index) => setState(() => _selectedIndex = index),
+        onSelected: _selectTab,
       ),
     );
   }
@@ -106,26 +126,59 @@ class _FieldBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: fieldGray200)),
-      ),
-      child: SizedBox(
-        height: 66,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-          child: Row(
-            children: [
-              for (var i = 0; i < _items.length; i++)
-                Expanded(
-                  child: _FieldBottomNavButton(
-                    item: _items[i],
-                    isActive: selectedIndex == i,
-                    onTap: () => onSelected(i),
-                  ),
+    return SafeArea(
+      top: false,
+      minimum: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(36),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+          child: Container(
+            height: 70,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(36),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withValues(alpha: 0.74),
+                  Colors.white.withValues(alpha: 0.54),
+                  Colors.white.withValues(alpha: 0.42),
+                ],
+                stops: const [0, 0.42, 1],
+              ),
+              border: Border.all(
+                color: Colors.white.withValues(alpha: 0.70),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: fieldGray900.withValues(alpha: 0.11),
+                  blurRadius: 24,
+                  offset: const Offset(0, 12),
                 ),
-            ],
+                BoxShadow(
+                  color: Colors.white.withValues(alpha: 0.38),
+                  blurRadius: 1,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+              child: Row(
+                children: [
+                  for (var i = 0; i < _items.length; i++)
+                    Expanded(
+                      child: _FieldBottomNavButton(
+                        item: _items[i],
+                        isActive: selectedIndex == i,
+                        onTap: () => onSelected(i),
+                      ),
+                    ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -158,7 +211,9 @@ class _FieldBottomNavButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isActive ? fieldEmerald600 : fieldGray500;
+    final color = isActive
+        ? fieldGray900
+        : fieldGray900.withValues(alpha: 0.74);
 
     return Semantics(
       selected: isActive,
@@ -168,32 +223,53 @@ class _FieldBottomNavButton extends StatelessWidget {
         onTap: onTap,
         splashColor: Colors.transparent,
         highlightColor: Colors.transparent,
-        child: AnimatedDefaultTextStyle(
-          duration: const Duration(milliseconds: 150),
-          curve: Curves.easeOut,
-          style: TextStyle(
-            color: color,
-            fontSize: 10,
-            height: 1,
-            fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
-            letterSpacing: 0,
+        borderRadius: BorderRadius.circular(28),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+          height: double.infinity,
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            gradient: isActive
+                ? LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Colors.white.withValues(alpha: 0.72),
+                      Colors.white.withValues(alpha: 0.36),
+                    ],
+                  )
+                : null,
+            border: isActive
+                ? Border.all(color: Colors.white.withValues(alpha: 0.60))
+                : null,
+            boxShadow: isActive
+                ? [
+                    BoxShadow(
+                      color: Colors.white.withValues(alpha: 0.42),
+                      blurRadius: 20,
+                      offset: const Offset(0, 0),
+                    ),
+                    BoxShadow(
+                      color: fieldGray900.withValues(alpha: 0.12),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ]
+                : null,
           ),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            curve: Curves.easeOut,
-            height: double.infinity,
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  isActive ? item.selectedIcon : item.icon,
-                  size: 24,
-                  color: color,
-                  weight: isActive ? 2.5 : 2,
-                ),
-                const SizedBox(height: 2),
-                Text(item.label, maxLines: 1, overflow: TextOverflow.fade),
-              ],
+          child: Center(
+            child: AnimatedScale(
+              scale: isActive ? 1.12 : 1,
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOutCubic,
+              child: Icon(
+                isActive ? item.selectedIcon : item.icon,
+                size: isActive ? 30 : 29,
+                color: color,
+                weight: isActive ? 2.6 : 2,
+              ),
             ),
           ),
         ),
@@ -237,7 +313,7 @@ class _DashboardHome extends StatelessWidget {
         ),
       ),
       child: ListView(
-        padding: fieldHeaderAwarePadding(context, top: 24, bottom: 16),
+        padding: fieldHeaderAwarePadding(context, top: 24, bottom: 124),
         children: [
           FieldHeroBanner(
             eyebrow: 'Field FC',
@@ -343,98 +419,6 @@ class _ComingSoonScreen extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _ProfileScreen extends StatelessWidget {
-  const _ProfileScreen({
-    required this.authRepository,
-    required this.isSigningOut,
-    required this.onSignOut,
-  });
-
-  final AuthRepository authRepository;
-  final bool isSigningOut;
-  final VoidCallback onSignOut;
-
-  @override
-  Widget build(BuildContext context) {
-    final name = _displayName(authRepository) ?? 'Player';
-    final phone = authRepository.currentUser?.phone ?? '';
-
-    return FieldHeaderOverlay(
-      header: const FieldPageHeader(title: 'Profile'),
-      child: ListView(
-        padding: fieldHeaderAwarePadding(context, top: 24, bottom: 16),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(18),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              border: Border.all(color: fieldGray200),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    gradient: const LinearGradient(
-                      colors: [fieldEmerald500, fieldBlue600],
-                    ),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Center(
-                    child: Text(
-                      name.characters.first.toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        name,
-                        style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(phone, style: const TextStyle(color: fieldGray500)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: isSigningOut ? null : onSignOut,
-              icon: isSigningOut
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.logout_rounded),
-              label: const Text('Sign out'),
-            ),
-          ),
-        ],
       ),
     );
   }

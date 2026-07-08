@@ -39,6 +39,36 @@ export interface Player {
   name: string;
   avatar?: string;
   clanId?: string;
+  position?: string;
+  bio?: string;
+  /** Player IDs this player follows. */
+  followingIds?: string[];
+  /** Player IDs following this player (their fans). */
+  fanIds?: string[];
+  highlights?: Highlight[];
+  career?: CareerEntry[];
+}
+
+/** A short video clip / reel on a player's profile. */
+export interface Highlight {
+  id: string;
+  title: string;
+  thumbnail: string;
+  duration: string;
+  views: number;
+  clanTag?: string;
+}
+
+/** A stint at a previous (or current) team in a player's career. */
+export interface CareerEntry {
+  id: string;
+  clanName: string;
+  tag: string;
+  emblem: string;
+  period: string;
+  apps: number;
+  goals: number;
+  current?: boolean;
 }
 
 export interface Clan {

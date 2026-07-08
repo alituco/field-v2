@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../fixtures/create_fixture_screen.dart';
+import '../fixtures/fixture.dart';
+import '../fixtures/fixture_repository.dart';
 import 'clan.dart';
 import 'clan_repository.dart';
 import 'clan_widgets.dart';
+import 'customize_clan_screen.dart';
 
 class ClanDetailScreen extends StatefulWidget {
   const ClanDetailScreen({
     super.key,
     required this.clan,
     required this.clanRepository,
+    required this.fixtureRepository,
+    this.currentMembership,
   });
 
   final Clan clan;
   final ClanRepository clanRepository;
+  final FixtureRepository fixtureRepository;
+  final ClanMembership? currentMembership;
 
   @override
   State<ClanDetailScreen> createState() => _ClanDetailScreenState();
@@ -21,13 +29,24 @@ class ClanDetailScreen extends StatefulWidget {
 
 class _ClanDetailScreenState extends State<ClanDetailScreen> {
   int _tabIndex = 0;
+  late Clan _clan;
   List<ClanMember> _members = const [];
+  List<Fixture> _fixtures = const [];
   bool _isLoadingMembers = true;
   String? _membersErrorText;
 
-  Clan get clan => widget.clan;
+  Clan get clan => _clan;
+
+  bool get _isCurrentClan => widget.currentMembership?.clanId == clan.id;
+
+  bool get _hasClan => widget.currentMembership != null;
 
   bool get _isOwner {
+    final membership = widget.currentMembership;
+    if (membership != null) {
+      return membership.clanId == clan.id && membership.isOwner;
+    }
+
     final userId = Supabase.instance.client.auth.currentUser?.id;
     return userId != null && clan.createdBy == userId;
   }
@@ -35,10 +54,62 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _loadMembers();
+    _clan = widget.clan;
+    _loadClanData();
   }
 
-  Future<void> _loadMembers() async {
+  Future<void> _openCustomize() async {
+    final updated = await Navigator.of(context).push<Clan>(
+      MaterialPageRoute(
+        builder: (context) => CustomizeClanScreen(
+          clan: clan,
+          clanRepository: widget.clanRepository,
+        ),
+      ),
+    );
+    if (updated == null || !mounted) return;
+    setState(() => _clan = updated);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Clan identity updated.')));
+  }
+
+  Future<void> _openFixtureFlow() async {
+    if (!_isOwner) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Join requests are next.')));
+      return;
+    }
+
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => CreateFixtureScreen(
+          fixtureRepository: widget.fixtureRepository,
+          myClanMembership: MyClanMembership(
+            clan: FixtureClan(
+              id: clan.id,
+              name: clan.name,
+              tag: clan.tag,
+              emblem: clan.emblem,
+              themeId: clan.themeId,
+              patternId: clan.patternId,
+              skillRating: clan.skillRating,
+            ),
+            role: widget.currentMembership?.clanId == clan.id
+                ? widget.currentMembership!.role
+                : 'owner',
+          ),
+        ),
+      ),
+    );
+
+    if (changed == true && mounted) {
+      await _loadClanData();
+    }
+  }
+
+  Future<void> _loadClanData() async {
     setState(() {
       _isLoadingMembers = true;
       _membersErrorText = null;
@@ -46,12 +117,16 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
 
     try {
       final members = await widget.clanRepository.listClanMembers(clan.id);
+      final fixtures = await widget.clanRepository.listClanFixtures(clan.id);
       if (!mounted) return;
-      setState(() => _members = members);
+      setState(() {
+        _members = members;
+        _fixtures = fixtures;
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _membersErrorText = 'Could not load roster.';
+        _membersErrorText = 'Could not load clan data.';
       });
     } finally {
       if (mounted) {
@@ -62,12 +137,26 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final detail = _ClanDetailData.fromClan(clan, members: _members);
+    final detail = _ClanDetailData.fromClan(
+      clan,
+      members: _members,
+      fixtures: _fixtures,
+    );
 
     return Scaffold(
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
-        header: FieldPageHeader(title: clan.name, showBack: true),
+        header: FieldPageHeader(
+          title: clan.name,
+          showBack: true,
+          rightAction: _isOwner
+              ? HeaderActionButton(
+                  icon: Icons.tune_rounded,
+                  label: 'Edit',
+                  onPressed: _openCustomize,
+                )
+              : null,
+        ),
         child: ListView(
           padding: fieldHeaderAwarePadding(context, bottom: 116),
           children: [
@@ -101,7 +190,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
                       detail: detail,
                       isLoadingMembers: _isLoadingMembers,
                       membersErrorText: _membersErrorText,
-                      onRetryMembers: _loadMembers,
+                      onRetryMembers: _loadClanData,
                     )
                   : _MatchesTab(
                       key: const ValueKey('matches'),
@@ -114,14 +203,9 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
       ),
       bottomNavigationBar: _ClanActionBar(
         isOwner: _isOwner,
-        onPressed: () {
-          final message = _isOwner
-              ? 'Match scheduling is next.'
-              : 'Join requests are next.';
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text(message)));
-        },
+        isCurrentClan: _isCurrentClan,
+        hasClan: _hasClan,
+        onPressed: _openFixtureFlow,
       ),
     );
   }
@@ -592,13 +676,20 @@ class _RatingPanel extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Skill Rating',
-                      style: TextStyle(
-                        color: fieldGray900,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                      ),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Skill Rating',
+                            style: TextStyle(
+                              color: fieldGray900,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        TierLabelBadge(rank: rank, small: true),
+                      ],
                     ),
                     const SizedBox(height: 4),
                     Text.rich(
@@ -1114,9 +1205,14 @@ class _RosterPanel extends StatelessWidget {
           ),
           const SizedBox(height: 16),
           if (isLoading && members.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 18),
-              child: CircularProgressIndicator(strokeWidth: 2),
+            const Column(
+              children: [
+                _RosterSkeletonRow(),
+                SizedBox(height: 12),
+                _RosterSkeletonRow(),
+                SizedBox(height: 12),
+                _RosterSkeletonRow(),
+              ],
             )
           else if (errorText != null)
             _RosterErrorState(message: errorText!, onRetry: onRetry)
@@ -1213,6 +1309,32 @@ class _MemberRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _RosterSkeletonRow extends StatelessWidget {
+  const _RosterSkeletonRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Row(
+      children: [
+        FieldSkeletonBox(width: 42, height: 42, borderRadius: 999),
+        SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FieldSkeletonBox(height: 14, borderRadius: 6),
+              SizedBox(height: 8),
+              FieldSkeletonBox(width: 120, height: 12, borderRadius: 6),
+            ],
+          ),
+        ),
+        SizedBox(width: 12),
+        FieldSkeletonBox(width: 58, height: 24, borderRadius: 999),
+      ],
     );
   }
 }
@@ -1444,12 +1566,16 @@ class _PastMatchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final badgeColor = match.outcome == 'Victory'
+    final badgeColor = match.isCancelled
+        ? const Color(0xFFB45309)
+        : match.outcome == 'Victory'
         ? fieldEmerald600
         : match.outcome == 'Draw'
         ? fieldGray600
         : const Color(0xFFDC2626);
-    final badgeBackground = match.outcome == 'Victory'
+    final badgeBackground = match.isCancelled
+        ? const Color(0xFFFFF7ED)
+        : match.outcome == 'Victory'
         ? const Color(0xFFECFDF5)
         : match.outcome == 'Draw'
         ? fieldGray100
@@ -1494,58 +1620,89 @@ class _PastMatchCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: Row(
-                  children: [
-                    _OpponentAvatar(emblem: clan.emblem, size: 32),
-                    const SizedBox(width: 8),
-                    Text(
-                      match.myScore.toString(),
-                      style: TextStyle(
-                        color: match.outcome == 'Victory'
-                            ? fieldGray900
-                            : fieldGray500,
-                        fontSize: 22,
-                        height: 1,
-                        fontWeight: FontWeight.w900,
-                      ),
+          if (match.isCancelled)
+            Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFF7ED),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.event_busy_rounded,
+                    color: Color(0xFFEA580C),
+                    size: 19,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    match.note ?? 'Match cancelled.',
+                    style: const TextStyle(
+                      color: fieldGray600,
+                      fontSize: 13,
+                      height: 1.3,
+                      fontWeight: FontWeight.w700,
                     ),
-                  ],
+                  ),
                 ),
-              ),
-              const Text(
-                '-',
-                style: TextStyle(
-                  color: fieldGray300,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Text(
-                      match.opponentScore.toString(),
-                      style: TextStyle(
-                        color: match.outcome == 'Defeat'
-                            ? fieldGray900
-                            : fieldGray500,
-                        fontSize: 22,
-                        height: 1,
-                        fontWeight: FontWeight.w900,
+              ],
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      _OpponentAvatar(emblem: clan.emblem, size: 32),
+                      const SizedBox(width: 8),
+                      Text(
+                        match.myScore.toString(),
+                        style: TextStyle(
+                          color: match.outcome == 'Victory'
+                              ? fieldGray900
+                              : fieldGray500,
+                          fontSize: 22,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    _OpponentAvatar(emblem: match.opponentEmblem, size: 32),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
-          if (match.srChange != null) ...[
+                const Text(
+                  '-',
+                  style: TextStyle(
+                    color: fieldGray300,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                Expanded(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      Text(
+                        match.opponentScore.toString(),
+                        style: TextStyle(
+                          color: match.outcome == 'Defeat'
+                              ? fieldGray900
+                              : fieldGray500,
+                          fontSize: 22,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _OpponentAvatar(emblem: match.opponentEmblem, size: 32),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          if (!match.isCancelled && match.srChange != null) ...[
             const SizedBox(height: 12),
             const Divider(color: fieldGray100, height: 1),
             const SizedBox(height: 10),
@@ -1726,13 +1883,36 @@ class _Panel extends StatelessWidget {
 }
 
 class _ClanActionBar extends StatelessWidget {
-  const _ClanActionBar({required this.isOwner, required this.onPressed});
+  const _ClanActionBar({
+    required this.isOwner,
+    required this.isCurrentClan,
+    required this.hasClan,
+    required this.onPressed,
+  });
 
   final bool isOwner;
+  final bool isCurrentClan;
+  final bool hasClan;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
+    final enabled = isOwner || !hasClan;
+    final icon = isOwner
+        ? Icons.sports_mma_rounded
+        : isCurrentClan
+        ? Icons.verified_user_rounded
+        : hasClan
+        ? Icons.lock_rounded
+        : Icons.group_add_rounded;
+    final label = isOwner
+        ? 'Schedule a Match'
+        : isCurrentClan
+        ? 'Clan Member'
+        : hasClan
+        ? 'Already in a Clan'
+        : 'Request to Join';
+
     return SafeArea(
       top: false,
       child: Container(
@@ -1751,22 +1931,40 @@ class _ClanActionBar extends StatelessWidget {
         child: SizedBox(
           height: 56,
           width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: onPressed,
-            icon: Icon(
-              isOwner ? Icons.sports_mma_rounded : Icons.group_add_rounded,
-            ),
-            label: Text(isOwner ? 'Schedule a Match' : 'Request to Join'),
-            style: FilledButton.styleFrom(
-              backgroundColor: fieldEmerald600,
-              foregroundColor: Colors.white,
-              textStyle: const TextStyle(
-                fontSize: 15,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.9,
-              ),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
+          child: Material(
+            color: enabled ? fieldEmerald600 : fieldGray200,
+            borderRadius: BorderRadius.circular(14),
+            child: InkWell(
+              onTap: enabled ? onPressed : null,
+              borderRadius: BorderRadius.circular(14),
+              child: Container(
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(14),
+                  border: enabled
+                      ? null
+                      : Border.all(color: fieldGray300, width: 1.2),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      icon,
+                      color: enabled ? Colors.white : fieldGray500,
+                      size: 22,
+                    ),
+                    const SizedBox(width: 9),
+                    Text(
+                      label.toUpperCase(),
+                      style: TextStyle(
+                        color: enabled ? Colors.white : fieldGray500,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.9,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1858,6 +2056,7 @@ class _ClanDetailData {
   factory _ClanDetailData.fromClan(
     Clan clan, {
     required List<ClanMember> members,
+    required List<Fixture> fixtures,
   }) {
     final recentForm = _recentFormFor(clan);
     final goalsFor = clan.wins == 0 && clan.losses == 0
@@ -1866,16 +2065,17 @@ class _ClanDetailData {
     final goalsAgainst = clan.wins == 0 && clan.losses == 0
         ? 0
         : (clan.losses * 2) + (clan.wins ~/ 2);
-    final pastMatches = _pastMatchesFor(clan);
+    final upcomingMatches = _upcomingMatchesFor(clan, fixtures);
+    final pastMatches = _pastMatchesFor(clan, fixtures);
 
     return _ClanDetailData(
       recentForm: recentForm,
       goalsFor: goalsFor,
       goalsAgainst: goalsAgainst,
       members: members,
-      upcomingMatches: const [],
+      upcomingMatches: upcomingMatches,
       pastMatches: pastMatches,
-      nextMatch: null,
+      nextMatch: upcomingMatches.isEmpty ? null : upcomingMatches.first,
       topScorer: goalsFor > 0 && members.isNotEmpty
           ? _TopPerformer(
               playerName: members.first.displayName,
@@ -1911,39 +2111,73 @@ List<String> _recentFormFor(Clan clan) {
   return results;
 }
 
-List<_FixtureSummary> _pastMatchesFor(Clan clan) {
-  final total = (clan.wins + clan.losses).clamp(0, 3);
-  if (total == 0) return const [];
+List<_FixtureSummary> _upcomingMatchesFor(Clan clan, List<Fixture> fixtures) {
+  final upcoming =
+      fixtures
+          .where(
+            (fixture) =>
+                fixture.status == FixtureStatus.open ||
+                fixture.status == FixtureStatus.scheduled ||
+                fixture.status == FixtureStatus.live,
+          )
+          .toList()
+        ..sort(_fixtureAscending);
 
-  var winsLeft = clan.wins;
-  final matches = <_FixtureSummary>[];
-  const opponents = [
-    ('Phoenix United', '🔥'),
-    ('Thunder FC', '⚡'),
-    ('Storm Riders', '🌪️'),
-  ];
+  return [for (final fixture in upcoming) _summaryFromFixture(clan, fixture)];
+}
 
-  for (var i = 0; i < total; i++) {
-    final won = winsLeft > 0;
-    if (won) winsLeft -= 1;
-    final myScore = won ? 3 + (i % 2) : 1;
-    final opponentScore = won ? i % 2 : 2 + (i % 2);
-    matches.add(
-      _FixtureSummary(
-        opponentName: opponents[i].$1,
-        opponentEmblem: opponents[i].$2,
-        dateLabel: 'Jun ${3 - i}',
-        timeLabel: '8:30 PM - 9:30 PM',
-        dayShort: i.isEven ? 'TUE' : 'THU',
-        daysAway: 0,
-        myScore: myScore,
-        opponentScore: opponentScore,
-        srChange: won ? 24 + (i * 4) : -18 - (i * 3),
-      ),
-    );
-  }
+List<_FixtureSummary> _pastMatchesFor(Clan clan, List<Fixture> fixtures) {
+  final past =
+      fixtures
+          .where(
+            (fixture) =>
+                fixture.status == FixtureStatus.finalResult ||
+                fixture.status == FixtureStatus.cancelled,
+          )
+          .toList()
+        ..sort((a, b) => _fixtureAscending(b, a));
 
-  return matches;
+  return [for (final fixture in past) _summaryFromFixture(clan, fixture)];
+}
+
+int _fixtureAscending(Fixture a, Fixture b) {
+  final dateCompare = a.matchDate.compareTo(b.matchDate);
+  if (dateCompare != 0) return dateCompare;
+  return a.timeSlot.compareTo(b.timeSlot);
+}
+
+_FixtureSummary _summaryFromFixture(Clan clan, Fixture fixture) {
+  final opponent = fixture.opponentFor(clan.id);
+  final isCancelled = fixture.status == FixtureStatus.cancelled;
+  final myScore = fixture.scoreFor(clan.id);
+  final opponentScore = opponent == null
+      ? null
+      : (fixture.homeClanId == clan.id ? fixture.awayScore : fixture.homeScore);
+  final matchStart = DateTime(
+    fixture.matchDate.year,
+    fixture.matchDate.month,
+    fixture.matchDate.day,
+  );
+  final today = DateTime.now();
+  final todayDate = DateTime(today.year, today.month, today.day);
+  final daysAway = matchStart.difference(todayDate).inDays;
+
+  return _FixtureSummary(
+    opponentName: opponent?.name ?? 'Awaiting opponent',
+    opponentEmblem: opponent?.emblem ?? '?',
+    dateLabel: fixture.monthDay,
+    timeLabel: fixture.timeSlot,
+    dayShort: fixture.dayShort,
+    daysAway: daysAway < 0 ? 0 : daysAway,
+    myScore: myScore ?? 0,
+    opponentScore: opponentScore ?? 0,
+    srChange: fixture.srChangeFor(clan.id),
+    isCancelled: isCancelled,
+    note: isCancelled
+        ? fixture.cancellationReason ??
+              'No opponent joined before the 24 hour cutoff.'
+        : null,
+  );
 }
 
 class _TopPerformer {
@@ -1964,6 +2198,8 @@ class _FixtureSummary {
     this.myScore = 0,
     this.opponentScore = 0,
     this.srChange,
+    this.isCancelled = false,
+    this.note,
   });
 
   final String opponentName;
@@ -1975,8 +2211,11 @@ class _FixtureSummary {
   final int myScore;
   final int opponentScore;
   final int? srChange;
+  final bool isCancelled;
+  final String? note;
 
   String get outcome {
+    if (isCancelled) return 'Cancelled';
     if (myScore > opponentScore) return 'Victory';
     if (myScore == opponentScore) return 'Draw';
     return 'Defeat';

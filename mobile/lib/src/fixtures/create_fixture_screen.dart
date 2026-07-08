@@ -121,12 +121,23 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   Future<void> _pickDate() async {
     final now = DateTime.now();
     final firstDate = DateTime(now.year, now.month, now.day);
-    final picked = await showDatePicker(
+    final lastDate = firstDate.add(const Duration(days: 90));
+    final initialDate =
+        _selectedDate != null &&
+            !_selectedDate!.isBefore(firstDate) &&
+            !_selectedDate!.isAfter(lastDate) &&
+            _isMatchDay(_selectedDate!)
+        ? _selectedDate!
+        : _nextMatchDay(firstDate);
+    final picked = await showDialog<DateTime>(
       context: context,
-      initialDate: _nextMatchDay(firstDate),
-      firstDate: firstDate,
-      lastDate: firstDate.add(const Duration(days: 90)),
-      selectableDayPredicate: _isMatchDay,
+      barrierColor: Colors.black.withValues(alpha: 0.42),
+      builder: (context) => _MatchDatePickerDialog(
+        initialDate: initialDate,
+        selectedDate: _selectedDate,
+        firstDate: firstDate,
+        lastDate: lastDate,
+      ),
     );
 
     if (picked == null) return;
@@ -186,17 +197,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   }
 
   bool _isSlotAvailable(DateTime date, FixtureTimeSlot slot) {
-    return !_fixtures.any((fixture) {
-      final sameDate =
-          fixture.matchDate.year == date.year &&
-          fixture.matchDate.month == date.month &&
-          fixture.matchDate.day == date.day;
-      final active =
-          fixture.status == FixtureStatus.open ||
-          fixture.status == FixtureStatus.scheduled ||
-          fixture.status == FixtureStatus.live;
-      return sameDate && active && fixture.timeSlot == slot.label;
-    });
+    return _activeFixtureCount(_fixtures, date, slot) == 0;
   }
 
   void _showOwnerSnack() {
@@ -487,11 +488,14 @@ class _ChooseActionStep extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         if (isLoading)
-          const Center(
-            child: Padding(
-              padding: EdgeInsets.symmetric(vertical: 28),
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
+          const Column(
+            children: [
+              _OpenFixtureSkeletonRow(),
+              SizedBox(height: 10),
+              _OpenFixtureSkeletonRow(),
+              SizedBox(height: 10),
+              _OpenFixtureSkeletonRow(),
+            ],
           )
         else if (errorText != null)
           _SimplePanel(
@@ -604,7 +608,7 @@ class _SelectTimeStep extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Choose a Tuesday or Thursday first, then pick one available time.',
+          'Choose a Tuesday or Thursday first. Each kickoff can host one game.',
           style: TextStyle(
             color: fieldGray500,
             fontSize: 14,
@@ -692,6 +696,11 @@ class _SelectTimeStep extends StatelessWidget {
                           slot: slot,
                           selected: selectedTimeSlot == slot,
                           available: availableSlots.contains(slot),
+                          activeCount: _activeFixtureCount(
+                            fixtures,
+                            selectedDate!,
+                            slot,
+                          ),
                           onTap: () => onSelectTimeSlot(slot),
                         ),
                         if (slot != FixtureTimeSlot.values.last)
@@ -775,12 +784,14 @@ class _TimeSlotTile extends StatelessWidget {
     required this.slot,
     required this.selected,
     required this.available,
+    required this.activeCount,
     required this.onTap,
   });
 
   final FixtureTimeSlot slot;
   final bool selected;
   final bool available;
+  final int activeCount;
   final VoidCallback onTap;
 
   @override
@@ -832,7 +843,7 @@ class _TimeSlotTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    available ? 'Available' : 'Booked',
+                    activeCount == 0 ? 'Available' : 'Booked',
                     style: TextStyle(
                       color: available ? fieldEmerald600 : fieldGray400,
                       fontSize: 11,
@@ -868,6 +879,377 @@ class _TimeSlotTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _MatchDatePickerDialog extends StatefulWidget {
+  const _MatchDatePickerDialog({
+    required this.initialDate,
+    required this.selectedDate,
+    required this.firstDate,
+    required this.lastDate,
+  });
+
+  final DateTime initialDate;
+  final DateTime? selectedDate;
+  final DateTime firstDate;
+  final DateTime lastDate;
+
+  @override
+  State<_MatchDatePickerDialog> createState() => _MatchDatePickerDialogState();
+}
+
+class _MatchDatePickerDialogState extends State<_MatchDatePickerDialog> {
+  late DateTime _visibleMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _visibleMonth = DateTime(widget.initialDate.year, widget.initialDate.month);
+  }
+
+  bool get _canGoPrevious {
+    final firstMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    return _visibleMonth.isAfter(firstMonth);
+  }
+
+  bool get _canGoNext {
+    final lastMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+    return _visibleMonth.isBefore(lastMonth);
+  }
+
+  void _moveMonth(int delta) {
+    final next = DateTime(_visibleMonth.year, _visibleMonth.month + delta);
+    final firstMonth = DateTime(widget.firstDate.year, widget.firstDate.month);
+    final lastMonth = DateTime(widget.lastDate.year, widget.lastDate.month);
+
+    if (next.isBefore(firstMonth) || next.isAfter(lastMonth)) return;
+    setState(() => _visibleMonth = next);
+  }
+
+  List<DateTime?> _monthCells() {
+    final firstOfMonth = DateTime(_visibleMonth.year, _visibleMonth.month);
+    final leadingBlanks = firstOfMonth.weekday % 7;
+    final dayCount = DateUtils.getDaysInMonth(
+      _visibleMonth.year,
+      _visibleMonth.month,
+    );
+
+    return [
+      for (var i = 0; i < 42; i++)
+        if (i < leadingBlanks || i >= leadingBlanks + dayCount)
+          null
+        else
+          DateTime(
+            _visibleMonth.year,
+            _visibleMonth.month,
+            i - leadingBlanks + 1,
+          ),
+    ];
+  }
+
+  bool _isEnabled(DateTime date) {
+    return !date.isBefore(widget.firstDate) &&
+        !date.isAfter(widget.lastDate) &&
+        _isMatchDay(date);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = widget.selectedDate;
+    final cells = _monthCells();
+
+    return Dialog(
+      elevation: 0,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 24),
+      backgroundColor: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 420),
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: fieldGray200),
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: fieldGray900.withValues(alpha: 0.18),
+              blurRadius: 32,
+              offset: const Offset(0, 18),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 42,
+                  height: 42,
+                  decoration: BoxDecoration(
+                    gradient: const LinearGradient(
+                      colors: [fieldEmerald500, fieldBlue600],
+                    ),
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                  child: const Icon(
+                    Icons.calendar_month_rounded,
+                    color: Colors.white,
+                    size: 22,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: Text(
+                    'Match Date',
+                    style: TextStyle(
+                      color: fieldGray900,
+                      fontSize: 21,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close_rounded),
+                  color: fieldGray500,
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: fieldGray100,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
+                children: [
+                  _CalendarArrowButton(
+                    icon: Icons.chevron_left_rounded,
+                    enabled: _canGoPrevious,
+                    onPressed: () => _moveMonth(-1),
+                  ),
+                  Expanded(
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 160),
+                      child: Text(
+                        _formatMonthYear(_visibleMonth),
+                        key: ValueKey(
+                          '${_visibleMonth.year}-${_visibleMonth.month}',
+                        ),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: fieldGray900,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0,
+                        ),
+                      ),
+                    ),
+                  ),
+                  _CalendarArrowButton(
+                    icon: Icons.chevron_right_rounded,
+                    enabled: _canGoNext,
+                    onPressed: () => _moveMonth(1),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Row(
+              children: [
+                _WeekdayLabel('S'),
+                _WeekdayLabel('M'),
+                _WeekdayLabel('T'),
+                _WeekdayLabel('W'),
+                _WeekdayLabel('T'),
+                _WeekdayLabel('F'),
+                _WeekdayLabel('S'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            GridView.builder(
+              itemCount: cells.length,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 7,
+                mainAxisSpacing: 7,
+                crossAxisSpacing: 6,
+              ),
+              itemBuilder: (context, index) {
+                final date = cells[index];
+                if (date == null) return const SizedBox.shrink();
+
+                return _CalendarDateTile(
+                  date: date,
+                  selected: selected != null && _sameDay(selected, date),
+                  enabled: _isEnabled(date),
+                  today: _sameDay(date, DateTime.now()),
+                  onTap: () => Navigator.of(context).pop(date),
+                );
+              },
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const _CalendarDot(color: fieldEmerald500),
+                const SizedBox(width: 6),
+                const Text(
+                  'Match day',
+                  style: TextStyle(
+                    color: fieldGray500,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const Spacer(),
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarArrowButton extends StatelessWidget {
+  const _CalendarArrowButton({
+    required this.icon,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: enabled ? onPressed : null,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        width: 36,
+        height: 36,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: enabled ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(999),
+          border: enabled ? Border.all(color: fieldGray200) : null,
+        ),
+        child: Icon(
+          icon,
+          color: enabled ? fieldGray700 : fieldGray300,
+          size: 22,
+        ),
+      ),
+    );
+  }
+}
+
+class _WeekdayLabel extends StatelessWidget {
+  const _WeekdayLabel(this.label);
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: Center(
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: fieldGray500,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarDateTile extends StatelessWidget {
+  const _CalendarDateTile({
+    required this.date,
+    required this.selected,
+    required this.enabled,
+    required this.today,
+    required this.onTap,
+  });
+
+  final DateTime date;
+  final bool selected;
+  final bool enabled;
+  final bool today;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(13),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          gradient: selected
+              ? const LinearGradient(colors: [fieldEmerald500, fieldBlue600])
+              : null,
+          color: selected
+              ? null
+              : enabled
+              ? const Color(0xFFECFDF5)
+              : Colors.transparent,
+          border: Border.all(
+            color: selected
+                ? Colors.transparent
+                : today
+                ? fieldEmerald500.withValues(alpha: 0.55)
+                : enabled
+                ? const Color(0xFFA7F3D0)
+                : Colors.transparent,
+          ),
+          borderRadius: BorderRadius.circular(13),
+        ),
+        child: Text(
+          date.day.toString(),
+          style: TextStyle(
+            color: selected
+                ? Colors.white
+                : enabled
+                ? const Color(0xFF065F46)
+                : fieldGray300,
+            fontSize: 15,
+            fontWeight: selected || enabled ? FontWeight.w900 : FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarDot extends StatelessWidget {
+  const _CalendarDot({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
     );
   }
 }
@@ -1249,6 +1631,39 @@ class _BottomAction extends StatelessWidget {
   }
 }
 
+class _OpenFixtureSkeletonRow extends StatelessWidget {
+  const _OpenFixtureSkeletonRow();
+
+  @override
+  Widget build(BuildContext context) {
+    return const FieldSkeletonCard(
+      height: 74,
+      borderRadius: 16,
+      padding: EdgeInsets.all(14),
+      children: [
+        Row(
+          children: [
+            FieldSkeletonBox(width: 42, height: 42, borderRadius: 12),
+            SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  FieldSkeletonBox(height: 14, borderRadius: 6),
+                  SizedBox(height: 8),
+                  FieldSkeletonBox(width: 142, height: 12, borderRadius: 6),
+                ],
+              ),
+            ),
+            SizedBox(width: 12),
+            FieldSkeletonBox(width: 72, height: 30, borderRadius: 999),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _SimplePanel extends StatelessWidget {
   const _SimplePanel({
     required this.icon,
@@ -1318,7 +1733,15 @@ bool _isMatchDay(DateTime date) {
 }
 
 bool _isBooked(List<Fixture> fixtures, DateTime date, FixtureTimeSlot slot) {
-  return fixtures.any((fixture) {
+  return _activeFixtureCount(fixtures, date, slot) >= 1;
+}
+
+int _activeFixtureCount(
+  List<Fixture> fixtures,
+  DateTime date,
+  FixtureTimeSlot slot,
+) {
+  return fixtures.where((fixture) {
     final sameDate =
         fixture.matchDate.year == date.year &&
         fixture.matchDate.month == date.month &&
@@ -1328,7 +1751,29 @@ bool _isBooked(List<Fixture> fixtures, DateTime date, FixtureTimeSlot slot) {
         fixture.status == FixtureStatus.scheduled ||
         fixture.status == FixtureStatus.live;
     return sameDate && active && fixture.timeSlot == slot.label;
-  });
+  }).length;
+}
+
+bool _sameDay(DateTime a, DateTime b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+String _formatMonthYear(DateTime date) {
+  const months = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+  ];
+  return '${months[date.month - 1]} ${date.year}';
 }
 
 String _formatLongDate(DateTime date) {

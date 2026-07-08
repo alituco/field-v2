@@ -1,6 +1,6 @@
 import '../clans/clan.dart';
 
-enum FixtureStatus { open, scheduled, live, finalResult }
+enum FixtureStatus { open, scheduled, live, finalResult, cancelled }
 
 enum FixtureTimeSlot {
   early('7:00 PM - 8:00 PM'),
@@ -66,6 +66,8 @@ class Fixture {
     this.awaySrChange,
     this.videoUrl,
     this.awayClan,
+    this.cancelledAt,
+    this.cancellationReason,
     this.createdAt,
     this.updatedAt,
   });
@@ -87,6 +89,8 @@ class Fixture {
   final String createdBy;
   final FixtureClan homeClan;
   final FixtureClan? awayClan;
+  final DateTime? cancelledAt;
+  final String? cancellationReason;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -96,12 +100,15 @@ class Fixture {
 
   bool get isLive => status == FixtureStatus.live;
 
+  bool get isCancelled => status == FixtureStatus.cancelled;
+
   String get statusLabel {
     return switch (status) {
       FixtureStatus.open => 'Looking for opponent',
       FixtureStatus.scheduled => 'Scheduled',
       FixtureStatus.live => 'Live Now',
       FixtureStatus.finalResult => 'Final',
+      FixtureStatus.cancelled => 'Cancelled',
     };
   }
 
@@ -111,6 +118,7 @@ class Fixture {
       FixtureStatus.scheduled => 'Upcoming',
       FixtureStatus.live => 'Live Now',
       FixtureStatus.finalResult => 'Full Time',
+      FixtureStatus.cancelled => 'Cancelled',
     };
   }
 
@@ -168,6 +176,8 @@ class Fixture {
       createdBy: json['created_by'] as String? ?? '',
       homeClan: FixtureClan.fromJson(homeClan),
       awayClan: awayClan == null ? null : FixtureClan.fromJson(awayClan),
+      cancelledAt: _asDate(json['cancelled_at']),
+      cancellationReason: json['cancellation_reason'] as String?,
       createdAt: _asDate(json['created_at']),
       updatedAt: _asDate(json['updated_at']),
     );
@@ -189,6 +199,7 @@ String fixtureStatusToWire(FixtureStatus status) {
     FixtureStatus.scheduled => 'SCHEDULED',
     FixtureStatus.live => 'LIVE',
     FixtureStatus.finalResult => 'FINAL',
+    FixtureStatus.cancelled => 'CANCELLED',
   };
 }
 
@@ -197,6 +208,7 @@ FixtureStatus _fixtureStatusFromWire(String value) {
     'SCHEDULED' => FixtureStatus.scheduled,
     'LIVE' => FixtureStatus.live,
     'FINAL' => FixtureStatus.finalResult,
+    'CANCELLED' => FixtureStatus.cancelled,
     _ => FixtureStatus.open,
   };
 }
