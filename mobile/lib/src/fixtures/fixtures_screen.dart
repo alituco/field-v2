@@ -20,6 +20,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
   List<Fixture> _fixtures = const [];
   MyClanMembership? _myClanMembership;
   FixtureStatus? _selectedStatus;
+  DateTime? _selectedMatchDate;
   bool _isLoading = true;
   String? _errorText;
 
@@ -41,9 +42,11 @@ class _FixturesScreenState extends State<FixturesScreen> {
         widget.fixtureRepository.getMyClanMembership(),
       ]);
       if (!mounted) return;
+      final fixtures = results[0] as List<Fixture>;
       setState(() {
-        _fixtures = results[0] as List<Fixture>;
+        _fixtures = fixtures;
         _myClanMembership = results[1] as MyClanMembership?;
+        _selectedMatchDate ??= _defaultMatchDate(fixtures);
       });
     } catch (error) {
       if (!mounted) return;
@@ -58,9 +61,21 @@ class _FixturesScreenState extends State<FixturesScreen> {
     }
   }
 
-  List<Fixture> get _filteredFixtures {
-    if (_selectedStatus == null) return _fixtures;
+  List<DateTime> get _calendarDates => _matchCalendarDates(_fixtures);
+
+  List<Fixture> get _selectedDateFixtures {
+    final selectedDate = _selectedMatchDate;
+    if (selectedDate == null) return const [];
+
     return _fixtures
+        .where((fixture) => _sameDay(fixture.matchDate, selectedDate))
+        .toList();
+  }
+
+  List<Fixture> get _filteredFixtures {
+    final fixtures = _selectedDateFixtures;
+    if (_selectedStatus == null) return fixtures;
+    return fixtures
         .where((fixture) => fixture.status == _selectedStatus)
         .toList();
   }
@@ -96,6 +111,11 @@ class _FixturesScreenState extends State<FixturesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final calendarDates = _calendarDates;
+    final selectedDate =
+        _selectedMatchDate ??
+        (calendarDates.isEmpty ? null : calendarDates.first);
+    final selectedDateFixtures = _selectedDateFixtures;
     final filteredFixtures = _filteredFixtures;
 
     return FieldHeaderOverlay(
@@ -118,18 +138,31 @@ class _FixturesScreenState extends State<FixturesScreen> {
           children: [
             FixtureHeroBanner(fixtures: _fixtures),
             const SizedBox(height: 24),
+            const _SectionLabel('Match Calendar'),
+            const SizedBox(height: 10),
+            _MatchDayCalendar(
+              dates: calendarDates,
+              selectedDate: selectedDate,
+              fixtures: _fixtures,
+              onSelected: (date) {
+                setState(() => _selectedMatchDate = date);
+              },
+            ),
+            const SizedBox(height: 24),
             const _SectionLabel('Filter Matches'),
             const SizedBox(height: 10),
             FixtureStatusFilters(
               selectedStatus: _selectedStatus,
-              fixtures: _fixtures,
+              fixtures: selectedDateFixtures,
               onSelected: (status) {
                 setState(() => _selectedStatus = status);
               },
             ),
             const SizedBox(height: 24),
             _SectionLabel(
-              '${filteredFixtures.length} Match${filteredFixtures.length == 1 ? '' : 'es'}',
+              selectedDate == null
+                  ? 'No Match Day Selected'
+                  : '${_longDateLabel(selectedDate)} - ${filteredFixtures.length} Match${filteredFixtures.length == 1 ? '' : 'es'}',
             ),
             const SizedBox(height: 12),
             if (_isLoading)
@@ -162,6 +195,233 @@ class _FixturesScreenState extends State<FixturesScreen> {
                   const SizedBox(height: 12),
               ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MatchDayCalendar extends StatefulWidget {
+  const _MatchDayCalendar({
+    required this.dates,
+    required this.selectedDate,
+    required this.fixtures,
+    required this.onSelected,
+  });
+
+  final List<DateTime> dates;
+  final DateTime? selectedDate;
+  final List<Fixture> fixtures;
+  final ValueChanged<DateTime> onSelected;
+
+  @override
+  State<_MatchDayCalendar> createState() => _MatchDayCalendarState();
+}
+
+class _MatchDayCalendarState extends State<_MatchDayCalendar> {
+  late final ScrollController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = ScrollController();
+    _scrollSelectedIntoView(animated: false);
+  }
+
+  @override
+  void didUpdateWidget(covariant _MatchDayCalendar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_sameNullableDay(widget.selectedDate, oldWidget.selectedDate) ||
+        widget.dates.length != oldWidget.dates.length) {
+      _scrollSelectedIntoView(animated: true);
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _scrollSelectedIntoView({required bool animated}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients || widget.selectedDate == null) {
+        return;
+      }
+
+      final index = widget.dates.indexWhere(
+        (date) => _sameDay(date, widget.selectedDate!),
+      );
+      if (index < 0) return;
+
+      final target = (index * 92.0).clamp(
+        0.0,
+        _controller.position.maxScrollExtent,
+      );
+
+      if (animated) {
+        _controller.animateTo(
+          target,
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOutCubic,
+        );
+      } else {
+        _controller.jumpTo(target);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.dates.isEmpty) {
+      return const _StatePanel(
+        icon: Icons.calendar_month_rounded,
+        title: 'No match days',
+        message: 'Tuesday and Thursday match days will show here.',
+      );
+    }
+
+    return SizedBox(
+      height: 104,
+      child: ListView.separated(
+        controller: _controller,
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        itemCount: widget.dates.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 10),
+        itemBuilder: (context, index) {
+          final date = widget.dates[index];
+          final selected =
+              widget.selectedDate != null &&
+              _sameDay(date, widget.selectedDate!);
+          final count = widget.fixtures
+              .where((fixture) => _sameDay(fixture.matchDate, date))
+              .length;
+
+          return _MatchDayChip(
+            date: date,
+            selected: selected,
+            matchCount: count,
+            onTap: () => widget.onSelected(date),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _MatchDayChip extends StatelessWidget {
+  const _MatchDayChip({
+    required this.date,
+    required this.selected,
+    required this.matchCount,
+    required this.onTap,
+  });
+
+  final DateTime date;
+  final bool selected;
+  final int matchCount;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 82,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            gradient: selected
+                ? const LinearGradient(colors: [fieldEmerald500, fieldBlue600])
+                : null,
+            color: selected ? null : Colors.white,
+            border: Border.all(
+              color: selected ? Colors.transparent : fieldGray100,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: selected
+                    ? fieldEmerald500.withValues(alpha: 0.22)
+                    : fieldGray900.withValues(alpha: 0.035),
+                blurRadius: selected ? 18 : 10,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(
+                _weekdayShort(date).toUpperCase(),
+                style: TextStyle(
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.82)
+                      : fieldGray500,
+                  fontSize: 10,
+                  height: 1,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.7,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                date.day.toString(),
+                style: TextStyle(
+                  color: selected ? Colors.white : fieldGray900,
+                  fontSize: 28,
+                  height: 0.9,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    _monthShort(date).toUpperCase(),
+                    style: TextStyle(
+                      color: selected
+                          ? Colors.white.withValues(alpha: 0.82)
+                          : fieldGray400,
+                      fontSize: 10,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.7,
+                    ),
+                  ),
+                  if (matchCount > 0) ...[
+                    const SizedBox(width: 5),
+                    Container(
+                      width: 18,
+                      height: 18,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: selected
+                            ? Colors.white.withValues(alpha: 0.20)
+                            : fieldGray100,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        matchCount.toString(),
+                        style: TextStyle(
+                          color: selected ? Colors.white : fieldGray700,
+                          fontSize: 10,
+                          height: 1,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -344,4 +604,105 @@ class _StatePanel extends StatelessWidget {
       ),
     );
   }
+}
+
+DateTime? _defaultMatchDate(List<Fixture> fixtures) {
+  final calendarDates = _matchCalendarDates(fixtures);
+  if (calendarDates.isEmpty) return null;
+
+  final today = _dateOnly(DateTime.now());
+  final upcomingMatchDays =
+      calendarDates
+          .where((date) => _isEnabledMatchDay(date) && !date.isBefore(today))
+          .toList()
+        ..sort();
+  if (upcomingMatchDays.isNotEmpty) return upcomingMatchDays.first;
+
+  return calendarDates.first;
+}
+
+List<DateTime> _matchCalendarDates(List<Fixture> fixtures) {
+  final datesByKey = <String, DateTime>{};
+
+  for (final fixture in fixtures) {
+    final date = _dateOnly(fixture.matchDate);
+    if (_isEnabledMatchDay(date)) {
+      datesByKey[_dateKey(date)] = date;
+    }
+  }
+
+  var cursor = _dateOnly(DateTime.now());
+  var addedUpcoming = 0;
+  while (addedUpcoming < 12) {
+    if (_isEnabledMatchDay(cursor)) {
+      datesByKey[_dateKey(cursor)] = cursor;
+      addedUpcoming += 1;
+    }
+    cursor = cursor.add(const Duration(days: 1));
+  }
+
+  final dates = datesByKey.values.toList()..sort();
+  return dates;
+}
+
+bool _isEnabledMatchDay(DateTime date) {
+  return date.weekday == DateTime.tuesday || date.weekday == DateTime.thursday;
+}
+
+bool _sameNullableDay(DateTime? a, DateTime? b) {
+  if (a == null || b == null) return a == b;
+  return _sameDay(a, b);
+}
+
+bool _sameDay(DateTime a, DateTime b) {
+  return a.year == b.year && a.month == b.month && a.day == b.day;
+}
+
+DateTime _dateOnly(DateTime date) {
+  return DateTime(date.year, date.month, date.day);
+}
+
+String _dateKey(DateTime date) {
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '${date.year}-$month-$day';
+}
+
+String _longDateLabel(DateTime date) {
+  return '${_weekdayName(date)}, ${_monthShort(date)} ${date.day}';
+}
+
+String _weekdayShort(DateTime date) {
+  return _weekdayName(date).substring(0, 3);
+}
+
+String _weekdayName(DateTime date) {
+  const weekdays = [
+    'Monday',
+    'Tuesday',
+    'Wednesday',
+    'Thursday',
+    'Friday',
+    'Saturday',
+    'Sunday',
+  ];
+  return weekdays[date.weekday - 1];
+}
+
+String _monthShort(DateTime date) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return months[date.month - 1];
 }

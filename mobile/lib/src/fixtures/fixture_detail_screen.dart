@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../clans/clan_widgets.dart';
 import 'fixture.dart';
@@ -24,6 +25,8 @@ class FixtureDetailScreen extends StatefulWidget {
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
   bool _isJoining = false;
+  bool _isCompleting = false;
+  bool _didChange = false;
   String? _errorText;
 
   bool get _canJoin {
@@ -32,6 +35,20 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         membership.isOwner &&
         _fixture.isOpen &&
         _fixture.homeClanId != membership.clan.id;
+  }
+
+  bool get _canShowCompleteAction {
+    return (_fixture.status == FixtureStatus.scheduled || _fixture.isLive) &&
+        _fixture.awayClanId != null;
+  }
+
+  bool get _canComplete {
+    final membership = widget.myClanMembership;
+    if (membership == null || !membership.isOwner) return false;
+    if (!_canShowCompleteAction) return false;
+
+    return membership.clan.id == _fixture.homeClanId ||
+        membership.clan.id == _fixture.awayClanId;
   }
 
   Future<void> _joinFixture() async {
@@ -54,7 +71,10 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         awayClanId: membership.clan.id,
       );
       if (!mounted) return;
-      setState(() => _fixture = fixture);
+      setState(() {
+        _fixture = fixture;
+        _didChange = true;
+      });
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Match joined. Game on.')));
@@ -70,6 +90,56 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     }
   }
 
+  Future<void> _completeFixture() async {
+    if (!_canComplete) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Only a participating clan owner can finalize scores.'),
+        ),
+      );
+      return;
+    }
+
+    final scores = await showModalBottomSheet<_ScoreSubmission>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _CompleteScoreSheet(fixture: _fixture),
+    );
+    if (scores == null) return;
+
+    setState(() {
+      _isCompleting = true;
+      _errorText = null;
+    });
+
+    try {
+      final fixture = await widget.fixtureRepository.completeFixture(
+        fixtureId: _fixture.id,
+        homeScore: scores.homeScore,
+        awayScore: scores.awayScore,
+      );
+      if (!mounted) return;
+      setState(() {
+        _fixture = fixture;
+        _didChange = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Score finalized. SR updated.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isCompleting = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomAction = _fixture.isOpen
@@ -77,6 +147,12 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
             canJoin: _canJoin,
             isJoining: _isJoining,
             onJoin: _joinFixture,
+          )
+        : _canShowCompleteAction
+        ? _CompleteActionBar(
+            canComplete: _canComplete,
+            isCompleting: _isCompleting,
+            onComplete: _completeFixture,
           )
         : null;
 
@@ -86,10 +162,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         header: FieldPageHeader(
           title: 'Match Details',
           showBack: true,
-          onBack: () => Navigator.of(context).pop(
-            _fixture.id != widget.fixture.id ||
-                _fixture.awayClanId != widget.fixture.awayClanId,
-          ),
+          onBack: () => Navigator.of(context).pop(_didChange),
         ),
         child: ListView(
           padding: fieldHeaderAwarePadding(
@@ -718,6 +791,336 @@ class _JoinActionBar extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _CompleteActionBar extends StatelessWidget {
+  const _CompleteActionBar({
+    required this.canComplete,
+    required this.isCompleting,
+    required this.onComplete,
+  });
+
+  final bool canComplete;
+  final bool isCompleting;
+  final VoidCallback onComplete;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.92),
+          border: const Border(top: BorderSide(color: fieldGray100)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, -6),
+            ),
+          ],
+        ),
+        child: SizedBox(
+          width: double.infinity,
+          height: 54,
+          child: FilledButton.icon(
+            onPressed: canComplete && !isCompleting ? onComplete : null,
+            icon: isCompleting
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.fact_check_rounded),
+            label: Text(isCompleting ? 'Finalizing...' : 'Finalize Score'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.black,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: fieldGray300,
+              disabledForegroundColor: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScoreSubmission {
+  const _ScoreSubmission({required this.homeScore, required this.awayScore});
+
+  final int homeScore;
+  final int awayScore;
+}
+
+class _CompleteScoreSheet extends StatefulWidget {
+  const _CompleteScoreSheet({required this.fixture});
+
+  final Fixture fixture;
+
+  @override
+  State<_CompleteScoreSheet> createState() => _CompleteScoreSheetState();
+}
+
+class _CompleteScoreSheetState extends State<_CompleteScoreSheet> {
+  late final TextEditingController _homeController;
+  late final TextEditingController _awayController;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _homeController = TextEditingController(
+      text: (widget.fixture.homeScore ?? 0).toString(),
+    );
+    _awayController = TextEditingController(
+      text: (widget.fixture.awayScore ?? 0).toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _homeController.dispose();
+    _awayController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final homeScore = int.tryParse(_homeController.text.trim());
+    final awayScore = int.tryParse(_awayController.text.trim());
+
+    if (homeScore == null || awayScore == null) {
+      setState(() => _errorText = 'Enter both scores.');
+      return;
+    }
+
+    if (homeScore > 99 || awayScore > 99) {
+      setState(() => _errorText = 'Scores must be between 0 and 99.');
+      return;
+    }
+
+    Navigator.of(
+      context,
+    ).pop(_ScoreSubmission(homeScore: homeScore, awayScore: awayScore));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    final fixture = widget.fixture;
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: fieldGray900,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(
+                      Icons.fact_check_rounded,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Finalize Score',
+                          style: TextStyle(
+                            color: fieldGray900,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          'This immediately updates SR.',
+                          style: TextStyle(
+                            color: fieldGray500,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ScoreInputCard(
+                      clan: fixture.homeClan,
+                      controller: _homeController,
+                      textInputAction: TextInputAction.next,
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      '-',
+                      style: TextStyle(
+                        color: fieldGray400,
+                        fontSize: 28,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _ScoreInputCard(
+                      clan: fixture.awayClan,
+                      controller: _awayController,
+                      textInputAction: TextInputAction.done,
+                      onSubmitted: (_) => _submit(),
+                    ),
+                  ),
+                ],
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                _ErrorCallout(message: _errorText!),
+              ],
+              const SizedBox(height: 18),
+              SizedBox(
+                width: double.infinity,
+                height: 54,
+                child: FilledButton.icon(
+                  onPressed: _submit,
+                  icon: const Icon(Icons.trending_up_rounded),
+                  label: const Text('Apply SR'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: fieldEmerald600,
+                    foregroundColor: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScoreInputCard extends StatelessWidget {
+  const _ScoreInputCard({
+    required this.clan,
+    required this.controller,
+    required this.textInputAction,
+    this.onSubmitted,
+  });
+
+  final FixtureClan? clan;
+  final TextEditingController controller;
+  final TextInputAction textInputAction;
+  final ValueChanged<String>? onSubmitted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: fieldBackground,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        children: [
+          clan == null
+              ? Container(
+                  width: 44,
+                  height: 44,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: fieldGray200),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(
+                    Icons.shield_rounded,
+                    color: fieldGray400,
+                    size: 22,
+                  ),
+                )
+              : FixtureClanAvatar(clan: clan!, size: 44),
+          const SizedBox(height: 8),
+          Text(
+            clan?.tag ?? 'TBD',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: fieldGray600,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            textInputAction: textInputAction,
+            textAlign: TextAlign.center,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(2),
+            ],
+            onSubmitted: onSubmitted,
+            style: const TextStyle(
+              color: fieldGray900,
+              fontSize: 34,
+              fontWeight: FontWeight.w900,
+            ),
+            decoration: InputDecoration(
+              counterText: '',
+              isDense: true,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 10,
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: fieldGray200),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: fieldGray200),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: fieldEmerald500, width: 2),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

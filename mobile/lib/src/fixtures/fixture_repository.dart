@@ -20,6 +20,12 @@ abstract class FixtureRepository {
     required String fixtureId,
     required String awayClanId,
   });
+
+  Future<Fixture> completeFixture({
+    required String fixtureId,
+    required int homeScore,
+    required int awayScore,
+  });
 }
 
 class SupabaseFixtureRepository implements FixtureRepository {
@@ -151,6 +157,24 @@ class SupabaseFixtureRepository implements FixtureRepository {
       params: {
         'fixture_id_to_join': fixtureId,
         'away_clan_id_to_use': awayClanId,
+      },
+    );
+    final row = Map<String, dynamic>.from(response as Map);
+    return _fetchFixture(row['id'] as String);
+  }
+
+  @override
+  Future<Fixture> completeFixture({
+    required String fixtureId,
+    required int homeScore,
+    required int awayScore,
+  }) async {
+    final response = await _client.rpc(
+      'complete_fixture',
+      params: {
+        'fixture_id_to_complete': fixtureId,
+        'home_score_to_use': homeScore,
+        'away_score_to_use': awayScore,
       },
     );
     final row = Map<String, dynamic>.from(response as Map);

@@ -121,6 +121,7 @@ class Clan {
     required this.losses,
     required this.memberCount,
     required this.createdBy,
+    this.region = 'bahrain',
     this.createdAt,
     this.updatedAt,
   });
@@ -137,6 +138,7 @@ class Clan {
   final int losses;
   final int memberCount;
   final String createdBy;
+  final String region;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -154,6 +156,7 @@ class Clan {
       losses: _asInt(json['losses']),
       memberCount: _asInt(json['member_count'], fallback: 1),
       createdBy: json['created_by'] as String? ?? '',
+      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
       createdAt: _asDateTime(json['created_at']),
       updatedAt: _asDateTime(json['updated_at']),
     );

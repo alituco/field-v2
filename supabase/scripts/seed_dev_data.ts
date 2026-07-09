@@ -42,6 +42,7 @@ type FakeClan = {
   skillRating: number;
   wins: number;
   losses: number;
+  region?: string;
   ownerPhone: string;
   memberPhones: string[];
 };
@@ -371,20 +372,18 @@ const fakeFixtures: FakeFixture[] = [
     homeTag: "NRYL",
     awayTag: "MMAV",
     venue: "Central Sports Complex",
-    day: "TUESDAY",
+    day: "THURSDAY",
     timeSlot: "7:00 PM - 8:00 PM",
-    matchDate: "2026-06-09",
+    matchDate: "2026-07-09",
   },
   {
-    status: "LIVE",
+    status: "SCHEDULED",
     homeTag: "CDRF",
     awayTag: "NRYL",
     venue: "Riverside Park",
     day: "THURSDAY",
     timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-06-11",
-    homeScore: 1,
-    awayScore: 0,
+    matchDate: "2026-07-23",
   },
   {
     status: "OPEN",
@@ -392,7 +391,7 @@ const fakeFixtures: FakeFixture[] = [
     venue: "Sunset Pitch",
     day: "TUESDAY",
     timeSlot: "7:00 PM - 8:00 PM",
-    matchDate: "2026-06-16",
+    matchDate: "2026-07-28",
   },
   {
     status: "OPEN",
@@ -400,78 +399,29 @@ const fakeFixtures: FakeFixture[] = [
     venue: "Eastside Arena",
     day: "THURSDAY",
     timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-06-18",
-  },
-  {
-    status: "FINAL",
-    homeTag: "NRYL",
-    awayTag: "CDRF",
-    venue: "Downtown Stadium",
-    day: "TUESDAY",
-    timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-06-02",
-    homeScore: 4,
-    awayScore: 1,
-    winnerTag: "NRYL",
-    homeSrChange: 28,
-    awaySrChange: -21,
-    scorers: [
-      {
-        clanTag: "NRYL",
-        scorerPhone: "+97338883671",
-        minute: 5,
-        assistPhone: "+97338883672",
-      },
-      { clanTag: "NRYL", scorerPhone: "+97338883671", minute: 23 },
-      {
-        clanTag: "CDRF",
-        scorerPhone: "+97338883677",
-        minute: 45,
-        assistPhone: "+97338883678",
-      },
-      {
-        clanTag: "NRYL",
-        scorerPhone: "+97338883673",
-        minute: 81,
-        assistPhone: "+97338883672",
-      },
-    ],
-  },
-  {
-    status: "FINAL",
-    homeTag: "MMAV",
-    awayTag: "NRYL",
-    venue: "Central Sports Complex",
-    day: "THURSDAY",
-    timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-06-04",
-    homeScore: 2,
-    awayScore: 2,
-    homeSrChange: 5,
-    awaySrChange: 5,
-    scorers: [
-      {
-        clanTag: "MMAV",
-        scorerPhone: "+97338883674",
-        minute: 20,
-        assistPhone: "+97338883675",
-      },
-      { clanTag: "NRYL", scorerPhone: "+97338883671", minute: 33 },
-      {
-        clanTag: "NRYL",
-        scorerPhone: "+97338883672",
-        minute: 74,
-        assistPhone: "+97338883673",
-      },
-      {
-        clanTag: "MMAV",
-        scorerPhone: "+97338883676",
-        minute: 84,
-        assistPhone: "+97338883674",
-      },
-    ],
+    matchDate: "2026-07-30",
   },
 ];
+
+const generatedSeed = buildGeneratedSeedData();
+
+fakeUsers.push(...generatedSeed.users);
+fakeFollows.push(...generatedSeed.follows);
+
+for (
+  const [tag, memberPhones] of Object.entries(
+    generatedSeed.baseClanMembersByTag,
+  )
+) {
+  const clan = fakeClans.find((candidate) => candidate.tag === tag);
+  if (!clan) {
+    throw new Error(`Missing base clan ${tag} for generated members.`);
+  }
+  clan.memberPhones.push(...memberPhones);
+}
+
+fakeClans.push(...generatedSeed.clans);
+fakeFixtures.push(...generatedSeed.fixtures);
 
 const supabaseUrl = requireEnv("SUPABASE_URL");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -507,8 +457,11 @@ await seedFollows(admin, usersByPhone);
 
 console.log("");
 console.log("Seeded dev users:");
-for (const fakeUser of fakeUsers) {
+for (const fakeUser of fakeUsers.slice(0, 18)) {
   console.log(`  ${fakeUser.phone}  ${fakeUser.displayName}`);
+}
+if (fakeUsers.length > 18) {
+  console.log(`  ... ${fakeUsers.length - 18} more users`);
 }
 console.log("");
 console.log("Seeded dev clans:");
@@ -517,12 +470,205 @@ for (const fakeClan of fakeClans) {
 }
 console.log("");
 console.log("Seeded dev fixtures:");
-for (const fakeFixture of fakeFixtures) {
+for (const fakeFixture of fakeFixtures.slice(0, 18)) {
   console.log(
     `  ${fakeFixture.status}  ${fakeFixture.homeTag} ${
       fakeFixture.awayTag ? "vs " + fakeFixture.awayTag : "open"
     }`,
   );
+}
+if (fakeFixtures.length > 18) {
+  console.log(`  ... ${fakeFixtures.length - 18} more fixtures`);
+}
+
+type GeneratedSeedData = {
+  users: FakeUser[];
+  follows: FakeFollow[];
+  clans: FakeClan[];
+  fixtures: FakeFixture[];
+  baseClanMembersByTag: Record<string, string[]>;
+};
+
+function buildGeneratedSeedData(): GeneratedSeedData {
+  const users = buildGeneratedUsers(72);
+  let cursor = 0;
+  const takePhones = (count: number) => {
+    const phones = users.slice(cursor, cursor + count).map((user) =>
+      user.phone
+    );
+    cursor += count;
+    return phones;
+  };
+
+  const baseClanMembersByTag: Record<string, string[]> = {
+    NRYL: takePhones(6),
+    MMAV: takePhones(6),
+    CDRF: takePhones(7),
+  };
+
+  const generatedClanSpecs = [
+    {
+      name: "Pearl United",
+      tag: "PEAR",
+      motto: "Keep it sharp, keep it moving.",
+      emblem: "\u{1F48E}",
+      themeId: "pitch",
+      patternId: "sash",
+      skillRating: 1985,
+      wins: 15,
+      losses: 7,
+    },
+    {
+      name: "Dilmun FC",
+      tag: "DILM",
+      motto: "Old roots, quick feet.",
+      emblem: "\u{1F3DB}",
+      themeId: "gold",
+      patternId: "solid",
+      skillRating: 1840,
+      wins: 13,
+      losses: 8,
+    },
+    {
+      name: "Tide Runners",
+      tag: "TIDE",
+      motto: "Press high, recover faster.",
+      emblem: "\u{1F30A}",
+      themeId: "electric",
+      patternId: "chevron",
+      skillRating: 1710,
+      wins: 12,
+      losses: 10,
+    },
+    {
+      name: "Riffa Raiders",
+      tag: "RIFR",
+      motto: "No easy touches.",
+      emblem: "\u{1F6E1}",
+      themeId: "shadow",
+      patternId: "stripes",
+      skillRating: 1545,
+      wins: 10,
+      losses: 10,
+    },
+    {
+      name: "Saar City",
+      tag: "SAAR",
+      motto: "Win the middle, win the night.",
+      emblem: "\u{1F3D9}",
+      themeId: "mint",
+      patternId: "pitch",
+      skillRating: 1420,
+      wins: 8,
+      losses: 12,
+    },
+    {
+      name: "Hidd Heat",
+      tag: "HIDD",
+      motto: "Fast starts, louder finishes.",
+      emblem: "\u{1F525}",
+      themeId: "sunset",
+      patternId: "sash",
+      skillRating: 1315,
+      wins: 7,
+      losses: 14,
+    },
+  ];
+
+  const clans = generatedClanSpecs.map((spec) => {
+    const memberPhones = takePhones(8);
+    return {
+      ...spec,
+      ownerPhone: memberPhones[0],
+      memberPhones,
+    };
+  });
+
+  return {
+    users,
+    follows: buildGeneratedFollows(users),
+    clans,
+    fixtures: [],
+    baseClanMembersByTag,
+  };
+}
+
+function buildGeneratedUsers(count: number): FakeUser[] {
+  const firstNames = [
+    "Ali",
+    "Noura",
+    "Hamad",
+    "Mariam",
+    "Yousef",
+    "Layla",
+    "Faisal",
+    "Dana",
+    "Salman",
+    "Reem",
+    "Khalid",
+    "Noor",
+    "Rashid",
+    "Sara",
+    "Jassim",
+    "Maya",
+  ];
+  const lastNames = [
+    "Alawi",
+    "Saleh",
+    "Haddad",
+    "Mansoor",
+    "Khalifa",
+    "Nasser",
+    "Faraj",
+    "Jaber",
+    "Sayed",
+    "Mahmood",
+    "Qasim",
+    "Habib",
+  ];
+
+  return Array.from({ length: count }, (_, index) => {
+    const firstName = firstNames[index % firstNames.length];
+    const lastName =
+      lastNames[Math.floor(index / firstNames.length) % lastNames.length];
+    const username = `bh_${firstName.toLowerCase()}_${
+      (index + 1)
+        .toString()
+        .padStart(2, "0")
+    }`;
+
+    return {
+      phone: generatedPhone(index),
+      displayName: `${firstName} ${lastName}`,
+      username,
+      bio: "Dev league player. Seeded for match history.",
+      avatarUrl:
+        `https://ui-avatars.com/api/?name=${firstName}+${lastName}&background=10B981&color=fff&bold=true`,
+      followingCount: 0,
+      fansCount: 0,
+    };
+  });
+}
+
+function buildGeneratedFollows(users: FakeUser[]): FakeFollow[] {
+  const follows: FakeFollow[] = [];
+
+  for (let i = 0; i < users.length; i += 1) {
+    for (const offset of [1, 3, 8]) {
+      const target = users[(i + offset) % users.length];
+      if (target.phone === users[i].phone) continue;
+      follows.push({
+        followerPhone: users[i].phone,
+        followingPhone: target.phone,
+      });
+    }
+  }
+
+  return follows;
+}
+
+function generatedPhone(index: number) {
+  return `+973${(38900001 + index).toString()}`;
 }
 
 async function ensureUser({
@@ -605,6 +751,7 @@ async function upsertProfiles(
 
 async function removeSeedOwnedRows(admin: AdminClient, userIds: string[]) {
   const clanTags = fakeClans.map((clan) => clan.tag);
+  const seedClanIds = await loadSeedClanIds(admin, userIds, clanTags);
 
   await assertNoError(
     admin.from("profile_follows").delete().in("follower_id", userIds),
@@ -622,6 +769,20 @@ async function removeSeedOwnedRows(admin: AdminClient, userIds: string[]) {
     admin.from("profile_career_entries").delete().in("profile_id", userIds),
     "delete seed career entries",
   );
+  await assertNoError(
+    admin.from("fixtures").delete().in("created_by", userIds),
+    "delete seed-created fixtures",
+  );
+  if (seedClanIds.length > 0) {
+    await assertNoError(
+      admin.from("fixtures").delete().in("home_clan_id", seedClanIds),
+      "delete seed home fixtures",
+    );
+    await assertNoError(
+      admin.from("fixtures").delete().in("away_clan_id", seedClanIds),
+      "delete seed away fixtures",
+    );
+  }
   await assertNoError(
     admin.from("fixture_scorers").delete().in("profile_id", userIds),
     "delete seed scorer rows",
@@ -644,6 +805,44 @@ async function removeSeedOwnedRows(admin: AdminClient, userIds: string[]) {
   );
 }
 
+async function loadSeedClanIds(
+  admin: AdminClient,
+  userIds: string[],
+  clanTags: string[],
+) {
+  const ids = new Set<string>();
+
+  const { data: clansByTag, error: tagError } = await admin
+    .from("clans")
+    .select("id")
+    .in("tag", clanTags);
+
+  if (tagError) {
+    throw new Error(`load seed clans by tag: ${tagError.message}`);
+  }
+
+  for (const row of clansByTag ?? []) {
+    const id = (row as { id?: string }).id;
+    if (id) ids.add(id);
+  }
+
+  const { data: clansByOwner, error: ownerError } = await admin
+    .from("clans")
+    .select("id")
+    .in("created_by", userIds);
+
+  if (ownerError) {
+    throw new Error(`load seed clans by owner: ${ownerError.message}`);
+  }
+
+  for (const row of clansByOwner ?? []) {
+    const id = (row as { id?: string }).id;
+    if (id) ids.add(id);
+  }
+
+  return [...ids];
+}
+
 async function seedClans(
   admin: AdminClient,
   userIdsByPhone: Map<string, string>,
@@ -664,6 +863,7 @@ async function seedClans(
         skill_rating: fakeClan.skillRating,
         wins: fakeClan.wins,
         losses: fakeClan.losses,
+        region: fakeClan.region ?? "bahrain",
         created_by: ownerId,
       })
       .select("id")

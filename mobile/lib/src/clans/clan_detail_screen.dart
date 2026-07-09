@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../fixtures/create_fixture_screen.dart';
 import '../fixtures/fixture.dart';
+import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import 'clan.dart';
 import 'clan_repository.dart';
@@ -109,6 +110,68 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     }
   }
 
+  MyClanMembership? _fixtureMembership() {
+    final membership = widget.currentMembership;
+    if (membership == null || membership.clanId != clan.id) return null;
+
+    return MyClanMembership(
+      clan: FixtureClan(
+        id: clan.id,
+        name: clan.name,
+        tag: clan.tag,
+        emblem: clan.emblem,
+        themeId: clan.themeId,
+        patternId: clan.patternId,
+        skillRating: clan.skillRating,
+      ),
+      role: membership.role,
+    );
+  }
+
+  Future<void> _openFixtureDetail(Fixture fixture) async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => FixtureDetailScreen(
+          fixture: fixture,
+          fixtureRepository: widget.fixtureRepository,
+          myClanMembership: _fixtureMembership(),
+        ),
+      ),
+    );
+
+    if (changed == true && mounted) {
+      await _loadClanData();
+    }
+  }
+
+  Future<void> _openFixtureClan(FixtureClan fixtureClan) async {
+    if (fixtureClan.id == clan.id) return;
+
+    try {
+      final clans = await widget.clanRepository.listClans();
+      final target = clans.firstWhere(
+        (candidate) => candidate.id == fixtureClan.id,
+      );
+      if (!mounted) return;
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (context) => ClanDetailScreen(
+            clan: target,
+            clanRepository: widget.clanRepository,
+            fixtureRepository: widget.fixtureRepository,
+            currentMembership: widget.currentMembership,
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not open clan.')));
+    }
+  }
+
   Future<void> _loadClanData() async {
     setState(() {
       _isLoadingMembers = true;
@@ -196,6 +259,8 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
                       key: const ValueKey('matches'),
                       clan: clan,
                       detail: detail,
+                      onOpenFixture: _openFixtureDetail,
+                      onOpenClan: _openFixtureClan,
                     ),
             ),
           ],
@@ -1407,10 +1472,18 @@ class _OwnerBadge extends StatelessWidget {
 }
 
 class _MatchesTab extends StatelessWidget {
-  const _MatchesTab({super.key, required this.clan, required this.detail});
+  const _MatchesTab({
+    super.key,
+    required this.clan,
+    required this.detail,
+    required this.onOpenFixture,
+    required this.onOpenClan,
+  });
 
   final Clan clan;
   final _ClanDetailData detail;
+  final ValueChanged<Fixture> onOpenFixture;
+  final ValueChanged<FixtureClan> onOpenClan;
 
   @override
   Widget build(BuildContext context) {
@@ -1430,7 +1503,11 @@ class _MatchesTab extends StatelessWidget {
                 const _DashedEmptyState(message: 'No upcoming fixtures')
               else
                 for (var i = 0; i < detail.upcomingMatches.length; i++) ...[
-                  _UpcomingMatchRow(match: detail.upcomingMatches[i]),
+                  _UpcomingMatchRow(
+                    match: detail.upcomingMatches[i],
+                    onTap: () =>
+                        onOpenFixture(detail.upcomingMatches[i].fixture),
+                  ),
                   if (i != detail.upcomingMatches.length - 1)
                     const SizedBox(height: 12),
                 ],
@@ -1452,7 +1529,14 @@ class _MatchesTab extends StatelessWidget {
                 const _DashedEmptyState(message: 'No past matches yet')
               else
                 for (var i = 0; i < detail.pastMatches.length; i++) ...[
-                  _PastMatchCard(clan: clan, match: detail.pastMatches[i]),
+                  _PastMatchCard(
+                    clan: clan,
+                    match: detail.pastMatches[i],
+                    onTap: () => onOpenFixture(detail.pastMatches[i].fixture),
+                    onOpponentTap: detail.pastMatches[i].opponent == null
+                        ? null
+                        : () => onOpenClan(detail.pastMatches[i].opponent!),
+                  ),
                   if (i != detail.pastMatches.length - 1)
                     const SizedBox(height: 12),
                 ],
@@ -1465,104 +1549,120 @@ class _MatchesTab extends StatelessWidget {
 }
 
 class _UpcomingMatchRow extends StatelessWidget {
-  const _UpcomingMatchRow({required this.match});
+  const _UpcomingMatchRow({required this.match, required this.onTap});
 
   final _FixtureSummary match;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: fieldGray100.withValues(alpha: 0.72),
-        border: Border.all(color: fieldGray100),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(14),
-      ),
-      child: Row(
-        children: [
-          _OpponentAvatar(emblem: match.opponentEmblem),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: fieldGray100.withValues(alpha: 0.72),
+            border: Border.all(color: fieldGray100),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Row(
+            children: [
+              _OpponentAvatar(emblem: match.opponentEmblem),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Text(
-                        'vs ${match.opponentName}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'vs ${match.opponentName}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: fieldGray900,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFECFDF5),
-                        borderRadius: BorderRadius.circular(7),
-                      ),
-                      child: Text(
-                        match.dayShort,
-                        style: const TextStyle(
-                          color: fieldEmerald600,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFECFDF5),
+                            borderRadius: BorderRadius.circular(7),
+                          ),
+                          child: Text(
+                            match.dayShort,
+                            style: const TextStyle(
+                              color: fieldEmerald600,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
-                      ),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.calendar_month_rounded,
-                      color: fieldGray500,
-                      size: 12,
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(
-                      child: Text(
-                        '${match.dateLabel} • ${match.timeLabel}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.calendar_month_rounded,
                           color: fieldGray500,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
+                          size: 12,
                         ),
-                      ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            '${match.dateLabel} - ${match.timeLabel}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: fieldGray500,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: fieldGray400,
+                size: 20,
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: fieldGray400,
-            size: 20,
-          ),
-        ],
+        ),
       ),
     );
   }
 }
 
 class _PastMatchCard extends StatelessWidget {
-  const _PastMatchCard({required this.clan, required this.match});
+  const _PastMatchCard({
+    required this.clan,
+    required this.match,
+    required this.onTap,
+    this.onOpponentTap,
+  });
 
   final Clan clan;
   final _FixtureSummary match;
+  final VoidCallback onTap;
+  final VoidCallback? onOpponentTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1581,174 +1681,302 @@ class _PastMatchCard extends StatelessWidget {
         ? fieldGray100
         : const Color(0xFFFEF2F2);
 
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: fieldGray100),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        children: [
-          Row(
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: fieldGray100),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
             children: [
-              Expanded(
-                child: Text(
-                  match.dateLabel,
-                  style: const TextStyle(
-                    color: fieldGray400,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${match.dateLabel} - ${match.timeLabel}',
+                      style: const TextStyle(
+                        color: fieldGray400,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: badgeBackground,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  match.outcome.toUpperCase(),
-                  style: TextStyle(
-                    color: badgeColor,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeBackground,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      match.outcome.toUpperCase(),
+                      style: TextStyle(
+                        color: badgeColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
+              const SizedBox(height: 12),
+              if (match.isCancelled)
+                Row(
+                  children: [
+                    Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF7ED),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.event_busy_rounded,
+                        color: Color(0xFFEA580C),
+                        size: 19,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        match.note ?? 'Match cancelled.',
+                        style: const TextStyle(
+                          color: fieldGray600,
+                          fontSize: 13,
+                          height: 1.3,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ScorecardClanSide(
+                        name: clan.name,
+                        tag: clan.tag,
+                        emblem: clan.emblem,
+                        score: match.myScore,
+                        highlight: match.outcome == 'Victory',
+                        alignEnd: false,
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 10),
+                      child: Text(
+                        '-',
+                        style: TextStyle(
+                          color: fieldGray300,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: _ScorecardClanSide(
+                        name: match.opponentName,
+                        tag: match.opponentTag,
+                        emblem: match.opponentEmblem,
+                        score: match.opponentScore,
+                        highlight: match.outcome == 'Defeat',
+                        alignEnd: true,
+                        onTap: onOpponentTap,
+                      ),
+                    ),
+                  ],
+                ),
+              if (!match.isCancelled && match.srChange != null) ...[
+                const SizedBox(height: 12),
+                const Divider(color: fieldGray100, height: 1),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Rating Change',
+                        style: TextStyle(
+                          color: fieldGray500,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      match.srChange! > 0
+                          ? Icons.trending_up_rounded
+                          : match.srChange! < 0
+                          ? Icons.trending_down_rounded
+                          : Icons.remove_rounded,
+                      color: match.srChange! > 0
+                          ? fieldEmerald600
+                          : match.srChange! < 0
+                          ? const Color(0xFFEF4444)
+                          : fieldGray500,
+                      size: 15,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${match.srChange! > 0 ? '+' : ''}${match.srChange} SR',
+                      style: TextStyle(
+                        color: match.srChange! > 0
+                            ? fieldEmerald600
+                            : match.srChange! < 0
+                            ? const Color(0xFFEF4444)
+                            : fieldGray500,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ],
           ),
-          const SizedBox(height: 12),
-          if (match.isCancelled)
-            Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF7ED),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: const Icon(
-                    Icons.event_busy_rounded,
-                    color: Color(0xFFEA580C),
-                    size: 19,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    match.note ?? 'Match cancelled.',
-                    style: const TextStyle(
-                      color: fieldGray600,
-                      fontSize: 13,
-                      height: 1.3,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            )
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: Row(
-                    children: [
-                      _OpponentAvatar(emblem: clan.emblem, size: 32),
-                      const SizedBox(width: 8),
-                      Text(
-                        match.myScore.toString(),
-                        style: TextStyle(
-                          color: match.outcome == 'Victory'
-                              ? fieldGray900
-                              : fieldGray500,
-                          fontSize: 22,
-                          height: 1,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Text(
-                  '-',
-                  style: TextStyle(
-                    color: fieldGray300,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                Expanded(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      Text(
-                        match.opponentScore.toString(),
-                        style: TextStyle(
-                          color: match.outcome == 'Defeat'
-                              ? fieldGray900
-                              : fieldGray500,
-                          fontSize: 22,
-                          height: 1,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      _OpponentAvatar(emblem: match.opponentEmblem, size: 32),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          if (!match.isCancelled && match.srChange != null) ...[
-            const SizedBox(height: 12),
-            const Divider(color: fieldGray100, height: 1),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Rating Change',
-                    style: TextStyle(
-                      color: fieldGray500,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-                Icon(
-                  match.srChange! > 0
-                      ? Icons.trending_up_rounded
-                      : match.srChange! < 0
-                      ? Icons.trending_down_rounded
-                      : Icons.remove_rounded,
-                  color: match.srChange! > 0
-                      ? fieldEmerald600
-                      : match.srChange! < 0
-                      ? const Color(0xFFEF4444)
-                      : fieldGray500,
-                  size: 15,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '${match.srChange! > 0 ? '+' : ''}${match.srChange} SR',
-                  style: TextStyle(
-                    color: match.srChange! > 0
-                        ? fieldEmerald600
-                        : match.srChange! < 0
-                        ? const Color(0xFFEF4444)
-                        : fieldGray500,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ],
+        ),
       ),
+    );
+  }
+}
+
+class _ScorecardClanSide extends StatelessWidget {
+  const _ScorecardClanSide({
+    required this.name,
+    required this.tag,
+    required this.emblem,
+    required this.score,
+    required this.highlight,
+    required this.alignEnd,
+    this.onTap,
+  });
+
+  final String name;
+  final String tag;
+  final String emblem;
+  final int score;
+  final bool highlight;
+  final bool alignEnd;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Row(
+      mainAxisAlignment: alignEnd
+          ? MainAxisAlignment.end
+          : MainAxisAlignment.start,
+      children: alignEnd
+          ? [
+              Flexible(
+                child: _ScorecardClanText(name: name, tag: tag, alignEnd: true),
+              ),
+              const SizedBox(width: 8),
+              _ScoreText(value: score, highlight: highlight),
+              const SizedBox(width: 8),
+              _OpponentAvatar(emblem: emblem, size: 32),
+            ]
+          : [
+              _OpponentAvatar(emblem: emblem, size: 32),
+              const SizedBox(width: 8),
+              _ScoreText(value: score, highlight: highlight),
+              const SizedBox(width: 8),
+              Flexible(
+                child: _ScorecardClanText(name: name, tag: tag),
+              ),
+            ],
+    );
+
+    if (onTap == null) return content;
+
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: content,
+        ),
+      ),
+    );
+  }
+}
+
+class _ScoreText extends StatelessWidget {
+  const _ScoreText({required this.value, required this.highlight});
+
+  final int value;
+  final bool highlight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      value.toString(),
+      style: TextStyle(
+        color: highlight ? fieldGray900 : fieldGray500,
+        fontSize: 22,
+        height: 1,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+  }
+}
+
+class _ScorecardClanText extends StatelessWidget {
+  const _ScorecardClanText({
+    required this.name,
+    required this.tag,
+    this.alignEnd = false,
+  });
+
+  final String name;
+  final String tag;
+  final bool alignEnd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: alignEnd
+          ? CrossAxisAlignment.end
+          : CrossAxisAlignment.start,
+      children: [
+        Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: alignEnd ? TextAlign.right : TextAlign.left,
+          style: const TextStyle(
+            color: fieldGray900,
+            fontSize: 12,
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          tag,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: alignEnd ? TextAlign.right : TextAlign.left,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 10,
+            height: 1,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -2163,7 +2391,10 @@ _FixtureSummary _summaryFromFixture(Clan clan, Fixture fixture) {
   final daysAway = matchStart.difference(todayDate).inDays;
 
   return _FixtureSummary(
+    fixture: fixture,
+    opponent: opponent,
     opponentName: opponent?.name ?? 'Awaiting opponent',
+    opponentTag: opponent?.tag ?? 'TBD',
     opponentEmblem: opponent?.emblem ?? '?',
     dateLabel: fixture.monthDay,
     timeLabel: fixture.timeSlot,
@@ -2189,7 +2420,10 @@ class _TopPerformer {
 
 class _FixtureSummary {
   const _FixtureSummary({
+    required this.fixture,
+    required this.opponent,
     required this.opponentName,
+    required this.opponentTag,
     required this.opponentEmblem,
     required this.dateLabel,
     required this.timeLabel,
@@ -2202,7 +2436,10 @@ class _FixtureSummary {
     this.note,
   });
 
+  final Fixture fixture;
+  final FixtureClan? opponent;
   final String opponentName;
+  final String opponentTag;
   final String opponentEmblem;
   final String dateLabel;
   final String timeLabel;

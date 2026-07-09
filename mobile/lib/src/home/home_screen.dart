@@ -8,6 +8,8 @@ import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../fixtures/fixtures_screen.dart';
+import '../leaderboard/leaderboard_repository.dart';
+import '../leaderboard/leaderboard_screen.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 
@@ -24,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final ClanRepository _clanRepository = SupabaseClanRepository();
   final FixtureRepository _fixtureRepository = SupabaseFixtureRepository();
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
+  final LeaderboardRepository _leaderboardRepository =
+      SupabaseLeaderboardRepository();
   int _selectedIndex = 0;
   int _clansActivationTick = 0;
   bool _isSigningOut = false;
@@ -63,10 +67,10 @@ class _HomeScreenState extends State<HomeScreen> {
         fixtureRepository: _fixtureRepository,
         activationTick: _clansActivationTick,
       ),
-      const _ComingSoonScreen(
-        title: 'Ranks',
-        icon: Icons.emoji_events_rounded,
-        message: 'Clan leaderboards will use the same skill rating system.',
+      LeaderboardScreen(
+        clanRepository: _clanRepository,
+        fixtureRepository: _fixtureRepository,
+        leaderboardRepository: _leaderboardRepository,
       ),
       ProfileScreen(
         profileRepository: _profileRepository,
@@ -370,55 +374,6 @@ class _DashboardHome extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ComingSoonScreen extends StatelessWidget {
-  const _ComingSoonScreen({
-    required this.title,
-    required this.icon,
-    required this.message,
-  });
-
-  final String title;
-  final IconData icon;
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return FieldHeaderOverlay(
-      header: FieldPageHeader(title: title),
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: fieldEmerald600, size: 42),
-              const SizedBox(height: 14),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: fieldGray500,
-                  fontSize: 15,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
