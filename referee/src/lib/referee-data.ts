@@ -35,14 +35,29 @@ const fixtureSelect = `
 
 export async function loadRefereeFixtures(
   db: SupabaseClient,
+  refereeId: string,
 ): Promise<RefereeFixture[]> {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
   today.setUTCDate(today.getUTCDate() - 1);
 
+  const { data: assignments, error: assignmentsError } = await db
+    .from("fixture_referee_assignments")
+    .select("fixture_id")
+    .eq("referee_id", refereeId);
+
+  if (assignmentsError) throw assignmentsError;
+
+  const assignedFixtureIds = (assignments ?? []).map((row) =>
+    String(row.fixture_id)
+  );
+
+  if (assignedFixtureIds.length === 0) return [];
+
   const { data: fixtures, error: fixturesError } = await db
     .from("fixtures")
     .select(fixtureSelect)
+    .in("id", assignedFixtureIds)
     .in("status", ["SCHEDULED", "LIVE"])
     .not("away_clan_id", "is", null)
     .gte("match_date", today.toISOString().slice(0, 10))
@@ -50,7 +65,37 @@ export async function loadRefereeFixtures(
     .order("time_slot");
 
   if (fixturesError) throw fixturesError;
-  if (!fixtures || fixtures.length === 0) return [];
+
+  return hydrateFixtureRows(db, fixtures ?? []);
+}
+
+export async function loadAdminFixtures(
+  db: SupabaseClient,
+): Promise<RefereeFixture[]> {
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  today.setUTCDate(today.getUTCDate() - 730);
+
+  const { data: fixtures, error: fixturesError } = await db
+    .from("fixtures")
+    .select(fixtureSelect)
+    .in("status", ["OPEN", "SCHEDULED", "LIVE", "FINAL", "CANCELLED"])
+    .not("away_clan_id", "is", null)
+    .gte("match_date", today.toISOString().slice(0, 10))
+    .order("match_date", { ascending: false })
+    .order("time_slot")
+    .limit(300);
+
+  if (fixturesError) throw fixturesError;
+
+  return hydrateFixtureRows(db, fixtures ?? []);
+}
+
+async function hydrateFixtureRows(
+  db: SupabaseClient,
+  fixtures: Record<string, unknown>[],
+) {
+  if (fixtures.length === 0) return [];
 
   const fixtureRows = fixtures.map((row) => normalizeFixtureRow(row));
   const fixtureIds = fixtureRows.map((fixture) => fixture.id);

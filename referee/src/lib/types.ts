@@ -9,7 +9,8 @@ export type FixtureEventType =
   | "MATCH_ENDED"
   | "GOAL"
   | "BLUE_CARD"
-  | "BLUE_CARD_EXPIRED";
+  | "BLUE_CARD_EXPIRED"
+  | "CORRECTION";
 
 export type BlueCardStatus = "ACTIVE" | "EXPIRED" | "CLEARED";
 
@@ -91,5 +92,34 @@ export type RefereeFixture = {
 };
 
 export type RefereeFixturesResponse = {
+  me: {
+    profileId: string;
+    displayName: string;
+    phone: string;
+    role: "admin" | "referee";
+  };
   fixtures: RefereeFixture[];
+};
+
+export type RefereeListItem = {
+  profileId: string;
+  displayName: string;
+  phone: string;
+  role: "admin" | "referee";
+};
+
+export type AssignableFixture = {
+  id: string;
+  status: FixtureStatus;
+  venue: string;
+  matchDate: string;
+  timeSlot: string;
+  homeClan: Clan;
+  awayClan: Clan;
+  assignedRefereeId: string | null;
+};
+
+export type RefereeAssignmentsResponse = {
+  referees: RefereeListItem[];
+  fixtures: AssignableFixture[];
 };

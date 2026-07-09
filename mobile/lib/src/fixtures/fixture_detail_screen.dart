@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -24,10 +26,24 @@ class FixtureDetailScreen extends StatefulWidget {
 
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
+  Timer? _refreshTimer;
   bool _isJoining = false;
   bool _isCompleting = false;
+  bool _isRefreshing = false;
   bool _didChange = false;
   String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _configureRefreshTimer();
+  }
+
+  @override
+  void dispose() {
+    _refreshTimer?.cancel();
+    super.dispose();
+  }
 
   bool get _canJoin {
     final membership = widget.myClanMembership;
@@ -38,8 +54,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   }
 
   bool get _canShowCompleteAction {
-    return (_fixture.status == FixtureStatus.scheduled || _fixture.isLive) &&
-        _fixture.awayClanId != null;
+    return false;
   }
 
   bool get _canComplete {
@@ -75,6 +90,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _fixture = fixture;
         _didChange = true;
       });
+      _configureRefreshTimer();
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Match joined. Game on.')));
@@ -125,6 +141,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _fixture = fixture;
         _didChange = true;
       });
+      _configureRefreshTimer();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Score finalized. SR updated.')),
       );
@@ -137,6 +154,48 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       if (mounted) {
         setState(() => _isCompleting = false);
       }
+    }
+  }
+
+  Future<void> _refreshFixture({bool quiet = false}) async {
+    if (_isRefreshing) return;
+    if (!quiet) {
+      setState(() => _errorText = null);
+    }
+    _isRefreshing = true;
+
+    try {
+      final fixture = await widget.fixtureRepository.getFixture(_fixture.id);
+      if (!mounted) return;
+      setState(() {
+        _fixture = fixture;
+        _didChange = true;
+      });
+      _configureRefreshTimer();
+    } catch (error) {
+      if (!mounted || quiet) return;
+      setState(
+        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+      );
+    } finally {
+      _isRefreshing = false;
+    }
+  }
+
+  void _configureRefreshTimer() {
+    _refreshTimer?.cancel();
+    if (_fixture.isLive) {
+      _refreshTimer = Timer.periodic(
+        const Duration(seconds: 5),
+        (_) => _refreshFixture(quiet: true),
+      );
+      return;
+    }
+    if (_fixture.status == FixtureStatus.scheduled) {
+      _refreshTimer = Timer.periodic(
+        const Duration(seconds: 10),
+        (_) => _refreshFixture(quiet: true),
+      );
     }
   }
 
@@ -177,6 +236,14 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
             ],
             const SizedBox(height: 18),
             _InfoGrid(fixture: _fixture),
+            if (_fixture.scorers.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              _GoalContributions(fixture: _fixture),
+            ],
+            if (_fixture.timeline.isNotEmpty) ...[
+              const SizedBox(height: 18),
+              _MatchTimeline(fixture: _fixture),
+            ],
             if (_fixture.isFinal &&
                 (_fixture.homeSrChange != null ||
                     _fixture.awaySrChange != null)) ...[
@@ -269,6 +336,10 @@ class _Scoreboard extends StatelessWidget {
                   ),
                 ),
               ),
+              if (fixture.isLive) ...[
+                const SizedBox(height: 10),
+                _LiveMinutePill(clock: fixture.clock),
+              ],
               const SizedBox(height: 24),
               Row(
                 children: [
@@ -419,6 +490,299 @@ class _ScoreNumber extends StatelessWidget {
         fontSize: 40,
         fontWeight: FontWeight.w900,
       ),
+    );
+  }
+}
+
+class _LiveMinutePill extends StatefulWidget {
+  const _LiveMinutePill({required this.clock});
+
+  final FixtureClock? clock;
+
+  @override
+  State<_LiveMinutePill> createState() => _LiveMinutePillState();
+}
+
+class _LiveMinutePillState extends State<_LiveMinutePill> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTimer();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LiveMinutePill oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.clock != widget.clock) _syncTimer();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  void _syncTimer() {
+    _timer?.cancel();
+    if (widget.clock?.isRunning ?? false) {
+      _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final elapsed = widget.clock?.elapsedSeconds() ?? 0;
+    final minute = elapsed == 0 ? 0 : (elapsed ~/ 60) + 1;
+    final label = widget.clock?.isRunning ?? false
+        ? 'LIVE $minute\''
+        : '$minute\'';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.12),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.18)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0,
+        ),
+      ),
+    );
+  }
+}
+
+class _GoalContributions extends StatelessWidget {
+  const _GoalContributions({required this.fixture});
+
+  final Fixture fixture;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.sports_soccer_rounded, color: fieldEmerald600),
+              SizedBox(width: 8),
+              Text(
+                'GOALS & ASSISTS',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          for (final scorer in fixture.scorers) ...[
+            _GoalContributionRow(fixture: fixture, scorer: scorer),
+            if (scorer != fixture.scorers.last)
+              const Divider(height: 18, color: fieldGray100),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _GoalContributionRow extends StatelessWidget {
+  const _GoalContributionRow({required this.fixture, required this.scorer});
+
+  final Fixture fixture;
+  final FixtureScorer scorer;
+
+  @override
+  Widget build(BuildContext context) {
+    final team = _teamTagFor(fixture, scorer.clanId);
+    final assistLabel = scorer.assistProfileId == null
+        ? 'No assist'
+        : 'Assist ${scorer.assistName}';
+
+    return Row(
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: const Color(0xFFECFDF5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            '${scorer.minute}\'',
+            style: const TextStyle(
+              color: fieldEmerald600,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                scorer.scorerName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '$team · $assistLabel',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray500,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _MatchTimeline extends StatelessWidget {
+  const _MatchTimeline({required this.fixture});
+
+  final Fixture fixture;
+
+  @override
+  Widget build(BuildContext context) {
+    final events = fixture.timeline.take(18).toList();
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.timeline_rounded, color: fieldBlue600),
+              SizedBox(width: 8),
+              Text(
+                'TIMELINE',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          for (final event in events) ...[
+            _TimelineRow(fixture: fixture, event: event),
+            if (event != events.last) const SizedBox(height: 12),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _TimelineRow extends StatelessWidget {
+  const _TimelineRow({required this.fixture, required this.event});
+
+  final Fixture fixture;
+  final FixtureTimelineEvent event;
+
+  @override
+  Widget build(BuildContext context) {
+    final eventStyle = _timelineEventStyle(event.eventType);
+    final title = _timelineTitle(event);
+    final subtitle = _timelineSubtitle(fixture, event);
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: eventStyle.background,
+            borderRadius: BorderRadius.circular(11),
+          ),
+          child: Icon(eventStyle.icon, color: eventStyle.color, size: 19),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray500,
+                  fontSize: 12,
+                  height: 1.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          event.minute == 0
+              ? '0:00'
+              : '${event.minute}:${event.second.toString().padLeft(2, '0')}',
+          style: const TextStyle(
+            color: fieldGray500,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1124,6 +1488,84 @@ class _ScoreInputCard extends StatelessWidget {
       ),
     );
   }
+}
+
+String _teamTagFor(Fixture fixture, String? clanId) {
+  if (clanId == fixture.homeClanId) return fixture.homeClan.tag;
+  if (clanId == fixture.awayClanId) return fixture.awayClan?.tag ?? 'AWAY';
+  return 'MATCH';
+}
+
+({IconData icon, Color color, Color background}) _timelineEventStyle(
+  String eventType,
+) {
+  return switch (eventType) {
+    'GOAL' => (
+      icon: Icons.sports_soccer_rounded,
+      color: fieldEmerald600,
+      background: Color(0xFFECFDF5),
+    ),
+    'BLUE_CARD' => (
+      icon: Icons.square_rounded,
+      color: fieldBlue600,
+      background: Color(0xFFEFF6FF),
+    ),
+    'BLUE_CARD_EXPIRED' => (
+      icon: Icons.keyboard_return_rounded,
+      color: Color(0xFF2563EB),
+      background: Color(0xFFEFF6FF),
+    ),
+    'MATCH_STARTED' || 'MATCH_RESUMED' => (
+      icon: Icons.play_arrow_rounded,
+      color: fieldEmerald600,
+      background: Color(0xFFECFDF5),
+    ),
+    'MATCH_PAUSED' => (
+      icon: Icons.pause_rounded,
+      color: Color(0xFFD97706),
+      background: Color(0xFFFFFBEB),
+    ),
+    'MATCH_ENDED' => (
+      icon: Icons.flag_rounded,
+      color: fieldGray700,
+      background: fieldGray100,
+    ),
+    'CORRECTION' => (
+      icon: Icons.edit_note_rounded,
+      color: Color(0xFF7C3AED),
+      background: Color(0xFFF5F3FF),
+    ),
+    _ => (
+      icon: Icons.bolt_rounded,
+      color: fieldGray700,
+      background: fieldGray100,
+    ),
+  };
+}
+
+String _timelineTitle(FixtureTimelineEvent event) {
+  return switch (event.eventType) {
+    'GOAL' => 'Goal · ${event.playerName}',
+    'BLUE_CARD' => 'Blue card · ${event.playerName}',
+    'BLUE_CARD_EXPIRED' => 'Returned · ${event.playerName}',
+    'MATCH_STARTED' => 'Match started',
+    'MATCH_PAUSED' => 'Match paused',
+    'MATCH_RESUMED' => 'Match resumed',
+    'MATCH_ENDED' => 'Match ended',
+    'CORRECTION' => 'Admin correction',
+    _ => event.eventType.replaceAll('_', ' '),
+  };
+}
+
+String _timelineSubtitle(Fixture fixture, FixtureTimelineEvent event) {
+  final team = _teamTagFor(fixture, event.clanId);
+  final note = event.note == null || event.note!.isEmpty ? null : event.note;
+
+  if (event.eventType == 'GOAL' && event.assistProfileId != null) {
+    return '$team · assist ${event.assistName}';
+  }
+  if (note != null) return '$team · $note';
+  return team;
 }
 
 class _ErrorCallout extends StatelessWidget {

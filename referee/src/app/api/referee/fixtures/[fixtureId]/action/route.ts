@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { refereeAuthError } from "@/lib/referee-auth";
+import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
 type RouteContext = {
@@ -14,6 +14,8 @@ type ActionBody = {
     | "pause"
     | "resume"
     | "goal"
+    | "correction_goal"
+    | "delete_goal"
     | "blue_card"
     | "expire_blue_card"
     | "finish";
@@ -22,6 +24,9 @@ type ActionBody = {
   profileId?: string;
   assistProfileId?: string | null;
   blueCardId?: string;
+  goalId?: string;
+  minute?: number;
+  note?: string;
 };
 
 type FixtureRow = {
@@ -39,13 +44,20 @@ type ClockRow = {
 };
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const authError = refereeAuthError(request);
-  if (authError) return authError;
+  const refereeContext = await requireReferee(request);
+  if (!isRefereeContext(refereeContext)) return refereeContext;
 
   const { fixtureId } = await context.params;
-  const db = createSupabaseAdmin();
+  const db = refereeContext.db;
 
   try {
+    await assertCanManageFixture(
+      db,
+      fixtureId,
+      refereeContext.referee.profileId,
+      refereeContext.referee.role,
+    );
+
     const body = (await request.json()) as ActionBody;
 
     switch (body.action) {
@@ -60,6 +72,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
         break;
       case "goal":
         await recordGoal(db, fixtureId, body);
+        break;
+      case "correction_goal":
+        assertAdmin(refereeContext.referee.role);
+        await recordGoalCorrection(db, fixtureId, body);
+        break;
+      case "delete_goal":
+        assertAdmin(refereeContext.referee.role);
+        await deleteGoalCorrection(db, fixtureId, body.goalId);
         break;
       case "blue_card":
         await recordBlueCard(db, fixtureId, body);
@@ -83,6 +103,31 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 }
 
+function assertAdmin(role: "admin" | "referee") {
+  if (role !== "admin") {
+    throw new Error("Admin access required for corrections.");
+  }
+}
+
+async function assertCanManageFixture(
+  db: ReturnType<typeof createSupabaseAdmin>,
+  fixtureId: string,
+  refereeId: string,
+  role: "admin" | "referee",
+) {
+  if (role === "admin") return;
+
+  const { data, error } = await db
+    .from("fixture_referee_assignments")
+    .select("fixture_id")
+    .eq("fixture_id", fixtureId)
+    .eq("referee_id", refereeId)
+    .maybeSingle();
+
+  if (error) throw new Error(`Could not verify assignment: ${error.message}`);
+  if (!data) throw new Error("This match is not assigned to you.");
+}
+
 async function startFixture(
   db: SupabaseClient,
   fixtureId: string,
@@ -102,10 +147,6 @@ async function startFixture(
   const now = new Date();
 
   await assertNoError(
-    db.from("fixtures").update({ status: "LIVE" }).eq("id", fixtureId),
-    "Could not start fixture",
-  );
-  await assertNoError(
     db.from("fixture_clock_states").upsert(
       {
         fixture_id: fixtureId,
@@ -117,6 +158,10 @@ async function startFixture(
       { onConflict: "fixture_id" },
     ),
     "Could not start fixture clock",
+  );
+  await assertNoError(
+    db.from("fixtures").update({ status: "LIVE" }).eq("id", fixtureId),
+    "Could not start fixture",
   );
   await insertEvent(db, fixtureId, "MATCH_STARTED", 0, 0);
 }
@@ -177,7 +222,7 @@ async function recordGoal(
   }
 
   const { minute, second } = splitElapsed(await currentElapsed(db, fixtureId));
-  const scoringMinute = clamp(minute === 0 ? 1 : minute, 1, 130);
+  const scoringMinute = clamp(minute === 0 ? 1 : minute, 1, 240);
 
   await assertNoError(
     db.from("fixture_scorers").insert({
@@ -199,6 +244,113 @@ async function recordGoal(
     profileId,
     assistProfileId,
   );
+  await syncScoreFromScorers(db, fixture);
+}
+
+async function recordGoalCorrection(
+  db: SupabaseClient,
+  fixtureId: string,
+  body: ActionBody,
+) {
+  const fixture = await loadFixture(db, fixtureId);
+  const clanId = requireString(body.clanId, "Choose the scoring team.");
+  const profileId = requireString(body.profileId, "Choose the scorer.");
+  const assistProfileId = body.assistProfileId || null;
+  const minute = clamp(Math.round(Number(body.minute ?? 1)), 1, 240);
+
+  if (fixture.away_clan_id === null) {
+    throw new Error("Cannot correct a match without an opponent.");
+  }
+
+  if (fixture.status !== "FINAL") {
+    throw new Error("Historic corrections are only available for final matches.");
+  }
+
+  assertParticipatingClan(fixture, clanId);
+  await assertPlayerInClan(db, clanId, profileId);
+
+  if (assistProfileId) {
+    await assertPlayerInClan(db, clanId, assistProfileId);
+  }
+
+  await assertNoError(
+    db.from("fixture_scorers").insert({
+      fixture_id: fixtureId,
+      clan_id: clanId,
+      profile_id: profileId,
+      assist_profile_id: assistProfileId,
+      minute,
+    }),
+    "Could not record goal correction",
+  );
+  await insertEvent(
+    db,
+    fixtureId,
+    "GOAL",
+    minute,
+    0,
+    clanId,
+    profileId,
+    assistProfileId,
+    null,
+    "Admin correction",
+  );
+  await syncScoreFromScorers(db, fixture);
+}
+
+async function deleteGoalCorrection(
+  db: SupabaseClient,
+  fixtureId: string,
+  goalId?: string,
+) {
+  const fixture = await loadFixture(db, fixtureId);
+  const id = requireString(goalId, "Missing goal id.");
+
+  if (fixture.status !== "FINAL") {
+    throw new Error("Historic corrections are only available for final matches.");
+  }
+
+  const { data: goal, error: goalError } = await db
+    .from("fixture_scorers")
+    .select("id,fixture_id,clan_id,profile_id,assist_profile_id,minute")
+    .eq("id", id)
+    .eq("fixture_id", fixtureId)
+    .single();
+
+  if (goalError) {
+    throw new Error(`Could not load goal correction: ${goalError.message}`);
+  }
+
+  await assertNoError(
+    db.from("fixture_scorers").delete().eq("id", id).eq("fixture_id", fixtureId),
+    "Could not remove goal",
+  );
+
+  await assertNoError(
+    db
+      .from("fixture_events")
+      .delete()
+      .eq("fixture_id", fixtureId)
+      .eq("event_type", "GOAL")
+      .eq("clan_id", String(goal.clan_id))
+      .eq("profile_id", String(goal.profile_id))
+      .eq("minute", Number(goal.minute ?? 1)),
+    "Could not remove matching goal event",
+  );
+
+  await insertEvent(
+    db,
+    fixtureId,
+    "CORRECTION",
+    Number(goal.minute ?? 1),
+    0,
+    String(goal.clan_id),
+    String(goal.profile_id),
+    goal.assist_profile_id ? String(goal.assist_profile_id) : null,
+    null,
+    "Removed goal correction",
+  );
+  await syncScoreFromScorers(db, fixture);
 }
 
 async function recordBlueCard(
@@ -298,7 +450,7 @@ async function finishFixture(db: SupabaseClient, fixtureId: string) {
       .update({
         status: "ENDED",
         started_at: null,
-        accumulated_seconds: Math.min(elapsedSeconds, clock.duration_seconds),
+        accumulated_seconds: elapsedSeconds,
       })
       .eq("fixture_id", fixtureId),
     "Could not stop fixture clock",
@@ -312,6 +464,43 @@ async function finishFixture(db: SupabaseClient, fixtureId: string) {
   if (error) {
     throw new Error(`Could not finalize fixture: ${error.message}`);
   }
+}
+
+async function syncScoreFromScorers(
+  db: SupabaseClient,
+  fixture: FixtureRow,
+) {
+  const { data: rows, error } = await db
+    .from("fixture_scorers")
+    .select("clan_id")
+    .eq("fixture_id", fixture.id);
+
+  if (error) throw new Error(`Could not recalculate score: ${error.message}`);
+
+  const homeScore = (rows ?? []).filter(
+    (row) => String(row.clan_id) === fixture.home_clan_id,
+  ).length;
+  const awayScore = (rows ?? []).filter(
+    (row) => String(row.clan_id) === fixture.away_clan_id,
+  ).length;
+  const winnerClanId =
+    homeScore > awayScore
+      ? fixture.home_clan_id
+      : awayScore > homeScore
+        ? fixture.away_clan_id
+        : null;
+
+  await assertNoError(
+    db
+      .from("fixtures")
+      .update({
+        home_score: homeScore,
+        away_score: awayScore,
+        winner_clan_id: winnerClanId,
+      })
+      .eq("id", fixture.id),
+    "Could not update final score",
+  );
 }
 
 async function loadLiveFixture(db: SupabaseClient, fixtureId: string) {
@@ -388,7 +577,7 @@ function elapsedFromClock(clock: ClockRow) {
 function splitElapsed(totalSeconds: number) {
   const safeSeconds = Math.max(0, Math.round(totalSeconds));
   return {
-    minute: Math.min(130, Math.floor(safeSeconds / 60)),
+    minute: Math.min(240, Math.floor(safeSeconds / 60)),
     second: safeSeconds % 60,
   };
 }
@@ -425,6 +614,7 @@ async function insertEvent(
   profileId: string | null = null,
   assistProfileId: string | null = null,
   blueCardId: string | null = null,
+  note = "",
 ) {
   await assertNoError(
     db.from("fixture_events").insert({
@@ -436,6 +626,7 @@ async function insertEvent(
       blue_card_id: blueCardId,
       minute,
       second,
+      note,
     }),
     `Could not record ${eventType.toLowerCase()} event`,
   );

@@ -68,6 +68,53 @@ class SupabaseFixtureRepository implements FixtureRepository {
       theme_id,
       pattern_id,
       skill_rating
+    ),
+    fixture_clock_states(
+      status,
+      started_at,
+      accumulated_seconds,
+      duration_seconds
+    ),
+    fixture_scorers(
+      id,
+      fixture_id,
+      clan_id,
+      profile_id,
+      assist_profile_id,
+      minute,
+      created_at,
+      scorer:profiles!fixture_scorers_profile_id_fkey(
+        id,
+        display_name,
+        username
+      ),
+      assist:profiles!fixture_scorers_assist_profile_id_fkey(
+        id,
+        display_name,
+        username
+      )
+    ),
+    fixture_events(
+      id,
+      fixture_id,
+      event_type,
+      clan_id,
+      profile_id,
+      assist_profile_id,
+      minute,
+      second,
+      note,
+      created_at,
+      player:profiles!fixture_events_profile_id_fkey(
+        id,
+        display_name,
+        username
+      ),
+      assist:profiles!fixture_events_assist_profile_id_fkey(
+        id,
+        display_name,
+        username
+      )
     )
   ''';
 

@@ -8,8 +8,8 @@ Create `referee/.env.local`:
 
 ```sh
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
-REFEREE_ACCESS_CODE=pick-a-referee-code
 ```
 
 The service-role key is used only by Next.js API routes. Do not expose it as a `NEXT_PUBLIC_` value.
@@ -26,8 +26,9 @@ Open `http://localhost:3001` on the referee phone or simulator browser.
 
 ## Current Flow
 
-- Enter the referee access code.
-- Pick a scheduled/live fixture.
+- Referee signs in with phone OTP.
+- Admin referees can create referee profiles and assign referees to games.
+- Assigned referees see only their own upcoming games.
 - Start the match timer.
 - Record goals with scorer and optional assist.
 - Record blue cards. Active cards count down from 2 minutes and alert when the player can return.

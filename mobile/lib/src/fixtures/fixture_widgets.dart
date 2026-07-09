@@ -730,11 +730,9 @@ class _FixtureCenter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (fixture.isFinal &&
-        fixture.homeScore != null &&
-        fixture.awayScore != null) {
+    if (fixture.isFinal || fixture.isLive) {
       return Text(
-        '${fixture.homeScore} - ${fixture.awayScore}',
+        '${fixture.homeScore ?? 0} - ${fixture.awayScore ?? 0}',
         style: const TextStyle(
           color: fieldGray900,
           fontSize: 19,
