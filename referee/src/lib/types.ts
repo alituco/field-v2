@@ -82,6 +82,10 @@ export type RefereeFixture = {
   day: string;
   timeSlot: string;
   matchDate: string;
+  cancellationCode: string | null;
+  cancellationReason: string | null;
+  cancelledAt: string | null;
+  cancelledBy: string | null;
   homeClan: Clan;
   awayClan: Clan;
   players: Player[];

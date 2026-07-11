@@ -8,6 +8,7 @@ abstract class AuthRepository {
   Future<void> sendPhoneOtp(String phone);
   Future<void> verifyPhoneOtp({required String phone, required String token});
   Future<void> updateDisplayName(String displayName);
+  Future<void> switchToUserForDevelopment(String profileId);
   Future<void> signOut();
 }
 
@@ -110,6 +111,56 @@ class SupabaseAuthRepository implements AuthRepository {
       'phone': user.phone,
       'display_name': trimmedName,
     }, onConflict: 'id');
+  }
+
+  @override
+  Future<void> switchToUserForDevelopment(String profileId) async {
+    final targetProfileId = profileId.trim();
+    if (targetProfileId.isEmpty) {
+      throw const AuthException('Choose a user to switch to.');
+    }
+    if (targetProfileId == currentUser?.id) return;
+
+    try {
+      final session = currentSession;
+      final response = await _client.functions.invoke(
+        'dev-switch-user',
+        headers: session == null
+            ? null
+            : {'Authorization': 'Bearer ${session.accessToken}'},
+        body: {'profile_id': targetProfileId},
+      );
+      final data = response.data;
+      if (data is! Map) {
+        throw const AuthException(
+          'Dev user switch returned an invalid response.',
+        );
+      }
+
+      final targetAccessToken = data['access_token'];
+      final refreshToken = data['refresh_token'];
+      if (targetAccessToken is! String || refreshToken is! String) {
+        throw const AuthException(
+          'Dev user switch returned an invalid session.',
+        );
+      }
+
+      await _client.auth.setSession(
+        refreshToken,
+        accessToken: targetAccessToken,
+      );
+      if (currentUser?.id != targetProfileId) {
+        throw const AuthException(
+          'The selected dev session could not be opened.',
+        );
+      }
+    } on FunctionException catch (error) {
+      final details = error.details;
+      final message = details is Map && details['error'] is String
+          ? details['error'] as String
+          : 'Dev user switching is not configured.';
+      throw AuthException(message);
+    }
   }
 
   @override

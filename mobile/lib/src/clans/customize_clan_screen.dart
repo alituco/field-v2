@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../core/user_facing_error.dart';
 import 'clan.dart';
 import 'clan_repository.dart';
 import 'clan_widgets.dart';
@@ -79,10 +80,13 @@ class _CustomizeClanScreenState extends State<CustomizeClanScreen> {
       );
       if (!mounted) return;
       Navigator.of(context).pop(updated);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
-        _errorText = 'Could not save changes. Make sure you own this clan.';
+        _errorText = userFacingError(
+          error,
+          fallback: 'We could not save those changes. Try again.',
+        );
       });
     } finally {
       if (mounted) {

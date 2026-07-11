@@ -2,8 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/user_facing_error.dart';
 import 'auth_repository.dart';
 
 enum AuthStep { welcome, phone, otp, name }
@@ -181,10 +181,14 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
       if (!mounted) return;
       _phoneForVerification = phone;
       _go(AuthStep.otp);
-    } on AuthException catch (error) {
-      setState(() => _errorText = error.message);
-    } catch (_) {
-      setState(() => _errorText = 'Could not send the code. Try again.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not send the code. Try again.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isSendingCode = false);
@@ -206,10 +210,14 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
       await widget.authRepository.verifyPhoneOtp(phone: phone, token: token);
       if (!mounted) return;
       _go(AuthStep.name);
-    } on AuthException catch (error) {
-      setState(() => _errorText = error.message);
-    } catch (_) {
-      setState(() => _errorText = 'Could not verify the code. Try again.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not verify the code. Try again.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isVerifying = false);
@@ -231,10 +239,14 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Code sent again.')));
-    } on AuthException catch (error) {
-      setState(() => _errorText = error.message);
-    } catch (_) {
-      setState(() => _errorText = 'Could not resend the code. Try again.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not resend the code. Try again.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isResending = false);
@@ -255,10 +267,14 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
       await widget.authRepository.updateDisplayName(name);
       if (!mounted) return;
       widget.onNameSaved();
-    } on AuthException catch (error) {
-      setState(() => _errorText = error.message);
-    } catch (_) {
-      setState(() => _errorText = 'Could not save your name. Try again.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not save your name. Try again.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isSavingName = false);

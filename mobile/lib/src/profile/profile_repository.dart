@@ -7,7 +7,11 @@ import 'profile.dart';
 abstract class ProfileRepository {
   Future<PlayerProfile> getCurrentProfile();
 
+  Future<PlayerProfile> getProfile(String profileId);
+
   Future<ProfileConnections> getConnections();
+
+  Future<List<DevProfileOption>> listProfilesForDevelopment();
 
   Future<void> followProfile(String profileId);
 
@@ -36,17 +40,37 @@ class SupabaseProfileRepository implements ProfileRepository {
 
     await _ensureProfile(user);
 
-    final profile = await _loadProfile(user.id);
-    final clan = await _loadCurrentClan(user.id);
+    return _getProfile(user.id);
+  }
+
+  @override
+  Future<PlayerProfile> getProfile(String profileId) async {
+    final id = profileId.trim();
+    if (id.isEmpty) {
+      throw ArgumentError.value(profileId, 'profileId', 'Profile is required.');
+    }
+    return _getProfile(id);
+  }
+
+  Future<PlayerProfile> _getProfile(String profileId) async {
+    final results = await Future.wait<dynamic>([
+      _loadProfile(profileId),
+      _loadCurrentClan(profileId),
+      _loadConnectionCounts(profileId),
+      _loadHighlights(profileId),
+      _loadCareer(profileId),
+    ]);
+    final profile = results[0] as _ProfileRow;
+    final clan = results[1] as ProfileClan?;
+    final connectionCounts = results[2] as _ConnectionCounts;
+    final highlights = results[3] as List<ProfileHighlight>;
+    final career = results[4] as List<ProfileCareerEntry>;
     final stats = clan == null
         ? const _ProfileStats(appearances: 0, goals: 0, assists: 0)
-        : await _loadStats(user.id, clan.id);
-    final connectionCounts = await _loadConnectionCounts(user.id);
-    final highlights = await _loadHighlights(user.id);
-    final career = await _loadCareer(user.id);
+        : await _loadStats(profileId, clan.id);
 
     return PlayerProfile(
-      id: user.id,
+      id: profileId,
       displayName: profile.displayName,
       username: profile.username,
       bio: profile.bio,
@@ -138,6 +162,37 @@ class SupabaseProfileRepository implements ProfileRepository {
       fans: fans,
       discover: discover,
     );
+  }
+
+  @override
+  Future<List<DevProfileOption>> listProfilesForDevelopment() async {
+    if (_client.auth.currentUser == null) {
+      throw const AuthException('You need to sign in again.');
+    }
+
+    final response = await _client
+        .from('profiles')
+        .select('id, display_name, username, phone, avatar_url')
+        .order('display_name')
+        .order('username');
+    final rows = [
+      for (final row in response as List<dynamic>)
+        Map<String, dynamic>.from(row as Map),
+    ];
+    final profileIds = [for (final row in rows) row['id'] as String];
+    final clansByProfileId = await _loadClansForProfiles(profileIds);
+
+    return [
+      for (final row in rows)
+        DevProfileOption(
+          id: row['id'] as String,
+          displayName: (row['display_name'] as String? ?? 'Player').trim(),
+          username: (row['username'] as String? ?? '').trim(),
+          phone: (row['phone'] as String?)?.trim(),
+          avatarUrl: (row['avatar_url'] as String?)?.trim(),
+          clan: clansByProfileId[row['id']],
+        ),
+    ];
   }
 
   @override
@@ -247,6 +302,7 @@ class SupabaseProfileRepository implements ProfileRepository {
           )
         ''')
         .eq('profile_id', userId)
+        .isFilter('left_at', null)
         .maybeSingle();
 
     if (response == null) return null;
@@ -277,7 +333,8 @@ class SupabaseProfileRepository implements ProfileRepository {
             skill_rating
           )
         ''')
-        .inFilter('profile_id', ids);
+        .inFilter('profile_id', ids)
+        .isFilter('left_at', null);
     final rows = response as List<dynamic>;
 
     return {

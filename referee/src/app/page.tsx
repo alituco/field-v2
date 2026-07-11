@@ -21,6 +21,7 @@ type Tab = "games" | "assign" | "admin";
 type Me = RefereeFixturesResponse["me"];
 
 const supabase = createSupabaseBrowserClient();
+const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export default function RefereePage() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
@@ -878,6 +879,9 @@ function AdminControlView({
                     {fixture.matchDate} · {fixture.timeSlot} ·{" "}
                     {assignedRefereeName(assignments, fixture.id)}
                   </div>
+                  {fixture.status === "CANCELLED" && fixture.cancellationReason ? (
+                    <div className="event-subtitle">{fixture.cancellationReason}</div>
+                  ) : null}
                 </div>
                 <div className="event-minute">
                   {scoreFor(fixture, fixture.homeClan.id)}-
@@ -891,11 +895,31 @@ function AdminControlView({
 
       {activeFixture ? (
         <>
-          <TimerPanel
-            fixture={activeFixture}
-            submitting={submitting}
-            onRunAction={(body) => onRunAction(activeFixture.id, body)}
-          />
+          {activeFixture.status === "CANCELLED" ? (
+            <section className="panel">
+              <div className="panel-heading">
+                <h2 className="panel-title">Cancellation</h2>
+                <span className="small-text">
+                  {activeFixture.cancellationCode ?? "LEGACY_OTHER"}
+                </span>
+              </div>
+              <p className="small-text">
+                {activeFixture.cancellationReason ??
+                  "No cancellation reason was recorded."}
+              </p>
+              {activeFixture.cancelledAt ? (
+                <div className="event-subtitle">
+                  Recorded {new Date(activeFixture.cancelledAt).toLocaleString()}
+                </div>
+              ) : null}
+            </section>
+          ) : (
+            <TimerPanel
+              fixture={activeFixture}
+              submitting={submitting}
+              onRunAction={(body) => onRunAction(activeFixture.id, body)}
+            />
+          )}
 
           <ActionPanel
             title="Goal"
@@ -1219,10 +1243,51 @@ function TimerPanel({
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
   const now = useNowMs(status === "RUNNING");
-  const elapsedSeconds = elapsedFromClock(fixture.clock, now);
+  const rawElapsedSeconds = elapsedFromClock(fixture.clock, now);
+  const elapsedSeconds = Math.min(rawElapsedSeconds, MAX_MATCH_SECONDS);
   const duration = fixture.clock?.durationSeconds ?? 3600;
   const progress = Math.min(1, elapsedSeconds / duration);
   const isClosed = fixture.status === "FINAL" || status === "ENDED";
+  const [correctedMinutes, setCorrectedMinutes] = useState(
+    String(Math.floor(elapsedSeconds / 60)),
+  );
+  const [correctedSeconds, setCorrectedSeconds] = useState(
+    String(elapsedSeconds % 60).padStart(2, "0"),
+  );
+  const autoStopFixtureId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isClosed) return;
+    setCorrectedMinutes(String(Math.floor(elapsedSeconds / 60)));
+    setCorrectedSeconds(String(elapsedSeconds % 60).padStart(2, "0"));
+  }, [elapsedSeconds, fixture.id, isClosed]);
+
+  useEffect(() => {
+    if (
+      status !== "RUNNING" ||
+      rawElapsedSeconds < MAX_MATCH_SECONDS ||
+      autoStopFixtureId.current === fixture.id
+    ) {
+      return;
+    }
+
+    autoStopFixtureId.current = fixture.id;
+    void onRunAction({ action: "finish" });
+  }, [fixture.id, onRunAction, rawElapsedSeconds, status]);
+
+  const correctedMinuteValue = Number(correctedMinutes);
+  const correctedSecondValue = Number(correctedSeconds);
+  const correctedElapsedSeconds =
+    correctedMinuteValue * 60 + correctedSecondValue;
+  const hasValidCorrection =
+    correctedMinutes.trim().length > 0 &&
+    correctedSeconds.trim().length > 0 &&
+    Number.isInteger(correctedMinuteValue) &&
+    Number.isInteger(correctedSecondValue) &&
+    correctedMinuteValue >= 0 &&
+    correctedSecondValue >= 0 &&
+    correctedSecondValue <= 59 &&
+    correctedElapsedSeconds <= MAX_MATCH_SECONDS;
 
   return (
     <section className="timer-card">
@@ -1288,6 +1353,52 @@ function TimerPanel({
           </button>
         ) : null}
       </div>
+      {isClosed ? (
+        <div className="clock-editor">
+          <div className="clock-editor-title">Correct match time</div>
+          <div className="clock-editor-controls">
+            <label>
+              <span className="clock-editor-label">Minutes</span>
+              <input
+                className="clock-input"
+                inputMode="numeric"
+                min="0"
+                max="180"
+                onChange={(event) => setCorrectedMinutes(event.target.value)}
+                type="number"
+                value={correctedMinutes}
+              />
+            </label>
+            <span className="clock-editor-separator">:</span>
+            <label>
+              <span className="clock-editor-label">Seconds</span>
+              <input
+                className="clock-input"
+                inputMode="numeric"
+                min="0"
+                max="59"
+                onChange={(event) => setCorrectedSeconds(event.target.value)}
+                type="number"
+                value={correctedSeconds}
+              />
+            </label>
+            <button
+              className="primary-button clock-save-button"
+              disabled={submitting !== null || !hasValidCorrection}
+              onClick={() =>
+                void onRunAction({
+                  action: "set_time",
+                  elapsedSeconds: correctedElapsedSeconds,
+                })
+              }
+              type="button"
+            >
+              Save time
+            </button>
+          </div>
+          <div className="clock-editor-hint">Maximum 180:00</div>
+        </div>
+      ) : null}
     </section>
   );
 }

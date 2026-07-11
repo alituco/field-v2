@@ -15,5 +15,7 @@ Future<void> main() async {
     );
   }
 
-  runApp(FieldApp(hasSupabaseConfig: config.hasSupabaseConfig));
+  runApp(
+    FieldApp(hasSupabaseConfig: config.hasSupabaseConfig, isDev: config.isDev),
+  );
 }

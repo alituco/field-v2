@@ -91,6 +91,46 @@ class ProfileConnections {
   final List<ProfileConnection> discover;
 }
 
+class DevProfileOption {
+  const DevProfileOption({
+    required this.id,
+    required this.displayName,
+    required this.username,
+    this.phone,
+    this.avatarUrl,
+    this.clan,
+  });
+
+  final String id;
+  final String displayName;
+  final String username;
+  final String? phone;
+  final String? avatarUrl;
+  final ProfileClan? clan;
+
+  String get initials {
+    final words = displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return '?';
+    return words
+        .take(2)
+        .map((word) => word.substring(0, 1))
+        .join()
+        .toUpperCase();
+  }
+
+  String get searchableText => [
+    displayName,
+    username,
+    phone ?? '',
+    clan?.name ?? '',
+    clan?.tag ?? '',
+  ].join(' ').toLowerCase();
+}
+
 class ProfileConnection {
   const ProfileConnection({
     required this.id,

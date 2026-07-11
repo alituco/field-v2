@@ -17,6 +17,10 @@ const fixtureSelect = `
   day,
   time_slot,
   match_date,
+  cancellation_code,
+  cancellation_reason,
+  cancelled_at,
+  cancelled_by,
   home_clan:clans!fixtures_home_clan_id_fkey(
     id,
     name,
@@ -58,7 +62,7 @@ export async function loadRefereeFixtures(
     .from("fixtures")
     .select(fixtureSelect)
     .in("id", assignedFixtureIds)
-    .in("status", ["SCHEDULED", "LIVE"])
+    .in("status", ["SCHEDULED", "LIVE", "FINAL"])
     .not("away_clan_id", "is", null)
     .gte("match_date", today.toISOString().slice(0, 10))
     .order("match_date")
@@ -140,7 +144,7 @@ async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
         clan_id,
         profile_id,
         role,
-        profiles(
+        profiles!clan_members_profile_id_fkey(
           id,
           display_name,
           username,
@@ -149,6 +153,7 @@ async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
       `,
     )
     .in("clan_id", clanIds)
+    .is("left_at", null)
     .order("role");
 
   if (error) throw error;
@@ -278,6 +283,10 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     day: String(row.day ?? ""),
     timeSlot: String(row.time_slot ?? ""),
     matchDate: String(row.match_date ?? ""),
+    cancellationCode: nullableString(row.cancellation_code),
+    cancellationReason: nullableString(row.cancellation_reason),
+    cancelledAt: nullableString(row.cancelled_at),
+    cancelledBy: nullableString(row.cancelled_by),
     homeClan: normalizeClan(asObject(row.home_clan)),
     awayClan: normalizeClan(asObject(row.away_clan)),
     players: [],

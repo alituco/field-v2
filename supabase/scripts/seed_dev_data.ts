@@ -62,6 +62,7 @@ type FakeFixture = {
   awaySrChange?: number;
   videoUrl?: string;
   scorers?: FakeScorer[];
+  blueCards?: FakeBlueCard[];
 };
 
 type FakeScorer = {
@@ -69,6 +70,13 @@ type FakeScorer = {
   scorerPhone: string;
   minute: number;
   assistPhone?: string;
+};
+
+type FakeBlueCard = {
+  clanTag: string;
+  playerPhone: string;
+  minute: number;
+  second?: number;
 };
 
 type FakeFollow = {
@@ -297,6 +305,15 @@ const fakeUsers: FakeUser[] = [
       },
     ],
   },
+  {
+    phone: "+97338883679",
+    displayName: "Madeline Coffey",
+    username: "madeline_coffey",
+    bio: "Free agent. Ready for the next match.",
+    avatarUrl: "",
+    followingCount: 0,
+    fansCount: 0,
+  },
 ];
 
 const fakeFollows: FakeFollow[] = [
@@ -373,8 +390,8 @@ const fakeFixtures: FakeFixture[] = [
     awayTag: "MMAV",
     venue: "Central Sports Complex",
     day: "THURSDAY",
-    timeSlot: "7:00 PM - 8:00 PM",
-    matchDate: "2026-07-09",
+    timeSlot: "8:30 PM - 9:30 PM",
+    matchDate: "2026-07-16",
   },
   {
     status: "SCHEDULED",
@@ -450,8 +467,33 @@ for (const fakeUser of fakeUsers) {
 await upsertProfiles(admin, usersByPhone);
 await removeSeedOwnedRows(admin, [...usersByPhone.values()]);
 const clanIdsByTag = await seedClans(admin, usersByPhone);
-const fixtureIdsByKey = await seedFixtures(admin, clanIdsByTag);
+await seedExistingClanMembers(
+  admin,
+  usersByPhone,
+  clanIdsByTag,
+  generatedSeed.existingClanMembersByTag,
+);
+await seedJoinRequests(
+  admin,
+  usersByPhone,
+  clanIdsByTag,
+  generatedSeed.joinRequests,
+);
+await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
+const clanOwnerIdsByTag = await loadClanOwnerIds(admin, clanIdsByTag);
+const fixtureIdsByKey = await seedFixtures(
+  admin,
+  clanIdsByTag,
+  clanOwnerIdsByTag,
+);
 await seedFixtureScorers(admin, clanIdsByTag, usersByPhone, fixtureIdsByKey);
+await seedFixtureMatchControl(
+  admin,
+  clanIdsByTag,
+  usersByPhone,
+  fixtureIdsByKey,
+);
+await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
 await seedProfileDetails(admin, usersByPhone);
 await seedFollows(admin, usersByPhone);
 
@@ -487,10 +529,12 @@ type GeneratedSeedData = {
   clans: FakeClan[];
   fixtures: FakeFixture[];
   baseClanMembersByTag: Record<string, string[]>;
+  existingClanMembersByTag: Record<string, string[]>;
+  joinRequests: Array<{ clanTag: string; profilePhone: string }>;
 };
 
 function buildGeneratedSeedData(): GeneratedSeedData {
-  const users = buildGeneratedUsers(72);
+  const users = buildGeneratedUsers(82);
   let cursor = 0;
   const takePhones = (count: number) => {
     const phones = users.slice(cursor, cursor + count).map((user) =>
@@ -584,13 +628,412 @@ function buildGeneratedSeedData(): GeneratedSeedData {
     };
   });
 
+  const tempeMemberPhones = takePhones(10);
+  const joinRequests = users.slice(cursor, cursor + 3).map((user) => ({
+    clanTag: "TTR",
+    profilePhone: user.phone,
+  }));
+  const existingClanMembersByTag = { TTR: tempeMemberPhones };
+  const memberPhonesByTag: Record<string, string[]> = {
+    NRYL: [
+      "+97338883671",
+      "+97338883672",
+      "+97338883673",
+      ...baseClanMembersByTag.NRYL,
+    ],
+    MMAV: [
+      "+97338883674",
+      "+97338883675",
+      "+97338883676",
+      ...baseClanMembersByTag.MMAV,
+    ],
+    CDRF: [
+      "+97338883677",
+      "+97338883678",
+      ...baseClanMembersByTag.CDRF,
+    ],
+    TTR: tempeMemberPhones,
+    ...Object.fromEntries(
+      clans.map((clan) => [clan.tag, clan.memberPhones]),
+    ),
+  };
+  const tempeFixtures = buildTempeHistory(memberPhonesByTag);
+  const fixtures = [
+    ...tempeFixtures,
+    ...buildSeasonLeagueHistory(
+      memberPhonesByTag,
+      [...fakeFixtures, ...tempeFixtures],
+    ),
+  ];
+  const tempeHistory = fixtures.filter((fixture) =>
+    fixture.homeTag === "TTR" || fixture.awayTag === "TTR"
+  );
+
+  for (const phone of tempeMemberPhones) {
+    const user = users.find((candidate) => candidate.phone === phone);
+    if (!user) continue;
+    user.bio = "Tempe Tempuras player. Quick football, louder sidelines.";
+    user.career = [
+      {
+        clanName: "Tempe Tempuras",
+        tag: "TTR",
+        emblem: "\u{1F42C}",
+        period: "2026 - Present",
+        apps: tempeHistory.length,
+        goals: fixtures.reduce(
+          (total, fixture) =>
+            total +
+            (fixture.scorers ?? []).filter(
+              (scorer) =>
+                scorer.clanTag === "TTR" && scorer.scorerPhone === phone,
+            ).length,
+          0,
+        ),
+        isCurrent: true,
+      },
+    ];
+  }
+
   return {
     users,
     follows: buildGeneratedFollows(users),
     clans,
-    fixtures: [],
+    fixtures,
     baseClanMembersByTag,
+    existingClanMembersByTag,
+    joinRequests,
   };
+}
+
+function buildTempeHistory(
+  memberPhonesByTag: Record<string, string[]>,
+): FakeFixture[] {
+  const matchDates = [
+    "2026-04-28",
+    "2026-04-30",
+    "2026-05-05",
+    "2026-05-07",
+    "2026-05-12",
+    "2026-05-14",
+    "2026-05-19",
+    "2026-05-21",
+    "2026-05-26",
+    "2026-05-28",
+    "2026-06-02",
+    "2026-06-04",
+    "2026-06-09",
+    "2026-06-11",
+    "2026-06-16",
+    "2026-06-18",
+    "2026-06-23",
+    "2026-06-25",
+    "2026-06-30",
+    "2026-07-02",
+    "2026-07-07",
+  ];
+  const opponents = [
+    "RIFR",
+    "MMAV",
+    "PEAR",
+    "TIDE",
+    "CDRF",
+    "DILM",
+    "SAAR",
+    "NRYL",
+    "HIDD",
+  ];
+  const scorelines = [
+    [3, 1],
+    [2, 2],
+    [1, 2],
+    [4, 2],
+    [0, 1],
+    [3, 0],
+    [1, 1],
+    [2, 3],
+    [5, 2],
+    [2, 0],
+    [1, 3],
+    [3, 2],
+    [0, 0],
+    [2, 1],
+    [1, 4],
+    [4, 3],
+    [2, 2],
+    [3, 1],
+    [0, 2],
+    [2, 1],
+    [3, 3],
+  ];
+  const venues = [
+    "Central Sports Complex",
+    "Riverside Park",
+    "Eastside Arena",
+    "Sunset Pitch",
+  ];
+
+  return matchDates.map((matchDate, index) => {
+    const opponentTag = opponents[index % opponents.length];
+    const [tempeGoals, opponentGoals] = scorelines[index];
+    const tempeIsHome = index % 2 === 0;
+    const homeTag = tempeIsHome ? "TTR" : opponentTag;
+    const awayTag = tempeIsHome ? opponentTag : "TTR";
+    const homeScore = tempeIsHome ? tempeGoals : opponentGoals;
+    const awayScore = tempeIsHome ? opponentGoals : tempeGoals;
+    const winnerTag = homeScore === awayScore
+      ? undefined
+      : homeScore > awayScore
+      ? homeTag
+      : awayTag;
+    const date = new Date(`${matchDate}T00:00:00Z`);
+    const scorers = [
+      ...buildSeedScorers(
+        "TTR",
+        tempeGoals,
+        memberPhonesByTag.TTR,
+        index,
+      ),
+      ...buildSeedScorers(
+        opponentTag,
+        opponentGoals,
+        memberPhonesByTag[opponentTag],
+        index + 5,
+      ),
+    ].sort((first, second) => first.minute - second.minute);
+    const blueCards: FakeBlueCard[] = [
+      {
+        clanTag: index % 3 === 0 ? "TTR" : opponentTag,
+        playerPhone: memberPhonesByTag[index % 3 === 0 ? "TTR" : opponentTag][
+          index %
+          memberPhonesByTag[index % 3 === 0 ? "TTR" : opponentTag].length
+        ],
+        minute: 17 + (index % 12),
+        second: (index * 7) % 60,
+      },
+    ];
+
+    if (index % 5 === 0) {
+      blueCards.push({
+        clanTag: opponentTag,
+        playerPhone: memberPhonesByTag[opponentTag][
+          (index + 2) % memberPhonesByTag[opponentTag].length
+        ],
+        minute: 42 + (index % 8),
+        second: (index * 11) % 60,
+      });
+    }
+
+    return {
+      status: "FINAL",
+      homeTag,
+      awayTag,
+      venue: venues[index % venues.length],
+      day: date.getUTCDay() === 2 ? "TUESDAY" : "THURSDAY",
+      timeSlot: index % 2 === 0 ? "7:00 PM - 8:00 PM" : "8:30 PM - 9:30 PM",
+      matchDate,
+      homeScore,
+      awayScore,
+      winnerTag,
+      scorers,
+      blueCards,
+    };
+  });
+}
+
+function buildSeasonLeagueHistory(
+  memberPhonesByTag: Record<string, string[]>,
+  existingFixtures: FakeFixture[],
+): FakeFixture[] {
+  const seasonStartsOn = "2026-06-01";
+  const historyEndsOn = "2026-07-09";
+  const timeSlots: FakeFixture["timeSlot"][] = [
+    "7:00 PM - 8:00 PM",
+    "8:30 PM - 9:30 PM",
+  ];
+  const occupiedSlots = new Set(
+    existingFixtures.map((fixture) =>
+      `${fixture.matchDate}|${fixture.timeSlot}`
+    ),
+  );
+  const availableSlots: Array<{
+    matchDate: string;
+    day: FakeFixture["day"];
+    timeSlot: FakeFixture["timeSlot"];
+  }> = [];
+  const date = new Date(`${seasonStartsOn}T00:00:00Z`);
+  const lastDate = new Date(`${historyEndsOn}T00:00:00Z`);
+
+  while (date <= lastDate) {
+    const day = date.getUTCDay();
+    if (day === 2 || day === 4) {
+      const matchDate = date.toISOString().slice(0, 10);
+      for (const timeSlot of timeSlots) {
+        if (!occupiedSlots.has(`${matchDate}|${timeSlot}`)) {
+          availableSlots.push({
+            matchDate,
+            day: day === 2 ? "TUESDAY" : "THURSDAY",
+            timeSlot,
+          });
+        }
+      }
+    }
+    date.setUTCDate(date.getUTCDate() + 1);
+  }
+
+  const clanTags = Object.keys(memberPhonesByTag);
+  const tagOrder = new Map(clanTags.map((tag, index) => [tag, index]));
+  const gamesByTag = new Map(clanTags.map((tag) => [tag, 0]));
+  const pairCounts = new Map<string, number>();
+
+  for (const fixture of existingFixtures) {
+    if (
+      fixture.status !== "FINAL" ||
+      fixture.matchDate < seasonStartsOn ||
+      fixture.matchDate > historyEndsOn ||
+      !fixture.awayTag
+    ) {
+      continue;
+    }
+    gamesByTag.set(
+      fixture.homeTag,
+      (gamesByTag.get(fixture.homeTag) ?? 0) + 1,
+    );
+    gamesByTag.set(
+      fixture.awayTag,
+      (gamesByTag.get(fixture.awayTag) ?? 0) + 1,
+    );
+    const pairKey = [fixture.homeTag, fixture.awayTag].sort().join("|");
+    pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+  }
+
+  const scorelines = [
+    [2, 1],
+    [1, 1],
+    [3, 0],
+    [1, 2],
+    [4, 2],
+    [0, 0],
+    [2, 3],
+    [3, 2],
+  ];
+  const venues = [
+    "Central Sports Complex",
+    "Riverside Park",
+    "Eastside Arena",
+    "Sunset Pitch",
+  ];
+  const fixtures: FakeFixture[] = [];
+
+  for (const [slotIndex, slot] of availableSlots.entries()) {
+    if (
+      clanTags.every((tag) => (gamesByTag.get(tag) ?? 0) >= 4)
+    ) {
+      break;
+    }
+
+    const rotation = slotIndex % clanTags.length;
+    const rotatedOrder = (tag: string) =>
+      ((tagOrder.get(tag) ?? 0) - rotation + clanTags.length) %
+      clanTags.length;
+    const ordered = [...clanTags].sort((first, second) =>
+      (gamesByTag.get(first) ?? 0) - (gamesByTag.get(second) ?? 0) ||
+      rotatedOrder(first) - rotatedOrder(second)
+    );
+    const firstTag = ordered[0];
+    const secondTag = ordered.slice(1).sort((first, second) => {
+      const gamesCompare = (gamesByTag.get(first) ?? 0) -
+        (gamesByTag.get(second) ?? 0);
+      if (gamesCompare !== 0) return gamesCompare;
+      const firstPair = [firstTag, first].sort().join("|");
+      const secondPair = [firstTag, second].sort().join("|");
+      const pairCompare = (pairCounts.get(firstPair) ?? 0) -
+        (pairCounts.get(secondPair) ?? 0);
+      if (pairCompare !== 0) return pairCompare;
+      return rotatedOrder(first) - rotatedOrder(second);
+    })[0];
+    const homeTag = slotIndex % 2 === 0 ? firstTag : secondTag;
+    const awayTag = slotIndex % 2 === 0 ? secondTag : firstTag;
+    const [homeScore, awayScore] = scorelines[slotIndex % scorelines.length];
+    const winnerTag = homeScore === awayScore
+      ? undefined
+      : homeScore > awayScore
+      ? homeTag
+      : awayTag;
+    const gameIndex = 100 + slotIndex;
+    const scorers = [
+      ...buildSeedScorers(
+        homeTag,
+        homeScore,
+        memberPhonesByTag[homeTag],
+        gameIndex,
+      ),
+      ...buildSeedScorers(
+        awayTag,
+        awayScore,
+        memberPhonesByTag[awayTag],
+        gameIndex + 7,
+      ),
+    ].sort((first, second) => first.minute - second.minute);
+    const cardTag = slotIndex % 2 === 0 ? homeTag : awayTag;
+    const cardRoster = memberPhonesByTag[cardTag];
+
+    fixtures.push({
+      status: "FINAL",
+      homeTag,
+      awayTag,
+      venue: venues[slotIndex % venues.length],
+      day: slot.day,
+      timeSlot: slot.timeSlot,
+      matchDate: slot.matchDate,
+      homeScore,
+      awayScore,
+      winnerTag,
+      scorers,
+      blueCards: slotIndex % 3 === 1 ? [] : [{
+        clanTag: cardTag,
+        playerPhone: cardRoster[gameIndex % cardRoster.length],
+        minute: 14 + (slotIndex % 28),
+        second: (slotIndex * 17) % 60,
+      }],
+    });
+
+    gamesByTag.set(homeTag, (gamesByTag.get(homeTag) ?? 0) + 1);
+    gamesByTag.set(awayTag, (gamesByTag.get(awayTag) ?? 0) + 1);
+    const pairKey = [homeTag, awayTag].sort().join("|");
+    pairCounts.set(pairKey, (pairCounts.get(pairKey) ?? 0) + 1);
+  }
+
+  const unqualifiedTags = clanTags.filter((tag) =>
+    (gamesByTag.get(tag) ?? 0) < 4
+  );
+  if (unqualifiedTags.length > 0) {
+    throw new Error(
+      `Not enough S0 history slots for: ${unqualifiedTags.join(", ")}`,
+    );
+  }
+
+  return fixtures;
+}
+
+function buildSeedScorers(
+  clanTag: string,
+  goalCount: number,
+  roster: string[],
+  gameIndex: number,
+): FakeScorer[] {
+  return Array.from({ length: goalCount }, (_, goalIndex) => {
+    const scorerIndex = (gameIndex + (goalIndex * 2)) % roster.length;
+    const assistIndex = (scorerIndex + 1 + (goalIndex % 2)) % roster.length;
+    const minute = 4 + ((gameIndex * 5 + goalIndex * 11) % 54);
+    return {
+      clanTag,
+      scorerPhone: roster[scorerIndex],
+      minute,
+      assistPhone: (gameIndex + goalIndex) % 4 === 0
+        ? undefined
+        : roster[assistIndex],
+    };
+  });
 }
 
 function buildGeneratedUsers(count: number): FakeUser[] {
@@ -708,7 +1151,6 @@ async function ensureUser({
   const { error: updateError } = await admin.auth.admin.updateUserById(
     existingUser.id,
     {
-      password,
       phone_confirm: true,
       user_metadata: {
         ...existingUser.user_metadata,
@@ -735,7 +1177,7 @@ async function upsertProfiles(
     display_name: fakeUser.displayName,
     username: fakeUser.username,
     bio: fakeUser.bio,
-    avatar_url: fakeUser.avatarUrl,
+    avatar_url: fakeUser.avatarUrl || null,
     following_count: countFollowing(fakeUser.phone),
     fans_count: countFans(fakeUser.phone),
   }));
@@ -768,6 +1210,10 @@ async function removeSeedOwnedRows(admin: AdminClient, userIds: string[]) {
   await assertNoError(
     admin.from("profile_career_entries").delete().in("profile_id", userIds),
     "delete seed career entries",
+  );
+  await assertNoError(
+    admin.from("clan_join_requests").delete().in("profile_id", userIds),
+    "delete seed join requests",
   );
   await assertNoError(
     admin.from("fixtures").delete().in("created_by", userIds),
@@ -883,6 +1329,9 @@ async function seedClans(
       clan_id: clanId,
       profile_id: requireUserId(userIdsByPhone, phone),
       role: phone === fakeClan.ownerPhone ? "owner" : "member",
+      left_at: null,
+      removed_by: null,
+      removal_reason: null,
     }));
 
     await assertNoError(
@@ -896,13 +1345,191 @@ async function seedClans(
   return clanIdsByTag;
 }
 
-async function seedFixtures(
+async function seedExistingClanMembers(
+  admin: AdminClient,
+  userIdsByPhone: Map<string, string>,
+  clanIdsByTag: Map<string, string>,
+  memberPhonesByTag: Record<string, string[]>,
+) {
+  for (const [tag, memberPhones] of Object.entries(memberPhonesByTag)) {
+    const { data: clan, error } = await admin
+      .from("clans")
+      .select("id")
+      .eq("tag", tag)
+      .single();
+
+    if (error) {
+      throw new Error(`load existing clan ${tag}: ${error.message}`);
+    }
+
+    const clanId = (clan as { id?: string }).id;
+    if (!clanId) throw new Error(`Could not read existing clan id for ${tag}.`);
+    clanIdsByTag.set(tag, clanId);
+
+    const rows = memberPhones.map((phone) => ({
+      clan_id: clanId,
+      profile_id: requireUserId(userIdsByPhone, phone),
+      role: "member",
+      left_at: null,
+      removed_by: null,
+      removal_reason: null,
+    }));
+    await assertNoError(
+      admin.from("clan_members").upsert(rows, {
+        onConflict: "clan_id,profile_id",
+      }),
+      `upsert members for existing clan ${tag}`,
+    );
+  }
+}
+
+async function seedJoinRequests(
+  admin: AdminClient,
+  userIdsByPhone: Map<string, string>,
+  clanIdsByTag: Map<string, string>,
+  requests: Array<{ clanTag: string; profilePhone: string }>,
+) {
+  if (requests.length === 0) return;
+
+  const rows = requests.map((request, index) => ({
+    clan_id: requireClanId(clanIdsByTag, request.clanTag),
+    profile_id: requireUserId(userIdsByPhone, request.profilePhone),
+    status: "PENDING",
+    requested_at: new Date(Date.now() - (index + 1) * 3_600_000).toISOString(),
+    reviewed_at: null,
+    reviewed_by: null,
+    cancellation_code: null,
+    cancellation_reason: null,
+    cancelled_at: null,
+    cancelled_by: null,
+    cancellation_context: {},
+  }));
+
+  await assertNoError(
+    admin.from("clan_join_requests").upsert(rows, {
+      onConflict: "clan_id,profile_id",
+    }),
+    "upsert dev clan join requests",
+  );
+}
+
+async function loadClanOwnerIds(
   admin: AdminClient,
   clanIdsByTag: Map<string, string>,
 ) {
-  const fixtureIdsByKey = new Map<string, string>();
+  const { data, error } = await admin
+    .from("clan_members")
+    .select("clan_id,profile_id")
+    .eq("role", "owner")
+    .is("left_at", null)
+    .in("clan_id", [...clanIdsByTag.values()]);
 
-  for (const fixture of fakeFixtures) {
+  if (error) throw new Error(`load clan owners: ${error.message}`);
+
+  const tagsByClanId = new Map(
+    [...clanIdsByTag.entries()].map(([tag, clanId]) => [clanId, tag]),
+  );
+  const ownerIdsByTag = new Map<string, string>();
+  for (const row of data ?? []) {
+    const clanId = (row as { clan_id?: string }).clan_id;
+    const tag = clanId ? tagsByClanId.get(clanId) : undefined;
+    const ownerId = (row as { profile_id?: string }).profile_id;
+    if (tag && ownerId) ownerIdsByTag.set(tag, ownerId);
+  }
+  return ownerIdsByTag;
+}
+
+async function seedFixtures(
+  admin: AdminClient,
+  clanIdsByTag: Map<string, string>,
+  clanOwnerIdsByTag: Map<string, string>,
+) {
+  const fixtureIdsByKey = new Map<string, string>();
+  const { data: clanRows, error: clanError } = await admin
+    .from("clans")
+    .select("tag,skill_rating")
+    .in("id", [...clanIdsByTag.values()]);
+  if (clanError) throw new Error(`load clan ratings: ${clanError.message}`);
+  const ratingsByTag = new Map<string, number>();
+  for (const row of clanRows ?? []) {
+    ratingsByTag.set(
+      String((row as { tag?: string }).tag),
+      Number((row as { skill_rating?: number }).skill_rating ?? 1500),
+    );
+  }
+  const { data: activeRows, error: activeError } = await admin
+    .from("fixtures")
+    .select("match_date,time_slot")
+    .in("status", ["OPEN", "SCHEDULED", "LIVE"]);
+  if (activeError) {
+    throw new Error(`load active fixture slots: ${activeError.message}`);
+  }
+  const activeSlots = new Set(
+    (activeRows ?? []).map((row) =>
+      `${String(row.match_date)}|${String(row.time_slot)}`
+    ),
+  );
+  const fixturesToSeed = [...fakeFixtures].sort((first, second) =>
+    `${first.matchDate}:${first.timeSlot}`.localeCompare(
+      `${second.matchDate}:${second.timeSlot}`,
+    )
+  );
+
+  for (const fixture of fixturesToSeed) {
+    const activeSlotKey = `${fixture.matchDate}|${fixture.timeSlot}`;
+    if (
+      fixture.status !== "FINAL" &&
+      activeSlots.has(activeSlotKey)
+    ) {
+      console.warn(
+        `Skipping ${fixture.status} ${fixture.homeTag} on ${activeSlotKey}; ` +
+          "the slot is already booked.",
+      );
+      continue;
+    }
+
+    let homeSrChange = fixture.homeSrChange ?? null;
+    let awaySrChange = fixture.awaySrChange ?? null;
+    if (
+      fixture.status === "FINAL" &&
+      fixture.awayTag &&
+      fixture.homeScore != null &&
+      fixture.awayScore != null
+    ) {
+      const delta = await calculateSrDelta(
+        admin,
+        requireRating(ratingsByTag, fixture.homeTag),
+        requireRating(ratingsByTag, fixture.awayTag),
+        fixture.homeScore,
+        fixture.awayScore,
+      );
+      homeSrChange = delta.homeChange;
+      awaySrChange = delta.awayChange;
+      ratingsByTag.set(
+        fixture.homeTag,
+        Math.max(
+          0,
+          requireRating(ratingsByTag, fixture.homeTag) + homeSrChange,
+        ),
+      );
+      ratingsByTag.set(
+        fixture.awayTag,
+        Math.max(
+          0,
+          requireRating(ratingsByTag, fixture.awayTag) + awaySrChange,
+        ),
+      );
+    }
+    const winnerTag = fixture.winnerTag ?? winnerTagFor(fixture);
+    const homePayerId = requireMapValue(
+      clanOwnerIdsByTag,
+      fixture.homeTag,
+      "clan owner",
+    );
+    const awayPayerId = fixture.awayTag
+      ? requireMapValue(clanOwnerIdsByTag, fixture.awayTag, "clan owner")
+      : null;
+    const paidAt = fixtureTimestamp(fixture, -7 * 24 * 60, 0);
     const { data, error } = await admin
       .from("fixtures")
       .insert({
@@ -917,13 +1544,18 @@ async function seedFixtures(
         match_date: fixture.matchDate,
         home_score: fixture.homeScore ?? null,
         away_score: fixture.awayScore ?? null,
-        winner_clan_id: fixture.winnerTag
-          ? requireClanId(clanIdsByTag, fixture.winnerTag)
+        winner_clan_id: winnerTag
+          ? requireClanId(clanIdsByTag, winnerTag)
           : null,
-        home_sr_change: fixture.homeSrChange ?? null,
-        away_sr_change: fixture.awaySrChange ?? null,
+        home_sr_change: homeSrChange,
+        away_sr_change: awaySrChange,
         video_url: fixture.videoUrl ?? null,
-        created_by: requireClanOwnerId(fixture.homeTag),
+        created_by: homePayerId,
+        home_paid_by: homePayerId,
+        away_paid_by: awayPayerId,
+        home_paid_at: paidAt,
+        away_paid_at: awayPayerId == null ? null : paidAt,
+        created_at: paidAt,
       })
       .select("id")
       .single();
@@ -937,6 +1569,7 @@ async function seedFixtures(
       throw new Error(`Could not read fixture id for ${fixtureKey(fixture)}.`);
     }
     fixtureIdsByKey.set(fixtureKey(fixture), fixtureId);
+    if (fixture.status !== "FINAL") activeSlots.add(activeSlotKey);
   }
 
   return fixtureIdsByKey;
@@ -956,7 +1589,7 @@ async function seedFixtureScorers(
       throw new Error(`Missing seeded fixture id for ${fixtureKey(fixture)}.`);
     }
 
-    return scorers.map((scorer) => ({
+    return scorers.map((scorer, index) => ({
       fixture_id: fixtureId,
       clan_id: requireClanId(clanIdsByTag, scorer.clanTag),
       profile_id: requireUserId(userIdsByPhone, scorer.scorerPhone),
@@ -964,6 +1597,7 @@ async function seedFixtureScorers(
         ? requireUserId(userIdsByPhone, scorer.assistPhone)
         : null,
       minute: scorer.minute,
+      created_at: fixtureTimestamp(fixture, scorer.minute, index * 7),
     }));
   });
 
@@ -973,6 +1607,149 @@ async function seedFixtureScorers(
     admin.from("fixture_scorers").insert(rows),
     "insert fixture scorers",
   );
+}
+
+async function seedFixtureMatchControl(
+  admin: AdminClient,
+  clanIdsByTag: Map<string, string>,
+  userIdsByPhone: Map<string, string>,
+  fixtureIdsByKey: Map<string, string>,
+) {
+  const finalFixtures = fakeFixtures.filter((fixture) =>
+    fixture.status === "FINAL"
+  );
+  if (finalFixtures.length === 0) return;
+
+  const clockRows = finalFixtures.map((fixture) => ({
+    fixture_id: requireFixtureId(fixtureIdsByKey, fixture),
+    status: "ENDED",
+    started_at: null,
+    accumulated_seconds: 3600,
+    duration_seconds: 3600,
+  }));
+  await assertNoError(
+    admin.from("fixture_clock_states").upsert(clockRows, {
+      onConflict: "fixture_id",
+    }),
+    "upsert final fixture clocks",
+  );
+
+  const eventRows: Record<string, unknown>[] = [];
+  for (const fixture of finalFixtures) {
+    const fixtureId = requireFixtureId(fixtureIdsByKey, fixture);
+    eventRows.push(
+      fixtureEventRow(fixtureId, fixture, "MATCH_STARTED", 0, 0),
+      fixtureEventRow(fixtureId, fixture, "MATCH_PAUSED", 30, 0),
+      fixtureEventRow(fixtureId, fixture, "MATCH_RESUMED", 30, 45),
+      fixtureEventRow(fixtureId, fixture, "MATCH_ENDED", 60, 0),
+    );
+
+    for (const [index, scorer] of (fixture.scorers ?? []).entries()) {
+      eventRows.push(
+        fixtureEventRow(
+          fixtureId,
+          fixture,
+          "GOAL",
+          scorer.minute,
+          (index * 13) % 60,
+          {
+            clan_id: requireClanId(clanIdsByTag, scorer.clanTag),
+            profile_id: requireUserId(userIdsByPhone, scorer.scorerPhone),
+            assist_profile_id: scorer.assistPhone
+              ? requireUserId(userIdsByPhone, scorer.assistPhone)
+              : null,
+          },
+        ),
+      );
+    }
+
+    for (const card of fixture.blueCards ?? []) {
+      const second = card.second ?? 0;
+      const startedAt = fixtureTimestamp(fixture, card.minute, second);
+      const expiresAt = new Date(
+        new Date(startedAt).getTime() + (120 * 1000),
+      ).toISOString();
+      const { data: cardRow, error: cardError } = await admin
+        .from("fixture_blue_cards")
+        .insert({
+          fixture_id: fixtureId,
+          clan_id: requireClanId(clanIdsByTag, card.clanTag),
+          profile_id: requireUserId(userIdsByPhone, card.playerPhone),
+          started_at: startedAt,
+          expires_at: expiresAt,
+          duration_seconds: 120,
+          status: "CLEARED",
+          minute: card.minute,
+          second,
+          created_at: startedAt,
+        })
+        .select("id")
+        .single();
+      if (cardError) {
+        throw new Error(`insert fixture blue card: ${cardError.message}`);
+      }
+      const blueCardId = (cardRow as { id?: string }).id;
+      if (!blueCardId) throw new Error("Could not read seeded blue card id.");
+
+      eventRows.push(
+        fixtureEventRow(
+          fixtureId,
+          fixture,
+          "BLUE_CARD",
+          card.minute,
+          second,
+          {
+            clan_id: requireClanId(clanIdsByTag, card.clanTag),
+            profile_id: requireUserId(userIdsByPhone, card.playerPhone),
+            blue_card_id: blueCardId,
+          },
+        ),
+        fixtureEventRow(
+          fixtureId,
+          fixture,
+          "BLUE_CARD_EXPIRED",
+          card.minute + 2,
+          second,
+          {
+            clan_id: requireClanId(clanIdsByTag, card.clanTag),
+            profile_id: requireUserId(userIdsByPhone, card.playerPhone),
+            blue_card_id: blueCardId,
+          },
+        ),
+      );
+    }
+  }
+
+  eventRows.sort((first, second) =>
+    String(first.created_at).localeCompare(String(second.created_at))
+  );
+  await assertNoError(
+    admin.from("fixture_events").insert(eventRows),
+    "insert fixture timeline events",
+  );
+}
+
+function fixtureEventRow(
+  fixtureId: string,
+  fixture: FakeFixture,
+  eventType: string,
+  minute: number,
+  second: number,
+  values: Record<string, unknown> = {},
+) {
+  return {
+    fixture_id: fixtureId,
+    event_type: eventType,
+    clan_id: null,
+    profile_id: null,
+    assist_profile_id: null,
+    blue_card_id: null,
+    minute,
+    second,
+    note: "",
+    created_at: fixtureTimestamp(fixture, minute, second),
+    ...values,
+  };
 }
 
 async function seedProfileDetails(
@@ -1015,6 +1792,16 @@ async function seedProfileDetails(
   });
 
   if (careerRows.length > 0) {
+    const profilesWithSeededCareers = fakeUsers
+      .filter((fakeUser) => (fakeUser.career?.length ?? 0) > 0)
+      .map((fakeUser) => requireUserId(userIdsByPhone, fakeUser.phone));
+    await assertNoError(
+      admin
+        .from("profile_career_entries")
+        .delete()
+        .in("profile_id", profilesWithSeededCareers),
+      "replace generated career entries",
+    );
     await assertNoError(
       admin.from("profile_career_entries").insert(careerRows),
       "insert profile career entries",
@@ -1041,12 +1828,89 @@ async function seedFollows(
   );
 }
 
-function requireClanOwnerId(tag: string) {
-  const clan = fakeClans.find((candidate) => candidate.tag === tag);
-  if (!clan) {
-    throw new Error(`Missing seeded clan owner for ${tag}.`);
+async function calculateSrDelta(
+  admin: AdminClient,
+  homeRating: number,
+  awayRating: number,
+  homeScore: number,
+  awayScore: number,
+) {
+  const { data, error } = await admin.rpc("calculate_fixture_sr_delta", {
+    home_rating: homeRating,
+    away_rating: awayRating,
+    home_score: homeScore,
+    away_score: awayScore,
+  });
+  if (error) throw new Error(`calculate fixture SR: ${error.message}`);
+  const row = Array.isArray(data) ? data[0] : data;
+  const homeChange = Number((row as { home_change?: number }).home_change);
+  const awayChange = Number((row as { away_change?: number }).away_change);
+  if (!Number.isFinite(homeChange) || !Number.isFinite(awayChange)) {
+    throw new Error("Could not read calculated fixture SR.");
   }
-  return requireUserId(usersByPhone, clan.ownerPhone);
+  return { homeChange, awayChange };
+}
+
+async function refreshClanRecord(admin: AdminClient, clanId: string) {
+  const { data, error } = await admin
+    .from("fixtures")
+    .select(
+      "home_clan_id,away_clan_id,home_score,away_score,home_sr_change,away_sr_change",
+    )
+    .eq("status", "FINAL")
+    .or(`home_clan_id.eq.${clanId},away_clan_id.eq.${clanId}`);
+  if (error) throw new Error(`load clan record: ${error.message}`);
+
+  let wins = 0;
+  let losses = 0;
+  let skillRating = 1500;
+  for (const row of data ?? []) {
+    const isHome = row.home_clan_id === clanId;
+    const myScore = Number(isHome ? row.home_score : row.away_score);
+    const opponentScore = Number(isHome ? row.away_score : row.home_score);
+    const srChange = Number(
+      isHome ? row.home_sr_change ?? 0 : row.away_sr_change ?? 0,
+    );
+    if (myScore > opponentScore) wins += 1;
+    if (myScore < opponentScore) losses += 1;
+    skillRating = Math.max(0, skillRating + srChange);
+  }
+
+  await assertNoError(
+    admin.from("clans").update({
+      wins,
+      losses,
+      skill_rating: skillRating,
+    }).eq("id", clanId),
+    "refresh clan record",
+  );
+}
+
+function winnerTagFor(fixture: FakeFixture) {
+  if (
+    !fixture.awayTag ||
+    fixture.homeScore == null ||
+    fixture.awayScore == null ||
+    fixture.homeScore === fixture.awayScore
+  ) {
+    return undefined;
+  }
+  return fixture.homeScore > fixture.awayScore
+    ? fixture.homeTag
+    : fixture.awayTag;
+}
+
+function fixtureTimestamp(
+  fixture: FakeFixture,
+  minute: number,
+  second: number,
+) {
+  const startTime = fixture.timeSlot.startsWith("7:00")
+    ? "16:00:00Z"
+    : "17:30:00Z";
+  const timestamp = new Date(`${fixture.matchDate}T${startTime}`);
+  timestamp.setUTCSeconds(timestamp.getUTCSeconds() + minute * 60 + second);
+  return timestamp.toISOString();
 }
 
 async function assertNoError(
@@ -1094,6 +1958,33 @@ function requireClanId(clanIdsByTag: Map<string, string>, tag: string) {
     throw new Error(`Missing seeded clan id for ${tag}.`);
   }
   return clanId;
+}
+
+function requireFixtureId(
+  fixtureIdsByKey: Map<string, string>,
+  fixture: FakeFixture,
+) {
+  const fixtureId = fixtureIdsByKey.get(fixtureKey(fixture));
+  if (!fixtureId) {
+    throw new Error(`Missing seeded fixture id for ${fixtureKey(fixture)}.`);
+  }
+  return fixtureId;
+}
+
+function requireRating(ratingsByTag: Map<string, number>, tag: string) {
+  const rating = ratingsByTag.get(tag);
+  if (rating == null) throw new Error(`Missing seeded rating for ${tag}.`);
+  return rating;
+}
+
+function requireMapValue(
+  values: Map<string, string>,
+  key: string,
+  label: string,
+) {
+  const value = values.get(key);
+  if (!value) throw new Error(`Missing seeded ${label} for ${key}.`);
+  return value;
 }
 
 function fixtureKey(fixture: FakeFixture) {

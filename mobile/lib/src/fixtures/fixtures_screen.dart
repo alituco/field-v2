@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
 import 'create_fixture_screen.dart';
 import 'fixture.dart';
 import 'fixture_detail_screen.dart';
@@ -51,8 +52,10 @@ class _FixturesScreenState extends State<FixturesScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _errorText =
-            'Could not load fixtures. Make sure the fixtures migration is applied.';
+        _errorText = userFacingError(
+          error,
+          fallback: 'We could not load matches. Pull down to try again.',
+        );
       });
     } finally {
       if (mounted) {
@@ -145,7 +148,10 @@ class _FixturesScreenState extends State<FixturesScreen> {
               selectedDate: selectedDate,
               fixtures: _fixtures,
               onSelected: (date) {
-                setState(() => _selectedMatchDate = date);
+                setState(() {
+                  _selectedMatchDate = date;
+                  _selectedStatus = null;
+                });
               },
             ),
             const SizedBox(height: 24),
@@ -254,7 +260,7 @@ class _MatchDayCalendarState extends State<_MatchDayCalendar> {
       );
       if (index < 0) return;
 
-      final target = (index * 92.0).clamp(
+      final target = ((index - 1).clamp(0, widget.dates.length) * 92.0).clamp(
         0.0,
         _controller.position.maxScrollExtent,
       );
@@ -623,6 +629,7 @@ DateTime? _defaultMatchDate(List<Fixture> fixtures) {
 
 List<DateTime> _matchCalendarDates(List<Fixture> fixtures) {
   final datesByKey = <String, DateTime>{};
+  final today = _dateOnly(DateTime.now());
 
   for (final fixture in fixtures) {
     final date = _dateOnly(fixture.matchDate);
@@ -631,7 +638,17 @@ List<DateTime> _matchCalendarDates(List<Fixture> fixtures) {
     }
   }
 
-  var cursor = _dateOnly(DateTime.now());
+  var cursor = today.subtract(const Duration(days: 1));
+  var addedPast = 0;
+  while (addedPast < 24) {
+    if (_isEnabledMatchDay(cursor)) {
+      datesByKey[_dateKey(cursor)] = cursor;
+      addedPast += 1;
+    }
+    cursor = cursor.subtract(const Duration(days: 1));
+  }
+
+  cursor = today;
   var addedUpcoming = 0;
   while (addedUpcoming < 12) {
     if (_isEnabledMatchDay(cursor)) {

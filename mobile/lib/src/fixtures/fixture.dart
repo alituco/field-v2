@@ -20,6 +20,8 @@ class FixtureClan {
     required this.themeId,
     required this.patternId,
     required this.skillRating,
+    this.region = 'bahrain',
+    this.regionRank,
   });
 
   final String id;
@@ -29,6 +31,8 @@ class FixtureClan {
   final String themeId;
   final String patternId;
   final int skillRating;
+  final String region;
+  final int? regionRank;
 
   ClanRank get rank => rankFromRating(skillRating);
 
@@ -43,8 +47,36 @@ class FixtureClan {
       themeId: json['theme_id'] as String? ?? 'pitch',
       patternId: json['pattern_id'] as String? ?? 'solid',
       skillRating: _asInt(json['skill_rating'], fallback: 1500),
+      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
+      regionRank: _asNullableInt(json['region_rank']),
     );
   }
+
+  FixtureClan copyWith({int? regionRank}) {
+    return FixtureClan(
+      id: id,
+      name: name,
+      tag: tag,
+      emblem: emblem,
+      themeId: themeId,
+      patternId: patternId,
+      skillRating: skillRating,
+      region: region,
+      regionRank: regionRank ?? this.regionRank,
+    );
+  }
+}
+
+class FixtureSrScenario {
+  const FixtureSrScenario({
+    required this.label,
+    required this.myChange,
+    required this.opponentChange,
+  });
+
+  final String label;
+  final int myChange;
+  final int opponentChange;
 }
 
 class FixtureClock {
@@ -216,8 +248,18 @@ class Fixture {
     this.awaySrChange,
     this.videoUrl,
     this.awayClan,
+    this.homePaidBy,
+    this.awayPaidBy,
+    this.homePaidAt,
+    this.awayPaidAt,
+    this.homePayer,
+    this.awayPayer,
     this.cancelledAt,
+    this.cancellationCode,
     this.cancellationReason,
+    this.cancelledBy,
+    this.cancellationContext = const {},
+    this.cancellationActor,
     this.createdAt,
     this.updatedAt,
     this.clock,
@@ -242,8 +284,18 @@ class Fixture {
   final String createdBy;
   final FixtureClan homeClan;
   final FixtureClan? awayClan;
+  final String? homePaidBy;
+  final String? awayPaidBy;
+  final DateTime? homePaidAt;
+  final DateTime? awayPaidAt;
+  final FixtureParticipant? homePayer;
+  final FixtureParticipant? awayPayer;
   final DateTime? cancelledAt;
+  final String? cancellationCode;
   final String? cancellationReason;
+  final String? cancelledBy;
+  final Map<String, dynamic> cancellationContext;
+  final FixtureParticipant? cancellationActor;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final FixtureClock? clock;
@@ -257,6 +309,22 @@ class Fixture {
   bool get isLive => status == FixtureStatus.live;
 
   bool get isCancelled => status == FixtureStatus.cancelled;
+
+  String get cancellationTitle {
+    return switch (cancellationCode) {
+      'NO_OPPONENT_24H' => 'No Opponent Joined',
+      'CLAN_ARCHIVED' => 'Clan Deleted',
+      'SLOT_CONFLICT_MIGRATION' => 'Schedule Conflict',
+      'ADMIN_CANCELLED' => 'Cancelled by Admin',
+      _ => 'Match Cancelled',
+    };
+  }
+
+  String get cancellationDisplayReason {
+    final reason = cancellationReason?.trim();
+    if (reason != null && reason.isNotEmpty) return reason;
+    return 'This match was cancelled.';
+  }
 
   String get statusLabel {
     return switch (status) {
@@ -313,10 +381,25 @@ class Fixture {
     return null;
   }
 
+  FixtureParticipant? payerFor(String clanId) {
+    if (homeClanId == clanId) return homePayer;
+    if (awayClanId == clanId) return awayPayer;
+    return null;
+  }
+
+  DateTime? paidAtFor(String clanId) {
+    if (homeClanId == clanId) return homePaidAt;
+    if (awayClanId == clanId) return awayPaidAt;
+    return null;
+  }
+
   factory Fixture.fromJson(Map<String, dynamic> json) {
     final homeClan = _nestedMap(json['home_clan'] ?? json['clans']) ?? const {};
     final awayClan = _nestedMap(json['away_clan']);
     final clock = _nestedMap(json['fixture_clock_states']);
+    final homePayer = _nestedMap(json['home_payer']);
+    final awayPayer = _nestedMap(json['away_payer']);
+    final cancellationActor = _nestedMap(json['cancellation_actor']);
 
     return Fixture(
       id: json['id'] as String,
@@ -344,8 +427,24 @@ class Fixture {
       createdBy: json['created_by'] as String? ?? '',
       homeClan: FixtureClan.fromJson(homeClan),
       awayClan: awayClan == null ? null : FixtureClan.fromJson(awayClan),
+      homePaidBy: json['home_paid_by'] as String?,
+      awayPaidBy: json['away_paid_by'] as String?,
+      homePaidAt: _asDate(json['home_paid_at']),
+      awayPaidAt: _asDate(json['away_paid_at']),
+      homePayer: homePayer == null
+          ? null
+          : FixtureParticipant.fromJson(homePayer),
+      awayPayer: awayPayer == null
+          ? null
+          : FixtureParticipant.fromJson(awayPayer),
       cancelledAt: _asDate(json['cancelled_at']),
+      cancellationCode: json['cancellation_code'] as String?,
       cancellationReason: json['cancellation_reason'] as String?,
+      cancelledBy: json['cancelled_by'] as String?,
+      cancellationContext: _jsonMap(json['cancellation_context']),
+      cancellationActor: cancellationActor == null
+          ? null
+          : FixtureParticipant.fromJson(cancellationActor),
       createdAt: _asDate(json['created_at']),
       updatedAt: _asDate(json['updated_at']),
       clock: clock == null ? null : FixtureClock.fromJson(clock),
@@ -362,6 +461,10 @@ class MyClanMembership {
   final String role;
 
   bool get isOwner => role == 'owner';
+
+  bool get isLeader => role == 'leader';
+
+  bool get canManageMatches => isOwner || isLeader;
 }
 
 String fixtureStatusToWire(FixtureStatus status) {
@@ -393,6 +496,12 @@ Map<String, dynamic>? _nestedMap(Object? value) {
     if (first is Map) return Map<String, dynamic>.from(first);
   }
   return null;
+}
+
+Map<String, dynamic> _jsonMap(Object? value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return const {};
 }
 
 int _asInt(Object? value, {int fallback = 0}) {

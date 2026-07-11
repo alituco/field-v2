@@ -14,9 +14,14 @@ import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key, required this.authRepository});
+  const HomeScreen({
+    super.key,
+    required this.authRepository,
+    this.isDev = false,
+  });
 
   final AuthRepository authRepository;
+  final bool isDev;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -52,6 +57,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _switchUser(String profileId) {
+    return widget.authRepository.switchToUserForDevelopment(profileId);
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -74,6 +83,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       ProfileScreen(
         profileRepository: _profileRepository,
+        devModeEnabled: widget.isDev,
+        onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
       ),

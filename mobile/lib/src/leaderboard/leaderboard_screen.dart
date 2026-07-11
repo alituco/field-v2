@@ -4,7 +4,10 @@ import '../clans/clan.dart';
 import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
 import '../fixtures/fixture_repository.dart';
+import '../profile/profile_repository.dart';
+import '../profile/profile_screen.dart';
 import 'leaderboard.dart';
 import 'leaderboard_repository.dart';
 
@@ -55,6 +58,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     ),
   ];
 
+  final ProfileRepository _profileRepository = SupabaseProfileRepository();
   int _seasonIndex = 0;
   List<Clan> _clans = const [];
   ClanMembership? _myMembership;
@@ -99,10 +103,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         _myMembership = results[1] as ClanMembership?;
         _playerStats = results[2] as LeaderboardPlayerStats;
       });
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() {
-        _errorText = 'Could not load leaderboards.';
+        _errorText = userFacingError(
+          error,
+          fallback: 'We could not load the leaderboard. Try again.',
+        );
       });
     } finally {
       if (mounted) {
@@ -143,6 +150,22 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     }
   }
 
+  Future<void> _openPlayerProfile(LeaderboardPlayerStat player) async {
+    if (player.profileId.trim().isEmpty) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: fieldBackground,
+          body: ProfileScreen(
+            profileRepository: _profileRepository,
+            profileId: player.profileId,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openAllRankings(List<Clan> rankedClans) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
@@ -165,7 +188,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   Widget build(BuildContext context) {
     final clanRecords = _playerStats.clanRecords;
     final rankedClans =
-        _clans.where((clan) => clan.region == _activeRegion.id).toList()
+        _clans
+            .where(
+              (clan) =>
+                  clan.region == _activeRegion.id &&
+                  _playerStats.isClanEligible(clan.id),
+            )
+            .toList()
           ..sort((a, b) {
             final srCompare = b.skillRating.compareTo(a.skillRating);
             if (srCompare != 0) return srCompare;
@@ -193,6 +222,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               onPrevious: _previousSeason,
               onNext: _nextSeason,
             ),
+            const SizedBox(height: 12),
+            const _LeaderboardEligibilityNote(),
             const SizedBox(height: 24),
             _SectionHeader(
               title: 'The Top 10',
@@ -208,7 +239,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             else if (_errorText != null)
               _LeaderboardErrorState(message: _errorText!, onRetry: _load)
             else if (topRankedClans.isEmpty)
-              const _NoLeaderboardDataState(message: 'No Bahrain rankings yet.')
+              const _NoLeaderboardDataState(
+                message: 'No clans have completed 4 matches this season.',
+              )
             else
               for (var i = 0; i < topRankedClans.length; i++) ...[
                 TweenAnimationBuilder<double>(
@@ -249,6 +282,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               label: 'goals',
               players: _playerStats.topScorers,
               loading: _isLoading,
+              onPlayerTap: _openPlayerProfile,
             ),
             const SizedBox(height: 24),
             _PlayerStatSection(
@@ -259,6 +293,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               label: 'assists',
               players: _playerStats.topAssisters,
               loading: _isLoading,
+              onPlayerTap: _openPlayerProfile,
             ),
           ],
         ),
@@ -311,6 +346,8 @@ class _AllRankingsScreen extends StatelessWidget {
           padding: fieldHeaderAwarePadding(context, top: 18, bottom: 40),
           children: [
             _RankingsSummaryCard(region: region, clanCount: clans.length),
+            const SizedBox(height: 12),
+            const _LeaderboardEligibilityNote(),
             const SizedBox(height: 16),
             _SectionHeader(
               title: 'All Clans',
@@ -318,7 +355,9 @@ class _AllRankingsScreen extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             if (clans.isEmpty)
-              const _NoLeaderboardDataState(message: 'No Bahrain rankings yet.')
+              const _NoLeaderboardDataState(
+                message: 'No clans have completed 4 matches this season.',
+              )
             else
               for (var i = 0; i < clans.length; i++) ...[
                 _ClanRankRow(
@@ -334,6 +373,36 @@ class _AllRankingsScreen extends StatelessWidget {
               ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _LeaderboardEligibilityNote extends StatelessWidget {
+  const _LeaderboardEligibilityNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline_rounded, color: fieldGray400, size: 16),
+          const SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'Clans need at least $minimumLeaderboardMatches completed '
+              'matches in the selected season to be ranked.',
+              style: const TextStyle(
+                color: fieldGray500,
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -972,6 +1041,7 @@ class _PlayerStatSection extends StatelessWidget {
     required this.label,
     required this.players,
     required this.loading,
+    required this.onPlayerTap,
   });
 
   final String title;
@@ -981,6 +1051,7 @@ class _PlayerStatSection extends StatelessWidget {
   final String label;
   final List<LeaderboardPlayerStat> players;
   final bool loading;
+  final ValueChanged<LeaderboardPlayerStat> onPlayerTap;
 
   @override
   Widget build(BuildContext context) {
@@ -1033,6 +1104,7 @@ class _PlayerStatSection extends StatelessWidget {
                         player: players[i],
                         label: label,
                         iconColor: iconColor,
+                        onTap: () => onPlayerTap(players[i]),
                       ),
                       if (i != players.length - 1)
                         const Divider(height: 1, color: fieldGray100),
@@ -1051,95 +1123,103 @@ class _PlayerStatRow extends StatelessWidget {
     required this.player,
     required this.label,
     required this.iconColor,
+    required this.onTap,
   });
 
   final int rank;
   final LeaderboardPlayerStat player;
   final String label;
   final Color iconColor;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 28,
-            child: rank == 1
-                ? const Icon(
-                    Icons.military_tech_rounded,
-                    color: Color(0xFFF59E0B),
-                    size: 22,
-                  )
-                : Text(
-                    rank.toString(),
-                    textAlign: TextAlign.center,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 28,
+                child: rank == 1
+                    ? const Icon(
+                        Icons.military_tech_rounded,
+                        color: Color(0xFFF59E0B),
+                        size: 22,
+                      )
+                    : Text(
+                        rank.toString(),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: fieldGray400,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 10),
+              _PlayerAvatar(player: player, color: iconColor),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      player.displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '@${player.username}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    player.value.toString(),
                     style: const TextStyle(
-                      color: fieldGray400,
-                      fontSize: 14,
+                      color: fieldGray900,
+                      fontSize: 20,
+                      height: 1,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
-          ),
-          const SizedBox(width: 10),
-          _PlayerAvatar(player: player, color: iconColor),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  player.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: fieldGray900,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
+                  const SizedBox(height: 4),
+                  Text(
+                    label.toUpperCase(),
+                    style: const TextStyle(
+                      color: fieldGray400,
+                      fontSize: 10,
+                      height: 1,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '@${player.username}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: fieldGray500,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                player.value.toString(),
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 20,
-                  height: 1,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                label.toUpperCase(),
-                style: const TextStyle(
-                  color: fieldGray400,
-                  fontSize: 10,
-                  height: 1,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.2,
-                ),
+                ],
               ),
             ],
           ),
-        ],
+        ),
       ),
     );
   }

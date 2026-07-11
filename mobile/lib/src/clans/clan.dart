@@ -65,7 +65,15 @@ class ClanMember {
 
   bool get isOwner => role == 'owner';
 
-  String get roleLabel => isOwner ? 'Owner' : 'Member';
+  bool get isLeader => role == 'leader';
+
+  bool get isManager => isOwner || isLeader;
+
+  String get roleLabel => switch (role) {
+    'owner' => 'Owner',
+    'leader' => 'Leader',
+    _ => 'Member',
+  };
 
   String get initials {
     final words = displayName
@@ -99,10 +107,75 @@ class ClanMembership {
 
   bool get isOwner => role == 'owner';
 
+  bool get isLeader => role == 'leader';
+
+  bool get isManager => isOwner || isLeader;
+
   factory ClanMembership.fromJson(Map<String, dynamic> json) {
     return ClanMembership(
       clanId: json['clan_id'] as String? ?? '',
       role: json['role'] as String? ?? 'member',
+    );
+  }
+}
+
+class ClanJoinRequest {
+  const ClanJoinRequest({
+    required this.id,
+    required this.clanId,
+    required this.profileId,
+    required this.displayName,
+    required this.status,
+    this.username,
+    this.avatarUrl,
+    this.requestedAt,
+    this.cancellationCode,
+    this.cancellationReason,
+    this.cancelledAt,
+    this.cancelledBy,
+  });
+
+  final String id;
+  final String clanId;
+  final String profileId;
+  final String displayName;
+  final String status;
+  final String? username;
+  final String? avatarUrl;
+  final DateTime? requestedAt;
+  final String? cancellationCode;
+  final String? cancellationReason;
+  final DateTime? cancelledAt;
+  final String? cancelledBy;
+
+  bool get isPending => status == 'PENDING';
+
+  String get initials {
+    final words = displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return '?';
+    return words.take(2).map((word) => word[0]).join().toUpperCase();
+  }
+
+  factory ClanJoinRequest.fromJson(Map<String, dynamic> json) {
+    final profile = _profileFromJson(json['profiles']);
+    final displayName = (profile['display_name'] as String? ?? '').trim();
+    return ClanJoinRequest(
+      id: json['id'] as String? ?? '',
+      clanId: json['clan_id'] as String? ?? '',
+      profileId: json['profile_id'] as String? ?? '',
+      displayName: displayName.isEmpty ? 'Player' : displayName,
+      status: (json['status'] as String? ?? 'PENDING').toUpperCase(),
+      username: profile['username'] as String?,
+      avatarUrl: profile['avatar_url'] as String?,
+      requestedAt: _asDateTime(json['requested_at']),
+      cancellationCode: json['cancellation_code'] as String?,
+      cancellationReason: json['cancellation_reason'] as String?,
+      cancelledAt: _asDateTime(json['cancelled_at']),
+      cancelledBy: json['cancelled_by'] as String?,
     );
   }
 }

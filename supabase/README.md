@@ -51,6 +51,7 @@ Seeded fake users:
 +97338883676  Lina Abbas
 +97338883677  Rami Darwish
 +97338883678  Hala Mansour
++97338883679  Madeline Coffey (free agent)
 ```
 
 Seeded fake clans:
@@ -100,3 +101,30 @@ To test as a fake user, sign out in the app, enter one of the fake phone
 numbers, and use code `000000`.
 
 Do not enable `DEV_OTP_ENABLED=true` on any production Supabase project.
+
+## Dev User Switching
+
+With `DEV=true` in `mobile/.env.mobile`, the current user's Profile screen
+shows a searchable account switcher. The switch is performed by the
+authenticated `dev-switch-user` Edge Function, so the service-role key never
+ships in Flutter.
+
+Enable and deploy it only on the hosted development project:
+
+```sh
+supabase secrets set DEV=true
+supabase secrets set DEV_SWITCH_ALLOW_UNAUTHENTICATED=true
+supabase functions deploy dev-switch-user --no-verify-jwt
+```
+
+Phone-only users use the existing `DEV_OTP_PASSWORD` secret. You can instead
+set a separate strong password with:
+
+```sh
+supabase secrets set DEV_SWITCH_PASSWORD='replace-with-a-strong-dev-password'
+```
+
+Set `DEV=false` in both Flutter and Supabase, or do not deploy this function,
+for production. Client-side `DEV=true` alone cannot enable impersonation.
+`DEV_SWITCH_ALLOW_UNAUTHENTICATED` exists only to recover revoked fake-user
+sessions and must never be enabled outside the isolated development project.

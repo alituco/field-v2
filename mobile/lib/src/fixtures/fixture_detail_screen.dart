@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
+import '../profile/profile_repository.dart';
+import '../profile/profile_screen.dart';
 import 'fixture.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
@@ -26,6 +29,7 @@ class FixtureDetailScreen extends StatefulWidget {
 
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
+  final ProfileRepository _profileRepository = SupabaseProfileRepository();
   Timer? _refreshTimer;
   bool _isJoining = false;
   bool _isCompleting = false;
@@ -37,6 +41,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   void initState() {
     super.initState();
     _configureRefreshTimer();
+    unawaited(_refreshFixture(quiet: true));
   }
 
   @override
@@ -48,7 +53,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   bool get _canJoin {
     final membership = widget.myClanMembership;
     return membership != null &&
-        membership.isOwner &&
+        membership.canManageMatches &&
         _fixture.isOpen &&
         _fixture.homeClanId != membership.clan.id;
   }
@@ -57,9 +62,21 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     return false;
   }
 
+  bool get _canSeePayments {
+    final membership = widget.myClanMembership;
+    if (membership == null) return false;
+    final isParticipating =
+        membership.clan.id == _fixture.homeClanId ||
+        membership.clan.id == _fixture.awayClanId;
+    final isUpcoming =
+        _fixture.status == FixtureStatus.open ||
+        _fixture.status == FixtureStatus.scheduled;
+    return isParticipating && isUpcoming;
+  }
+
   bool get _canComplete {
     final membership = widget.myClanMembership;
-    if (membership == null || !membership.isOwner) return false;
+    if (membership == null || !membership.canManageMatches) return false;
     if (!_canShowCompleteAction) return false;
 
     return membership.clan.id == _fixture.homeClanId ||
@@ -68,9 +85,11 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   Future<void> _joinFixture() async {
     final membership = widget.myClanMembership;
-    if (membership == null || !membership.isOwner) {
+    if (membership == null || !membership.canManageMatches) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Only a clan owner can join matches.')),
+        const SnackBar(
+          content: Text('Only clan owners and leaders can join matches.'),
+        ),
       );
       return;
     }
@@ -97,7 +116,10 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(
-        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not join this match. Try again.',
+        ),
       );
     } finally {
       if (mounted) {
@@ -110,7 +132,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     if (!_canComplete) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Only a participating clan owner can finalize scores.'),
+          content: Text(
+            'Only participating clan owners and leaders can finalize scores.',
+          ),
         ),
       );
       return;
@@ -148,13 +172,31 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(
-        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not finalize this match. Try again.',
+        ),
       );
     } finally {
       if (mounted) {
         setState(() => _isCompleting = false);
       }
     }
+  }
+
+  Future<void> _openPlayerProfile(String profileId) async {
+    if (profileId.trim().isEmpty) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: fieldBackground,
+          body: ProfileScreen(
+            profileRepository: _profileRepository,
+            profileId: profileId,
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _refreshFixture({bool quiet = false}) async {
@@ -175,7 +217,10 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     } catch (error) {
       if (!mounted || quiet) return;
       setState(
-        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not refresh this match. Try again.',
+        ),
       );
     } finally {
       _isRefreshing = false;
@@ -234,15 +279,29 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
               const SizedBox(height: 14),
               _ErrorCallout(message: _errorText!),
             ],
+            if (_fixture.isCancelled) ...[
+              const SizedBox(height: 18),
+              _CancellationPanel(fixture: _fixture),
+            ],
             const SizedBox(height: 18),
             _InfoGrid(fixture: _fixture),
+            if (_canSeePayments) ...[
+              const SizedBox(height: 18),
+              _TeamPaymentsPanel(
+                fixture: _fixture,
+                onOpenProfile: _openPlayerProfile,
+              ),
+            ],
             if (_fixture.scorers.isNotEmpty) ...[
               const SizedBox(height: 18),
               _GoalContributions(fixture: _fixture),
             ],
             if (_fixture.timeline.isNotEmpty) ...[
               const SizedBox(height: 18),
-              _MatchTimeline(fixture: _fixture),
+              _MatchTimeline(
+                fixture: _fixture,
+                onOpenProfile: _openPlayerProfile,
+              ),
             ],
             if (_fixture.isFinal &&
                 (_fixture.homeSrChange != null ||
@@ -438,6 +497,18 @@ class _ScoreboardClan extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         TierBadge(rank: clan.rank, small: true),
+        const SizedBox(height: 6),
+        Text(
+          '${clan.skillRating} SR${clan.regionRank == null ? '' : ' · ${_regionName(clan.region)} #${clan.regionRank}'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ],
     );
   }
@@ -672,9 +743,10 @@ class _GoalContributionRow extends StatelessWidget {
 }
 
 class _MatchTimeline extends StatelessWidget {
-  const _MatchTimeline({required this.fixture});
+  const _MatchTimeline({required this.fixture, required this.onOpenProfile});
 
   final Fixture fixture;
+  final ValueChanged<String> onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -707,7 +779,11 @@ class _MatchTimeline extends StatelessWidget {
           ),
           const SizedBox(height: 14),
           for (final event in events) ...[
-            _TimelineRow(fixture: fixture, event: event),
+            _TimelineRow(
+              fixture: fixture,
+              event: event,
+              onOpenProfile: onOpenProfile,
+            ),
             if (event != events.last) const SizedBox(height: 12),
           ],
         ],
@@ -717,10 +793,15 @@ class _MatchTimeline extends StatelessWidget {
 }
 
 class _TimelineRow extends StatelessWidget {
-  const _TimelineRow({required this.fixture, required this.event});
+  const _TimelineRow({
+    required this.fixture,
+    required this.event,
+    required this.onOpenProfile,
+  });
 
   final Fixture fixture;
   final FixtureTimelineEvent event;
+  final ValueChanged<String> onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
@@ -746,26 +827,48 @@ class _TimelineRow extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
+              InkWell(
+                onTap: event.profileId == null
+                    ? null
+                    : () => onOpenProfile(event.profileId!),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: event.profileId == null
+                          ? fieldGray900
+                          : fieldBlue600,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
               ),
               const SizedBox(height: 3),
-              Text(
-                subtitle,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: fieldGray500,
-                  fontSize: 12,
-                  height: 1.2,
-                  fontWeight: FontWeight.w600,
+              InkWell(
+                onTap: event.assistProfileId == null
+                    ? null
+                    : () => onOpenProfile(event.assistProfileId!),
+                borderRadius: BorderRadius.circular(6),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1),
+                  child: Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: event.assistProfileId == null
+                          ? fieldGray500
+                          : fieldBlue600,
+                      fontSize: 12,
+                      height: 1.2,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -830,6 +933,130 @@ class _InfoGrid extends StatelessWidget {
       ],
     );
   }
+}
+
+class _CancellationPanel extends StatelessWidget {
+  const _CancellationPanel({required this.fixture});
+
+  final Fixture fixture;
+
+  @override
+  Widget build(BuildContext context) {
+    final actorName = fixture.cancellationActor?.displayName;
+    final actorLabel = actorName == null || actorName.trim().isEmpty
+        ? fixture.cancellationCode == 'NO_OPPONENT_24H'
+              ? 'Automatic cancellation'
+              : 'Cancellation source not recorded'
+        : 'Cancelled by $actorName';
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF7ED),
+        border: Border.all(color: const Color(0xFFFED7AA)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFEDD5),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: const Icon(
+                  Icons.event_busy_rounded,
+                  color: Color(0xFFEA580C),
+                  size: 21,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Text(
+                  fixture.cancellationTitle,
+                  style: const TextStyle(
+                    color: Color(0xFF9A3412),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            fixture.cancellationDisplayReason,
+            style: const TextStyle(
+              color: Color(0xFF7C2D12),
+              fontSize: 13,
+              height: 1.4,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 13),
+          const Divider(height: 1, color: Color(0xFFFED7AA)),
+          const SizedBox(height: 11),
+          Row(
+            children: [
+              const Icon(
+                Icons.info_outline_rounded,
+                color: Color(0xFFC2410C),
+                size: 16,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  actorLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF9A3412),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (fixture.cancelledAt != null)
+                Text(
+                  _cancellationTimestamp(fixture.cancelledAt!),
+                  style: const TextStyle(
+                    color: Color(0xFF9A3412),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _cancellationTimestamp(DateTime value) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final local = value.toLocal();
+  final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+  final minute = local.minute.toString().padLeft(2, '0');
+  final period = local.hour < 12 ? 'AM' : 'PM';
+  return '${months[local.month - 1]} ${local.day}, $hour:$minute $period';
 }
 
 class _InfoTile extends StatelessWidget {
@@ -908,6 +1135,168 @@ class _InfoTile extends StatelessWidget {
       ),
     );
   }
+}
+
+class _TeamPaymentsPanel extends StatelessWidget {
+  const _TeamPaymentsPanel({
+    required this.fixture,
+    required this.onOpenProfile,
+  });
+
+  final Fixture fixture;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.receipt_long_rounded, color: fieldEmerald600),
+              SizedBox(width: 8),
+              Text(
+                'TEAM PAYMENTS',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Spacer(),
+              Text(
+                '20 BHD EACH',
+                style: TextStyle(
+                  color: fieldGray500,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          _PaymentRow(
+            clan: fixture.homeClan,
+            payer: fixture.homePayer,
+            paidAt: fixture.homePaidAt,
+            onOpenProfile: onOpenProfile,
+          ),
+          if (fixture.awayClan != null) ...[
+            const Divider(height: 22, color: fieldGray100),
+            _PaymentRow(
+              clan: fixture.awayClan!,
+              payer: fixture.awayPayer,
+              paidAt: fixture.awayPaidAt,
+              onOpenProfile: onOpenProfile,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PaymentRow extends StatelessWidget {
+  const _PaymentRow({
+    required this.clan,
+    required this.payer,
+    required this.paidAt,
+    required this.onOpenProfile,
+  });
+
+  final FixtureClan clan;
+  final FixtureParticipant? payer;
+  final DateTime? paidAt;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPayer = payer != null && payer!.id.isNotEmpty;
+    return Row(
+      children: [
+        Container(
+          width: 42,
+          height: 42,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: const Color(0xFFECFDF5),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(clan.emblem, style: const TextStyle(fontSize: 23)),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                clan.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              InkWell(
+                onTap: hasPayer ? () => onOpenProfile(payer!.id) : null,
+                borderRadius: BorderRadius.circular(5),
+                child: Text(
+                  hasPayer
+                      ? 'Paid by ${payer!.displayName}'
+                      : 'Payment not recorded',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: hasPayer ? fieldBlue600 : fieldGray500,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (paidAt != null)
+          Text(
+            _shortPaymentDate(paidAt!),
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+String _shortPaymentDate(DateTime value) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final local = value.toLocal();
+  return '${months[local.month - 1]} ${local.day}';
 }
 
 class _RatingUpdates extends StatelessWidget {
@@ -1494,6 +1883,11 @@ String _teamTagFor(Fixture fixture, String? clanId) {
   if (clanId == fixture.homeClanId) return fixture.homeClan.tag;
   if (clanId == fixture.awayClanId) return fixture.awayClan?.tag ?? 'AWAY';
   return 'MATCH';
+}
+
+String _regionName(String region) {
+  if (region.isEmpty) return 'Region';
+  return '${region[0].toUpperCase()}${region.substring(1).toLowerCase()}';
 }
 
 ({IconData icon, Color color, Color background}) _timelineEventStyle(

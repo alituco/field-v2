@@ -13,6 +13,7 @@ type ActionBody = {
     | "start"
     | "pause"
     | "resume"
+    | "set_time"
     | "goal"
     | "correction_goal"
     | "delete_goal"
@@ -25,6 +26,7 @@ type ActionBody = {
   assistProfileId?: string | null;
   blueCardId?: string;
   goalId?: string;
+  elapsedSeconds?: number;
   minute?: number;
   note?: string;
 };
@@ -42,6 +44,8 @@ type ClockRow = {
   accumulated_seconds: number;
   duration_seconds: number;
 };
+
+const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export async function POST(request: NextRequest, context: RouteContext) {
   const refereeContext = await requireReferee(request);
@@ -69,6 +73,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         break;
       case "resume":
         await resumeFixture(db, fixtureId);
+        break;
+      case "set_time":
+        await setFixtureTime(db, fixtureId, body.elapsedSeconds);
         break;
       case "goal":
         await recordGoal(db, fixtureId, body);
@@ -169,7 +176,7 @@ async function startFixture(
 async function pauseFixture(db: SupabaseClient, fixtureId: string) {
   await loadFixture(db, fixtureId);
   const clock = await loadClock(db, fixtureId);
-  const elapsedSeconds = elapsedFromClock(clock);
+  const elapsedSeconds = Math.min(elapsedFromClock(clock), MAX_MATCH_SECONDS);
   const { minute, second } = splitElapsed(elapsedSeconds);
 
   await assertNoError(
@@ -263,7 +270,9 @@ async function recordGoalCorrection(
   }
 
   if (fixture.status !== "FINAL") {
-    throw new Error("Historic corrections are only available for final matches.");
+    throw new Error(
+      "Historic corrections are only available for final matches.",
+    );
   }
 
   assertParticipatingClan(fixture, clanId);
@@ -307,7 +316,9 @@ async function deleteGoalCorrection(
   const id = requireString(goalId, "Missing goal id.");
 
   if (fixture.status !== "FINAL") {
-    throw new Error("Historic corrections are only available for final matches.");
+    throw new Error(
+      "Historic corrections are only available for final matches.",
+    );
   }
 
   const { data: goal, error: goalError } = await db
@@ -322,7 +333,10 @@ async function deleteGoalCorrection(
   }
 
   await assertNoError(
-    db.from("fixture_scorers").delete().eq("id", id).eq("fixture_id", fixtureId),
+    db.from("fixture_scorers").delete().eq("id", id).eq(
+      "fixture_id",
+      fixtureId,
+    ),
     "Could not remove goal",
   );
 
@@ -441,7 +455,7 @@ async function finishFixture(db: SupabaseClient, fixtureId: string) {
   }
 
   const clock = await loadClock(db, fixtureId);
-  const elapsedSeconds = elapsedFromClock(clock);
+  const elapsedSeconds = Math.min(elapsedFromClock(clock), MAX_MATCH_SECONDS);
   const { minute, second } = splitElapsed(elapsedSeconds);
 
   await assertNoError(
@@ -464,6 +478,98 @@ async function finishFixture(db: SupabaseClient, fixtureId: string) {
   if (error) {
     throw new Error(`Could not finalize fixture: ${error.message}`);
   }
+
+  // The completion function also handles older clock rows and may clamp them to
+  // the configured match duration. Restore the referee's actual stopped time.
+  await assertNoError(
+    db
+      .from("fixture_clock_states")
+      .update({
+        status: "ENDED",
+        started_at: null,
+        accumulated_seconds: elapsedSeconds,
+      })
+      .eq("fixture_id", fixtureId),
+    "Could not save final match time",
+  );
+}
+
+async function setFixtureTime(
+  db: SupabaseClient,
+  fixtureId: string,
+  requestedElapsedSeconds?: number,
+) {
+  const fixture = await loadFixture(db, fixtureId);
+  if (fixture.status !== "FINAL") {
+    throw new Error("Stop the match before correcting its time.");
+  }
+
+  const rawElapsedSeconds = Number(requestedElapsedSeconds);
+  if (
+    !Number.isFinite(rawElapsedSeconds) ||
+    rawElapsedSeconds < 0 ||
+    rawElapsedSeconds > MAX_MATCH_SECONDS
+  ) {
+    throw new Error("Match time must be between 0:00 and 180:00.");
+  }
+
+  const elapsedSeconds = Math.round(rawElapsedSeconds);
+  const clock = await loadClock(db, fixtureId);
+  const { minute, second } = splitElapsed(elapsedSeconds);
+
+  await assertNoError(
+    db.from("fixture_clock_states").upsert(
+      {
+        fixture_id: fixtureId,
+        status: "ENDED",
+        started_at: null,
+        accumulated_seconds: elapsedSeconds,
+        duration_seconds: clock.duration_seconds,
+      },
+      { onConflict: "fixture_id" },
+    ),
+    "Could not correct match time",
+  );
+
+  const { data: endedEvent, error: endedEventError } = await db
+    .from("fixture_events")
+    .select("id")
+    .eq("fixture_id", fixtureId)
+    .eq("event_type", "MATCH_ENDED")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (endedEventError) {
+    throw new Error(
+      `Could not load final whistle event: ${endedEventError.message}`,
+    );
+  }
+
+  if (endedEvent) {
+    await assertNoError(
+      db
+        .from("fixture_events")
+        .update({ minute, second })
+        .eq("id", String(endedEvent.id)),
+      "Could not correct final whistle time",
+    );
+  } else {
+    await insertEvent(db, fixtureId, "MATCH_ENDED", minute, second);
+  }
+
+  await insertEvent(
+    db,
+    fixtureId,
+    "CORRECTION",
+    minute,
+    second,
+    null,
+    null,
+    null,
+    null,
+    `Match time corrected to ${formatElapsed(elapsedSeconds)}`,
+  );
 }
 
 async function syncScoreFromScorers(
@@ -483,12 +589,11 @@ async function syncScoreFromScorers(
   const awayScore = (rows ?? []).filter(
     (row) => String(row.clan_id) === fixture.away_clan_id,
   ).length;
-  const winnerClanId =
-    homeScore > awayScore
-      ? fixture.home_clan_id
-      : awayScore > homeScore
-        ? fixture.away_clan_id
-        : null;
+  const winnerClanId = homeScore > awayScore
+    ? fixture.home_clan_id
+    : awayScore > homeScore
+    ? fixture.away_clan_id
+    : null;
 
   await assertNoError(
     db
@@ -582,6 +687,12 @@ function splitElapsed(totalSeconds: number) {
   };
 }
 
+function formatElapsed(totalSeconds: number) {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 async function assertPlayerInClan(
   db: SupabaseClient,
   clanId: string,
@@ -592,6 +703,7 @@ async function assertPlayerInClan(
     .select("profile_id")
     .eq("clan_id", clanId)
     .eq("profile_id", profileId)
+    .is("left_at", null)
     .maybeSingle();
 
   if (error) throw new Error(`Could not verify player: ${error.message}`);

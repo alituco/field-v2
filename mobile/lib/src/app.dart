@@ -5,9 +5,14 @@ import 'auth/auth_repository.dart';
 import 'config/configuration_screen.dart';
 
 class FieldApp extends StatelessWidget {
-  const FieldApp({super.key, required this.hasSupabaseConfig});
+  const FieldApp({
+    super.key,
+    required this.hasSupabaseConfig,
+    this.isDev = false,
+  });
 
   final bool hasSupabaseConfig;
+  final bool isDev;
 
   @override
   Widget build(BuildContext context) {
@@ -44,7 +49,7 @@ class FieldApp extends StatelessWidget {
         ),
       ),
       home: hasSupabaseConfig
-          ? AuthGate(authRepository: SupabaseAuthRepository())
+          ? AuthGate(authRepository: SupabaseAuthRepository(), isDev: isDev)
           : const ConfigurationScreen(),
     );
   }

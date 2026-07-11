@@ -8,9 +8,10 @@ import 'auth_flow_screen.dart';
 import 'auth_repository.dart';
 
 class AuthGate extends StatefulWidget {
-  const AuthGate({super.key, required this.authRepository});
+  const AuthGate({super.key, required this.authRepository, this.isDev = false});
 
   final AuthRepository authRepository;
+  final bool isDev;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -42,7 +43,11 @@ class _AuthGateState extends State<AuthGate> {
   Widget build(BuildContext context) {
     if (_session != null &&
         _hasDisplayName(widget.authRepository.currentUser)) {
-      return HomeScreen(authRepository: widget.authRepository);
+      return HomeScreen(
+        key: ValueKey(_session!.user.id),
+        authRepository: widget.authRepository,
+        isDev: widget.isDev,
+      );
     }
 
     return AuthFlowScreen(

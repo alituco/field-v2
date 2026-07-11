@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 
@@ -80,9 +81,16 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
       setState(() {
         _connections = previous;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not update that follow. Try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -123,7 +131,10 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
 
     if (error != null && connections == null) {
       return _ConnectionsErrorView(
-        message: error.toString(),
+        message: userFacingError(
+          error,
+          fallback: 'We could not load these people. Try again.',
+        ),
         onRetry: () => _loadConnections(showLoading: true),
       );
     }

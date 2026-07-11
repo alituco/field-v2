@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../core/user_facing_error.dart';
+import '../fixtures/fixture_repository.dart';
 import 'clan.dart';
 import 'clan_detail_screen.dart';
 import 'clan_repository.dart';
 import 'clan_widgets.dart';
 import 'create_clan_screen.dart';
-import '../fixtures/fixture_repository.dart';
 
 enum _ClansViewMode { mine, browse }
 
@@ -79,8 +80,10 @@ class _ClansScreenState extends State<ClansScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _errorText =
-            'Could not load clans. Make sure the clan migration is applied in Supabase.';
+        _errorText = userFacingError(
+          error,
+          fallback: 'We could not load clans. Pull down to try again.',
+        );
       });
     } finally {
       if (mounted) {
@@ -573,7 +576,7 @@ class _MyClanPanel extends StatelessWidget {
                                         TierBadge(rank: rank),
                                         const SizedBox(height: 10),
                                         _MyClanRoleBadge(
-                                          isOwner: membership.isOwner,
+                                          role: membership.role,
                                           onDark: true,
                                         ),
                                       ],
@@ -895,10 +898,16 @@ class _OpenClanIndicator extends StatelessWidget {
 }
 
 class _MyClanRoleBadge extends StatelessWidget {
-  const _MyClanRoleBadge({required this.isOwner, this.onDark = false});
+  const _MyClanRoleBadge({required this.role, this.onDark = false});
 
-  final bool isOwner;
+  final String role;
   final bool onDark;
+
+  String get label => switch (role) {
+    'owner' => 'OWNER',
+    'leader' => 'LEADER',
+    _ => 'MEMBER',
+  };
 
   @override
   Widget build(BuildContext context) {
@@ -911,7 +920,7 @@ class _MyClanRoleBadge extends StatelessWidget {
           borderRadius: BorderRadius.circular(999),
         ),
         child: Text(
-          isOwner ? 'OWNER' : 'MEMBER',
+          label,
           style: const TextStyle(
             color: Colors.white,
             fontSize: 11,
@@ -922,19 +931,20 @@ class _MyClanRoleBadge extends StatelessWidget {
       );
     }
 
+    final isManager = role == 'owner' || role == 'leader';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
       decoration: BoxDecoration(
-        color: isOwner ? const Color(0xFFECFDF5) : fieldGray100,
+        color: isManager ? const Color(0xFFECFDF5) : fieldGray100,
         border: Border.all(
-          color: isOwner ? const Color(0xFFA7F3D0) : fieldGray200,
+          color: isManager ? const Color(0xFFA7F3D0) : fieldGray200,
         ),
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(
-        isOwner ? 'OWNER' : 'MEMBER',
+        label,
         style: TextStyle(
-          color: isOwner ? fieldEmerald600 : fieldGray600,
+          color: isManager ? fieldEmerald600 : fieldGray600,
           fontSize: 11,
           fontWeight: FontWeight.w900,
           letterSpacing: 0.8,

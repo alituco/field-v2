@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
 import 'fixture.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
@@ -36,7 +37,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   String? _errorText;
   late final AnimationController _successController;
 
-  bool get _canAct => widget.myClanMembership?.isOwner == true;
+  bool get _canAct => widget.myClanMembership?.canManageMatches == true;
 
   @override
   void initState() {
@@ -71,7 +72,12 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       });
     } catch (error) {
       if (!mounted) return;
-      setState(() => _errorText = 'Could not load open matches.');
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not load open matches. Try again.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isLoadingOpenFixtures = false);
@@ -187,7 +193,10 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     } catch (error) {
       if (!mounted) return;
       setState(
-        () => _errorText = error.toString().replaceFirst('Exception: ', ''),
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not book this match. Try again.',
+        ),
       );
     } finally {
       if (mounted) {
@@ -202,7 +211,9 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
 
   void _showOwnerSnack() {
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Only a clan owner can schedule matches.')),
+      const SnackBar(
+        content: Text('Only clan owners and leaders can schedule matches.'),
+      ),
     );
   }
 
@@ -291,6 +302,8 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       _CreateFixtureStep.summary => _SummaryStep(
         key: const ValueKey('summary'),
         fixtureToJoin: _selectedFixtureToJoin,
+        myClan: widget.myClanMembership?.clan,
+        fixtureRepository: widget.fixtureRepository,
         date: _selectedDate!,
         timeSlot: _selectedTimeSlot!,
         errorText: _errorText,
@@ -1258,12 +1271,16 @@ class _SummaryStep extends StatelessWidget {
   const _SummaryStep({
     super.key,
     required this.fixtureToJoin,
+    required this.myClan,
+    required this.fixtureRepository,
     required this.date,
     required this.timeSlot,
     required this.errorText,
   });
 
   final Fixture? fixtureToJoin;
+  final FixtureClan? myClan;
+  final FixtureRepository fixtureRepository;
   final DateTime date;
   final FixtureTimeSlot timeSlot;
   final String? errorText;
@@ -1292,6 +1309,15 @@ class _SummaryStep extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 18),
+              if (fixtureToJoin != null && myClan != null) ...[
+                _ConfirmationMatchup(
+                  opponent: fixtureToJoin!.homeClan,
+                  myClan: myClan!,
+                ),
+                const SizedBox(height: 18),
+                const Divider(color: fieldGray100),
+                const SizedBox(height: 16),
+              ],
               _SummaryRow(
                 icon: Icons.calendar_month_rounded,
                 iconColor: fieldBlue600,
@@ -1353,6 +1379,15 @@ class _SummaryStep extends StatelessWidget {
             ],
           ),
         ),
+        if (fixtureToJoin != null && myClan != null) ...[
+          const SizedBox(height: 14),
+          _SrImpactDisclosure(
+            key: ValueKey('sr-${fixtureToJoin!.id}-${myClan!.id}'),
+            fixtureRepository: fixtureRepository,
+            fixture: fixtureToJoin!,
+            myClan: myClan!,
+          ),
+        ],
         const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.all(14),
@@ -1394,6 +1429,374 @@ class _SummaryStep extends StatelessWidget {
       ],
     );
   }
+}
+
+class _ConfirmationMatchup extends StatelessWidget {
+  const _ConfirmationMatchup({required this.opponent, required this.myClan});
+
+  final FixtureClan opponent;
+  final FixtureClan myClan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: _ConfirmationTeam(clan: opponent, label: 'OPPONENT'),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(
+              color: fieldGray100,
+              shape: BoxShape.circle,
+            ),
+            child: const Text(
+              'VS',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: _ConfirmationTeam(clan: myClan, label: 'YOUR CLAN'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConfirmationTeam extends StatelessWidget {
+  const _ConfirmationTeam({required this.clan, required this.label});
+
+  final FixtureClan clan;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final rank = clan.regionRank;
+    final rankLabel = rank == null
+        ? null
+        : '${_displayRegion(clan.region)} #$rank';
+
+    return Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 9,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        FixtureClanAvatar(clan: clan, size: 56),
+        const SizedBox(height: 9),
+        Text(
+          clan.name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: fieldGray900,
+            fontSize: 13,
+            height: 1.1,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          '${clan.tag} · ${clan.rank.label}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: fieldGray500,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '${clan.skillRating} SR',
+          style: const TextStyle(
+            color: fieldEmerald600,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        if (rankLabel != null) ...[
+          const SizedBox(height: 3),
+          Text(
+            rankLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SrImpactDisclosure extends StatefulWidget {
+  const _SrImpactDisclosure({
+    super.key,
+    required this.fixtureRepository,
+    required this.fixture,
+    required this.myClan,
+  });
+
+  final FixtureRepository fixtureRepository;
+  final Fixture fixture;
+  final FixtureClan myClan;
+
+  @override
+  State<_SrImpactDisclosure> createState() => _SrImpactDisclosureState();
+}
+
+class _SrImpactDisclosureState extends State<_SrImpactDisclosure> {
+  bool _expanded = false;
+  Future<List<FixtureSrScenario>>? _scenarios;
+
+  void _toggle() {
+    setState(() {
+      _expanded = !_expanded;
+      if (_expanded) _scenarios ??= _loadScenarios();
+    });
+  }
+
+  Future<List<FixtureSrScenario>> _loadScenarios() {
+    return widget.fixtureRepository.previewSrScenarios(
+      homeClanId: widget.fixture.homeClan.id,
+      awayClanId: widget.myClan.id,
+      myClanId: widget.myClan.id,
+    );
+  }
+
+  void _retry() {
+    setState(() => _scenarios = _loadScenarios());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Semantics(
+            button: true,
+            expanded: _expanded,
+            child: InkWell(
+              onTap: _toggle,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 15,
+                  vertical: 14,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline_rounded,
+                      color: fieldGray500,
+                      size: 19,
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Text(
+                        'How could SR change?',
+                        style: TextStyle(
+                          color: fieldGray700,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      _expanded ? 'Hide' : 'View',
+                      style: const TextStyle(
+                        color: fieldGray400,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: fieldGray400,
+                      size: 20,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOutCubic,
+            child: _expanded
+                ? Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(15, 0, 15, 15),
+                    decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: fieldGray100)),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 14),
+                      child: FutureBuilder<List<FixtureSrScenario>>(
+                        future: _scenarios,
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState !=
+                              ConnectionState.done) {
+                            return const _SrScenarioLoading();
+                          }
+                          if (snapshot.hasError || !snapshot.hasData) {
+                            return Row(
+                              children: [
+                                const Expanded(
+                                  child: Text(
+                                    'Could not load SR outcomes.',
+                                    style: TextStyle(
+                                      color: fieldGray500,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  onPressed: _retry,
+                                  tooltip: 'Retry',
+                                  icon: const Icon(Icons.refresh_rounded),
+                                ),
+                              ],
+                            );
+                          }
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Based on both teams\' current SR. Any SR movement is at least 5, and goal-margin impact caps at 3 goals.',
+                                style: TextStyle(
+                                  color: fieldGray500,
+                                  fontSize: 11,
+                                  height: 1.35,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 11),
+                              for (
+                                var index = 0;
+                                index < snapshot.data!.length;
+                                index++
+                              ) ...[
+                                _SrScenarioRow(scenario: snapshot.data![index]),
+                                if (index != snapshot.data!.length - 1)
+                                  const Divider(
+                                    height: 15,
+                                    color: fieldGray100,
+                                  ),
+                              ],
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SrScenarioRow extends StatelessWidget {
+  const _SrScenarioRow({required this.scenario});
+
+  final FixtureSrScenario scenario;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            scenario.label,
+            style: const TextStyle(
+              color: fieldGray700,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        _SrChangeLabel(label: 'You', change: scenario.myChange),
+        const SizedBox(width: 10),
+        _SrChangeLabel(label: 'Them', change: scenario.opponentChange),
+      ],
+    );
+  }
+}
+
+class _SrChangeLabel extends StatelessWidget {
+  const _SrChangeLabel({required this.label, required this.change});
+
+  final String label;
+  final int change;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = change > 0
+        ? fieldEmerald600
+        : change < 0
+        ? const Color(0xFFDC2626)
+        : fieldGray500;
+    final sign = change > 0 ? '+' : '';
+
+    return Text(
+      '$label $sign$change',
+      style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w800),
+    );
+  }
+}
+
+class _SrScenarioLoading extends StatelessWidget {
+  const _SrScenarioLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Column(
+      children: [
+        FieldSkeletonBox(height: 16, borderRadius: 6),
+        SizedBox(height: 10),
+        FieldSkeletonBox(height: 16, borderRadius: 6),
+        SizedBox(height: 10),
+        FieldSkeletonBox(height: 16, borderRadius: 6),
+      ],
+    );
+  }
+}
+
+String _displayRegion(String region) {
+  if (region.isEmpty) return 'Region';
+  return '${region[0].toUpperCase()}${region.substring(1).toLowerCase()}';
 }
 
 class _SummaryRow extends StatelessWidget {

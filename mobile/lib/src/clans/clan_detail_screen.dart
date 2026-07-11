@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/user_facing_error.dart';
 import '../fixtures/create_fixture_screen.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
+import '../profile/profile_repository.dart';
+import '../profile/profile_screen.dart';
 import 'clan.dart';
 import 'clan_repository.dart';
 import 'clan_widgets.dart';
 import 'customize_clan_screen.dart';
+
+enum _MemberAction { makeLeader, removeLeader, transferOwnership, remove }
+
+enum _ClanHeaderAction { edit, archive }
 
 class ClanDetailScreen extends StatefulWidget {
   const ClanDetailScreen({
@@ -29,33 +36,40 @@ class ClanDetailScreen extends StatefulWidget {
 }
 
 class _ClanDetailScreenState extends State<ClanDetailScreen> {
+  final ProfileRepository _profileRepository = SupabaseProfileRepository();
   int _tabIndex = 0;
   late Clan _clan;
   List<ClanMember> _members = const [];
+  List<ClanJoinRequest> _pendingRequests = const [];
   List<Fixture> _fixtures = const [];
+  ClanMembership? _currentMembership;
+  ClanJoinRequest? _myJoinRequest;
   bool _isLoadingMembers = true;
+  bool _isLoadingRequests = true;
+  bool _isSubmittingJoinRequest = false;
+  bool _isArchiving = false;
+  String? _activeMemberAction;
+  String? _activeJoinRequest;
   String? _membersErrorText;
 
   Clan get clan => _clan;
 
-  bool get _isCurrentClan => widget.currentMembership?.clanId == clan.id;
+  bool get _isCurrentClan => _currentMembership?.clanId == clan.id;
 
-  bool get _hasClan => widget.currentMembership != null;
+  bool get _hasClan => _currentMembership != null;
 
-  bool get _isOwner {
-    final membership = widget.currentMembership;
-    if (membership != null) {
-      return membership.clanId == clan.id && membership.isOwner;
-    }
+  bool get _isOwner => _isCurrentClan && (_currentMembership?.isOwner ?? false);
 
-    final userId = Supabase.instance.client.auth.currentUser?.id;
-    return userId != null && clan.createdBy == userId;
-  }
+  bool get _canManageClan =>
+      _isCurrentClan && (_currentMembership?.isManager ?? false);
+
+  String? get _currentUserId => Supabase.instance.client.auth.currentUser?.id;
 
   @override
   void initState() {
     super.initState();
     _clan = widget.clan;
+    _currentMembership = widget.currentMembership;
     _loadClanData();
   }
 
@@ -75,11 +89,33 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     ).showSnackBar(const SnackBar(content: Text('Clan identity updated.')));
   }
 
+  Future<void> _openMemberProfile(ClanMember member) async {
+    if (member.profileId.trim().isEmpty) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: fieldBackground,
+          body: ProfileScreen(
+            profileRepository: _profileRepository,
+            profileId: member.profileId,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openFixtureFlow() async {
-    if (!_isOwner) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Join requests are next.')));
+    if (!_canManageClan) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            !_hasClan
+                ? 'Clan join requests are coming next.'
+                : 'Only clan owners and leaders can schedule matches.',
+          ),
+        ),
+      );
       return;
     }
 
@@ -97,8 +133,8 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
               patternId: clan.patternId,
               skillRating: clan.skillRating,
             ),
-            role: widget.currentMembership?.clanId == clan.id
-                ? widget.currentMembership!.role
+            role: _currentMembership?.clanId == clan.id
+                ? _currentMembership!.role
                 : 'owner',
           ),
         ),
@@ -111,7 +147,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   }
 
   MyClanMembership? _fixtureMembership() {
-    final membership = widget.currentMembership;
+    final membership = _currentMembership;
     if (membership == null || membership.clanId != clan.id) return null;
 
     return MyClanMembership(
@@ -160,42 +196,384 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
             clan: target,
             clanRepository: widget.clanRepository,
             fixtureRepository: widget.fixtureRepository,
-            currentMembership: widget.currentMembership,
+            currentMembership: _currentMembership,
           ),
         ),
       );
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Could not open clan.')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open that clan. Try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
   Future<void> _loadClanData() async {
     setState(() {
       _isLoadingMembers = true;
+      _isLoadingRequests = true;
       _membersErrorText = null;
     });
 
     try {
-      final members = await widget.clanRepository.listClanMembers(clan.id);
-      final fixtures = await widget.clanRepository.listClanFixtures(clan.id);
+      final membership = await widget.clanRepository.getMyClanMembership();
+      final results = await Future.wait<dynamic>([
+        widget.clanRepository.listClanMembers(clan.id),
+        widget.clanRepository.listClanFixtures(clan.id),
+        widget.clanRepository.listClans(),
+        widget.clanRepository.listPendingJoinRequests(clan.id),
+      ]);
+      final members = results[0] as List<ClanMember>;
+      final fixtures = results[1] as List<Fixture>;
+      final clans = results[2] as List<Clan>;
+      final visibleRequests = results[3] as List<ClanJoinRequest>;
+      final isManager = membership?.clanId == clan.id && membership!.isManager;
+      final refreshedClan = clans
+          .where((item) => item.id == clan.id)
+          .firstOrNull;
       if (!mounted) return;
       setState(() {
         _members = members;
         _fixtures = fixtures;
+        _currentMembership = membership;
+        _pendingRequests = isManager ? visibleRequests : const [];
+        _myJoinRequest = isManager
+            ? null
+            : visibleRequests
+                  .where((request) => request.profileId == _currentUserId)
+                  .firstOrNull;
+        if (refreshedClan != null) _clan = refreshedClan;
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _membersErrorText = 'Could not load clan data.';
+        _membersErrorText = userFacingError(
+          error,
+          fallback: 'We could not load this clan. Try again.',
+        );
       });
     } finally {
       if (mounted) {
-        setState(() => _isLoadingMembers = false);
+        setState(() {
+          _isLoadingMembers = false;
+          _isLoadingRequests = false;
+        });
       }
     }
+  }
+
+  Future<void> _requestToJoin() async {
+    if (_hasClan || _isSubmittingJoinRequest) return;
+    setState(() => _isSubmittingJoinRequest = true);
+    try {
+      await widget.clanRepository.requestToJoinClan(clan.id);
+      await _loadClanData();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Request sent to ${clan.name}.')));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not send that request. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmittingJoinRequest = false);
+    }
+  }
+
+  Future<void> _cancelJoinRequest() async {
+    final request = _myJoinRequest;
+    if (request == null || _isSubmittingJoinRequest) return;
+    final confirmed = await _confirmClanAction(
+      title: 'Cancel join request?',
+      message: '${clan.name} will no longer see your pending request.',
+      confirmLabel: 'Cancel Request',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _isSubmittingJoinRequest = true);
+    try {
+      await widget.clanRepository.cancelJoinRequest(request.id);
+      await _loadClanData();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not cancel that request. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmittingJoinRequest = false);
+    }
+  }
+
+  Future<void> _reviewJoinRequest(
+    ClanJoinRequest request, {
+    required bool approve,
+  }) async {
+    if (_activeJoinRequest != null) return;
+    if (!approve) {
+      final confirmed = await _confirmClanAction(
+        title: 'Decline ${request.displayName}?',
+        message: 'Their request will be removed from the pending list.',
+        confirmLabel: 'Decline',
+        destructive: true,
+      );
+      if (!confirmed || !mounted) return;
+    }
+
+    setState(() => _activeJoinRequest = request.id);
+    try {
+      await widget.clanRepository.reviewJoinRequest(
+        requestId: request.id,
+        approve: approve,
+      );
+      await _loadClanData();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            approve
+                ? '${request.displayName} joined the clan.'
+                : '${request.displayName}\'s request was declined.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not review that request. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _activeJoinRequest = null);
+    }
+  }
+
+  Future<void> _archiveClan() async {
+    if (!_isOwner || _isArchiving) return;
+    final confirmed = await _confirmClanAction(
+      title: 'Delete ${clan.name}?',
+      message:
+          'The clan will disappear from Field and upcoming matches will be cancelled. Its roster, payments, and match history will stay stored.',
+      confirmLabel: 'Delete Clan',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() => _isArchiving = true);
+    try {
+      await widget.clanRepository.archiveClan(clan.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not delete this clan. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isArchiving = false);
+    }
+  }
+
+  Future<void> _handlePrimaryAction() async {
+    if (_canManageClan) {
+      await _openFixtureFlow();
+      return;
+    }
+    if (_hasClan) return;
+    if (_myJoinRequest != null) {
+      await _cancelJoinRequest();
+      return;
+    }
+    await _requestToJoin();
+  }
+
+  Future<void> _handleMemberAction(
+    ClanMember member,
+    _MemberAction action,
+  ) async {
+    if (_activeMemberAction != null) return;
+
+    final confirmed = switch (action) {
+      _MemberAction.transferOwnership => await _confirmClanAction(
+        title: 'Transfer ownership?',
+        message:
+            '${member.displayName} will become the owner. You will stay as a clan leader.',
+        confirmLabel: 'Transfer',
+      ),
+      _MemberAction.remove => await _confirmClanAction(
+        title: 'Remove ${member.displayName}?',
+        message: 'They will lose access to this clan and its team controls.',
+        confirmLabel: 'Remove',
+        destructive: true,
+      ),
+      _ => true,
+    };
+    if (!confirmed || !mounted) return;
+
+    setState(() => _activeMemberAction = member.profileId);
+    try {
+      switch (action) {
+        case _MemberAction.makeLeader:
+          await widget.clanRepository.setClanMemberLeader(
+            clanId: clan.id,
+            profileId: member.profileId,
+            makeLeader: true,
+          );
+        case _MemberAction.removeLeader:
+          await widget.clanRepository.setClanMemberLeader(
+            clanId: clan.id,
+            profileId: member.profileId,
+            makeLeader: false,
+          );
+        case _MemberAction.transferOwnership:
+          await widget.clanRepository.transferClanOwnership(
+            clanId: clan.id,
+            newOwnerProfileId: member.profileId,
+          );
+        case _MemberAction.remove:
+          await widget.clanRepository.kickClanMember(
+            clanId: clan.id,
+            profileId: member.profileId,
+          );
+      }
+      await _loadClanData();
+      if (!mounted) return;
+      final message = switch (action) {
+        _MemberAction.makeLeader => '${member.displayName} is now a leader.',
+        _MemberAction.removeLeader =>
+          '${member.displayName} is now a regular member.',
+        _MemberAction.transferOwnership =>
+          '${member.displayName} now owns the clan.',
+        _MemberAction.remove => '${member.displayName} was removed.',
+      };
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not update that player. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _activeMemberAction = null);
+    }
+  }
+
+  Future<void> _leaveClan() async {
+    if (!_isCurrentClan || _activeMemberAction != null) return;
+
+    final successor = _isOwner
+        ? _members
+              .where((member) => member.profileId != _currentUserId)
+              .firstOrNull
+        : null;
+    final message = _isOwner
+        ? successor == null
+              ? 'Add another player before leaving. A clan must always have an owner.'
+              : '${successor.displayName}, the earliest-joined remaining player, will become the owner.'
+        : 'You will lose access to this clan and its team controls.';
+    final confirmed = await _confirmClanAction(
+      title: 'Leave ${clan.name}?',
+      message: message,
+      confirmLabel: 'Leave Clan',
+      destructive: true,
+    );
+    if (!confirmed || !mounted || (_isOwner && successor == null)) return;
+
+    setState(() => _activeMemberAction = _currentUserId ?? 'leave');
+    try {
+      await widget.clanRepository.leaveClan(clan.id);
+      if (!mounted) return;
+      Navigator.of(context).pop(true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not leave this clan. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _activeMemberAction = null);
+    }
+  }
+
+  Future<bool> _confirmClanAction({
+    required String title,
+    required String message,
+    required String confirmLabel,
+    bool destructive = false,
+  }) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                style: FilledButton.styleFrom(
+                  backgroundColor: destructive
+                      ? const Color(0xFFDC2626)
+                      : fieldEmerald600,
+                ),
+                child: Text(confirmLabel),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   @override
@@ -213,6 +591,18 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
           title: clan.name,
           showBack: true,
           rightAction: _isOwner
+              ? _ClanHeaderMenu(
+                  enabled: !_isArchiving,
+                  onSelected: (action) {
+                    switch (action) {
+                      case _ClanHeaderAction.edit:
+                        _openCustomize();
+                      case _ClanHeaderAction.archive:
+                        _archiveClan();
+                    }
+                  },
+                )
+              : _canManageClan
               ? HeaderActionButton(
                   icon: Icons.tune_rounded,
                   label: 'Edit',
@@ -227,6 +617,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
             const SizedBox(height: 24),
             _SegmentedTabs(
               selectedIndex: _tabIndex,
+              pendingCount: _canManageClan ? _pendingRequests.length : 0,
               onChanged: (index) => setState(() => _tabIndex = index),
             ),
             const SizedBox(height: 16),
@@ -246,31 +637,50 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
                   ),
                 );
               },
-              child: _tabIndex == 0
-                  ? _OverviewTab(
-                      key: const ValueKey('overview'),
-                      clan: clan,
-                      detail: detail,
-                      isLoadingMembers: _isLoadingMembers,
-                      membersErrorText: _membersErrorText,
-                      onRetryMembers: _loadClanData,
-                    )
-                  : _MatchesTab(
-                      key: const ValueKey('matches'),
-                      clan: clan,
-                      detail: detail,
-                      onOpenFixture: _openFixtureDetail,
-                      onOpenClan: _openFixtureClan,
-                    ),
+              child: switch (_tabIndex) {
+                0 => _OverviewTab(
+                  key: const ValueKey('overview'),
+                  clan: clan,
+                  detail: detail,
+                ),
+                1 => _MatchesTab(
+                  key: const ValueKey('matches'),
+                  clan: clan,
+                  detail: detail,
+                  onOpenFixture: _openFixtureDetail,
+                  onOpenClan: _openFixtureClan,
+                ),
+                _ => _MembersTab(
+                  key: const ValueKey('members'),
+                  members: detail.members,
+                  expectedCount: clan.memberCount,
+                  pendingRequests: _pendingRequests,
+                  isManager: _canManageClan,
+                  isLoadingMembers: _isLoadingMembers,
+                  isLoadingRequests: _isLoadingRequests,
+                  errorText: _membersErrorText,
+                  currentProfileId: _currentUserId,
+                  currentRole: _isCurrentClan ? _currentMembership?.role : null,
+                  activeMemberAction: _activeMemberAction,
+                  activeJoinRequest: _activeJoinRequest,
+                  onRetry: _loadClanData,
+                  onOpenMember: _openMemberProfile,
+                  onMemberAction: _handleMemberAction,
+                  onReviewRequest: _reviewJoinRequest,
+                  onLeaveClan: _isCurrentClan ? _leaveClan : null,
+                ),
+              },
             ),
           ],
         ),
       ),
       bottomNavigationBar: _ClanActionBar(
-        isOwner: _isOwner,
+        canManageMatches: _canManageClan,
         isCurrentClan: _isCurrentClan,
         hasClan: _hasClan,
-        onPressed: _openFixtureFlow,
+        hasPendingRequest: _myJoinRequest != null,
+        isWorking: _isSubmittingJoinRequest,
+        onPressed: _handlePrimaryAction,
       ),
     );
   }
@@ -476,6 +886,65 @@ class _ClanHero extends StatelessWidget {
   }
 }
 
+class _ClanHeaderMenu extends StatelessWidget {
+  const _ClanHeaderMenu({required this.enabled, required this.onSelected});
+
+  final bool enabled;
+  final ValueChanged<_ClanHeaderAction> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white.withValues(alpha: 0.72),
+      borderRadius: BorderRadius.circular(12),
+      child: PopupMenuButton<_ClanHeaderAction>(
+        enabled: enabled,
+        tooltip: 'Clan options',
+        onSelected: onSelected,
+        icon: const Icon(Icons.more_horiz_rounded, color: fieldGray900),
+        itemBuilder: (context) => const [
+          PopupMenuItem<_ClanHeaderAction>(
+            value: _ClanHeaderAction.edit,
+            child: Row(
+              children: [
+                Icon(Icons.tune_rounded, size: 19, color: fieldGray700),
+                SizedBox(width: 10),
+                Text(
+                  'Edit clan',
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem<_ClanHeaderAction>(
+            value: _ClanHeaderAction.archive,
+            child: Row(
+              children: [
+                Icon(
+                  Icons.delete_outline_rounded,
+                  size: 19,
+                  color: Color(0xFFDC2626),
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Delete clan',
+                  style: TextStyle(
+                    color: Color(0xFFDC2626),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FormPill extends StatelessWidget {
   const _FormPill({required this.result});
 
@@ -564,9 +1033,14 @@ class _HeroStat extends StatelessWidget {
 }
 
 class _SegmentedTabs extends StatelessWidget {
-  const _SegmentedTabs({required this.selectedIndex, required this.onChanged});
+  const _SegmentedTabs({
+    required this.selectedIndex,
+    required this.pendingCount,
+    required this.onChanged,
+  });
 
   final int selectedIndex;
+  final int pendingCount;
   final ValueChanged<int> onChanged;
 
   @override
@@ -589,6 +1063,12 @@ class _SegmentedTabs extends StatelessWidget {
             selected: selectedIndex == 1,
             onTap: () => onChanged(1),
           ),
+          _SegmentedTabButton(
+            label: 'Members',
+            badgeCount: pendingCount,
+            selected: selectedIndex == 2,
+            onTap: () => onChanged(2),
+          ),
         ],
       ),
     );
@@ -600,11 +1080,13 @@ class _SegmentedTabButton extends StatelessWidget {
     required this.label,
     required this.selected,
     required this.onTap,
+    this.badgeCount = 0,
   });
 
   final String label;
   final bool selected;
   final VoidCallback onTap;
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
@@ -628,13 +1110,44 @@ class _SegmentedTabButton extends StatelessWidget {
                   ]
                 : null,
           ),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: selected ? const Color(0xFF047857) : fieldGray600,
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-            ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? const Color(0xFF047857) : fieldGray600,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (badgeCount > 0) ...[
+                const SizedBox(width: 5),
+                Container(
+                  constraints: const BoxConstraints(minWidth: 18),
+                  height: 18,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    badgeCount > 99 ? '99+' : badgeCount.toString(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
@@ -643,20 +1156,10 @@ class _SegmentedTabButton extends StatelessWidget {
 }
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({
-    super.key,
-    required this.clan,
-    required this.detail,
-    required this.isLoadingMembers,
-    required this.membersErrorText,
-    required this.onRetryMembers,
-  });
+  const _OverviewTab({super.key, required this.clan, required this.detail});
 
   final Clan clan;
   final _ClanDetailData detail;
-  final bool isLoadingMembers;
-  final String? membersErrorText;
-  final VoidCallback onRetryMembers;
 
   @override
   Widget build(BuildContext context) {
@@ -697,14 +1200,6 @@ class _OverviewTab extends StatelessWidget {
         _ScoringPanel(detail: detail),
         const SizedBox(height: 16),
         _KitIdentityPanel(clan: clan),
-        const SizedBox(height: 16),
-        _RosterPanel(
-          members: detail.members,
-          expectedCount: clan.memberCount,
-          isLoading: isLoadingMembers,
-          errorText: membersErrorText,
-          onRetry: onRetryMembers,
-        ),
       ],
     );
   }
@@ -1219,6 +1714,295 @@ class _KitIdentityPanel extends StatelessWidget {
   }
 }
 
+class _MembersTab extends StatelessWidget {
+  const _MembersTab({
+    super.key,
+    required this.members,
+    required this.expectedCount,
+    required this.pendingRequests,
+    required this.isManager,
+    required this.isLoadingMembers,
+    required this.isLoadingRequests,
+    required this.errorText,
+    required this.currentProfileId,
+    required this.currentRole,
+    required this.activeMemberAction,
+    required this.activeJoinRequest,
+    required this.onRetry,
+    required this.onOpenMember,
+    required this.onMemberAction,
+    required this.onReviewRequest,
+    required this.onLeaveClan,
+  });
+
+  final List<ClanMember> members;
+  final int expectedCount;
+  final List<ClanJoinRequest> pendingRequests;
+  final bool isManager;
+  final bool isLoadingMembers;
+  final bool isLoadingRequests;
+  final String? errorText;
+  final String? currentProfileId;
+  final String? currentRole;
+  final String? activeMemberAction;
+  final String? activeJoinRequest;
+  final VoidCallback onRetry;
+  final ValueChanged<ClanMember> onOpenMember;
+  final void Function(ClanMember, _MemberAction) onMemberAction;
+  final void Function(ClanJoinRequest, {required bool approve}) onReviewRequest;
+  final VoidCallback? onLeaveClan;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        if (isManager) ...[
+          _PendingRequestsPanel(
+            requests: pendingRequests,
+            isLoading: isLoadingRequests,
+            activeRequestId: activeJoinRequest,
+            onReview: onReviewRequest,
+          ),
+          const SizedBox(height: 16),
+        ],
+        _RosterPanel(
+          members: members,
+          expectedCount: expectedCount,
+          isLoading: isLoadingMembers,
+          errorText: errorText,
+          onRetry: onRetry,
+          currentProfileId: currentProfileId,
+          currentRole: currentRole,
+          activeMemberAction: activeMemberAction,
+          onOpenMember: onOpenMember,
+          onMemberAction: onMemberAction,
+          onLeaveClan: onLeaveClan,
+        ),
+      ],
+    );
+  }
+}
+
+class _PendingRequestsPanel extends StatelessWidget {
+  const _PendingRequestsPanel({
+    required this.requests,
+    required this.isLoading,
+    required this.activeRequestId,
+    required this.onReview,
+  });
+
+  final List<ClanJoinRequest> requests;
+  final bool isLoading;
+  final String? activeRequestId;
+  final void Function(ClanJoinRequest, {required bool approve}) onReview;
+
+  @override
+  Widget build(BuildContext context) {
+    return _Panel(
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: _PanelTitle(
+                  icon: Icons.person_add_alt_1_rounded,
+                  iconColor: fieldEmerald600,
+                  iconBackground: Color(0xFFECFDF5),
+                  title: 'Join Requests',
+                ),
+              ),
+              Container(
+                constraints: const BoxConstraints(minWidth: 28),
+                height: 28,
+                alignment: Alignment.center,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  color: requests.isEmpty
+                      ? fieldGray100
+                      : const Color(0xFFFEE2E2),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  requests.length.toString(),
+                  style: TextStyle(
+                    color: requests.isEmpty
+                        ? fieldGray500
+                        : const Color(0xFFDC2626),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          if (isLoading && requests.isEmpty)
+            const Column(
+              children: [
+                _RosterSkeletonRow(),
+                SizedBox(height: 12),
+                _RosterSkeletonRow(),
+              ],
+            )
+          else if (requests.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 18),
+              child: const Column(
+                children: [
+                  Icon(
+                    Icons.mark_email_read_rounded,
+                    color: fieldGray400,
+                    size: 28,
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'No pending requests',
+                    style: TextStyle(
+                      color: fieldGray500,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            )
+          else
+            for (var index = 0; index < requests.length; index++) ...[
+              _JoinRequestRow(
+                request: requests[index],
+                isBusy: activeRequestId == requests[index].id,
+                actionsEnabled: activeRequestId == null,
+                onReview: onReview,
+              ),
+              if (index != requests.length - 1)
+                const Divider(height: 20, color: fieldGray100),
+            ],
+        ],
+      ),
+    );
+  }
+}
+
+class _JoinRequestRow extends StatelessWidget {
+  const _JoinRequestRow({
+    required this.request,
+    required this.isBusy,
+    required this.actionsEnabled,
+    required this.onReview,
+  });
+
+  final ClanJoinRequest request;
+  final bool isBusy;
+  final bool actionsEnabled;
+  final void Function(ClanJoinRequest, {required bool approve}) onReview;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF34D399), Color(0xFF3B82F6)],
+            ),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            request.initials,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+        const SizedBox(width: 11),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                request.displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                _joinRequestDate(request.requestedAt),
+                style: const TextStyle(
+                  color: fieldGray500,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (isBusy)
+          const SizedBox(
+            width: 38,
+            height: 38,
+            child: Padding(
+              padding: EdgeInsets.all(10),
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          )
+        else ...[
+          IconButton(
+            onPressed: actionsEnabled
+                ? () => onReview(request, approve: false)
+                : null,
+            tooltip: 'Decline request',
+            icon: const Icon(Icons.close_rounded),
+            color: const Color(0xFFDC2626),
+          ),
+          IconButton.filled(
+            onPressed: actionsEnabled
+                ? () => onReview(request, approve: true)
+                : null,
+            tooltip: 'Approve request',
+            icon: const Icon(Icons.check_rounded, size: 20),
+            style: IconButton.styleFrom(
+              backgroundColor: fieldEmerald600,
+              foregroundColor: Colors.white,
+              disabledBackgroundColor: fieldGray200,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+String _joinRequestDate(DateTime? value) {
+  if (value == null) return 'Requested recently';
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final local = value.toLocal();
+  return 'Requested ${months[local.month - 1]} ${local.day}';
+}
+
 class _RosterPanel extends StatelessWidget {
   const _RosterPanel({
     required this.members,
@@ -1226,6 +2010,12 @@ class _RosterPanel extends StatelessWidget {
     required this.isLoading,
     required this.errorText,
     required this.onRetry,
+    required this.currentProfileId,
+    required this.currentRole,
+    required this.activeMemberAction,
+    required this.onOpenMember,
+    required this.onMemberAction,
+    required this.onLeaveClan,
   });
 
   final List<ClanMember> members;
@@ -1233,6 +2023,12 @@ class _RosterPanel extends StatelessWidget {
   final bool isLoading;
   final String? errorText;
   final VoidCallback onRetry;
+  final String? currentProfileId;
+  final String? currentRole;
+  final String? activeMemberAction;
+  final ValueChanged<ClanMember> onOpenMember;
+  final void Function(ClanMember, _MemberAction) onMemberAction;
+  final VoidCallback? onLeaveClan;
 
   @override
   Widget build(BuildContext context) {
@@ -1266,6 +2062,15 @@ class _RosterPanel extends StatelessWidget {
                   ),
                 ),
               ),
+              if (onLeaveClan != null) ...[
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: activeMemberAction == null ? onLeaveClan : null,
+                  tooltip: 'Leave clan',
+                  icon: const Icon(Icons.logout_rounded, size: 20),
+                  color: fieldGray500,
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 16),
@@ -1285,7 +2090,15 @@ class _RosterPanel extends StatelessWidget {
             const _DashedEmptyState(message: 'No members found yet.')
           else
             for (var i = 0; i < members.length; i++) ...[
-              _MemberRow(member: members[i]),
+              _MemberRow(
+                member: members[i],
+                currentProfileId: currentProfileId,
+                currentRole: currentRole,
+                isBusy: activeMemberAction == members[i].profileId,
+                actionsEnabled: activeMemberAction == null,
+                onTap: () => onOpenMember(members[i]),
+                onAction: onMemberAction,
+              ),
               if (i != members.length - 1) const SizedBox(height: 12),
             ],
         ],
@@ -1295,84 +2108,178 @@ class _RosterPanel extends StatelessWidget {
 }
 
 class _MemberRow extends StatelessWidget {
-  const _MemberRow({required this.member});
+  const _MemberRow({
+    required this.member,
+    required this.currentProfileId,
+    required this.currentRole,
+    required this.isBusy,
+    required this.actionsEnabled,
+    required this.onTap,
+    required this.onAction,
+  });
 
   final ClanMember member;
+  final String? currentProfileId;
+  final String? currentRole;
+  final bool isBusy;
+  final bool actionsEnabled;
+  final VoidCallback onTap;
+  final void Function(ClanMember, _MemberAction) onAction;
+
+  List<_MemberAction> get _actions {
+    if (member.profileId == currentProfileId) return const [];
+    if (currentRole == 'owner') {
+      return [
+        if (member.isLeader)
+          _MemberAction.removeLeader
+        else
+          _MemberAction.makeLeader,
+        _MemberAction.transferOwnership,
+        _MemberAction.remove,
+      ];
+    }
+    if (currentRole == 'leader' && !member.isManager) {
+      return const [_MemberAction.remove];
+    }
+    return const [];
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(14)),
-      child: Row(
-        children: [
-          Container(
-            width: 48,
-            height: 48,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [Color(0xFF34D399), Color(0xFF3B82F6)],
-              ),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white, width: 2),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: 0.06),
-                  blurRadius: 7,
-                  offset: const Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Text(
-              member.initials,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        member.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [Color(0xFF34D399), Color(0xFF3B82F6)],
+                  ),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: Colors.white, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.06),
+                      blurRadius: 7,
+                      offset: const Offset(0, 2),
                     ),
-                    if (member.isOwner) ...[
-                      const SizedBox(width: 7),
-                      const _OwnerBadge(),
-                    ],
                   ],
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  member.roleLabel,
+                child: Text(
+                  member.initials,
                   style: const TextStyle(
-                    color: fieldGray500,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            member.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: fieldGray900,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        if (member.isManager) ...[
+                          const SizedBox(width: 7),
+                          _RoleBadge(role: member.role),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      member.roleLabel,
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (isBusy)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10),
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (_actions.isNotEmpty)
+                PopupMenuButton<_MemberAction>(
+                  enabled: actionsEnabled,
+                  tooltip: 'Manage ${member.displayName}',
+                  icon: const Icon(
+                    Icons.more_vert_rounded,
+                    color: fieldGray500,
+                  ),
+                  onSelected: (action) => onAction(member, action),
+                  itemBuilder: (context) => [
+                    for (final action in _actions)
+                      PopupMenuItem<_MemberAction>(
+                        value: action,
+                        child: Row(
+                          children: [
+                            Icon(
+                              _memberActionIcon(action),
+                              size: 19,
+                              color: action == _MemberAction.remove
+                                  ? const Color(0xFFDC2626)
+                                  : fieldGray700,
+                            ),
+                            const SizedBox(width: 10),
+                            Text(
+                              _memberActionLabel(action),
+                              style: TextStyle(
+                                color: action == _MemberAction.remove
+                                    ? const Color(0xFFDC2626)
+                                    : fieldGray900,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                  ],
+                )
+              else
+                const Padding(
+                  padding: EdgeInsets.only(right: 6),
+                  child: Icon(
+                    Icons.chevron_right_rounded,
+                    color: fieldGray300,
+                    size: 21,
+                  ),
+                ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1438,27 +2345,36 @@ class _RosterErrorState extends StatelessWidget {
   }
 }
 
-class _OwnerBadge extends StatelessWidget {
-  const _OwnerBadge();
+class _RoleBadge extends StatelessWidget {
+  const _RoleBadge({required this.role});
+
+  final String role;
 
   @override
   Widget build(BuildContext context) {
+    final isOwner = role == 'owner';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFFBBF24), Color(0xFFF97316)],
+        gradient: LinearGradient(
+          colors: isOwner
+              ? const [Color(0xFFFBBF24), Color(0xFFF97316)]
+              : const [Color(0xFF10B981), Color(0xFF2563EB)],
         ),
         borderRadius: BorderRadius.circular(999),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.workspace_premium_rounded, color: Colors.white, size: 10),
-          SizedBox(width: 3),
+          Icon(
+            isOwner ? Icons.workspace_premium_rounded : Icons.shield_rounded,
+            color: Colors.white,
+            size: 10,
+          ),
+          const SizedBox(width: 3),
           Text(
-            'OWNER',
-            style: TextStyle(
+            isOwner ? 'OWNER' : 'LEADER',
+            style: const TextStyle(
               color: Colors.white,
               fontSize: 9,
               fontWeight: FontWeight.w900,
@@ -1469,6 +2385,24 @@ class _OwnerBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+String _memberActionLabel(_MemberAction action) {
+  return switch (action) {
+    _MemberAction.makeLeader => 'Make leader',
+    _MemberAction.removeLeader => 'Remove leader',
+    _MemberAction.transferOwnership => 'Transfer ownership',
+    _MemberAction.remove => 'Remove from clan',
+  };
+}
+
+IconData _memberActionIcon(_MemberAction action) {
+  return switch (action) {
+    _MemberAction.makeLeader => Icons.add_moderator_rounded,
+    _MemberAction.removeLeader => Icons.remove_moderator_rounded,
+    _MemberAction.transferOwnership => Icons.swap_horiz_rounded,
+    _MemberAction.remove => Icons.person_remove_rounded,
+  };
 }
 
 class _MatchesTab extends StatelessWidget {
@@ -2112,34 +3046,43 @@ class _Panel extends StatelessWidget {
 
 class _ClanActionBar extends StatelessWidget {
   const _ClanActionBar({
-    required this.isOwner,
+    required this.canManageMatches,
     required this.isCurrentClan,
     required this.hasClan,
+    required this.hasPendingRequest,
+    required this.isWorking,
     required this.onPressed,
   });
 
-  final bool isOwner;
+  final bool canManageMatches;
   final bool isCurrentClan;
   final bool hasClan;
+  final bool hasPendingRequest;
+  final bool isWorking;
   final VoidCallback onPressed;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = isOwner || !hasClan;
-    final icon = isOwner
+    final enabled = !isWorking && (canManageMatches || !hasClan);
+    final icon = canManageMatches
         ? Icons.sports_mma_rounded
         : isCurrentClan
         ? Icons.verified_user_rounded
         : hasClan
         ? Icons.lock_rounded
+        : hasPendingRequest
+        ? Icons.hourglass_top_rounded
         : Icons.group_add_rounded;
-    final label = isOwner
+    final label = canManageMatches
         ? 'Schedule a Match'
         : isCurrentClan
         ? 'Clan Member'
         : hasClan
         ? 'Already in a Clan'
+        : hasPendingRequest
+        ? 'Request Pending'
         : 'Request to Join';
+    final activeColor = hasPendingRequest ? fieldGray900 : fieldEmerald600;
 
     return SafeArea(
       top: false,
@@ -2160,7 +3103,7 @@ class _ClanActionBar extends StatelessWidget {
           height: 56,
           width: double.infinity,
           child: Material(
-            color: enabled ? fieldEmerald600 : fieldGray200,
+            color: enabled ? activeColor : fieldGray200,
             borderRadius: BorderRadius.circular(14),
             child: InkWell(
               onTap: enabled ? onPressed : null,
@@ -2176,11 +3119,18 @@ class _ClanActionBar extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(
-                      icon,
-                      color: enabled ? Colors.white : fieldGray500,
-                      size: 22,
-                    ),
+                    if (isWorking)
+                      const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    else
+                      Icon(
+                        icon,
+                        color: enabled ? Colors.white : fieldGray500,
+                        size: 22,
+                      ),
                     const SizedBox(width: 9),
                     Text(
                       label.toUpperCase(),
@@ -2404,10 +3354,7 @@ _FixtureSummary _summaryFromFixture(Clan clan, Fixture fixture) {
     opponentScore: opponentScore ?? 0,
     srChange: fixture.srChangeFor(clan.id),
     isCancelled: isCancelled,
-    note: isCancelled
-        ? fixture.cancellationReason ??
-              'No opponent joined before the 24 hour cutoff.'
-        : null,
+    note: isCancelled ? fixture.cancellationDisplayReason : null,
   );
 }
 

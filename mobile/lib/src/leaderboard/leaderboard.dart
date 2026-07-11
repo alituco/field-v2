@@ -1,3 +1,5 @@
+const minimumLeaderboardMatches = 4;
+
 class LeaderboardSeason {
   const LeaderboardSeason({
     required this.id,
@@ -73,4 +75,9 @@ class LeaderboardPlayerStats {
   final Map<String, LeaderboardClanRecord> clanRecords;
   final List<LeaderboardPlayerStat> topScorers;
   final List<LeaderboardPlayerStat> topAssisters;
+
+  bool isClanEligible(String clanId) {
+    return (clanRecords[clanId]?.matchesPlayed ?? 0) >=
+        minimumLeaderboardMatches;
+  }
 }

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 
@@ -98,9 +99,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _isSaving = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not save your profile. Try again.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -130,9 +138,16 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_friendlyError(error))));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open that photo. Try another one.',
+            ),
+          ),
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isPickingImage = false);
@@ -455,15 +470,6 @@ String _contentTypeForAvatar({required String extension, String? mimeType}) {
     'webp' => 'image/webp',
     _ => 'image/jpeg',
   };
-}
-
-String _friendlyError(Object error) {
-  final message = error.toString();
-  if (message.contains('profiles_username_unique_lower_idx') ||
-      message.toLowerCase().contains('duplicate')) {
-    return 'That username is already taken.';
-  }
-  return message;
 }
 
 String _initials(String name) {

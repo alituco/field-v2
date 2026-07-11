@@ -2,8 +2,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/user_facing_error.dart';
 import 'clan.dart';
 import 'clan_repository.dart';
 import 'clan_widgets.dart';
@@ -136,28 +136,19 @@ class _CreateClanScreenState extends State<CreateClanScreen>
         _step = 3;
       });
       _confettiController.forward(from: 0);
-    } on PostgrestException catch (error) {
-      setState(() => _errorText = _friendlyPostgrestMessage(error));
-    } on AuthException catch (error) {
-      setState(() => _errorText = error.message);
-    } catch (_) {
-      setState(() => _errorText = 'Could not forge the clan. Try again.');
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not create your clan. Try again.',
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
       }
     }
-  }
-
-  String _friendlyPostgrestMessage(PostgrestException error) {
-    final message = error.message.toLowerCase();
-    if (message.contains('duplicate') || message.contains('unique')) {
-      return 'That tag is already claimed.';
-    }
-    if (message.contains('row-level security')) {
-      return 'You may already be in a clan.';
-    }
-    return error.message;
   }
 
   @override

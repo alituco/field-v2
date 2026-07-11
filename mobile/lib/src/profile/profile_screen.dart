@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/user_facing_error.dart';
+import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'profile.dart';
 import 'profile_connections_screen.dart';
@@ -11,13 +13,19 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.profileRepository,
-    required this.isSigningOut,
-    required this.onSignOut,
+    this.profileId,
+    this.devModeEnabled = false,
+    this.onSwitchUser,
+    this.isSigningOut = false,
+    this.onSignOut,
   });
 
   final ProfileRepository profileRepository;
+  final String? profileId;
+  final bool devModeEnabled;
+  final Future<void> Function(String profileId)? onSwitchUser;
   final bool isSigningOut;
-  final VoidCallback onSignOut;
+  final VoidCallback? onSignOut;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -27,6 +35,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late Future<PlayerProfile> _profileFuture;
   PlayerProfile? _latestProfile;
 
+  bool get _isCurrentProfile => widget.profileId == null;
+
   @override
   void initState() {
     super.initState();
@@ -34,7 +44,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<PlayerProfile> _loadProfile() async {
-    final profile = await widget.profileRepository.getCurrentProfile();
+    final profile = _isCurrentProfile
+        ? await widget.profileRepository.getCurrentProfile()
+        : await widget.profileRepository.getProfile(widget.profileId!);
     _latestProfile = profile;
     return profile;
   }
@@ -114,20 +126,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
+  Future<void> _openDevUserSwitcher() async {
+    final profile = _latestProfile;
+    final onSwitchUser = widget.onSwitchUser;
+    if (profile == null || onSwitchUser == null) return;
+
+    await showDevUserSwitcher(
+      context: context,
+      profileRepository: widget.profileRepository,
+      currentUserId: profile.id,
+      onSwitchUser: onSwitchUser,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return FieldHeaderOverlay(
       header: FieldPageHeader(
         title: 'Profile',
+        showBack: !_isCurrentProfile,
+        onBack: _isCurrentProfile ? null : () => Navigator.of(context).pop(),
         rightAction: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _HeaderIconButton(
-              icon: Icons.edit_rounded,
-              tooltip: 'Edit profile',
-              onPressed: _openEditProfile,
-            ),
-            const SizedBox(width: 8),
+            if (_isCurrentProfile) ...[
+              if (widget.devModeEnabled && widget.onSwitchUser != null) ...[
+                _HeaderIconButton(
+                  icon: Icons.switch_account_rounded,
+                  tooltip: 'Switch dev user',
+                  onPressed: _openDevUserSwitcher,
+                ),
+                const SizedBox(width: 8),
+              ],
+              _HeaderIconButton(
+                icon: Icons.edit_rounded,
+                tooltip: 'Edit profile',
+                onPressed: _openEditProfile,
+              ),
+              const SizedBox(width: 8),
+            ],
             _HeaderIconButton(
               icon: Icons.ios_share_rounded,
               tooltip: 'Share profile',
@@ -145,7 +182,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
           if (snapshot.hasError || !snapshot.hasData) {
             return _ProfileErrorView(
-              message: snapshot.error?.toString() ?? 'Could not load profile.',
+              message: userFacingError(
+                snapshot.error,
+                fallback: 'We could not load this profile. Try again.',
+              ),
               onRetry: () {
                 final next = _loadProfile();
                 setState(() {
@@ -161,13 +201,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
             onRefresh: _refresh,
             child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: fieldHeaderAwarePadding(context, top: 16, bottom: 124),
+              padding: fieldHeaderAwarePadding(
+                context,
+                top: 16,
+                bottom: _isCurrentProfile ? 124 : 32,
+              ),
               children: [
                 _IdentityCard(
                   profile: profile,
-                  onOpenFollowing: () =>
-                      _openConnections(ProfileConnectionTab.following),
-                  onOpenFans: () => _openConnections(ProfileConnectionTab.fans),
+                  onOpenFollowing: _isCurrentProfile
+                      ? () => _openConnections(ProfileConnectionTab.following)
+                      : null,
+                  onOpenFans: _isCurrentProfile
+                      ? () => _openConnections(ProfileConnectionTab.fans)
+                      : null,
                 ),
                 const SizedBox(height: 12),
                 _StatsRow(profile: profile),
@@ -179,11 +226,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   const SizedBox(height: 16),
                   _CareerCard(entries: profile.career),
                 ],
-                const SizedBox(height: 16),
-                _SignOutButton(
-                  isSigningOut: widget.isSigningOut,
-                  onSignOut: widget.onSignOut,
-                ),
+                if (_isCurrentProfile && widget.onSignOut != null) ...[
+                  const SizedBox(height: 16),
+                  _SignOutButton(
+                    isSigningOut: widget.isSigningOut,
+                    onSignOut: widget.onSignOut!,
+                  ),
+                ],
               ],
             ),
           );
@@ -201,8 +250,8 @@ class _IdentityCard extends StatelessWidget {
   });
 
   final PlayerProfile profile;
-  final VoidCallback onOpenFollowing;
-  final VoidCallback onOpenFans;
+  final VoidCallback? onOpenFollowing;
+  final VoidCallback? onOpenFans;
 
   @override
   Widget build(BuildContext context) {
@@ -347,7 +396,7 @@ class _SocialCount extends StatelessWidget {
 
   final int value;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
