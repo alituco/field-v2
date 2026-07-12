@@ -7,6 +7,7 @@ import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AssignableFixture,
   BlueCard,
+  BroadcastControlResponse,
   FixtureClock,
   FixtureEvent,
   Player,
@@ -496,6 +497,7 @@ export default function RefereePage() {
           />
         ) : (
           <GamesView
+            accessToken={accessToken}
             activeFixture={activeFixture}
             fixtures={fixtures}
             isLoading={isLoading}
@@ -1048,6 +1050,7 @@ function AdminControlView({
 }
 
 function GamesView({
+  accessToken,
   activeFixture,
   fixtures,
   isLoading,
@@ -1068,6 +1071,7 @@ function GamesView({
   onRunAction,
   onRefresh,
 }: {
+  accessToken: string;
   activeFixture: RefereeFixture | null;
   fixtures: RefereeFixture[];
   isLoading: boolean;
@@ -1137,6 +1141,8 @@ function GamesView({
           </button>
         ))}
       </div>
+
+      <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
 
       <TimerPanel
         fixture={activeFixture}
@@ -1228,6 +1234,161 @@ function GamesView({
       </section>
     </>
   );
+}
+
+function BroadcastControl({
+  fixture,
+  accessToken,
+}: {
+  fixture: RefereeFixture;
+  accessToken: string;
+}) {
+  const [state, setState] = useState<BroadcastControlResponse>({
+    broadcast: null,
+    device: null,
+  });
+  const [isLoading, setIsLoading] = useState(true);
+  const [action, setAction] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setIsLoading(true);
+    try {
+      const response = await fetch(
+        `/api/referee/fixtures/${fixture.id}/broadcast`,
+        {
+          headers: { authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        },
+      );
+      const payload = (await response.json()) as BroadcastControlResponse & {
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "Could not load stream status.");
+      setState(payload);
+      setError(null);
+    } catch (loadError) {
+      if (!quiet) {
+        setError(loadError instanceof Error ? loadError.message : "Stream status failed.");
+      }
+    } finally {
+      if (!quiet) setIsLoading(false);
+    }
+  }, [accessToken, fixture.id]);
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(true), 2_500);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  async function run(nextAction: "start" | "stop") {
+    setAction(nextAction);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/referee/fixtures/${fixture.id}/broadcast`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ action: nextAction }),
+        },
+      );
+      const payload = (await response.json()) as BroadcastControlResponse & {
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "Stream action failed.");
+      setState(payload);
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Stream action failed.");
+    } finally {
+      setAction(null);
+    }
+  }
+
+  const status = state.broadcast?.status ?? "NOT_CONFIGURED";
+  const deviceReady = state.device?.obsConnected === true &&
+    state.device.status !== "OFFLINE";
+  const streamActive = ["STARTING", "LIVE", "STOPPING"].includes(status);
+  const canStart = deviceReady &&
+    ["SCHEDULED", "LIVE"].includes(fixture.status) &&
+    !streamActive &&
+    status !== "PROCESSING";
+
+  return (
+    <section className="panel broadcast-control">
+      <div className="broadcast-control-heading">
+        <div>
+          <div className="broadcast-eyebrow">Broadcast</div>
+          <h2 className="panel-title">{broadcastStatusLabel(status)}</h2>
+        </div>
+        <span className={`broadcast-status-dot ${status.toLowerCase()}`} />
+      </div>
+
+      <div className="camera-readiness">
+        <span className={`camera-dot ${deviceReady ? "ready" : ""}`} />
+        <div>
+          <strong>{deviceReady ? "Camera ready" : "Camera offline"}</strong>
+          <span>
+            {state.device?.displayName ?? "Open the Field broadcaster on the camera laptop"}
+          </span>
+        </div>
+      </div>
+
+      {error || state.broadcast?.errorMessage ? (
+        <div className="broadcast-error">{error ?? state.broadcast?.errorMessage}</div>
+      ) : null}
+
+      <div className="broadcast-actions">
+        {streamActive ? (
+          <button
+            className="danger-button"
+            disabled={action !== null || status === "STOPPING"}
+            onClick={() => void run("stop")}
+            type="button"
+          >
+            {status === "STOPPING" ? "Stopping..." : "Stop Stream"}
+          </button>
+        ) : (
+          <button
+            className="primary-button"
+            disabled={!canStart || action !== null || isLoading}
+            onClick={() => void run("start")}
+            type="button"
+          >
+            {action === "start" ? "Starting..." : "Start Stream"}
+          </button>
+        )}
+      </div>
+      <p className="broadcast-hint">
+        Starting the stream keeps the match clock at 00:00. Use Start below at kickoff.
+      </p>
+    </section>
+  );
+}
+
+function broadcastStatusLabel(status: string) {
+  switch (status) {
+    case "READY":
+      return "Ready to stream";
+    case "STARTING":
+      return "Connecting camera";
+    case "LIVE":
+      return "Stream is live";
+    case "STOPPING":
+      return "Finishing broadcast";
+    case "PROCESSING":
+      return "Preparing replay";
+    case "REPLAY_READY":
+      return "Replay ready";
+    case "ERROR":
+      return "Stream needs attention";
+    default:
+      return "Not started";
+  }
 }
 
 function TimerPanel({

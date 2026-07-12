@@ -110,6 +110,63 @@ class FixtureClock {
   }
 }
 
+class FixtureBroadcast {
+  const FixtureBroadcast({
+    required this.status,
+    this.liveInputId,
+    this.activeVideoId,
+    this.hlsUrl,
+    this.replayHlsUrl,
+    this.streamStartedAt,
+    this.streamStoppedAt,
+    this.recordingReadyAt,
+    this.errorMessage,
+  });
+
+  final String status;
+  final String? liveInputId;
+  final String? activeVideoId;
+  final String? hlsUrl;
+  final String? replayHlsUrl;
+  final DateTime? streamStartedAt;
+  final DateTime? streamStoppedAt;
+  final DateTime? recordingReadyAt;
+  final String? errorMessage;
+
+  bool get isLive => status.toUpperCase() == 'LIVE';
+
+  bool get isStarting => status.toUpperCase() == 'STARTING';
+
+  bool get isProcessing => status.toUpperCase() == 'PROCESSING';
+
+  bool get isStopping => status.toUpperCase() == 'STOPPING';
+
+  bool get isReplayReady => status.toUpperCase() == 'REPLAY_READY';
+
+  bool get shouldPoll => isStarting || isLive || isStopping || isProcessing;
+
+  String? get playbackUrl {
+    final replay = replayHlsUrl?.trim();
+    if (replay != null && replay.isNotEmpty) return replay;
+    final live = hlsUrl?.trim();
+    return live == null || live.isEmpty ? null : live;
+  }
+
+  factory FixtureBroadcast.fromJson(Map<String, dynamic> json) {
+    return FixtureBroadcast(
+      status: json['status'] as String? ?? 'NOT_CONFIGURED',
+      liveInputId: json['live_input_id'] as String?,
+      activeVideoId: json['active_video_id'] as String?,
+      hlsUrl: json['hls_url'] as String?,
+      replayHlsUrl: json['replay_hls_url'] as String?,
+      streamStartedAt: _asDate(json['stream_started_at']),
+      streamStoppedAt: _asDate(json['stream_stopped_at']),
+      recordingReadyAt: _asDate(json['recording_ready_at']),
+      errorMessage: json['error_message'] as String?,
+    );
+  }
+}
+
 class FixtureParticipant {
   const FixtureParticipant({
     required this.id,
@@ -229,6 +286,18 @@ class FixtureTimelineEvent {
   }
 }
 
+class FixtureHighlightMoment {
+  const FixtureHighlightMoment({
+    required this.event,
+    required this.start,
+    required this.end,
+  });
+
+  final FixtureTimelineEvent event;
+  final Duration start;
+  final Duration end;
+}
+
 class Fixture {
   const Fixture({
     required this.id,
@@ -263,6 +332,7 @@ class Fixture {
     this.createdAt,
     this.updatedAt,
     this.clock,
+    this.broadcast,
     this.scorers = const [],
     this.timeline = const [],
   });
@@ -299,6 +369,7 @@ class Fixture {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final FixtureClock? clock;
+  final FixtureBroadcast? broadcast;
   final List<FixtureScorer> scorers;
   final List<FixtureTimelineEvent> timeline;
 
@@ -309,6 +380,49 @@ class Fixture {
   bool get isLive => status == FixtureStatus.live;
 
   bool get isCancelled => status == FixtureStatus.cancelled;
+
+  String? get livePlaybackUrl => _nonEmptyUrl(broadcast?.hlsUrl);
+
+  String? get fullGamePlaybackUrl {
+    return _nonEmptyUrl(broadcast?.replayHlsUrl) ?? _nonEmptyUrl(videoUrl);
+  }
+
+  /// Goal windows aligned to the recording's wall clock for post-game playback.
+  List<FixtureHighlightMoment> get highlightMoments {
+    if (!isFinal) return const [];
+
+    final streamStartedAt = broadcast?.streamStartedAt;
+    if (streamStartedAt == null) return const [];
+
+    const leadIn = Duration(seconds: 15);
+    const followThrough = Duration(seconds: 15);
+    final moments = <FixtureHighlightMoment>[];
+    final goals =
+        timeline.where((event) {
+          return event.eventType.toUpperCase() == 'GOAL' &&
+              event.createdAt != null &&
+              event.note?.toLowerCase() != 'admin correction';
+        }).toList()..sort((left, right) {
+          return left.createdAt!.compareTo(right.createdAt!);
+        });
+
+    for (final goal in goals) {
+      final offset = goal.createdAt!.difference(streamStartedAt);
+      final end = offset + followThrough;
+      if (end <= Duration.zero) continue;
+
+      final start = offset - leadIn;
+      moments.add(
+        FixtureHighlightMoment(
+          event: goal,
+          start: start.isNegative ? Duration.zero : start,
+          end: end,
+        ),
+      );
+    }
+
+    return moments;
+  }
 
   String get cancellationTitle {
     return switch (cancellationCode) {
@@ -397,6 +511,7 @@ class Fixture {
     final homeClan = _nestedMap(json['home_clan'] ?? json['clans']) ?? const {};
     final awayClan = _nestedMap(json['away_clan']);
     final clock = _nestedMap(json['fixture_clock_states']);
+    final broadcast = _nestedMap(json['fixture_broadcasts']);
     final homePayer = _nestedMap(json['home_payer']);
     final awayPayer = _nestedMap(json['away_payer']);
     final cancellationActor = _nestedMap(json['cancellation_actor']);
@@ -448,6 +563,9 @@ class Fixture {
       createdAt: _asDate(json['created_at']),
       updatedAt: _asDate(json['updated_at']),
       clock: clock == null ? null : FixtureClock.fromJson(clock),
+      broadcast: broadcast == null
+          ? null
+          : FixtureBroadcast.fromJson(broadcast),
       scorers: _scorersFromJson(json['fixture_scorers']),
       timeline: _timelineFromJson(json['fixture_events']),
     );
@@ -523,6 +641,11 @@ DateTime? _asDate(Object? value) {
   if (value is DateTime) return value;
   if (value is String) return DateTime.tryParse(value);
   return null;
+}
+
+String? _nonEmptyUrl(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
 int? _scoreFromRowsOrValue(Object? rows, String? clanId, Object? value) {

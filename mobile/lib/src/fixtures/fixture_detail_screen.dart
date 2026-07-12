@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
@@ -237,6 +238,13 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       return;
     }
     if (_fixture.status == FixtureStatus.scheduled) {
+      _refreshTimer = Timer.periodic(
+        const Duration(seconds: 10),
+        (_) => _refreshFixture(quiet: true),
+      );
+      return;
+    }
+    if (_fixture.broadcast?.shouldPoll == true) {
       _refreshTimer = Timer.periodic(
         const Duration(seconds: 10),
         (_) => _refreshFixture(quiet: true),
@@ -1406,13 +1414,336 @@ class _SrChangeTile extends StatelessWidget {
   }
 }
 
-class _BroadcastPanel extends StatelessWidget {
+class _BroadcastPanel extends StatefulWidget {
   const _BroadcastPanel({required this.fixture});
 
   final Fixture fixture;
 
   @override
+  State<_BroadcastPanel> createState() => _BroadcastPanelState();
+}
+
+enum _CompletedVideoView { highlights, fullGame }
+
+class _BroadcastPanelState extends State<_BroadcastPanel> {
+  VideoPlayerController? _controller;
+  Timer? _retryTimer;
+  String? _loadedUrl;
+  String? _playerError;
+  bool _isLoading = false;
+  bool _isAdvancingHighlight = false;
+  int _activeHighlightIndex = 0;
+  int _playerLoadGeneration = 0;
+  Duration _fullGamePosition = Duration.zero;
+  _CompletedVideoView _completedView = _CompletedVideoView.highlights;
+  late List<FixtureHighlightMoment> _highlightMoments;
+
+  Fixture get fixture => widget.fixture;
+
+  bool get _showHighlights {
+    return fixture.isFinal && _completedView == _CompletedVideoView.highlights;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _highlightMoments = fixture.highlightMoments;
+    unawaited(_syncPlayer());
+  }
+
+  @override
+  void didUpdateWidget(covariant _BroadcastPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldHighlightSignature = _highlightSignature(_highlightMoments);
+    _highlightMoments = fixture.highlightMoments;
+    final highlightsChanged =
+        oldHighlightSignature != _highlightSignature(_highlightMoments);
+    if (!oldWidget.fixture.isFinal && widget.fixture.isFinal) {
+      _completedView = _CompletedVideoView.highlights;
+      _activeHighlightIndex = 0;
+      _fullGamePosition = Duration.zero;
+    }
+    final oldUrl = _playbackUrl(oldWidget.fixture);
+    final nextUrl = _playbackUrl(widget.fixture);
+    if (oldUrl != nextUrl ||
+        oldWidget.fixture.broadcast?.status !=
+            widget.fixture.broadcast?.status) {
+      unawaited(_syncPlayer(force: oldUrl == nextUrl));
+    } else if (highlightsChanged && _showHighlights) {
+      unawaited(_resetHighlightPlayback());
+    }
+  }
+
+  @override
+  void dispose() {
+    _playerLoadGeneration += 1;
+    _retryTimer?.cancel();
+    final controller = _controller;
+    controller?.removeListener(_handlePlaybackTick);
+    unawaited(controller?.dispose());
+    super.dispose();
+  }
+
+  Future<void> _syncPlayer({bool force = false}) async {
+    final loadGeneration = ++_playerLoadGeneration;
+    final url = _playbackUrl(fixture);
+    if (url == null) {
+      _retryTimer?.cancel();
+      final previous = _controller;
+      previous?.removeListener(_handlePlaybackTick);
+      _controller = null;
+      _loadedUrl = null;
+      if (previous != null) await previous.dispose();
+      if (mounted && loadGeneration == _playerLoadGeneration) {
+        setState(() {
+          _isLoading = false;
+          _playerError = null;
+        });
+      }
+      return;
+    }
+
+    if (!force &&
+        _loadedUrl == url &&
+        _controller?.value.isInitialized == true) {
+      return;
+    }
+
+    _retryTimer?.cancel();
+    final previous = _controller;
+    previous?.removeListener(_handlePlaybackTick);
+    _controller = null;
+    _loadedUrl = null;
+    if (previous != null) await previous.dispose();
+    if (!mounted || loadGeneration != _playerLoadGeneration) return;
+    setState(() {
+      _isLoading = true;
+      _playerError = null;
+    });
+
+    final next = VideoPlayerController.networkUrl(Uri.parse(url));
+    try {
+      await next.initialize();
+      await next.setLooping(false);
+      if (!mounted ||
+          loadGeneration != _playerLoadGeneration ||
+          _playbackUrl(fixture) != url) {
+        await next.dispose();
+        return;
+      }
+      if (_showHighlights) {
+        _activeHighlightIndex = 0;
+        final highlights = _availableHighlights(next);
+        if (highlights.isNotEmpty) {
+          await next.seekTo(highlights.first.start);
+        }
+      } else if (fixture.isFinal) {
+        await next.seekTo(_boundedPosition(_fullGamePosition, next));
+      }
+      if (!mounted || loadGeneration != _playerLoadGeneration) {
+        await next.dispose();
+        return;
+      }
+      next.addListener(_handlePlaybackTick);
+      setState(() {
+        _controller = next;
+        _loadedUrl = url;
+        _isLoading = false;
+      });
+    } catch (_) {
+      await next.dispose();
+      if (!mounted || loadGeneration != _playerLoadGeneration) return;
+      setState(() {
+        _isLoading = false;
+        _playerError = _playerFailureMessage;
+      });
+      if (fixture.broadcast?.shouldPoll == true || fixture.isFinal) {
+        _retryTimer = Timer(
+          const Duration(seconds: 10),
+          () => unawaited(_syncPlayer(force: true)),
+        );
+      }
+    }
+  }
+
+  String? _playbackUrl(Fixture value) {
+    if (value.isLive) return value.livePlaybackUrl;
+    if (value.isFinal) return value.fullGamePlaybackUrl;
+    return null;
+  }
+
+  String get _playerFailureMessage {
+    if (fixture.isLive) return 'The live stream is not ready yet.';
+    if (_showHighlights) return 'Highlights are still loading.';
+    return 'The full game replay is still loading.';
+  }
+
+  List<FixtureHighlightMoment> _availableHighlights(
+    VideoPlayerController? controller,
+  ) {
+    if (controller?.value.isInitialized != true ||
+        controller!.value.duration <= Duration.zero) {
+      return _highlightMoments;
+    }
+    return _highlightMoments
+        .where((moment) => moment.start < controller.value.duration)
+        .toList(growable: false);
+  }
+
+  String _highlightSignature(List<FixtureHighlightMoment> moments) {
+    return moments
+        .map(
+          (moment) =>
+              '${moment.event.id}:${moment.start.inMilliseconds}:${moment.end.inMilliseconds}',
+        )
+        .join('|');
+  }
+
+  Future<void> _resetHighlightPlayback() async {
+    final controller = _controller;
+    if (controller?.value.isInitialized != true) {
+      if (_playbackUrl(fixture) != null) {
+        unawaited(_syncPlayer(force: true));
+      }
+      return;
+    }
+    final wasPlaying = controller!.value.isPlaying;
+    if (wasPlaying) await controller.pause();
+    final highlights = _availableHighlights(controller);
+    if (highlights.isEmpty) {
+      if (mounted) setState(() => _activeHighlightIndex = 0);
+      return;
+    }
+    await controller.seekTo(highlights.first.start);
+    if (wasPlaying) await controller.play();
+    if (mounted) setState(() => _activeHighlightIndex = 0);
+  }
+
+  Duration _boundedPosition(
+    Duration position,
+    VideoPlayerController controller,
+  ) {
+    if (position.isNegative) return Duration.zero;
+    final duration = controller.value.duration;
+    if (duration > Duration.zero && position > duration) return duration;
+    return position;
+  }
+
+  Future<void> _selectCompletedView(_CompletedVideoView view) async {
+    if (!fixture.isFinal || view == _completedView) return;
+
+    final controller = _controller;
+    if (_completedView == _CompletedVideoView.fullGame &&
+        controller?.value.isInitialized == true) {
+      _fullGamePosition = controller!.value.position;
+    }
+    if (controller?.value.isPlaying == true) await controller!.pause();
+    if (!mounted) return;
+
+    setState(() {
+      _completedView = view;
+      _activeHighlightIndex = 0;
+      _playerError = null;
+    });
+
+    if (controller?.value.isInitialized != true) return;
+    if (view == _CompletedVideoView.highlights) {
+      final highlights = _availableHighlights(controller);
+      if (highlights.isNotEmpty) {
+        await controller!.seekTo(highlights.first.start);
+      }
+    } else {
+      await controller!.seekTo(_boundedPosition(_fullGamePosition, controller));
+    }
+  }
+
+  void _handlePlaybackTick() {
+    final controller = _controller;
+    if (!_showHighlights ||
+        _isAdvancingHighlight ||
+        controller == null ||
+        !controller.value.isInitialized ||
+        !controller.value.isPlaying) {
+      return;
+    }
+
+    final highlights = _availableHighlights(controller);
+    if (highlights.isEmpty) return;
+    final index = _activeHighlightIndex.clamp(0, highlights.length - 1);
+    final end = _boundedPosition(highlights[index].end, controller);
+    if (controller.value.position + const Duration(milliseconds: 250) < end) {
+      return;
+    }
+    unawaited(_advanceHighlight(controller, highlights, index));
+  }
+
+  Future<void> _advanceHighlight(
+    VideoPlayerController controller,
+    List<FixtureHighlightMoment> highlights,
+    int currentIndex,
+  ) async {
+    if (_isAdvancingHighlight) return;
+    _isAdvancingHighlight = true;
+    try {
+      if (currentIndex >= highlights.length - 1) {
+        await controller.pause();
+        await controller.seekTo(
+          _boundedPosition(highlights[currentIndex].end, controller),
+        );
+        return;
+      }
+
+      final nextIndex = currentIndex + 1;
+      await controller.seekTo(highlights[nextIndex].start);
+      await controller.play();
+      if (mounted) {
+        setState(() => _activeHighlightIndex = nextIndex);
+      }
+    } finally {
+      _isAdvancingHighlight = false;
+    }
+  }
+
+  Future<void> _togglePlayback() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (controller.value.isPlaying) {
+      await controller.pause();
+    } else {
+      if (_showHighlights) {
+        final highlights = _availableHighlights(controller);
+        if (highlights.isEmpty) return;
+        final index = _activeHighlightIndex.clamp(0, highlights.length - 1);
+        final end = _boundedPosition(highlights[index].end, controller);
+        if (controller.value.position + const Duration(milliseconds: 250) >=
+            end) {
+          final nextIndex = index == highlights.length - 1 ? 0 : index + 1;
+          await controller.seekTo(highlights[nextIndex].start);
+          if (mounted) {
+            setState(() => _activeHighlightIndex = nextIndex);
+          }
+        }
+      }
+      await controller.play();
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openFullscreen() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _FullscreenVideoPage(controller: controller),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isLive = fixture.isLive;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1428,17 +1759,15 @@ class _BroadcastPanel extends StatelessWidget {
               children: [
                 Icon(
                   Icons.play_circle_rounded,
-                  color: fixture.isLive
-                      ? const Color(0xFFEF4444)
-                      : const Color(0xFFDC2626),
+                  color: isLive ? const Color(0xFFEF4444) : fieldEmerald600,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  fixture.isFinal
-                      ? 'MATCH REPLAY'
-                      : fixture.isLive
+                  isLive
                       ? 'LIVE STREAM'
-                      : 'LIVE BROADCAST',
+                      : fixture.isFinal
+                      ? 'WATCH MATCH'
+                      : 'MATCH VIDEO',
                   style: const TextStyle(
                     color: fieldGray900,
                     fontSize: 14,
@@ -1446,50 +1775,468 @@ class _BroadcastPanel extends StatelessWidget {
                     letterSpacing: 0,
                   ),
                 ),
+                if (isLive) ...[
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Color(0xFFDC2626),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: Container(
-              color: fieldGray900,
-              child: Center(
-                child: fixture.isLive
-                    ? FilledButton(
-                        onPressed: () {},
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFEF4444),
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Watch Live'),
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            fixture.isFinal
-                                ? Icons.shield_rounded
-                                : Icons.schedule_rounded,
-                            color: fieldGray400,
-                            size: 34,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            fixture.isFinal
-                                ? 'VOD Not Available'
-                                : 'Broadcast starts on match day',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
+          if (fixture.isFinal) ...[
+            const Divider(height: 1, color: fieldGray100),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<_CompletedVideoView>(
+                  showSelectedIcon: false,
+                  expandedInsets: EdgeInsets.zero,
+                  segments: const [
+                    ButtonSegment<_CompletedVideoView>(
+                      value: _CompletedVideoView.highlights,
+                      icon: Icon(Icons.auto_awesome_rounded, size: 17),
+                      label: Text('Highlights'),
+                    ),
+                    ButtonSegment<_CompletedVideoView>(
+                      value: _CompletedVideoView.fullGame,
+                      icon: Icon(Icons.sports_soccer_rounded, size: 17),
+                      label: Text('Full Game'),
+                    ),
+                  ],
+                  selected: {_completedView},
+                  onSelectionChanged: (selection) {
+                    unawaited(_selectCompletedView(selection.first));
+                  },
+                  style: SegmentedButton.styleFrom(
+                    selectedBackgroundColor: fieldGray900,
+                    selectedForegroundColor: Colors.white,
+                    backgroundColor: Colors.white,
+                    foregroundColor: fieldGray700,
+                    side: const BorderSide(color: fieldGray200),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
               ),
             ),
+          ],
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Container(color: fieldGray900, child: _buildPlayerBody()),
+          ),
+          if (!fixture.isFinal && !fixture.isCancelled)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              color: const Color(0xFFF9FAFB),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 17,
+                    color: fieldGray500,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Highlights will be available after the game',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayerBody() {
+    final isLive = fixture.isLive;
+    final isProcessing =
+        fixture.broadcast?.isProcessing == true ||
+        fixture.broadcast?.isStopping == true;
+    final controller = _controller;
+    final highlights = _availableHighlights(controller);
+    final hasNoUsableHighlights =
+        _highlightMoments.isEmpty ||
+        (controller?.value.isInitialized == true && highlights.isEmpty);
+
+    if (_showHighlights && hasNoUsableHighlights) {
+      final recordedGoals = fixture.timeline.where((event) {
+        return event.eventType.toUpperCase() == 'GOAL' &&
+            event.note?.toLowerCase() != 'admin correction';
+      }).length;
+      final isWaitingForHighlightTiming =
+          recordedGoals > 0 && isProcessing && _highlightMoments.isEmpty;
+      return _buildEmptyState(
+        icon: Icons.auto_awesome_rounded,
+        title: isWaitingForHighlightTiming
+            ? 'Preparing highlights...'
+            : recordedGoals == 0
+            ? 'No goal highlights from this match'
+            : 'Highlights are not available for this recording',
+        detail: isWaitingForHighlightTiming
+            ? 'They will appear as soon as the recording is ready.'
+            : fixture.fullGamePlaybackUrl == null
+            ? 'The full game replay is not available yet.'
+            : 'You can still watch the full game.',
+        actionLabel: fixture.fullGamePlaybackUrl == null
+            ? null
+            : 'Watch full game',
+        onAction: fixture.fullGamePlaybackUrl == null
+            ? null
+            : () =>
+                  unawaited(_selectCompletedView(_CompletedVideoView.fullGame)),
+      );
+    }
+
+    if (controller != null && controller.value.isInitialized) {
+      return ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: controller,
+        builder: (context, value, _) {
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              Center(
+                child: AspectRatio(
+                  aspectRatio: value.aspectRatio == 0
+                      ? 16 / 9
+                      : value.aspectRatio,
+                  child: VideoPlayer(controller),
+                ),
+              ),
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _togglePlayback,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 160),
+                    opacity: value.isPlaying ? 0 : 1,
+                    child: Center(
+                      child: Container(
+                        width: 58,
+                        height: 58,
+                        decoration: const BoxDecoration(
+                          color: Color(0xCC111827),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 36,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 10,
+                bottom: 10,
+                child: IconButton.filledTonal(
+                  tooltip: 'Fullscreen',
+                  onPressed: _openFullscreen,
+                  icon: const Icon(Icons.fullscreen_rounded),
+                ),
+              ),
+              if (_showHighlights && highlights.isNotEmpty)
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xCC111827),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _highlightLabel(highlights),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              Positioned(
+                right: 0,
+                bottom: 0,
+                left: 0,
+                child: _showHighlights && highlights.isNotEmpty
+                    ? _HighlightProgress(
+                        count: highlights.length,
+                        activeIndex: _activeHighlightIndex,
+                      )
+                    : VideoProgressIndicator(
+                        controller,
+                        allowScrubbing: !isLive,
+                        colors: const VideoProgressColors(
+                          playedColor: fieldEmerald600,
+                          bufferedColor: fieldGray500,
+                          backgroundColor: fieldGray700,
+                        ),
+                      ),
+              ),
+            ],
+          );
+        },
+      );
+    }
+
+    if (_isLoading) {
+      return const _VideoSkeleton();
+    }
+
+    final message =
+        _playerError ??
+        (isLive
+            ? 'Connecting to live stream...'
+            : _showHighlights && isProcessing
+            ? 'Preparing highlights...'
+            : _showHighlights
+            ? 'Highlights are not available yet'
+            : fixture.isFinal && isProcessing
+            ? 'Preparing the full game replay...'
+            : fixture.isFinal
+            ? 'Full game replay is not available yet'
+            : fixture.isCancelled
+            ? 'No video is available for this match'
+            : 'Broadcast starts on match day');
+    final detail = _showHighlights && isProcessing
+        ? 'They will appear as soon as the recording is ready.'
+        : null;
+    return _buildEmptyState(
+      icon: _showHighlights
+          ? Icons.auto_awesome_rounded
+          : fixture.isFinal
+          ? Icons.movie_creation_outlined
+          : isLive
+          ? Icons.sensors_rounded
+          : Icons.schedule_rounded,
+      title: message,
+      detail: detail,
+      actionLabel: _playerError == null ? null : 'Try again',
+      onAction: _playerError == null
+          ? null
+          : () => unawaited(_syncPlayer(force: true)),
+    );
+  }
+
+  String _highlightLabel(List<FixtureHighlightMoment> highlights) {
+    final index = _activeHighlightIndex.clamp(0, highlights.length - 1);
+    final event = highlights[index].event;
+    final scorer = event.playerName == 'Unknown' ? 'Goal' : event.playerName;
+    return '$scorer · ${event.minute}\' · ${index + 1}/${highlights.length}';
+  }
+
+  Widget _buildEmptyState({
+    required IconData icon,
+    required String title,
+    String? detail,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: fieldGray400, size: 34),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (detail != null) ...[
+            const SizedBox(height: 5),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                detail,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: fieldGray400,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 10),
+            TextButton(onPressed: onAction, child: Text(actionLabel)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _HighlightProgress extends StatelessWidget {
+  const _HighlightProgress({required this.count, required this.activeIndex});
+
+  final int count;
+  final int activeIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: fieldGray700,
+      child: SizedBox(
+        height: 4,
+        child: Row(
+          children: [
+            for (var index = 0; index < count; index++) ...[
+              Expanded(
+                child: ColoredBox(
+                  color: index <= activeIndex ? fieldEmerald600 : fieldGray500,
+                ),
+              ),
+              if (index != count - 1) const SizedBox(width: 2),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoSkeleton extends StatelessWidget {
+  const _VideoSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(22),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Color(0xFF374151),
+              shape: BoxShape.circle,
+            ),
+            child: SizedBox(width: 54, height: 54),
+          ),
+          SizedBox(height: 14),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Color(0xFF374151),
+              borderRadius: BorderRadius.all(Radius.circular(5)),
+            ),
+            child: SizedBox(width: 170, height: 12),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FullscreenVideoPage extends StatefulWidget {
+  const _FullscreenVideoPage({required this.controller});
+
+  final VideoPlayerController controller;
+
+  @override
+  State<_FullscreenVideoPage> createState() => _FullscreenVideoPageState();
+}
+
+class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(
+      SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]),
+    );
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
+    );
+  }
+
+  @override
+  void dispose() {
+    unawaited(
+      SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]),
+    );
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.controller.value.aspectRatio == 0
+                    ? 16 / 9
+                    : widget.controller.value.aspectRatio,
+                child: VideoPlayer(widget.controller),
+              ),
+            ),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () async {
+                  if (widget.controller.value.isPlaying) {
+                    await widget.controller.pause();
+                  } else {
+                    await widget.controller.play();
+                  }
+                  if (mounted) setState(() {});
+                },
+              ),
+            ),
+            Positioned(
+              top: 10,
+              left: 10,
+              child: IconButton.filledTonal(
+                tooltip: 'Close',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close_rounded),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

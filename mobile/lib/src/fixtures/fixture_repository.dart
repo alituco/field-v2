@@ -105,6 +105,17 @@ class SupabaseFixtureRepository implements FixtureRepository {
       accumulated_seconds,
       duration_seconds
     ),
+    fixture_broadcasts(
+      status,
+      live_input_id,
+      active_video_id,
+      hls_url,
+      replay_hls_url,
+      stream_started_at,
+      stream_stopped_at,
+      recording_ready_at,
+      error_message
+    ),
     fixture_scorers(
       id,
       fixture_id,

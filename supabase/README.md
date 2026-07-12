@@ -128,3 +128,17 @@ Set `DEV=false` in both Flutter and Supabase, or do not deploy this function,
 for production. Client-side `DEV=true` alone cannot enable impersonation.
 `DEV_SWITCH_ALLOW_UNAUTHENTICATED` exists only to recover revoked fake-user
 sessions and must never be enabled outside the isolated development project.
+
+## Cloudflare Stream Recording Webhook
+
+The `cloudflare-stream-webhook` Edge Function verifies Cloudflare's signed
+recording notifications and attaches a ready replay to its fixture. It is
+deployed without Supabase JWT verification because Cloudflare authenticates
+with the `Webhook-Signature` header instead.
+
+The hosted development project is already registered. For a separate Supabase
+or Cloudflare environment, deploy the function, register its public URL as the
+account's Stream webhook, and store the returned signing secret as
+`CLOUDFLARE_STREAM_WEBHOOK_SECRET`. Cloudflare permits one Stream recording
+webhook per account, so use a separate Cloudflare account for production or
+route one webhook to both environments deliberately.

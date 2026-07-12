@@ -1,0 +1,4 @@
+.env.local
+.field-broadcaster-state.json
+node_modules/
+npm-debug.log*

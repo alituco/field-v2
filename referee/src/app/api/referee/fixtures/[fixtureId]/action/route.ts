@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import { queueBroadcastStop } from "@/lib/broadcasts";
+import { assertCanManageFixture } from "@/lib/fixture-access";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
-import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
 type RouteContext = {
   params: Promise<{ fixtureId: string }>;
@@ -96,6 +97,16 @@ export async function POST(request: NextRequest, context: RouteContext) {
         break;
       case "finish":
         await finishFixture(db, fixtureId);
+        try {
+          await queueBroadcastStop(
+            db,
+            fixtureId,
+            refereeContext.referee.profileId,
+            30,
+          );
+        } catch (broadcastError) {
+          console.error("Could not queue automatic broadcast stop", broadcastError);
+        }
         break;
       default:
         return NextResponse.json({ error: "Unknown action." }, { status: 400 });
@@ -114,25 +125,6 @@ function assertAdmin(role: "admin" | "referee") {
   if (role !== "admin") {
     throw new Error("Admin access required for corrections.");
   }
-}
-
-async function assertCanManageFixture(
-  db: ReturnType<typeof createSupabaseAdmin>,
-  fixtureId: string,
-  refereeId: string,
-  role: "admin" | "referee",
-) {
-  if (role === "admin") return;
-
-  const { data, error } = await db
-    .from("fixture_referee_assignments")
-    .select("fixture_id")
-    .eq("fixture_id", fixtureId)
-    .eq("referee_id", refereeId)
-    .maybeSingle();
-
-  if (error) throw new Error(`Could not verify assignment: ${error.message}`);
-  if (!data) throw new Error("This match is not assigned to you.");
 }
 
 async function startFixture(

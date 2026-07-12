@@ -14,6 +14,46 @@ export type FixtureEventType =
 
 export type BlueCardStatus = "ACTIVE" | "EXPIRED" | "CLEARED";
 
+export type BroadcastStatus =
+  | "NOT_CONFIGURED"
+  | "READY"
+  | "STARTING"
+  | "LIVE"
+  | "STOPPING"
+  | "PROCESSING"
+  | "REPLAY_READY"
+  | "ERROR";
+
+export type FixtureBroadcastState = {
+  fixtureId: string;
+  liveInputId: string | null;
+  activeVideoId: string | null;
+  status: BroadcastStatus;
+  hlsUrl: string | null;
+  replayHlsUrl: string | null;
+  streamRequestedAt: string | null;
+  streamStartedAt: string | null;
+  streamStoppedAt: string | null;
+  recordingReadyAt: string | null;
+  errorMessage: string | null;
+};
+
+export type BroadcastDeviceState = {
+  deviceKey: string;
+  displayName: string;
+  status: "OFFLINE" | "READY" | "STREAMING" | "ERROR";
+  obsConnected: boolean;
+  obsStreaming: boolean;
+  currentFixtureId: string | null;
+  lastSeenAt: string | null;
+  errorMessage: string | null;
+};
+
+export type BroadcastControlResponse = {
+  broadcast: FixtureBroadcastState | null;
+  device: BroadcastDeviceState | null;
+};
+
 export type Clan = {
   id: string;
   name: string;

@@ -1,0 +1,13 @@
+{
+  "name": "field-broadcaster",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.mjs"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "obs-websocket-js": "^5.0.8"
+  }
+}
