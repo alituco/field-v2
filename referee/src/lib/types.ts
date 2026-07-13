@@ -129,6 +129,7 @@ export type RefereeFixture = {
   homeClan: Clan;
   awayClan: Clan;
   players: Player[];
+  participantIds: string[];
   clock: FixtureClock | null;
   goals: Goal[];
   events: FixtureEvent[];

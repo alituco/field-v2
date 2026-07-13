@@ -112,13 +112,15 @@ async function hydrateFixtureRows(
     ),
   ];
 
-  const [players, clocks, goals, events, blueCards] = await Promise.all([
-    loadPlayers(db, clanIds),
-    loadClocks(db, fixtureIds),
-    loadGoals(db, fixtureIds),
-    loadEvents(db, fixtureIds),
-    loadBlueCards(db, fixtureIds),
-  ]);
+  const [players, participantIds, clocks, goals, events, blueCards] =
+    await Promise.all([
+      loadPlayers(db, clanIds),
+      loadParticipantIds(db, fixtureIds),
+      loadClocks(db, fixtureIds),
+      loadGoals(db, fixtureIds),
+      loadEvents(db, fixtureIds),
+      loadBlueCards(db, fixtureIds),
+    ]);
 
   return fixtureRows.map((fixture) => ({
     ...fixture,
@@ -127,11 +129,34 @@ async function hydrateFixtureRows(
         player.clanId === fixture.homeClan.id ||
         player.clanId === fixture.awayClan.id,
     ),
+    participantIds: participantIds.get(fixture.id) ?? [],
     clock: clocks.get(fixture.id) ?? null,
     goals: goals.filter((goal) => goal.fixtureId === fixture.id),
     events: events.filter((event) => event.fixtureId === fixture.id),
     blueCards: blueCards.filter((card) => card.fixtureId === fixture.id),
   }));
+}
+
+async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
+  const participantIds = new Map<string, string[]>();
+  if (fixtureIds.length === 0) return participantIds;
+
+  const { data, error } = await db
+    .from("fixture_player_appearances")
+    .select("fixture_id,profile_id")
+    .in("fixture_id", fixtureIds)
+    .eq("played", true);
+
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    const fixtureId = String(row.fixture_id);
+    const current = participantIds.get(fixtureId) ?? [];
+    current.push(String(row.profile_id));
+    participantIds.set(fixtureId, current);
+  }
+
+  return participantIds;
 }
 
 async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
@@ -290,6 +315,7 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     homeClan: normalizeClan(asObject(row.home_clan)),
     awayClan: normalizeClan(asObject(row.away_clan)),
     players: [],
+    participantIds: [],
     clock: null,
     goals: [],
     events: [],

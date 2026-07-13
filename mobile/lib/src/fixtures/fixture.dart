@@ -240,6 +240,7 @@ class FixtureTimelineEvent {
     required this.minute,
     required this.second,
     required this.createdAt,
+    this.occurredAt,
     this.clanId,
     this.profileId,
     this.assistProfileId,
@@ -258,12 +259,15 @@ class FixtureTimelineEvent {
   final int second;
   final String? note;
   final DateTime? createdAt;
+  final DateTime? occurredAt;
   final FixtureParticipant? player;
   final FixtureParticipant? assist;
 
   String get playerName => player?.displayName ?? 'Unknown';
 
   String get assistName => assist?.displayName ?? 'Unknown';
+
+  DateTime? get highlightTimestamp => occurredAt ?? createdAt;
 
   factory FixtureTimelineEvent.fromJson(Map<String, dynamic> json) {
     final player = _nestedMap(json['player'] ?? json['profiles']);
@@ -280,6 +284,7 @@ class FixtureTimelineEvent {
       second: _asInt(json['second']),
       note: (json['note'] as String?)?.trim(),
       createdAt: _asDate(json['created_at']),
+      occurredAt: _asDate(json['occurred_at']),
       player: player == null ? null : FixtureParticipant.fromJson(player),
       assist: assist == null ? null : FixtureParticipant.fromJson(assist),
     );
@@ -389,25 +394,44 @@ class Fixture {
 
   /// Goal windows aligned to the recording's wall clock for post-game playback.
   List<FixtureHighlightMoment> get highlightMoments {
+    return _highlightMomentsFromOrigin(broadcast?.streamStartedAt);
+  }
+
+  /// Goal windows aligned from the finalized replay rather than its delayed
+  /// live-status timestamp. Cloudflare's replay duration and our recorded stop
+  /// time identify video time zero even when live startup reporting was late.
+  List<FixtureHighlightMoment> highlightMomentsForReplay(
+    Duration replayDuration,
+  ) {
+    final streamStoppedAt = broadcast?.streamStoppedAt;
+    final replayOrigin =
+        streamStoppedAt != null && replayDuration > Duration.zero
+        ? streamStoppedAt.subtract(replayDuration)
+        : broadcast?.streamStartedAt;
+    return _highlightMomentsFromOrigin(replayOrigin);
+  }
+
+  List<FixtureHighlightMoment> _highlightMomentsFromOrigin(
+    DateTime? replayOrigin,
+  ) {
     if (!isFinal) return const [];
 
-    final streamStartedAt = broadcast?.streamStartedAt;
-    if (streamStartedAt == null) return const [];
+    if (replayOrigin == null) return const [];
 
-    const leadIn = Duration(seconds: 15);
-    const followThrough = Duration(seconds: 15);
+    const leadIn = Duration(seconds: 10);
+    const followThrough = Duration(seconds: 10);
     final moments = <FixtureHighlightMoment>[];
     final goals =
         timeline.where((event) {
           return event.eventType.toUpperCase() == 'GOAL' &&
-              event.createdAt != null &&
+              event.highlightTimestamp != null &&
               event.note?.toLowerCase() != 'admin correction';
         }).toList()..sort((left, right) {
-          return left.createdAt!.compareTo(right.createdAt!);
+          return left.highlightTimestamp!.compareTo(right.highlightTimestamp!);
         });
 
     for (final goal in goals) {
-      final offset = goal.createdAt!.difference(streamStartedAt);
+      final offset = goal.highlightTimestamp!.difference(replayOrigin);
       final end = offset + followThrough;
       if (end <= Duration.zero) continue;
 

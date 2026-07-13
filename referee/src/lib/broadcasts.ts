@@ -162,6 +162,7 @@ export async function queueBroadcastStart(
     .update({
       status: "STARTING",
       stream_requested_at: now,
+      stream_started_at: null,
       stream_stopped_at: null,
       recording_ready_at: null,
       replay_hls_url: null,
@@ -241,13 +242,23 @@ export async function syncBroadcastFromCloudflare(
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
     if (lifecycle.live) {
+      let providerStartedAt: string | null = null;
+      if (
+        lifecycle.videoUID &&
+        broadcast.activeVideoId !== lifecycle.videoUID
+      ) {
+        const liveVideo = await getCloudflareVideo(lifecycle.videoUID);
+        providerStartedAt = validRecordingTimestamp(liveVideo?.created);
+      }
       const { error } = await db
         .from("fixture_broadcasts")
         .update({
           status: "LIVE",
           active_video_id: lifecycle.videoUID,
           stream_started_at:
-            broadcast.streamStartedAt ?? new Date().toISOString(),
+            providerStartedAt ??
+            broadcast.streamStartedAt ??
+            new Date().toISOString(),
           error_message: null,
         })
         .eq("fixture_id", fixtureId);
@@ -502,4 +513,13 @@ function firstObject(value: unknown): Record<string, unknown> {
 
 function nullableString(value: unknown) {
   return value === null || value === undefined ? null : String(value);
+}
+
+function validRecordingTimestamp(value: string | undefined) {
+  if (!value) return null;
+  const milliseconds = Date.parse(value);
+  if (!Number.isFinite(milliseconds) || milliseconds > Date.now() + 60_000) {
+    return null;
+  }
+  return new Date(milliseconds).toISOString();
 }

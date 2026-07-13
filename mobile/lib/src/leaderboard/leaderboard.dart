@@ -1,5 +1,94 @@
 const minimumLeaderboardMatches = 4;
 
+class PlayerRatingLeaderboardEntry {
+  const PlayerRatingLeaderboardEntry({
+    required this.rank,
+    required this.profileId,
+    required this.displayName,
+    required this.username,
+    required this.skillRating,
+    required this.matchesPlayed,
+    required this.wins,
+    required this.losses,
+    required this.draws,
+    required this.lastChange,
+    required this.region,
+    this.avatarUrl,
+  });
+
+  final int rank;
+  final String profileId;
+  final String displayName;
+  final String username;
+  final String? avatarUrl;
+  final int skillRating;
+  final int matchesPlayed;
+  final int wins;
+  final int losses;
+  final int draws;
+  final int lastChange;
+  final String region;
+
+  String get tierLabel => playerRatingTier(skillRating);
+
+  String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
+
+  String get initials {
+    final words = displayName.trim().split(RegExp(r'\s+'));
+    return words
+        .where((word) => word.isNotEmpty)
+        .take(2)
+        .map((word) => word[0])
+        .join()
+        .toUpperCase();
+  }
+
+  factory PlayerRatingLeaderboardEntry.fromJson(Map<String, dynamic> json) {
+    return PlayerRatingLeaderboardEntry(
+      rank: _leaderboardInt(json['rank']),
+      profileId: json['profile_id'] as String? ?? '',
+      displayName: json['display_name'] as String? ?? 'Player',
+      username: json['username'] as String? ?? 'player',
+      avatarUrl: json['avatar_url'] as String?,
+      skillRating: _leaderboardInt(json['skill_rating'], fallback: 1200),
+      matchesPlayed: _leaderboardInt(json['matches_played']),
+      wins: _leaderboardInt(json['wins']),
+      losses: _leaderboardInt(json['losses']),
+      draws: _leaderboardInt(json['draws']),
+      lastChange: _leaderboardInt(json['last_change']),
+      region: json['region'] as String? ?? 'bahrain',
+    );
+  }
+}
+
+String playerRatingTier(int rating) {
+  final tier = switch (rating) {
+    >= 2000 => ('Diamond', 2000, 2600),
+    >= 1600 => ('Platinum', 1600, 2000),
+    >= 1200 => ('Gold', 1200, 1600),
+    >= 800 => ('Silver', 800, 1200),
+    _ => ('Bronze', 0, 800),
+  };
+  final span = (tier.$3 - tier.$2) / 3;
+  final subdivision = ((rating - tier.$2) / span).floor().clamp(0, 2).toInt();
+  return '${tier.$1} ${const ['III', 'II', 'I'][subdivision]}';
+}
+
+int playerRatingNextTierTarget(int rating) {
+  if (rating < 800) return 800;
+  if (rating < 1200) return 1200;
+  if (rating < 1600) return 1600;
+  if (rating < 2000) return 2000;
+  return 2600;
+}
+
+int _leaderboardInt(Object? value, {int fallback = 0}) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  if (value is String) return int.tryParse(value) ?? fallback;
+  return fallback;
+}
+
 class LeaderboardSeason {
   const LeaderboardSeason({
     required this.id,

@@ -2,6 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 
 type CloudflareVideoPayload = {
   uid?: unknown;
+  created?: unknown;
   readyToStream?: unknown;
   status?: {
     state?: unknown;
@@ -52,7 +53,7 @@ Deno.serve(async (request) => {
 
   const byVideo = await admin
     .from("fixture_broadcasts")
-    .select("fixture_id, replay_hls_url")
+    .select("fixture_id, replay_hls_url, active_video_id, stream_requested_at")
     .eq("active_video_id", videoId)
     .limit(1)
     .maybeSingle();
@@ -64,7 +65,7 @@ Deno.serve(async (request) => {
   if (!broadcast && metadataFixtureId && isUuid(metadataFixtureId)) {
     const byFixture = await admin
       .from("fixture_broadcasts")
-      .select("fixture_id, replay_hls_url")
+      .select("fixture_id, replay_hls_url, active_video_id, stream_requested_at")
       .eq("fixture_id", metadataFixtureId)
       .maybeSingle();
     if (byFixture.error) {
@@ -78,19 +79,32 @@ Deno.serve(async (request) => {
   }
 
   const fixtureId = String(broadcast.fixture_id);
+  const recordingStartedAt = validRecordingTimestamp(payload.created);
+  if (isRecordingOlderThanRequest(
+    recordingStartedAt,
+    stringValue(broadcast.stream_requested_at),
+  )) {
+    return json({ received: true, ignored: true, reason: "stale recording" });
+  }
   const state = stringValue(payload.status?.state)?.toLowerCase();
   if (state === "error") {
     const errorMessage = stringValue(payload.status?.errorReasonText) ??
       "Cloudflare could not process the match recording.";
-    const { error } = await admin
+    const { data, error } = await admin
       .from("fixture_broadcasts")
       .update({
         active_video_id: videoId,
         status: "ERROR",
         error_message: errorMessage,
       })
-      .eq("fixture_id", fixtureId);
+      .eq("fixture_id", fixtureId)
+      .or(`active_video_id.is.null,active_video_id.eq.${videoId}`)
+      .select("fixture_id")
+      .maybeSingle();
     if (error) return json({ error: "Could not save recording error." }, 500);
+    if (!data) {
+      return json({ received: true, ignored: true, reason: "stale recording" });
+    }
     return json({ received: true });
   }
 
@@ -106,18 +120,27 @@ Deno.serve(async (request) => {
   }
 
   const readyAt = new Date().toISOString();
-  const { error: broadcastError } = await admin
+  const { data: updatedBroadcast, error: broadcastError } = await admin
     .from("fixture_broadcasts")
     .update({
       active_video_id: videoId,
       status: "REPLAY_READY",
       replay_hls_url: replayUrl,
       recording_ready_at: readyAt,
+      ...(recordingStartedAt
+        ? { stream_started_at: recordingStartedAt }
+        : {}),
       error_message: null,
     })
-    .eq("fixture_id", fixtureId);
+    .eq("fixture_id", fixtureId)
+    .or(`active_video_id.is.null,active_video_id.eq.${videoId}`)
+    .select("fixture_id")
+    .maybeSingle();
   if (broadcastError) {
     return json({ error: "Could not save the finished recording." }, 500);
+  }
+  if (!updatedBroadcast) {
+    return json({ received: true, ignored: true, reason: "stale recording" });
   }
 
   const { error: fixtureError } = await admin
@@ -194,6 +217,30 @@ function constantTimeEqual(left: string, right: string) {
 
 function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function validRecordingTimestamp(value: unknown) {
+  const raw = stringValue(value);
+  if (!raw) return null;
+  const milliseconds = Date.parse(raw);
+  if (!Number.isFinite(milliseconds) || milliseconds > Date.now() + 60_000) {
+    return null;
+  }
+  return new Date(milliseconds).toISOString();
+}
+
+function isRecordingOlderThanRequest(
+  recordingStartedAt: string | null,
+  streamRequestedAt: string | null,
+) {
+  if (!recordingStartedAt || !streamRequestedAt) return false;
+  const recordingMilliseconds = Date.parse(recordingStartedAt);
+  const requestMilliseconds = Date.parse(streamRequestedAt);
+  if (!Number.isFinite(recordingMilliseconds) ||
+    !Number.isFinite(requestMilliseconds)) {
+    return false;
+  }
+  return recordingMilliseconds < requestMilliseconds - 60_000;
 }
 
 function isUuid(value: string) {

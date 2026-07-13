@@ -82,15 +82,15 @@ void main() {
     expect(fixture.highlightMoments, hasLength(2));
     expect(fixture.highlightMoments.first.event.id, 'early');
     expect(fixture.highlightMoments.first.start, Duration.zero);
-    expect(fixture.highlightMoments.first.end, const Duration(seconds: 23));
+    expect(fixture.highlightMoments.first.end, const Duration(seconds: 18));
     expect(fixture.highlightMoments.last.event.id, 'late');
     expect(
       fixture.highlightMoments.last.start,
-      const Duration(minutes: 17, seconds: 45),
+      const Duration(minutes: 17, seconds: 50),
     );
     expect(
       fixture.highlightMoments.last.end,
-      const Duration(minutes: 18, seconds: 15),
+      const Duration(minutes: 18, seconds: 10),
     );
   });
 
@@ -112,6 +112,73 @@ void main() {
     );
 
     expect(fixture.highlightMoments, isEmpty);
+  });
+
+  test('highlights prefer occurrence time and retain paused wall time', () {
+    final streamStartedAt = DateTime.utc(2026, 7, 11, 18);
+    final fixture = _fixture(
+      status: FixtureStatus.finalResult,
+      broadcast: FixtureBroadcast(
+        status: 'REPLAY_READY',
+        streamStartedAt: streamStartedAt,
+      ),
+      timeline: [
+        _goal(
+          id: 'after-break',
+          minute: 5,
+          occurredAt: streamStartedAt.add(const Duration(minutes: 15)),
+          createdAt: streamStartedAt.add(
+            const Duration(minutes: 15, seconds: 4),
+          ),
+        ),
+      ],
+    );
+
+    expect(
+      fixture.highlightMoments.single.start,
+      const Duration(minutes: 14, seconds: 50),
+    );
+    expect(
+      fixture.highlightMoments.single.end,
+      const Duration(minutes: 15, seconds: 10),
+    );
+  });
+
+  test('final replay duration repairs a delayed live-stream origin', () {
+    final incorrectLiveOrigin = DateTime.parse('2026-07-13T00:51:25.848Z');
+    final streamStoppedAt = DateTime.parse('2026-07-13T00:55:08.653Z');
+    final fixture = _fixture(
+      status: FixtureStatus.finalResult,
+      broadcast: FixtureBroadcast(
+        status: 'REPLAY_READY',
+        streamStartedAt: incorrectLiveOrigin,
+        streamStoppedAt: streamStoppedAt,
+      ),
+      timeline: [
+        _goal(
+          id: 'mint-goal',
+          minute: 1,
+          occurredAt: DateTime.parse('2026-07-13T00:53:03.443Z'),
+          createdAt: DateTime.parse('2026-07-13T00:53:04.727704Z'),
+        ),
+        _goal(
+          id: 'riffa-goal',
+          minute: 2,
+          occurredAt: DateTime.parse('2026-07-13T00:54:20.868Z'),
+          createdAt: DateTime.parse('2026-07-13T00:54:22.148953Z'),
+        ),
+      ],
+    );
+
+    final highlights = fixture.highlightMomentsForReplay(
+      const Duration(milliseconds: 262930),
+    );
+
+    expect(highlights, hasLength(2));
+    expect(highlights.first.start, const Duration(milliseconds: 127720));
+    expect(highlights.first.end, const Duration(milliseconds: 147720));
+    expect(highlights.last.start, const Duration(milliseconds: 205145));
+    expect(highlights.last.end, const Duration(milliseconds: 225145));
   });
 }
 
@@ -149,6 +216,7 @@ FixtureTimelineEvent _goal({
   required String id,
   required int minute,
   required DateTime createdAt,
+  DateTime? occurredAt,
   String? note,
 }) {
   return FixtureTimelineEvent(
@@ -158,6 +226,7 @@ FixtureTimelineEvent _goal({
     minute: minute,
     second: 0,
     createdAt: createdAt,
+    occurredAt: occurredAt,
     note: note,
   );
 }

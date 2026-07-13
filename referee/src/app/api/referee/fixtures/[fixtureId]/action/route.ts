@@ -30,6 +30,7 @@ type ActionBody = {
   elapsedSeconds?: number;
   minute?: number;
   note?: string;
+  participantIds?: string[];
 };
 
 type FixtureRow = {
@@ -49,6 +50,7 @@ type ClockRow = {
 const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const requestReceivedAt = new Date().toISOString();
   const refereeContext = await requireReferee(request);
   if (!isRefereeContext(refereeContext)) return refereeContext;
 
@@ -67,7 +69,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     switch (body.action) {
       case "start":
-        await startFixture(db, fixtureId, body.durationSeconds);
+        await startFixture(
+          db,
+          fixtureId,
+          body.durationSeconds,
+          body.participantIds,
+        );
         break;
       case "pause":
         await pauseFixture(db, fixtureId);
@@ -79,7 +86,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         await setFixtureTime(db, fixtureId, body.elapsedSeconds);
         break;
       case "goal":
-        await recordGoal(db, fixtureId, body);
+        await recordGoal(db, fixtureId, body, requestReceivedAt);
         break;
       case "correction_goal":
         assertAdmin(refereeContext.referee.role);
@@ -131,6 +138,7 @@ async function startFixture(
   db: SupabaseClient,
   fixtureId: string,
   durationSeconds = 3600,
+  participantIds: string[] | undefined = undefined,
 ) {
   const fixture = await loadFixture(db, fixtureId);
 
@@ -141,6 +149,20 @@ async function startFixture(
   if (fixture.away_clan_id === null) {
     throw new Error("Cannot start a match without an opponent.");
   }
+
+  if (fixture.status === "LIVE") {
+    throw new Error("This match has already started.");
+  }
+
+  if (fixture.status !== "SCHEDULED") {
+    throw new Error("Only scheduled matches can be started.");
+  }
+
+  const selectedParticipantIds = await validateParticipantIds(
+    db,
+    fixture,
+    participantIds,
+  );
 
   const safeDuration = clamp(Math.round(durationSeconds), 600, 7200);
   const now = new Date();
@@ -162,7 +184,91 @@ async function startFixture(
     db.from("fixtures").update({ status: "LIVE" }).eq("id", fixtureId),
     "Could not start fixture",
   );
+  await saveFixtureParticipants(db, fixtureId, selectedParticipantIds);
   await insertEvent(db, fixtureId, "MATCH_STARTED", 0, 0);
+}
+
+async function validateParticipantIds(
+  db: SupabaseClient,
+  fixture: FixtureRow,
+  participantIds: string[] | undefined,
+) {
+  if (!Array.isArray(participantIds)) {
+    throw new Error("Confirm the players taking part before starting.");
+  }
+
+  const selectedIds = [...new Set(participantIds.map((id) => String(id).trim()))]
+    .filter(Boolean);
+  if (selectedIds.length === 0) {
+    throw new Error("Select at least one player from each team.");
+  }
+
+  const { data, error } = await db
+    .from("clan_members")
+    .select("profile_id,clan_id")
+    .in("profile_id", selectedIds)
+    .in("clan_id", [fixture.home_clan_id, fixture.away_clan_id])
+    .is("left_at", null);
+
+  if (error) throw new Error(`Could not verify the lineup: ${error.message}`);
+
+  const activeMembers = new Map(
+    (data ?? []).map((row) => [String(row.profile_id), String(row.clan_id)]),
+  );
+  if (
+    activeMembers.size !== selectedIds.length ||
+    selectedIds.some((profileId) => !activeMembers.has(profileId))
+  ) {
+    throw new Error(
+      "Every selected player must be an active member of a team in this match.",
+    );
+  }
+
+  const hasHomePlayer = selectedIds.some(
+    (profileId) => activeMembers.get(profileId) === fixture.home_clan_id,
+  );
+  const hasAwayPlayer = selectedIds.some(
+    (profileId) => activeMembers.get(profileId) === fixture.away_clan_id,
+  );
+  if (!hasHomePlayer || !hasAwayPlayer) {
+    throw new Error("Select at least one player from each team.");
+  }
+
+  return selectedIds;
+}
+
+async function saveFixtureParticipants(
+  db: SupabaseClient,
+  fixtureId: string,
+  participantIds: string[],
+) {
+  await assertNoError(
+    db
+      .from("fixture_player_appearances")
+      .update({ played: false })
+      .eq("fixture_id", fixtureId),
+    "Could not clear the fixture lineup",
+  );
+  const { data, error } = await db
+    .from("fixture_player_appearances")
+    .update({ played: true })
+    .eq("fixture_id", fixtureId)
+    .in("profile_id", participantIds)
+    .select("profile_id");
+
+  if (error) {
+    throw new Error(`Could not save the fixture lineup: ${error.message}`);
+  }
+
+  const savedIds = new Set((data ?? []).map((row) => String(row.profile_id)));
+  if (
+    savedIds.size !== participantIds.length ||
+    participantIds.some((profileId) => !savedIds.has(profileId))
+  ) {
+    throw new Error(
+      "Could not save every selected player in the fixture lineup.",
+    );
+  }
 }
 
 async function pauseFixture(db: SupabaseClient, fixtureId: string) {
@@ -207,6 +313,7 @@ async function recordGoal(
   db: SupabaseClient,
   fixtureId: string,
   body: ActionBody,
+  occurredAt: string,
 ) {
   const fixture = await loadLiveFixture(db, fixtureId);
   const clanId = requireString(body.clanId, "Choose the scoring team.");
@@ -242,6 +349,9 @@ async function recordGoal(
     clanId,
     profileId,
     assistProfileId,
+    null,
+    "",
+    occurredAt,
   );
   await syncScoreFromScorers(db, fixture);
 }
@@ -719,6 +829,7 @@ async function insertEvent(
   assistProfileId: string | null = null,
   blueCardId: string | null = null,
   note = "",
+  occurredAt: string | null = null,
 ) {
   await assertNoError(
     db.from("fixture_events").insert({
@@ -731,6 +842,7 @@ async function insertEvent(
       minute,
       second,
       note,
+      ...(occurredAt ? { occurred_at: occurredAt } : {}),
     }),
     `Could not record ${eventType.toLowerCase()} event`,
   );

@@ -145,6 +145,7 @@ class SupabaseFixtureRepository implements FixtureRepository {
       minute,
       second,
       note,
+      occurred_at,
       created_at,
       player:profiles!fixture_events_profile_id_fkey(
         id,

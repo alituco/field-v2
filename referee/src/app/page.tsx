@@ -18,6 +18,10 @@ import type {
 } from "@/lib/types";
 
 type Tab = "games" | "assign" | "admin";
+type FixtureActionBody = Record<
+  string,
+  string | number | string[] | null | undefined
+>;
 
 type Me = RefereeFixturesResponse["me"];
 
@@ -189,10 +193,11 @@ export default function RefereePage() {
     const defaultClanId = activeFixture.homeClan.id;
     const firstPlayer = playersForClan(activeFixture, defaultClanId)[0]?.id ?? "";
 
-    setGoalClanId((current) => current || defaultClanId);
-    setCardClanId((current) => current || defaultClanId);
-    setGoalPlayerId((current) => current || firstPlayer);
-    setCardPlayerId((current) => current || firstPlayer);
+    setGoalClanId(defaultClanId);
+    setCardClanId(defaultClanId);
+    setGoalPlayerId(firstPlayer);
+    setAssistPlayerId("");
+    setCardPlayerId(firstPlayer);
   }, [activeFixture]);
 
   async function sendOtp(event: React.FormEvent<HTMLFormElement>) {
@@ -249,7 +254,7 @@ export default function RefereePage() {
   }
 
   async function runAction(
-    body: Record<string, string | number | null | undefined>,
+    body: FixtureActionBody,
   ) {
     if (!activeFixture) return;
     await runFixtureAction(activeFixture.id, body, false);
@@ -257,14 +262,14 @@ export default function RefereePage() {
 
   async function runAdminAction(
     fixtureId: string,
-    body: Record<string, string | number | null | undefined>,
+    body: FixtureActionBody,
   ) {
     await runFixtureAction(fixtureId, body, true);
   }
 
   async function runFixtureAction(
     fixtureId: string,
-    body: Record<string, string | number | null | undefined>,
+    body: FixtureActionBody,
     refreshAdmin: boolean,
   ) {
     const action = String(body.action ?? "action");
@@ -670,7 +675,7 @@ function AdminControlView({
   submitting: string | null;
   onRunAction: (
     fixtureId: string,
-    body: Record<string, string | number | null | undefined>,
+    body: FixtureActionBody,
   ) => Promise<void>;
   onRefresh: () => void;
 }) {
@@ -917,6 +922,7 @@ function AdminControlView({
             </section>
           ) : (
             <TimerPanel
+              key={activeFixture.id}
               fixture={activeFixture}
               submitting={submitting}
               onRunAction={(body) => onRunAction(activeFixture.id, body)}
@@ -1090,7 +1096,7 @@ function GamesView({
   onCardClan: (clanId: string) => void;
   onCardPlayer: (playerId: string) => void;
   onRunAction: (
-    body: Record<string, string | number | null | undefined>,
+    body: FixtureActionBody,
   ) => Promise<void>;
   onRefresh: () => void;
 }) {
@@ -1145,6 +1151,7 @@ function GamesView({
       <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
 
       <TimerPanel
+        key={activeFixture.id}
         fixture={activeFixture}
         submitting={submitting}
         onRunAction={onRunAction}
@@ -1399,7 +1406,7 @@ function TimerPanel({
   fixture: RefereeFixture;
   submitting: string | null;
   onRunAction: (
-    body: Record<string, string | number | null | undefined>,
+    body: FixtureActionBody,
   ) => Promise<void>;
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
@@ -1409,6 +1416,10 @@ function TimerPanel({
   const duration = fixture.clock?.durationSeconds ?? 3600;
   const progress = Math.min(1, elapsedSeconds / duration);
   const isClosed = fixture.status === "FINAL" || status === "ENDED";
+  const isBeforeStart = fixture.status === "SCHEDULED" && status === "NOT_STARTED";
+  const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>(
+    () => (isBeforeStart ? [] : fixture.participantIds),
+  );
   const [correctedMinutes, setCorrectedMinutes] = useState(
     String(Math.floor(elapsedSeconds / 60)),
   );
@@ -1449,6 +1460,36 @@ function TimerPanel({
     correctedSecondValue >= 0 &&
     correctedSecondValue <= 59 &&
     correctedElapsedSeconds <= MAX_MATCH_SECONDS;
+  const selectedHomeCount = selectedParticipantIds.filter((profileId) =>
+    playersForClan(fixture, fixture.homeClan.id).some(
+      (player) => player.id === profileId,
+    )
+  ).length;
+  const selectedAwayCount = selectedParticipantIds.filter((profileId) =>
+    playersForClan(fixture, fixture.awayClan.id).some(
+      (player) => player.id === profileId,
+    )
+  ).length;
+  const hasValidLineup = selectedHomeCount > 0 && selectedAwayCount > 0;
+
+  function setPlayerSelected(profileId: string, selected: boolean) {
+    setSelectedParticipantIds((current) =>
+      selected
+        ? [...new Set([...current, profileId])]
+        : current.filter((id) => id !== profileId)
+    );
+  }
+
+  function setClanSelected(clanId: string, selected: boolean) {
+    const clanPlayerIds = playersForClan(fixture, clanId).map(
+      (player) => player.id,
+    );
+    setSelectedParticipantIds((current) => {
+      if (selected) return [...new Set([...current, ...clanPlayerIds])];
+      const clanPlayerIdSet = new Set(clanPlayerIds);
+      return current.filter((id) => !clanPlayerIdSet.has(id));
+    });
+  }
 
   return (
     <section className="timer-card">
@@ -1468,6 +1509,15 @@ function TimerPanel({
       <div className="progress">
         <span style={{ width: `${progress * 100}%` }} />
       </div>
+      <LineupPanel
+        fixture={fixture}
+        participantIds={
+          isBeforeStart ? selectedParticipantIds : fixture.participantIds
+        }
+        editable={isBeforeStart}
+        onPlayerSelected={setPlayerSelected}
+        onClanSelected={setClanSelected}
+      />
       <div className={status === "RUNNING" ? "control-grid" : "control-grid single"}>
         {isClosed ? (
           <button className="ghost-button" disabled type="button">
@@ -1494,13 +1544,17 @@ function TimerPanel({
         ) : (
           <button
             className="primary-button"
-            disabled={submitting !== null}
+            disabled={submitting !== null || !hasValidLineup}
             onClick={() =>
-              void onRunAction({ action: "start", durationSeconds: 3600 })
+              void onRunAction({
+                action: "start",
+                durationSeconds: 3600,
+                participantIds: selectedParticipantIds,
+              })
             }
             type="button"
           >
-            Start
+            {hasValidLineup ? "Start" : "Select players from both teams"}
           </button>
         )}
         {status === "RUNNING" || status === "PAUSED" ? (
@@ -1561,6 +1615,118 @@ function TimerPanel({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function LineupPanel({
+  fixture,
+  participantIds,
+  editable,
+  onPlayerSelected,
+  onClanSelected,
+}: {
+  fixture: RefereeFixture;
+  participantIds: string[];
+  editable: boolean;
+  onPlayerSelected: (profileId: string, selected: boolean) => void;
+  onClanSelected: (clanId: string, selected: boolean) => void;
+}) {
+  const participantIdSet = new Set(participantIds);
+  const clans = [fixture.homeClan, fixture.awayClan];
+
+  return (
+    <div className="lineup-panel">
+      <div className="lineup-heading">
+        <div>
+          <div className="lineup-title">
+            {editable ? "Confirm lineup" : "Match lineup"}
+          </div>
+          <div className="lineup-hint">
+            {editable
+              ? "Only selected players receive Player SR for this match."
+              : `${participantIds.length} players confirmed`}
+          </div>
+        </div>
+        {!editable ? <span className="lineup-saved">Saved</span> : null}
+      </div>
+
+      <div className="lineup-teams">
+        {clans.map((clan) => {
+          const roster = fixture.players.filter(
+            (player) => player.clanId === clan.id,
+          );
+          const selectedPlayers = roster.filter((player) =>
+            participantIdSet.has(player.id)
+          );
+          const shownPlayers = editable ? roster : selectedPlayers;
+
+          return (
+            <div className="lineup-team" key={clan.id}>
+              <div className="lineup-team-heading">
+                <div>
+                  <strong>{clan.tag}</strong>
+                  <span>{selectedPlayers.length} selected</span>
+                </div>
+                {editable && roster.length > 0 ? (
+                  <button
+                    className="lineup-toggle"
+                    onClick={() =>
+                      onClanSelected(
+                        clan.id,
+                        selectedPlayers.length !== roster.length,
+                      )
+                    }
+                    type="button"
+                  >
+                    {selectedPlayers.length === roster.length
+                      ? "Clear"
+                      : "Select all"}
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="lineup-list">
+                {shownPlayers.length === 0 ? (
+                  <div className="lineup-empty">
+                    {editable ? "No active players" : "No players saved"}
+                  </div>
+                ) : (
+                  shownPlayers.map((player) => {
+                    const isSelected = participantIdSet.has(player.id);
+                    return (
+                      <label
+                        className={`lineup-player ${
+                          isSelected ? "selected" : ""
+                        } ${editable ? "editable" : ""}`}
+                        key={player.id}
+                      >
+                        {editable ? (
+                          <input
+                            checked={isSelected}
+                            onChange={(event) =>
+                              onPlayerSelected(player.id, event.target.checked)
+                            }
+                            type="checkbox"
+                          />
+                        ) : (
+                          <span className="lineup-check" aria-hidden="true">
+                            ✓
+                          </span>
+                        )}
+                        <span>
+                          <strong>{player.displayName}</strong>
+                          <small>{player.role}</small>
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -1881,7 +2047,16 @@ function eventSubtitle(fixture: RefereeFixture, event: FixtureEvent) {
 }
 
 function playersForClan(fixture: RefereeFixture, clanId: string) {
-  return fixture.players.filter((player) => player.clanId === clanId);
+  const clanPlayers = fixture.players.filter((player) => player.clanId === clanId);
+  if (
+    !["LIVE", "FINAL"].includes(fixture.status) ||
+    fixture.participantIds.length === 0
+  ) {
+    return clanPlayers;
+  }
+
+  const participantIdSet = new Set(fixture.participantIds);
+  return clanPlayers.filter((player) => participantIdSet.has(player.id));
 }
 
 function scoreFor(fixture: RefereeFixture, clanId: string) {

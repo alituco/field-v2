@@ -6,6 +6,7 @@ import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/fixture_repository.dart';
+import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import 'leaderboard.dart';
@@ -34,6 +35,8 @@ class _LeaderboardRegion {
   final String label;
 }
 
+enum _LeaderboardMode { clans, players }
+
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
   static const _activeRegion = _LeaderboardRegion(
     id: 'bahrain',
@@ -59,6 +62,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   ];
 
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
+  _LeaderboardMode _mode = _LeaderboardMode.clans;
   int _seasonIndex = 0;
   List<Clan> _clans = const [];
   ClanMembership? _myMembership;
@@ -68,6 +72,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     topScorers: [],
     topAssisters: [],
   );
+  List<PlayerRatingLeaderboardEntry> _playerRatings = const [];
+  String? _currentProfileId;
   bool _isLoading = true;
   String? _errorText;
 
@@ -91,6 +97,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         widget.clanRepository.listClans(),
         widget.clanRepository.getMyClanMembership(),
         widget.leaderboardRepository.loadPlayerStats(season),
+        widget.leaderboardRepository.loadPlayerRatingLeaderboard(),
+        _profileRepository.getCurrentProfile(),
       ]);
       if (!mounted || season != _selectedSeason) return;
       setState(() {
@@ -102,6 +110,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           });
         _myMembership = results[1] as ClanMembership?;
         _playerStats = results[2] as LeaderboardPlayerStats;
+        _playerRatings = results[3] as List<PlayerRatingLeaderboardEntry>;
+        _currentProfileId = (results[4] as PlayerProfile).id;
       });
     } catch (error) {
       if (!mounted) return;
@@ -151,7 +161,15 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   }
 
   Future<void> _openPlayerProfile(LeaderboardPlayerStat player) async {
-    if (player.profileId.trim().isEmpty) return;
+    return _openProfileId(player.profileId);
+  }
+
+  Future<void> _openRatingProfile(PlayerRatingLeaderboardEntry player) {
+    return _openProfileId(player.profileId);
+  }
+
+  Future<void> _openProfileId(String profileId) async {
+    if (profileId.trim().isEmpty) return;
 
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -159,7 +177,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           backgroundColor: fieldBackground,
           body: ProfileScreen(
             profileRepository: _profileRepository,
-            profileId: player.profileId,
+            profileId: profileId,
           ),
         ),
       ),
@@ -215,49 +233,42 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: fieldHeaderAwarePadding(context, top: 16, bottom: 124),
           children: [
-            _SeasonSelector(
-              season: _selectedSeason,
-              canGoPrevious: _seasonIndex > 0,
-              canGoNext: _seasonIndex < _seasons.length - 1,
-              onPrevious: _previousSeason,
-              onNext: _nextSeason,
+            _LeaderboardModeSelector(
+              mode: _mode,
+              onChanged: (mode) => setState(() => _mode = mode),
             ),
-            const SizedBox(height: 12),
-            const _LeaderboardEligibilityNote(),
-            const SizedBox(height: 24),
-            _SectionHeader(
-              title: 'The Top 10',
-              action: rankedClans.isEmpty
-                  ? null
-                  : _ViewRankingsButton(
-                      onTap: () => _openAllRankings(rankedClans),
-                    ),
-            ),
-            const SizedBox(height: 12),
-            if (_isLoading)
-              const _LeaderboardLoadingState()
-            else if (_errorText != null)
-              _LeaderboardErrorState(message: _errorText!, onRetry: _load)
-            else if (topRankedClans.isEmpty)
-              const _NoLeaderboardDataState(
-                message: 'No clans have completed 4 matches this season.',
-              )
-            else
-              for (var i = 0; i < topRankedClans.length; i++) ...[
-                TweenAnimationBuilder<double>(
-                  tween: Tween(begin: 0, end: 1),
-                  duration: Duration(milliseconds: 220 + (i * 35)),
-                  curve: Curves.easeOutCubic,
-                  builder: (context, value, child) {
-                    return Opacity(
-                      opacity: value,
-                      child: Transform.translate(
-                        offset: Offset(0, 8 * (1 - value)),
-                        child: child,
+            const SizedBox(height: 18),
+            if (_mode == _LeaderboardMode.clans) ...[
+              _SeasonSelector(
+                season: _selectedSeason,
+                canGoPrevious: _seasonIndex > 0,
+                canGoNext: _seasonIndex < _seasons.length - 1,
+                onPrevious: _previousSeason,
+                onNext: _nextSeason,
+              ),
+              const SizedBox(height: 12),
+              const _LeaderboardEligibilityNote(),
+              const SizedBox(height: 24),
+              _SectionHeader(
+                title: 'The Top 10',
+                action: rankedClans.isEmpty
+                    ? null
+                    : _ViewRankingsButton(
+                        onTap: () => _openAllRankings(rankedClans),
                       ),
-                    );
-                  },
-                  child: _ClanRankRow(
+              ),
+              const SizedBox(height: 12),
+              if (_isLoading)
+                const _LeaderboardLoadingState()
+              else if (_errorText != null)
+                _LeaderboardErrorState(message: _errorText!, onRetry: _load)
+              else if (topRankedClans.isEmpty)
+                const _NoLeaderboardDataState(
+                  message: 'No clans have completed 4 matches this season.',
+                )
+              else
+                for (var i = 0; i < topRankedClans.length; i++) ...[
+                  _ClanRankRow(
                     rank: i + 1,
                     clan: topRankedClans[i],
                     record:
@@ -270,32 +281,280 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                     isMe: topRankedClans[i].id == _myMembership?.clanId,
                     onTap: () => _openClan(topRankedClans[i]),
                   ),
-                ),
-                if (i != topRankedClans.length - 1) const SizedBox(height: 8),
-              ],
-            const SizedBox(height: 30),
-            _PlayerStatSection(
-              title: 'Top Scorers',
-              icon: Icons.sports_soccer_rounded,
-              iconColor: fieldEmerald600,
-              emptyMessage: statEmptyMessage,
-              label: 'goals',
-              players: _playerStats.topScorers,
-              loading: _isLoading,
-              onPlayerTap: _openPlayerProfile,
-            ),
-            const SizedBox(height: 24),
-            _PlayerStatSection(
-              title: 'Top Assisters',
-              icon: Icons.auto_awesome_rounded,
-              iconColor: fieldBlue600,
-              emptyMessage: statEmptyMessage,
-              label: 'assists',
-              players: _playerStats.topAssisters,
-              loading: _isLoading,
-              onPlayerTap: _openPlayerProfile,
-            ),
+                  if (i != topRankedClans.length - 1) const SizedBox(height: 8),
+                ],
+              const SizedBox(height: 30),
+              _PlayerStatSection(
+                title: 'Top Scorers',
+                icon: Icons.sports_soccer_rounded,
+                iconColor: fieldEmerald600,
+                emptyMessage: statEmptyMessage,
+                label: 'goals',
+                players: _playerStats.topScorers,
+                loading: _isLoading,
+                onPlayerTap: _openPlayerProfile,
+              ),
+              const SizedBox(height: 24),
+              _PlayerStatSection(
+                title: 'Top Assisters',
+                icon: Icons.auto_awesome_rounded,
+                iconColor: fieldBlue600,
+                emptyMessage: statEmptyMessage,
+                label: 'assists',
+                players: _playerStats.topAssisters,
+                loading: _isLoading,
+                onPlayerTap: _openPlayerProfile,
+              ),
+            ] else ...[
+              const _PlayerRatingHero(),
+              const SizedBox(height: 18),
+              if (_isLoading)
+                const _LeaderboardLoadingState()
+              else if (_errorText != null)
+                _LeaderboardErrorState(message: _errorText!, onRetry: _load)
+              else if (_playerRatings.isEmpty)
+                const _NoLeaderboardDataState(
+                  message: 'No Player Rating data yet.',
+                )
+              else
+                for (var i = 0; i < _playerRatings.length; i++) ...[
+                  _PlayerRatingRow(
+                    player: _playerRatings[i],
+                    isMe: _playerRatings[i].profileId == _currentProfileId,
+                    onTap: () => _openRatingProfile(_playerRatings[i]),
+                  ),
+                  if (i != _playerRatings.length - 1) const SizedBox(height: 8),
+                ],
+            ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _LeaderboardModeSelector extends StatelessWidget {
+  const _LeaderboardModeSelector({required this.mode, required this.onChanged});
+
+  final _LeaderboardMode mode;
+  final ValueChanged<_LeaderboardMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SegmentedButton<_LeaderboardMode>(
+      key: const ValueKey('leaderboard-mode-selector'),
+      showSelectedIcon: false,
+      expandedInsets: EdgeInsets.zero,
+      segments: const [
+        ButtonSegment(value: _LeaderboardMode.clans, label: Text('Clans')),
+        ButtonSegment(value: _LeaderboardMode.players, label: Text('Players')),
+      ],
+      selected: {mode},
+      onSelectionChanged: (selection) => onChanged(selection.first),
+      style: ButtonStyle(
+        textStyle: const WidgetStatePropertyAll(
+          TextStyle(fontWeight: FontWeight.w900),
+        ),
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? Colors.white
+              : fieldGray600,
+        ),
+        backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected)
+              ? fieldGray900
+              : Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerRatingHero extends StatelessWidget {
+  const _PlayerRatingHero();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF047857), Color(0xFF0F3D31)],
+        ),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33047857),
+            blurRadius: 20,
+            offset: Offset(0, 9),
+          ),
+        ],
+      ),
+      child: const Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'PLAYER LADDER',
+                  style: TextStyle(
+                    color: fieldEmerald200,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.4,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  'Your game. Your rating.',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 5),
+                Text(
+                  'Bahrain · Current Player Rating',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.emoji_events_rounded, color: fieldEmerald200, size: 34),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlayerRatingRow extends StatelessWidget {
+  const _PlayerRatingRow({
+    required this.player,
+    required this.isMe,
+    required this.onTap,
+  });
+
+  final PlayerRatingLeaderboardEntry player;
+  final bool isMe;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: isMe ? fieldEmerald50 : Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: isMe ? fieldEmerald200 : fieldGray100),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 30,
+                child: Text(
+                  '#${player.rank}',
+                  style: TextStyle(
+                    color: player.rank <= 3 ? fieldEmerald700 : fieldGray400,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              CircleAvatar(
+                radius: 21,
+                backgroundColor: fieldGray100,
+                backgroundImage: player.avatarUrl?.trim().isNotEmpty == true
+                    ? NetworkImage(player.avatarUrl!)
+                    : null,
+                child: player.avatarUrl?.trim().isNotEmpty == true
+                    ? null
+                    : Text(
+                        player.initials,
+                        style: const TextStyle(
+                          color: fieldGray600,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            player.displayName,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: fieldGray900,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                        if (isMe) ...[
+                          const SizedBox(width: 5),
+                          const Text(
+                            'YOU',
+                            style: TextStyle(
+                              color: fieldEmerald700,
+                              fontSize: 8,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    Text(
+                      '${player.tierLabel} · ${player.matchesPlayed} matches',
+                      style: const TextStyle(
+                        color: fieldGray400,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${player.skillRating}',
+                    style: const TextStyle(
+                      color: fieldGray900,
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  Text(
+                    '${player.lastChange >= 0 ? '+' : ''}${player.lastChange}',
+                    style: TextStyle(
+                      color: player.lastChange >= 0
+                          ? fieldEmerald600
+                          : Colors.redAccent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

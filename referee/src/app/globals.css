@@ -557,6 +557,166 @@ button:disabled {
   background: var(--green);
 }
 
+.lineup-panel {
+  margin-top: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 14px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.lineup-heading,
+.lineup-team-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lineup-title {
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.lineup-hint {
+  margin-top: 3px;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.lineup-saved {
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(16, 185, 129, 0.2);
+  color: #6ee7b7;
+  font-size: 9px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.lineup-teams {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.lineup-team {
+  min-width: 0;
+}
+
+.lineup-team-heading strong,
+.lineup-team-heading span {
+  display: block;
+}
+
+.lineup-team-heading strong {
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.lineup-team-heading span {
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.lineup-toggle {
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.11);
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.lineup-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.lineup-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.lineup-player.editable {
+  cursor: pointer;
+}
+
+.lineup-player.selected {
+  border-color: rgba(52, 211, 153, 0.36);
+  background: rgba(16, 185, 129, 0.14);
+}
+
+.lineup-player input {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  accent-color: #10b981;
+}
+
+.lineup-check {
+  display: grid;
+  flex: 0 0 17px;
+  width: 17px;
+  height: 17px;
+  place-items: center;
+  border-radius: 5px;
+  background: #10b981;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.lineup-player > span:last-child {
+  min-width: 0;
+}
+
+.lineup-player strong,
+.lineup-player small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lineup-player strong {
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.lineup-player small {
+  margin-top: 2px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 8px;
+  text-transform: capitalize;
+}
+
+.lineup-empty {
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 9px;
+  padding: 10px 6px;
+  color: rgba(255, 255, 255, 0.48);
+  text-align: center;
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .control-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

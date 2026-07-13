@@ -115,13 +115,14 @@ export async function POST(request: NextRequest) {
       .single();
     if (commandError) throw new Error(`Could not load command: ${commandError.message}`);
 
+    const completedAt = new Date().toISOString();
     const ok = body.ok === true;
     const errorMessage = ok ? null : body.errorMessage?.trim() || "OBS command failed.";
     const { error: ackError } = await db
       .from("broadcast_commands")
       .update({
         status: ok ? "ACKNOWLEDGED" : "FAILED",
-        completed_at: new Date().toISOString(),
+        completed_at: completedAt,
         error_message: errorMessage,
       })
       .eq("id", command.id);
@@ -131,6 +132,14 @@ export async function POST(request: NextRequest) {
     if (ok && command.action === "STOP_STREAM") {
       await markBroadcastStopped(db, fixtureId);
     } else if (ok) {
+      if (command.action === "START_STREAM" && body.obsStreaming === true) {
+        const { error: startedAtError } = await db
+          .from("fixture_broadcasts")
+          .update({ stream_started_at: completedAt })
+          .eq("fixture_id", fixtureId)
+          .is("stream_started_at", null);
+        if (startedAtError) throw startedAtError;
+      }
       await syncBroadcastFromCloudflare(db, fixtureId);
     } else {
       await db
