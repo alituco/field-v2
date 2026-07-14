@@ -180,6 +180,86 @@ void main() {
     expect(highlights.last.start, const Duration(milliseconds: 205145));
     expect(highlights.last.end, const Duration(milliseconds: 225145));
   });
+
+  test('clan fixture appearances become balanced formation lineups', () {
+    final fixture = Fixture.fromJson({
+      'id': 'clan-fixture',
+      'status': 'FINAL',
+      'home_clan_id': 'home',
+      'away_clan_id': 'away',
+      'venue': 'Field',
+      'day': 'TUESDAY',
+      'time_slot': FixtureTimeSlot.early.label,
+      'match_date': '2026-07-11',
+      'created_by': 'owner',
+      'home_clan': _clanJson('home', 'Home', 'HOM'),
+      'away_clan': _clanJson('away', 'Away', 'AWY'),
+      'fixture_player_appearances': [
+        _appearanceJson(
+          profileId: 'home-player',
+          side: 'HOME',
+          rating: 1300,
+          played: true,
+          isMe: true,
+        ),
+        _appearanceJson(
+          profileId: 'home-dnp',
+          side: 'HOME',
+          rating: 900,
+          played: false,
+        ),
+        _appearanceJson(
+          profileId: 'away-player',
+          side: 'AWAY',
+          rating: 1200,
+          played: true,
+        ),
+      ],
+    });
+
+    expect(fixture.homeLineup, hasLength(2));
+    expect(fixture.awayLineup.single.id, 'away-player');
+    expect(fixture.homeLineup.first.isMe, isTrue);
+    expect(fixture.homeAveragePlayerRating, 1300);
+    expect(fixture.awayAveragePlayerRating, 1200);
+    expect(fixture.matchAveragePlayerRating, 1250);
+    expect(fixture.teamRatingSpread, 100);
+  });
+}
+
+Map<String, Object> _clanJson(String id, String name, String tag) {
+  return {
+    'id': id,
+    'name': name,
+    'tag': tag,
+    'emblem': '⚽',
+    'theme_id': 'pitch',
+    'pattern_id': 'solid',
+    'skill_rating': 1500,
+  };
+}
+
+Map<String, Object> _appearanceJson({
+  required String profileId,
+  required String side,
+  required int rating,
+  required bool played,
+  bool isMe = false,
+}) {
+  return {
+    'profile_id': profileId,
+    'clan_id': side == 'HOME' ? 'home' : 'away',
+    'side': side,
+    'played': played,
+    'rating_at_start': rating,
+    'is_me': isMe,
+    'player': {
+      'id': profileId,
+      'display_name': profileId,
+      'username': profileId,
+      'avatar_url': '',
+    },
+  };
 }
 
 Fixture _fixture({

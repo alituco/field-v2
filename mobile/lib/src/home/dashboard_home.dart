@@ -50,6 +50,7 @@ class DashboardHome extends StatefulWidget {
 class _DashboardHomeState extends State<DashboardHome> {
   PlayerProfile? _profile;
   PlayerRatingLeaderboardEntry? _rating;
+  LeaderboardSeason _ratingSeason = activeLeaderboardSeason;
   OpenQueueBooking? _booking;
   int _openQueuePlayerCount = 0;
   List<Clan> _clans = const [];
@@ -67,6 +68,7 @@ class _DashboardHomeState extends State<DashboardHome> {
   }
 
   Future<void> _load() async {
+    final ratingSeason = activeLeaderboardSeason;
     setState(() {
       _loading = true;
       _error = null;
@@ -74,7 +76,7 @@ class _DashboardHomeState extends State<DashboardHome> {
     try {
       final results = await Future.wait<dynamic>([
         widget.profileRepository.getCurrentProfile(),
-        widget.leaderboardRepository.loadCurrentPlayerRating(),
+        widget.leaderboardRepository.loadCurrentPlayerRating(ratingSeason),
         widget.openQueueRepository.getMyUpcomingBooking(),
         widget.openQueueRepository.listGames(),
         widget.clanRepository.listClans(),
@@ -91,6 +93,7 @@ class _DashboardHomeState extends State<DashboardHome> {
       setState(() {
         _profile = profile;
         _rating = rating;
+        _ratingSeason = ratingSeason;
         _booking = results[2] as OpenQueueBooking?;
         _openQueuePlayerCount = games.fold<int>(
           0,
@@ -231,6 +234,7 @@ class _DashboardHomeState extends State<DashboardHome> {
               _PlayerRatingCard(
                 profile: _profile!,
                 rating: _rating,
+                season: _ratingSeason,
                 onTap: widget.onOpenProfile,
                 onRanks: widget.onOpenRanks,
               ),
@@ -291,12 +295,14 @@ class _PlayerRatingCard extends StatelessWidget {
   const _PlayerRatingCard({
     required this.profile,
     required this.rating,
+    required this.season,
     required this.onTap,
     required this.onRanks,
   });
 
   final PlayerProfile profile;
   final PlayerRatingLeaderboardEntry? rating;
+  final LeaderboardSeason season;
   final VoidCallback onTap;
   final VoidCallback onRanks;
 
@@ -320,6 +326,11 @@ class _PlayerRatingCard extends StatelessWidget {
       0.0,
       1.0,
     );
+    final gamesNeeded =
+        rating?.gamesNeededToRank ?? minimumPlayerLeaderboardMatches;
+    final rankLabel = rating?.isRanked == true
+        ? '#${rating!.rank} in Bahrain · ${season.label}'
+        : '$gamesNeeded rated game${gamesNeeded == 1 ? '' : 's'} to enter ${season.label} rankings';
 
     return Material(
       color: Colors.white,
@@ -463,7 +474,8 @@ class _PlayerRatingCard extends StatelessWidget {
                           ],
                         ),
                         Text(
-                          '#${rating?.rank ?? '—'} in Bahrain',
+                          rankLabel,
+                          maxLines: 2,
                           style: const TextStyle(
                             color: fieldGray500,
                             fontSize: 11,
@@ -748,7 +760,9 @@ class _ConfirmedQueueHero extends StatelessWidget {
               ),
               const SizedBox(height: 5),
               Text(
-                '${booking.game.venue} · ${booking.game.dateGroup}',
+                booking.team == null
+                    ? '${booking.game.venue} · ${booking.game.dateGroup}'
+                    : '${booking.team} TEAM · ${_bookingTeamAverage(booking)} AVG SR',
                 style: const TextStyle(
                   color: Colors.white70,
                   fontWeight: FontWeight.w600,
@@ -769,6 +783,13 @@ class _ConfirmedQueueHero extends StatelessWidget {
       ),
     );
   }
+}
+
+String _bookingTeamAverage(OpenQueueBooking booking) {
+  final rating = booking.team == openQueueWhiteTeamId
+      ? booking.game.whiteAverageSr
+      : booking.game.blackAverageSr;
+  return rating?.toString() ?? '—';
 }
 
 class _MyClanSection extends StatelessWidget {

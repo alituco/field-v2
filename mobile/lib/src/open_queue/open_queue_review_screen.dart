@@ -125,7 +125,7 @@ class OpenQueueReviewScreen extends StatelessWidget {
                   ),
                   SizedBox(height: 11),
                   Text(
-                    'Clan games update Player Rating. Open Queue results will join the rating system in a later version and never affect Clan Rating.',
+                    'Clan and Open Queue games update Player Rating when you play. Solo results never affect Clan Rating.',
                     style: TextStyle(
                       color: fieldGray700,
                       height: 1.7,
@@ -270,7 +270,13 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
           ),
         ),
       );
-      if (mounted) Navigator.of(context).pop(true);
+      // The confirmation screen can clear the whole Open Queue stack when the
+      // player chooses Home. During that unwind this State can briefly remain
+      // mounted even though its route is no longer current. Popping again in
+      // that window removes the app's root route and leaves a black screen.
+      if (mounted && ModalRoute.of(context)?.isCurrent == true) {
+        Navigator.of(context).pop(true);
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {

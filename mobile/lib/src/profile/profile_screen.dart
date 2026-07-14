@@ -3,6 +3,10 @@ import 'package:flutter/services.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../fixtures/fixture_detail_screen.dart';
+import '../fixtures/fixture_repository.dart';
+import '../leaderboard/leaderboard.dart';
+import '../open_queue/open_queue_repository.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'profile.dart';
@@ -13,6 +17,8 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.profileRepository,
+    this.fixtureRepository,
+    this.openQueueRepository,
     this.profileId,
     this.devModeEnabled = false,
     this.onSwitchUser,
@@ -21,6 +27,8 @@ class ProfileScreen extends StatefulWidget {
   });
 
   final ProfileRepository profileRepository;
+  final FixtureRepository? fixtureRepository;
+  final OpenQueueRepository? openQueueRepository;
   final String? profileId;
   final bool devModeEnabled;
   final Future<void> Function(String profileId)? onSwitchUser;
@@ -33,13 +41,20 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late Future<PlayerProfile> _profileFuture;
+  late final FixtureRepository _fixtureRepository;
+  late final OpenQueueRepository _openQueueRepository;
   PlayerProfile? _latestProfile;
+  String? _openingGameId;
 
   bool get _isCurrentProfile => widget.profileId == null;
 
   @override
   void initState() {
     super.initState();
+    _fixtureRepository =
+        widget.fixtureRepository ?? SupabaseFixtureRepository();
+    _openQueueRepository =
+        widget.openQueueRepository ?? SupabaseOpenQueueRepository();
     _profileFuture = _loadProfile();
   }
 
@@ -75,6 +90,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('@${profile.username} copied')));
+  }
+
+  Future<void> _openPreviousGame(ProfilePreviousGame game) {
+    return _openRatedMatch(game.id, isSolo: game.isSolo);
+  }
+
+  Future<void> _openRatedMatch(String matchId, {required bool isSolo}) async {
+    if (_openingGameId != null) return;
+    if (matchId.trim().isEmpty) return;
+    setState(() => _openingGameId = matchId);
+    try {
+      if (isSolo) {
+        final detail = await _openQueueRepository.getMatchDetail(matchId);
+        if (!mounted) return;
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => FixtureDetailScreen(
+              fixture: detail.toFixture(),
+              fixtureRepository: _fixtureRepository,
+              myClanMembership: null,
+              sourceLabel: 'SOLO',
+              showTeamRatings: false,
+              refreshFixture: () async {
+                final next = await _openQueueRepository.getMatchDetail(matchId);
+                return next.toFixture();
+              },
+            ),
+          ),
+        );
+      } else {
+        final fixture = await _fixtureRepository.getFixture(matchId);
+        if (!mounted) return;
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => FixtureDetailScreen(
+              fixture: fixture,
+              fixtureRepository: _fixtureRepository,
+              myClanMembership: null,
+              sourceLabel: 'CLAN',
+            ),
+          ),
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open this match. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingGameId = null);
+    }
   }
 
   Future<void> _openConnections(ProfileConnectionTab tab) async {
@@ -163,13 +236,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 tooltip: 'Edit profile',
                 onPressed: _openEditProfile,
               ),
-              const SizedBox(width: 8),
-            ],
-            _HeaderIconButton(
-              icon: Icons.ios_share_rounded,
-              tooltip: 'Share profile',
-              onPressed: _copyProfileHandle,
-            ),
+              if (widget.onSignOut != null) ...[
+                const SizedBox(width: 8),
+                _HeaderIconButton(
+                  icon: Icons.logout_rounded,
+                  tooltip: 'Sign out',
+                  isLoading: widget.isSigningOut,
+                  onPressed: widget.isSigningOut ? null : widget.onSignOut,
+                ),
+              ],
+            ] else
+              _HeaderIconButton(
+                icon: Icons.ios_share_rounded,
+                tooltip: 'Share profile',
+                onPressed: _copyProfileHandle,
+              ),
           ],
         ),
       ),
@@ -218,19 +299,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ),
                 const SizedBox(height: 12),
                 _StatsRow(profile: profile),
-                if (profile.highlights.isNotEmpty) ...[
+                if (profile.playerRating case final rating?) ...[
                   const SizedBox(height: 16),
-                  _HighlightsCard(highlights: profile.highlights),
+                  _ProfilePlayerRatingCard(rating: rating),
                 ],
                 if (profile.career.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _CareerCard(entries: profile.career),
                 ],
-                if (_isCurrentProfile && widget.onSignOut != null) ...[
+                if (profile.highlights.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _SignOutButton(
-                    isSigningOut: widget.isSigningOut,
-                    onSignOut: widget.onSignOut!,
+                  _HighlightsCard(highlights: profile.highlights),
+                ],
+                if (profile.previousGames.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _MatchHistoryCard(
+                    games: profile.previousGames,
+                    openingMatchId: _openingGameId,
+                    onOpenGame: _openPreviousGame,
                   ),
                 ],
               ],
@@ -381,7 +467,6 @@ class _ClanLine extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        TierLabelBadge(rank: clan.rank, small: true),
       ],
     );
   }
@@ -490,6 +575,188 @@ class _StatCard extends StatelessWidget {
               letterSpacing: 0.8,
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProfilePlayerRatingCard extends StatelessWidget {
+  const _ProfilePlayerRatingCard({required this.rating});
+
+  final ProfilePlayerRating rating;
+
+  @override
+  Widget build(BuildContext context) {
+    final change = rating.lastChange;
+    final changeColor = change > 0
+        ? fieldEmerald600
+        : change < 0
+        ? const Color(0xFFEF4444)
+        : fieldGray400;
+    return _ProfileCard(
+      borderRadius: 22,
+      padding: const EdgeInsets.all(18),
+      child: Row(
+        children: [
+          Container(
+            width: 52,
+            height: 52,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [fieldEmerald500, fieldBlue600],
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(
+              Icons.insights_rounded,
+              color: Colors.white,
+              size: 25,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'PLAYER RATING',
+                  style: TextStyle(
+                    color: fieldEmerald600,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${rating.skillRating}',
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 28,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 2),
+                      child: Text(
+                        '${change > 0 ? '+' : ''}$change',
+                        style: TextStyle(
+                          color: changeColor,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${playerRatingTier(rating.skillRating)} · ${rating.recordLabel} · ${rating.matchesPlayed} rated games',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: fieldGray500,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MatchHistoryCard extends StatefulWidget {
+  const _MatchHistoryCard({
+    required this.games,
+    required this.openingMatchId,
+    required this.onOpenGame,
+  });
+
+  final List<ProfilePreviousGame> games;
+  final String? openingMatchId;
+  final ValueChanged<ProfilePreviousGame> onOpenGame;
+
+  @override
+  State<_MatchHistoryCard> createState() => _MatchHistoryCardState();
+}
+
+class _MatchHistoryCardState extends State<_MatchHistoryCard> {
+  static const _previewCount = 3;
+  var _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasMore = widget.games.length > _previewCount;
+    final visibleGames = _expanded
+        ? widget.games
+        : widget.games.take(_previewCount).toList(growable: false);
+
+    return _SectionCard(
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: Row(
+              children: [
+                Icon(Icons.timeline_rounded, color: fieldGray400, size: 16),
+                SizedBox(width: 8),
+                Text(
+                  'MATCH HISTORY',
+                  style: TextStyle(
+                    color: fieldGray700,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (var index = 0; index < visibleGames.length; index++) ...[
+            if (index > 0)
+              const Divider(height: 1, indent: 20, color: fieldGray100),
+            _PreviousGameRow(
+              game: visibleGames[index],
+              isLoading: widget.openingMatchId == visibleGames[index].id,
+              onTap: () => widget.onOpenGame(visibleGames[index]),
+            ),
+          ],
+          if (hasMore) ...[
+            const Divider(height: 1, color: fieldGray100),
+            TextButton.icon(
+              key: const ValueKey('profile-match-history-toggle'),
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(
+                _expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                size: 18,
+              ),
+              label: Text(_expanded ? 'SHOW LESS' : 'VIEW MORE'),
+              style: TextButton.styleFrom(
+                foregroundColor: fieldBlue600,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                textStyle: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.7,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -699,12 +966,38 @@ class _CareerCard extends StatelessWidget {
               ],
             ),
           ),
+          const _CareerSubheading(label: 'CLAN HISTORY'),
           for (var index = 0; index < entries.length; index++) ...[
             if (index > 0)
               const Divider(height: 1, indent: 20, color: fieldGray100),
             _CareerRow(entry: entries[index]),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _CareerSubheading extends StatelessWidget {
+  const _CareerSubheading({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 7, 20, 4),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.1,
+          ),
+        ),
       ),
     );
   }
@@ -828,6 +1121,156 @@ class _CareerRow extends StatelessWidget {
       ),
     );
   }
+}
+
+class _PreviousGameRow extends StatelessWidget {
+  const _PreviousGameRow({
+    required this.game,
+    required this.isLoading,
+    required this.onTap,
+  });
+
+  final ProfilePreviousGame game;
+  final bool isLoading;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final date = game.playedAt;
+    final role = game.playerRole?.toUpperCase();
+    final side = game.playerSide.isEmpty ? null : game.playerSide;
+    final contextLabel = [
+      _shortProfileGameDate(date),
+      if (side != null) side,
+      if (role != null) role,
+    ].join(' · ');
+
+    return InkWell(
+      key: ValueKey('profile-previous-game-${game.id}'),
+      onTap: isLoading ? null : onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: game.isSolo
+                    ? const Color(0xFFEFF6FF)
+                    : const Color(0xFFECFDF5),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                game.isSolo ? Icons.person_rounded : Icons.shield_outlined,
+                color: game.isSolo ? fieldBlue600 : fieldEmerald600,
+                size: 21,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: game.isSolo
+                              ? const Color(0xFFDBEAFE)
+                              : const Color(0xFFD1FAE5),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          game.typeLabel,
+                          style: TextStyle(
+                            color: game.isSolo ? fieldBlue600 : fieldEmerald600,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          '${game.homeTag} vs ${game.awayTag}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: fieldGray900,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+                  Text(
+                    contextLabel,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: fieldGray400,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            if (isLoading)
+              const SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else ...[
+              Text(
+                '${game.homeScore} - ${game.awayScore}',
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: fieldGray300,
+                size: 20,
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+String _shortProfileGameDate(DateTime value) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[value.month - 1]} ${value.day}, ${value.year}';
 }
 
 class _ProfileAvatar extends StatelessWidget {
@@ -972,72 +1415,18 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _SignOutButton extends StatelessWidget {
-  const _SignOutButton({required this.isSigningOut, required this.onSignOut});
-
-  final bool isSigningOut;
-  final VoidCallback onSignOut;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: isSigningOut ? null : onSignOut,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          height: 52,
-          decoration: BoxDecoration(
-            border: Border.all(color: fieldGray200),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: fieldGray900.withValues(alpha: 0.025),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Center(
-            child: isSigningOut
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.logout_rounded, color: fieldGray500, size: 17),
-                      SizedBox(width: 8),
-                      Text(
-                        'Sign out',
-                        style: TextStyle(
-                          color: fieldGray500,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _HeaderIconButton extends StatelessWidget {
   const _HeaderIconButton({
     required this.icon,
     required this.tooltip,
     required this.onPressed,
+    this.isLoading = false,
   });
 
   final IconData icon;
   final String tooltip;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -1063,7 +1452,12 @@ class _HeaderIconButton extends StatelessWidget {
                 ),
               ],
             ),
-            child: Icon(icon, color: fieldGray600, size: 18),
+            child: isLoading
+                ? const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Icon(icon, color: fieldGray600, size: 18),
           ),
         ),
       ),

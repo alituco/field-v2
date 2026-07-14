@@ -186,6 +186,12 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                     'TEAM',
                     booking.team == null ? 'Assignment pending' : booking.team!,
                   ),
+                  if (game.matchAverageSr != null)
+                    _bookingRow(
+                      Icons.balance_rounded,
+                      'TEAM BALANCE',
+                      'White ${game.whiteAverageSr ?? '—'} · Black ${game.blackAverageSr ?? '—'} · Avg ${game.matchAverageSr}',
+                    ),
                 ],
               ),
             ),
@@ -197,19 +203,21 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: const Color(0xFFDBEAFE)),
               ),
-              child: const Row(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.notifications_active_outlined,
                     color: fieldBlue600,
                     size: 20,
                   ),
-                  SizedBox(width: 10),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      "We'll notify you when the match fills and your White or Black team is assigned.",
-                      style: TextStyle(
+                      booking.team == null
+                          ? "We'll notify you when the match fills and your White or Black team is assigned."
+                          : 'Teams assigned. The two team averages are only ${game.teamSrSpread ?? 0} SR apart.',
+                      style: const TextStyle(
                         color: fieldGray600,
                         fontSize: 12,
                         height: 1.4,

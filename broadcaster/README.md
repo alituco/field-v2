@@ -21,6 +21,11 @@ The agent creates or updates an OBS Browser Source named `Field Scoreboard`,
 sets the Cloudflare RTMPS destination, starts a local backup recording, and
 starts or stops streaming when the assigned referee requests it.
 
+The same broadcaster handles both clan fixtures and Open Queue games. The
+command from the referee app selects the correct match and changes the OBS
+scoreboard automatically; no separate OBS profile or second broadcaster is
+needed for solo games.
+
 When the referee finishes a match, Field leaves the stream running for 30
 seconds, then stops OBS and the local recording. Cloudflare notifies the hosted
 Supabase function when its recording is ready, and the Flutter match page then

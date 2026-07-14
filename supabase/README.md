@@ -36,9 +36,83 @@ Run from the repo root:
 deno run --allow-env --allow-net --env-file=.env supabase/scripts/seed_dev_data.ts
 ```
 
-The command is idempotent. It reuses existing fake auth users by phone,
+The seed command is idempotent. It reuses existing fake auth users by phone,
 refreshes their profiles, removes seeded follows, profile highlights, career
 rows, fake clan data, fixture scorer rows, and recreates the seeded app data.
+
+## Reset All Game Schedule Data (Destructive)
+
+Use this development-only reset when you need a clean fixture and Open Queue
+schedule. It permanently removes the current game schedule data before seeding
+the canonical Tuesday/Friday schedule, so do not run it against production:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env --env-file=referee/.env.local supabase/scripts/reset_game_schedule_data.ts --confirm
+```
+
+Pass `--clear-only` to delete the game schedule data without creating the
+replacement seed data. Pass `--skip-cloudflare` to leave the associated remote
+Cloudflare Stream recordings untouched; those recordings can remain orphaned
+after their database records are removed. Both flags still require `--confirm`.
+
+Verify the clean data, permanent time split, paired match days, historical
+appearances, and both upcoming-game limits:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_permanent_game_schedule.ts
+```
+
+Verify the authenticated Fixtures feed includes both completed and upcoming
+solo games with accurate scores, player counts, and caller-only booking data:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_open_queue_fixture_feed.ts
+```
+
+Verify that Player Rankings use confirmed games from the selected season and
+exclude players with fewer than two games:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_season_player_rankings.ts
+```
+
+Only referee-confirmed appearances marked `played = true` count. Fixtures
+inserted directly as `FINAL` without a recorded lineup are intentionally
+excluded rather than guessing which clan members participated.
+
+Verify the two-upcoming-game limits for clans and solo players:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_scheduling_limits.ts
+```
+
+After adding the solo referee/match-control migration, backfill the existing
+development schedule with referee assignments and recording-aligned solo goal
+timelines without resetting any games:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/seed_open_queue_match_history.ts
+```
+
+Then verify solo match details, Career history, goal timestamps, and referee
+assignments together:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_open_queue_match_system.ts
+```
+
+After applying the Open Queue Player SR migration, verify exact role-preserving
+team balance, frozen team averages, the clan-and-solo rating ledger, and the
+public calculation history payload:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_open_queue_player_sr_system.ts
+```
+
+Player SR uses the same `PLAYER_ELO_V1` calculation for confirmed clan and solo
+appearances. Open Queue teams are frozen as soon as all 12 position-specific
+spots fill. If a player cancels and the game reopens, those team snapshots are
+cleared and the next fill is balanced again using current Player SR.
 
 Seeded fake users:
 

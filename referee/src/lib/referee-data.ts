@@ -17,6 +17,8 @@ const fixtureSelect = `
   day,
   time_slot,
   match_date,
+  home_score,
+  away_score,
   cancellation_code,
   cancellation_reason,
   cancelled_at,
@@ -192,6 +194,7 @@ async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
       displayName: String(profile.display_name ?? "Unnamed player"),
       username: nullableString(profile.username),
       avatarUrl: nullableString(profile.avatar_url),
+      ratingAtTeamAssignment: null,
     } satisfies Player;
   });
 }
@@ -302,6 +305,7 @@ async function loadBlueCards(db: SupabaseClient, fixtureIds: string[]) {
 
 function normalizeFixtureRow(row: Record<string, unknown>) {
   return {
+    matchKind: "CLAN",
     id: String(row.id),
     status: String(row.status) as RefereeFixture["status"],
     venue: String(row.venue ?? ""),
@@ -312,6 +316,12 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     cancellationReason: nullableString(row.cancellation_reason),
     cancelledAt: nullableString(row.cancelled_at),
     cancelledBy: nullableString(row.cancelled_by),
+    homeScore: nullableNumber(row.home_score),
+    awayScore: nullableNumber(row.away_score),
+    whiteAverageSr: null,
+    blackAverageSr: null,
+    matchAverageSr: null,
+    teamSrSpread: null,
     homeClan: normalizeClan(asObject(row.home_clan)),
     awayClan: normalizeClan(asObject(row.away_clan)),
     players: [],
@@ -348,4 +358,10 @@ function asObject(value: unknown): Record<string, unknown> {
 function nullableString(value: unknown) {
   if (value === null || value === undefined) return null;
   return String(value);
+}
+
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }

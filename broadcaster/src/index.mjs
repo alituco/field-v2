@@ -27,7 +27,9 @@ const statePath = path.resolve(process.cwd(), ".field-broadcaster-state.json");
 const obs = new OBSWebSocket();
 let obsConnected = false;
 let shuttingDown = false;
-let currentFixtureId = loadState().currentFixtureId ?? null;
+const savedState = loadState();
+let currentFixtureId = savedState.currentFixtureId ?? null;
+let currentOpenQueueGameId = savedState.currentOpenQueueGameId ?? null;
 let lastError = null;
 
 obs.on("ConnectionClosed", () => {
@@ -48,8 +50,9 @@ while (!shuttingDown) {
   try {
     await connectObs();
     const obsStatus = await getObsStatus();
-    if (!obsStatus.streaming && currentFixtureId) {
+    if (!obsStatus.streaming && (currentFixtureId || currentOpenQueueGameId)) {
       currentFixtureId = null;
+      currentOpenQueueGameId = null;
       saveState();
     }
 
@@ -100,6 +103,7 @@ async function sendHeartbeat(status) {
       obsConnected,
       obsStreaming: status.streaming === true,
       currentFixtureId,
+      currentOpenQueueGameId,
       errorMessage: lastError,
       metadata: {
         agentVersion: "0.1.0",
@@ -118,12 +122,14 @@ async function claimCommand() {
 }
 
 async function executeCommand(command) {
-  console.log(`${command.action} requested for fixture ${command.fixtureId}.`);
+  console.log(
+    `${command.action} requested for ${command.matchKind === "SOLO" ? "solo game" : "fixture"} ${command.matchId ?? command.fixtureId}.`,
+  );
   try {
     if (command.action === "START_STREAM") {
       await startStream(command);
     } else if (command.action === "STOP_STREAM") {
-      await stopStream();
+      await stopStream(command);
     } else {
       throw new Error(`Unsupported command: ${command.action}`);
     }
@@ -168,12 +174,26 @@ async function startStream(command) {
 
   const streamStatus = await obs.call("GetStreamStatus");
   if (!streamStatus.outputActive) await obs.call("StartStream");
-  currentFixtureId = command.fixtureId;
+  currentFixtureId = command.fixtureId ?? null;
+  currentOpenQueueGameId = command.openQueueGameId ?? null;
   saveState();
 }
 
-async function stopStream() {
+async function stopStream(command) {
   const streamStatus = await obs.call("GetStreamStatus");
+  const targetsCurrentFixture = Boolean(command.fixtureId) &&
+    command.fixtureId === currentFixtureId && !currentOpenQueueGameId;
+  const targetsCurrentSoloGame = Boolean(command.openQueueGameId) &&
+    command.openQueueGameId === currentOpenQueueGameId && !currentFixtureId;
+  const targetsCurrentMatch = targetsCurrentFixture || targetsCurrentSoloGame;
+
+  if (streamStatus.outputActive && !targetsCurrentMatch) {
+    throw new Error(
+      "Refusing to stop OBS because this command targets a different match.",
+    );
+  }
+  if (!streamStatus.outputActive && !targetsCurrentMatch) return;
+
   if (streamStatus.outputActive) await obs.call("StopStream");
 
   if (config.localRecording) {
@@ -190,6 +210,7 @@ async function stopStream() {
   }
 
   currentFixtureId = null;
+  currentOpenQueueGameId = null;
   saveState();
 }
 
@@ -262,7 +283,10 @@ function loadState() {
 }
 
 function saveState() {
-  fs.writeFileSync(statePath, JSON.stringify({ currentFixtureId }), {
+  fs.writeFileSync(statePath, JSON.stringify({
+    currentFixtureId,
+    currentOpenQueueGameId,
+  }), {
     mode: 0o600,
   });
 }

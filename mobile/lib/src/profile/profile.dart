@@ -13,6 +13,8 @@ class PlayerProfile {
     required this.assists,
     required this.highlights,
     required this.career,
+    this.previousGames = const [],
+    this.playerRating,
     this.phone,
     this.avatarUrl,
     this.clan,
@@ -32,6 +34,8 @@ class PlayerProfile {
   final int assists;
   final List<ProfileHighlight> highlights;
   final List<ProfileCareerEntry> career;
+  final List<ProfilePreviousGame> previousGames;
+  final ProfilePlayerRating? playerRating;
 
   PlayerProfile copyWith({int? followingCount, int? fansCount}) {
     return PlayerProfile(
@@ -49,6 +53,8 @@ class PlayerProfile {
       assists: assists,
       highlights: highlights,
       career: career,
+      previousGames: previousGames,
+      playerRating: playerRating,
     );
   }
 
@@ -64,6 +70,117 @@ class PlayerProfile {
         .map((word) => word.substring(0, 1))
         .join()
         .toUpperCase();
+  }
+}
+
+class ProfilePlayerRating {
+  const ProfilePlayerRating({
+    required this.skillRating,
+    required this.matchesPlayed,
+    required this.wins,
+    required this.losses,
+    required this.draws,
+    required this.lastChange,
+    required this.region,
+    required this.events,
+  });
+
+  final int skillRating;
+  final int matchesPlayed;
+  final int wins;
+  final int losses;
+  final int draws;
+  final int lastChange;
+  final String region;
+  final List<ProfileRatingEvent> events;
+
+  String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
+
+  factory ProfilePlayerRating.fromJson(Map<String, dynamic> json) {
+    final rawEvents = json['events'];
+    return ProfilePlayerRating(
+      skillRating: _asInt(json['skill_rating'], fallback: 1200),
+      matchesPlayed: _asInt(json['matches_played']),
+      wins: _asInt(json['wins']),
+      losses: _asInt(json['losses']),
+      draws: _asInt(json['draws']),
+      lastChange: _asInt(json['last_change']),
+      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
+      events: rawEvents is! List
+          ? const []
+          : [
+              for (final rawEvent in rawEvents)
+                if (rawEvent is Map)
+                  ProfileRatingEvent.fromJson(
+                    Map<String, dynamic>.from(rawEvent),
+                  ),
+            ],
+    );
+  }
+}
+
+class ProfileRatingEvent {
+  const ProfileRatingEvent({
+    required this.id,
+    required this.sourceType,
+    required this.sourceId,
+    required this.playedAt,
+    required this.opponentLabel,
+    required this.side,
+    required this.result,
+    required this.ratingBefore,
+    required this.ratingChange,
+    required this.ratingAfter,
+    this.ratingAtMatchStart,
+    this.teamAverageRating,
+    this.opponentAverageRating,
+    this.expectedScore,
+    this.calculationVersion,
+  });
+
+  final String id;
+  final String sourceType;
+  final String sourceId;
+  final DateTime playedAt;
+  final String opponentLabel;
+  final String side;
+  final String result;
+  final int ratingBefore;
+  final int ratingChange;
+  final int ratingAfter;
+  final int? ratingAtMatchStart;
+  final double? teamAverageRating;
+  final double? opponentAverageRating;
+  final double? expectedScore;
+  final String? calculationVersion;
+
+  bool get isSolo => sourceType == 'OPEN_QUEUE';
+
+  String get sourceLabel => isSolo ? 'SOLO' : 'CLAN';
+
+  factory ProfileRatingEvent.fromJson(Map<String, dynamic> json) {
+    return ProfileRatingEvent(
+      id: (json['event_id'] ?? json['id'] ?? '').toString(),
+      sourceType: (json['source_type'] ?? 'CLAN_FIXTURE')
+          .toString()
+          .toUpperCase(),
+      sourceId: (json['source_id'] ?? '').toString(),
+      playedAt: _profileGameDate(json['played_at']),
+      opponentLabel: (json['opponent_label'] as String? ?? 'Match').trim(),
+      side: (json['side'] as String? ?? '').trim().toUpperCase(),
+      result: (json['result'] as String? ?? '').trim().toUpperCase(),
+      ratingBefore: _asInt(json['rating_before']),
+      ratingChange: _asInt(json['rating_change']),
+      ratingAfter: _asInt(json['rating_after']),
+      ratingAtMatchStart: _asNullableInt(json['rating_at_match_start']),
+      teamAverageRating: _asDouble(json['team_average_rating']),
+      opponentAverageRating: _asDouble(json['opponent_average_rating']),
+      expectedScore: _asDouble(json['expected_score']),
+      calculationVersion: switch (json['calculation_version']) {
+        null => null,
+        final value => value.toString(),
+      },
+    );
   }
 }
 
@@ -291,9 +408,108 @@ class ProfileCareerEntry {
   }
 }
 
+enum ProfileGameType { clan, solo }
+
+class ProfilePreviousGame {
+  const ProfilePreviousGame({
+    required this.id,
+    required this.type,
+    required this.playedAt,
+    required this.venue,
+    required this.homeName,
+    required this.homeTag,
+    required this.homeEmblem,
+    required this.awayName,
+    required this.awayTag,
+    required this.awayEmblem,
+    required this.homeScore,
+    required this.awayScore,
+    required this.playerSide,
+    this.playerRole,
+  });
+
+  final String id;
+  final ProfileGameType type;
+  final DateTime playedAt;
+  final String venue;
+  final String homeName;
+  final String homeTag;
+  final String homeEmblem;
+  final String awayName;
+  final String awayTag;
+  final String awayEmblem;
+  final int homeScore;
+  final int awayScore;
+  final String playerSide;
+  final String? playerRole;
+
+  bool get isSolo => type == ProfileGameType.solo;
+
+  String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
+
+  factory ProfilePreviousGame.fromJson(Map<String, dynamic> json) {
+    final rawType = (json['match_type'] ?? json['source_type'] ?? 'CLAN')
+        .toString()
+        .toUpperCase();
+    final isSolo = rawType == 'SOLO' || rawType == 'OPEN_QUEUE';
+    final playedAtValue =
+        json['played_at'] ?? json['starts_at'] ?? json['match_date'];
+    return ProfilePreviousGame(
+      id: (json['match_id'] ?? json['source_id'] ?? json['id'] ?? '')
+          .toString(),
+      type: isSolo ? ProfileGameType.solo : ProfileGameType.clan,
+      playedAt: _profileGameDate(playedAtValue),
+      venue: (json['venue'] as String? ?? '').trim(),
+      homeName: (json['home_name'] as String? ?? (isSolo ? 'White Team' : ''))
+          .trim(),
+      homeTag: (json['home_tag'] as String? ?? (isSolo ? 'WHITE' : ''))
+          .trim()
+          .toUpperCase(),
+      homeEmblem: json['home_emblem'] as String? ?? (isSolo ? '⚪' : '⚽'),
+      awayName: (json['away_name'] as String? ?? (isSolo ? 'Black Team' : ''))
+          .trim(),
+      awayTag: (json['away_tag'] as String? ?? (isSolo ? 'BLACK' : ''))
+          .trim()
+          .toUpperCase(),
+      awayEmblem: json['away_emblem'] as String? ?? (isSolo ? '⚫' : '⚽'),
+      homeScore: _asInt(json['home_score'] ?? json['white_score']),
+      awayScore: _asInt(json['away_score'] ?? json['black_score']),
+      playerSide: (json['player_side'] ?? json['side'] ?? '')
+          .toString()
+          .toUpperCase(),
+      playerRole: switch (json['player_role'] ?? json['role']) {
+        final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
+    );
+  }
+}
+
+DateTime _profileGameDate(Object? value) {
+  if (value is DateTime) return value.toLocal();
+  if (value is String) {
+    return DateTime.tryParse(value)?.toLocal() ?? DateTime(0);
+  }
+  return DateTime(0);
+}
+
 int _asInt(Object? value, {int fallback = 0}) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value) ?? fallback;
   return fallback;
+}
+
+int? _asNullableInt(Object? value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.round();
+  if (value is String) return num.tryParse(value)?.round();
+  return null;
+}
+
+double? _asDouble(Object? value) {
+  if (value is num) return value.toDouble();
+  if (value is String) return double.tryParse(value);
+  return null;
 }

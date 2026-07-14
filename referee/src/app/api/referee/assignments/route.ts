@@ -40,7 +40,13 @@ export async function GET(request: NextRequest) {
   if (adminError) return adminError;
 
   try {
-    const [refereesResult, fixturesResult, assignmentsResult] = await Promise.all([
+    const [
+      refereesResult,
+      fixturesResult,
+      assignmentsResult,
+      soloGamesResult,
+      soloAssignmentsResult,
+    ] = await Promise.all([
       context.db
         .from("referee_profiles")
         .select("profile_id,display_name,phone,role")
@@ -56,15 +62,31 @@ export async function GET(request: NextRequest) {
       context.db
         .from("fixture_referee_assignments")
         .select("fixture_id,referee_id"),
+      context.db
+        .from("open_queue_games")
+        .select("id,status,venue,starts_at,ends_at,timezone")
+        .in("status", ["FULL", "LIVE"])
+        .order("starts_at"),
+      context.db
+        .from("open_queue_referee_assignments")
+        .select("game_id,referee_id"),
     ]);
 
     if (refereesResult.error) throw refereesResult.error;
     if (fixturesResult.error) throw fixturesResult.error;
     if (assignmentsResult.error) throw assignmentsResult.error;
+    if (soloGamesResult.error) throw soloGamesResult.error;
+    if (soloAssignmentsResult.error) throw soloAssignmentsResult.error;
 
     const refereeByFixture = new Map(
       (assignmentsResult.data ?? []).map((row) => [
         String(row.fixture_id),
+        String(row.referee_id),
+      ]),
+    );
+    const refereeBySoloGame = new Map(
+      (soloAssignmentsResult.data ?? []).map((row) => [
+        String(row.game_id),
         String(row.referee_id),
       ]),
     );
@@ -76,10 +98,22 @@ export async function GET(request: NextRequest) {
         phone: String(row.phone),
         role: String(row.role) === "admin" ? "admin" : "referee",
       } satisfies RefereeListItem)),
-      fixtures: (fixturesResult.data ?? []).map((row) =>
-        normalizeAssignableFixture(
-          row as Record<string, unknown>,
-          refereeByFixture.get(String(row.id)) ?? null,
+      fixtures: [
+        ...(fixturesResult.data ?? []).map((row) =>
+          normalizeAssignableFixture(
+            row as Record<string, unknown>,
+            refereeByFixture.get(String(row.id)) ?? null,
+          )
+        ),
+        ...(soloGamesResult.data ?? []).map((row) =>
+          normalizeAssignableSoloGame(
+            row as Record<string, unknown>,
+            refereeBySoloGame.get(String(row.id)) ?? null,
+          )
+        ),
+      ].sort((left, right) =>
+        `${left.matchDate} ${left.timeSlot}`.localeCompare(
+          `${right.matchDate} ${right.timeSlot}`,
         )
       ),
     };
@@ -103,28 +137,34 @@ export async function POST(request: NextRequest) {
     const body = (await request.json()) as {
       fixtureId?: string;
       refereeId?: string | null;
+      matchKind?: "CLAN" | "SOLO";
     };
     const fixtureId = requireValue(body.fixtureId, "Missing fixture.");
+    const isSolo = body.matchKind === "SOLO";
+    const assignmentTable = isSolo
+      ? "open_queue_referee_assignments"
+      : "fixture_referee_assignments";
+    const idColumn = isSolo ? "game_id" : "fixture_id";
 
     if (!body.refereeId) {
       const { error } = await context.db
-        .from("fixture_referee_assignments")
+        .from(assignmentTable)
         .delete()
-        .eq("fixture_id", fixtureId);
+        .eq(idColumn, fixtureId);
 
       if (error) throw error;
       return NextResponse.json({ ok: true });
     }
 
     const { error } = await context.db
-      .from("fixture_referee_assignments")
+      .from(assignmentTable)
       .upsert(
         {
-          fixture_id: fixtureId,
+          [idColumn]: fixtureId,
           referee_id: body.refereeId,
           assigned_by: context.referee.profileId,
         },
-        { onConflict: "fixture_id" },
+        { onConflict: idColumn },
       );
 
     if (error) throw error;
@@ -142,6 +182,7 @@ function normalizeAssignableFixture(
   assignedRefereeId: string | null,
 ): AssignableFixture {
   return {
+    matchKind: "CLAN",
     id: String(row.id),
     status: String(row.status) as AssignableFixture["status"],
     venue: String(row.venue ?? ""),
@@ -151,6 +192,59 @@ function normalizeAssignableFixture(
     awayClan: normalizeClan(asObject(row.away_clan)),
     assignedRefereeId,
   };
+}
+
+function normalizeAssignableSoloGame(
+  row: Record<string, unknown>,
+  assignedRefereeId: string | null,
+): AssignableFixture {
+  const startsAt = String(row.starts_at);
+  const endsAt = String(row.ends_at);
+  const timezone = String(row.timezone || "Asia/Bahrain");
+  return {
+    matchKind: "SOLO",
+    id: String(row.id),
+    status: String(row.status) as AssignableFixture["status"],
+    venue: String(row.venue ?? ""),
+    matchDate: zonedDate(startsAt, timezone),
+    timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,
+    homeClan: {
+      id: "WHITE",
+      name: "White Team",
+      tag: "WHITE",
+      emblem: "⚪",
+      skillRating: 0,
+    },
+    awayClan: {
+      id: "BLACK",
+      name: "Black Team",
+      tag: "BLACK",
+      emblem: "⚫",
+      skillRating: 0,
+    },
+    assignedRefereeId,
+  };
+}
+
+function zonedDate(value: string, timezone: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function zonedTime(value: string, timezone: string) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(value));
 }
 
 function normalizeClan(row: Record<string, unknown>) {

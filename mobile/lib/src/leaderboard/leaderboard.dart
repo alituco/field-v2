@@ -1,4 +1,5 @@
-const minimumLeaderboardMatches = 4;
+const minimumClanLeaderboardMatches = 4;
+const minimumPlayerLeaderboardMatches = 2;
 
 class PlayerRatingLeaderboardEntry {
   const PlayerRatingLeaderboardEntry({
@@ -28,6 +29,12 @@ class PlayerRatingLeaderboardEntry {
   final int draws;
   final int lastChange;
   final String region;
+
+  bool get isRanked =>
+      rank > 0 && matchesPlayed >= minimumPlayerLeaderboardMatches;
+
+  int get gamesNeededToRank => (minimumPlayerLeaderboardMatches - matchesPlayed)
+      .clamp(0, minimumPlayerLeaderboardMatches);
 
   String get tierLabel => playerRatingTier(skillRating);
 
@@ -96,7 +103,6 @@ class LeaderboardSeason {
     required this.rangeLabel,
     required this.startsOn,
     required this.endsOn,
-    this.active = false,
   });
 
   final String id;
@@ -104,7 +110,53 @@ class LeaderboardSeason {
   final String rangeLabel;
   final String startsOn;
   final String endsOn;
-  final bool active;
+}
+
+const leaderboardSeasons = [
+  LeaderboardSeason(
+    id: 's0',
+    label: 'S0',
+    rangeLabel: 'Jun - Sep 2026',
+    startsOn: '2026-06-01',
+    endsOn: '2026-09-30',
+  ),
+  LeaderboardSeason(
+    id: 's1',
+    label: 'S1',
+    rangeLabel: 'Oct - Dec 2026',
+    startsOn: '2026-10-01',
+    endsOn: '2026-12-31',
+  ),
+];
+
+LeaderboardSeason get activeLeaderboardSeason =>
+    leaderboardSeasonForDate(_bahrainToday());
+
+LeaderboardSeason leaderboardSeasonForDate(DateTime date) {
+  final day = DateTime.utc(date.year, date.month, date.day);
+  for (final season in leaderboardSeasons) {
+    final startsOn = DateTime.parse('${season.startsOn}T00:00:00Z');
+    final endsOn = DateTime.parse('${season.endsOn}T00:00:00Z');
+    if (!day.isBefore(startsOn) && !day.isAfter(endsOn)) return season;
+  }
+
+  final first = leaderboardSeasons.first;
+  final firstStart = DateTime.parse('${first.startsOn}T00:00:00Z');
+  if (day.isBefore(firstStart)) return first;
+  return leaderboardSeasons.last;
+}
+
+bool isActiveLeaderboardSeason(LeaderboardSeason season, {DateTime? now}) {
+  final bahrainDay = now ?? _bahrainToday();
+  final day = DateTime.utc(bahrainDay.year, bahrainDay.month, bahrainDay.day);
+  final startsOn = DateTime.parse('${season.startsOn}T00:00:00Z');
+  final endsOn = DateTime.parse('${season.endsOn}T00:00:00Z');
+  return !day.isBefore(startsOn) && !day.isAfter(endsOn);
+}
+
+DateTime _bahrainToday() {
+  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+  return DateTime.utc(now.year, now.month, now.day);
 }
 
 class LeaderboardClanRecord {
@@ -167,6 +219,6 @@ class LeaderboardPlayerStats {
 
   bool isClanEligible(String clanId) {
     return (clanRecords[clanId]?.matchesPlayed ?? 0) >=
-        minimumLeaderboardMatches;
+        minimumClanLeaderboardMatches;
   }
 }

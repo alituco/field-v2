@@ -52,8 +52,8 @@ type FakeFixture = {
   homeTag: string;
   awayTag?: string;
   venue: string;
-  day: "TUESDAY" | "THURSDAY";
-  timeSlot: "7:00 PM - 8:00 PM" | "8:30 PM - 9:30 PM";
+  day: "TUESDAY" | "FRIDAY";
+  timeSlot: "7:00 PM - 8:00 PM";
   matchDate: string;
   homeScore?: number;
   awayScore?: number;
@@ -389,18 +389,18 @@ const fakeFixtures: FakeFixture[] = [
     homeTag: "NRYL",
     awayTag: "MMAV",
     venue: "Central Sports Complex",
-    day: "THURSDAY",
-    timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-07-16",
+    day: "FRIDAY",
+    timeSlot: "7:00 PM - 8:00 PM",
+    matchDate: "2026-07-17",
   },
   {
     status: "SCHEDULED",
     homeTag: "CDRF",
     awayTag: "NRYL",
     venue: "Riverside Park",
-    day: "THURSDAY",
-    timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-07-23",
+    day: "FRIDAY",
+    timeSlot: "7:00 PM - 8:00 PM",
+    matchDate: "2026-07-24",
   },
   {
     status: "OPEN",
@@ -412,11 +412,11 @@ const fakeFixtures: FakeFixture[] = [
   },
   {
     status: "OPEN",
-    homeTag: "NRYL",
+    homeTag: "CDRF",
     venue: "Eastside Arena",
-    day: "THURSDAY",
-    timeSlot: "8:30 PM - 9:30 PM",
-    matchDate: "2026-07-30",
+    day: "FRIDAY",
+    timeSlot: "7:00 PM - 8:00 PM",
+    matchDate: "2026-07-31",
   },
 ];
 
@@ -439,6 +439,8 @@ for (
 
 fakeClans.push(...generatedSeed.clans);
 fakeFixtures.push(...generatedSeed.fixtures);
+assertUniqueFixtureSlots(fakeFixtures);
+assertUpcomingFixtureLimits(fakeFixtures);
 
 const supabaseUrl = requireEnv("SUPABASE_URL");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
@@ -532,6 +534,52 @@ type GeneratedSeedData = {
   existingClanMembersByTag: Record<string, string[]>;
   joinRequests: Array<{ clanTag: string; profilePhone: string }>;
 };
+
+function assertUpcomingFixtureLimits(fixtures: FakeFixture[]) {
+  const maximumUpcomingMatches = 2;
+  const counts = new Map<string, number>();
+
+  for (const fixture of fixtures) {
+    if (
+      fixture.status !== "OPEN" &&
+      fixture.status !== "SCHEDULED" &&
+      fixture.status !== "LIVE"
+    ) {
+      continue;
+    }
+
+    counts.set(fixture.homeTag, (counts.get(fixture.homeTag) ?? 0) + 1);
+    if (fixture.awayTag != null) {
+      counts.set(fixture.awayTag, (counts.get(fixture.awayTag) ?? 0) + 1);
+    }
+  }
+
+  const violations = [...counts.entries()].filter(
+    ([, count]) => count > maximumUpcomingMatches,
+  );
+  if (violations.length === 0) return;
+
+  throw new Error(
+    "Dev fixture seed exceeds the 2-upcoming-match clan limit: " +
+      violations.map(([tag, count]) => `${tag} (${count})`).join(", "),
+  );
+}
+
+function assertUniqueFixtureSlots(fixtures: FakeFixture[]) {
+  const fixturesBySlot = new Map<string, FakeFixture>();
+
+  for (const fixture of fixtures) {
+    const slot = `${fixture.matchDate}|${fixture.timeSlot}`;
+    const existing = fixturesBySlot.get(slot);
+    if (existing != null) {
+      throw new Error(
+        `Dev fixture seed assigns both ${existing.homeTag} and ` +
+          `${fixture.homeTag} to ${slot}.`,
+      );
+    }
+    fixturesBySlot.set(slot, fixture);
+  }
+}
 
 function buildGeneratedSeedData(): GeneratedSeedData {
   const users = buildGeneratedUsers(82);
@@ -710,25 +758,25 @@ function buildTempeHistory(
 ): FakeFixture[] {
   const matchDates = [
     "2026-04-28",
-    "2026-04-30",
+    "2026-05-01",
     "2026-05-05",
-    "2026-05-07",
+    "2026-05-08",
     "2026-05-12",
-    "2026-05-14",
+    "2026-05-15",
     "2026-05-19",
-    "2026-05-21",
+    "2026-05-22",
     "2026-05-26",
-    "2026-05-28",
+    "2026-05-29",
     "2026-06-02",
-    "2026-06-04",
+    "2026-06-05",
     "2026-06-09",
-    "2026-06-11",
+    "2026-06-12",
     "2026-06-16",
-    "2026-06-18",
+    "2026-06-19",
     "2026-06-23",
-    "2026-06-25",
+    "2026-06-26",
     "2026-06-30",
-    "2026-07-02",
+    "2026-07-03",
     "2026-07-07",
   ];
   const opponents = [
@@ -828,8 +876,8 @@ function buildTempeHistory(
       homeTag,
       awayTag,
       venue: venues[index % venues.length],
-      day: date.getUTCDay() === 2 ? "TUESDAY" : "THURSDAY",
-      timeSlot: index % 2 === 0 ? "7:00 PM - 8:00 PM" : "8:30 PM - 9:30 PM",
+      day: date.getUTCDay() === 2 ? "TUESDAY" : "FRIDAY",
+      timeSlot: "7:00 PM - 8:00 PM",
       matchDate,
       homeScore,
       awayScore,
@@ -844,12 +892,8 @@ function buildSeasonLeagueHistory(
   memberPhonesByTag: Record<string, string[]>,
   existingFixtures: FakeFixture[],
 ): FakeFixture[] {
-  const seasonStartsOn = "2026-06-01";
-  const historyEndsOn = "2026-07-09";
-  const timeSlots: FakeFixture["timeSlot"][] = [
-    "7:00 PM - 8:00 PM",
-    "8:30 PM - 9:30 PM",
-  ];
+  const historyStartsOn = "2026-04-03";
+  const historyEndsOn = "2026-07-10";
   const occupiedSlots = new Set(
     existingFixtures.map((fixture) =>
       `${fixture.matchDate}|${fixture.timeSlot}`
@@ -860,21 +904,20 @@ function buildSeasonLeagueHistory(
     day: FakeFixture["day"];
     timeSlot: FakeFixture["timeSlot"];
   }> = [];
-  const date = new Date(`${seasonStartsOn}T00:00:00Z`);
+  const date = new Date(`${historyStartsOn}T00:00:00Z`);
   const lastDate = new Date(`${historyEndsOn}T00:00:00Z`);
 
   while (date <= lastDate) {
     const day = date.getUTCDay();
-    if (day === 2 || day === 4) {
+    if (day === 2 || day === 5) {
       const matchDate = date.toISOString().slice(0, 10);
-      for (const timeSlot of timeSlots) {
-        if (!occupiedSlots.has(`${matchDate}|${timeSlot}`)) {
-          availableSlots.push({
-            matchDate,
-            day: day === 2 ? "TUESDAY" : "THURSDAY",
-            timeSlot,
-          });
-        }
+      const slotKey = `${matchDate}|7:00 PM - 8:00 PM`;
+      if (!occupiedSlots.has(slotKey)) {
+        availableSlots.push({
+          matchDate,
+          day: day === 2 ? "TUESDAY" : "FRIDAY",
+          timeSlot: "7:00 PM - 8:00 PM",
+        });
       }
     }
     date.setUTCDate(date.getUTCDate() + 1);
@@ -888,7 +931,7 @@ function buildSeasonLeagueHistory(
   for (const fixture of existingFixtures) {
     if (
       fixture.status !== "FINAL" ||
-      fixture.matchDate < seasonStartsOn ||
+      fixture.matchDate < historyStartsOn ||
       fixture.matchDate > historyEndsOn ||
       !fixture.awayTag
     ) {
@@ -1008,7 +1051,7 @@ function buildSeasonLeagueHistory(
   );
   if (unqualifiedTags.length > 0) {
     throw new Error(
-      `Not enough S0 history slots for: ${unqualifiedTags.join(", ")}`,
+      `Not enough unique history slots for: ${unqualifiedTags.join(", ")}`,
     );
   }
 
@@ -1905,10 +1948,7 @@ function fixtureTimestamp(
   minute: number,
   second: number,
 ) {
-  const startTime = fixture.timeSlot.startsWith("7:00")
-    ? "16:00:00Z"
-    : "17:30:00Z";
-  const timestamp = new Date(`${fixture.matchDate}T${startTime}`);
+  const timestamp = new Date(`${fixture.matchDate}T16:00:00Z`);
   timestamp.setUTCSeconds(timestamp.getUTCSeconds() + minute * 60 + second);
   return timestamp.toISOString();
 }

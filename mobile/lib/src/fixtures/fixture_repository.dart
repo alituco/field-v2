@@ -157,6 +157,21 @@ class SupabaseFixtureRepository implements FixtureRepository {
         display_name,
         username
       )
+    ),
+    fixture_player_appearances(
+      fixture_id,
+      profile_id,
+      clan_id,
+      side,
+      played,
+      rating_at_start,
+      rating_change,
+      player:profiles!fixture_player_appearances_profile_id_fkey(
+        id,
+        display_name,
+        username,
+        avatar_url
+      )
     )
   ''';
 
@@ -178,7 +193,11 @@ class SupabaseFixtureRepository implements FixtureRepository {
 
     return [
       for (final row in rows)
-        _fixtureFromRow(Map<String, dynamic>.from(row as Map), regionRanks),
+        _fixtureFromRow(
+          Map<String, dynamic>.from(row as Map),
+          regionRanks,
+          currentUserId: _client.auth.currentUser?.id,
+        ),
     ];
   }
 
@@ -323,7 +342,11 @@ class SupabaseFixtureRepository implements FixtureRepository {
     final response = Map<String, dynamic>.from(results[0] as Map);
     final regionRanks = results[1] as Map<String, int>;
 
-    return _fixtureFromRow(response, regionRanks);
+    return _fixtureFromRow(
+      response,
+      regionRanks,
+      currentUserId: _client.auth.currentUser?.id,
+    );
   }
 
   Future<Map<String, int>> _loadRegionRanks() async {
@@ -374,8 +397,9 @@ class SupabaseFixtureRepository implements FixtureRepository {
 
 Fixture _fixtureFromRow(
   Map<String, dynamic> row,
-  Map<String, int> regionRanks,
-) {
+  Map<String, int> regionRanks, {
+  String? currentUserId,
+}) {
   void addRank(String key) {
     final value = row[key];
     if (value is! Map) return;
@@ -386,6 +410,19 @@ Fixture _fixtureFromRow(
 
   addRank('home_clan');
   addRank('away_clan');
+  final rawAppearances = row['fixture_player_appearances'];
+  if (rawAppearances is List) {
+    row['fixture_player_appearances'] = [
+      for (final rawAppearance in rawAppearances)
+        if (rawAppearance is Map)
+          {
+            ...Map<String, dynamic>.from(rawAppearance),
+            'is_me':
+                currentUserId != null &&
+                rawAppearance['profile_id'] == currentUserId,
+          },
+    ];
+  }
   return Fixture.fromJson(row);
 }
 

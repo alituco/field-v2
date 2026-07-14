@@ -3,12 +3,18 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../open_queue/open_queue.dart';
 import 'fixture.dart';
 
 class FixtureHeroBanner extends StatefulWidget {
-  const FixtureHeroBanner({super.key, required this.fixtures});
+  const FixtureHeroBanner({
+    super.key,
+    required this.totalMatches,
+    required this.statusCounts,
+  });
 
-  final List<Fixture> fixtures;
+  final int totalMatches;
+  final Map<FixtureStatus, int> statusCounts;
 
   @override
   State<FixtureHeroBanner> createState() => _FixtureHeroBannerState();
@@ -35,15 +41,9 @@ class _FixtureHeroBannerState extends State<FixtureHeroBanner>
 
   @override
   Widget build(BuildContext context) {
-    final open = widget.fixtures
-        .where((fixture) => fixture.status == FixtureStatus.open)
-        .length;
-    final live = widget.fixtures
-        .where((fixture) => fixture.status == FixtureStatus.live)
-        .length;
-    final scheduled = widget.fixtures
-        .where((fixture) => fixture.status == FixtureStatus.scheduled)
-        .length;
+    final open = widget.statusCounts[FixtureStatus.open] ?? 0;
+    final live = widget.statusCounts[FixtureStatus.live] ?? 0;
+    final scheduled = widget.statusCounts[FixtureStatus.scheduled] ?? 0;
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -164,7 +164,7 @@ class _FixtureHeroBannerState extends State<FixtureHeroBanner>
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Challenge rivals, defend your turf, and earn the SR.',
+                              'Clan fixtures and solo games, together on every match day.',
                               style: TextStyle(
                                 color: Colors.white.withValues(alpha: 0.86),
                                 fontSize: 15,
@@ -200,6 +200,10 @@ class _FixtureHeroBannerState extends State<FixtureHeroBanner>
                     spacing: 8,
                     runSpacing: 8,
                     children: [
+                      _HeroPill(
+                        label: 'All',
+                        value: widget.totalMatches.toString(),
+                      ),
                       _HeroPill(label: 'Open', value: open.toString()),
                       _HeroPill(label: 'Live', value: live.toString()),
                       _HeroPill(
@@ -264,12 +268,14 @@ class FixtureStatusFilters extends StatelessWidget {
   const FixtureStatusFilters({
     super.key,
     required this.selectedStatus,
-    required this.fixtures,
+    required this.totalMatches,
+    required this.statusCounts,
     required this.onSelected,
   });
 
   final FixtureStatus? selectedStatus;
-  final List<Fixture> fixtures;
+  final int totalMatches;
+  final Map<FixtureStatus, int> statusCounts;
   final ValueChanged<FixtureStatus?> onSelected;
 
   @override
@@ -290,10 +296,8 @@ class FixtureStatusFilters extends StatelessWidget {
           final filter = filters[index];
           final selected = selectedStatus == filter.status;
           final count = filter.status == null
-              ? fixtures.length
-              : fixtures
-                    .where((fixture) => fixture.status == filter.status)
-                    .length;
+              ? totalMatches
+              : statusCounts[filter.status] ?? 0;
           return _FilterChipButton(
             label: filter.label,
             count: count,
@@ -508,6 +512,7 @@ class FixtureCard extends StatelessWidget {
     final status = _statusColors(fixture.status);
 
     return Material(
+      key: ValueKey('clan-fixture-${fixture.id}'),
       color: Colors.white,
       borderRadius: BorderRadius.circular(14),
       child: InkWell(
@@ -536,6 +541,8 @@ class FixtureCard extends StatelessWidget {
                 color: status.background,
                 child: Row(
                   children: [
+                    _MatchTypeBadge(label: 'CLAN', color: status.foreground),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         fixture.statusLabel,
@@ -616,6 +623,343 @@ class FixtureCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class SoloFixtureCard extends StatelessWidget {
+  const SoloFixtureCard({super.key, required this.game, this.onTap});
+
+  final OpenQueueGame game;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final fixtureStatus = _soloFixtureStatus(game);
+    final status = _statusColors(fixtureStatus);
+    final showScore =
+        fixtureStatus == FixtureStatus.live ||
+        fixtureStatus == FixtureStatus.finalResult;
+
+    return Material(
+      key: ValueKey('solo-fixture-${game.id}'),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(color: fieldGray200),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.03),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                color: status.background,
+                child: Row(
+                  children: [
+                    _MatchTypeBadge(label: 'SOLO', color: status.foreground),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _soloStatusLabel(game),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: status.foreground,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.calendar_month_rounded,
+                      color: status.foreground,
+                      size: 13,
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      _soloMonthDay(game),
+                      style: TextStyle(
+                        color: status.foreground,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _SoloTeamSummary(
+                            label: 'White',
+                            teamCode: 'W',
+                            alignEnd: false,
+                            dark: false,
+                            averageSr: game.whiteAverageSr,
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: showScore
+                              ? _SoloScore(
+                                  whiteScore: game.whiteScore ?? 0,
+                                  blackScore: game.blackScore ?? 0,
+                                )
+                              : _SoloPlayerCount(
+                                  confirmedCount: game.confirmedCount,
+                                  capacity: game.capacity,
+                                ),
+                        ),
+                        Expanded(
+                          child: _SoloTeamSummary(
+                            label: 'Black',
+                            teamCode: 'B',
+                            alignEnd: true,
+                            dark: true,
+                            averageSr: game.blackAverageSr,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (game.matchAverageSr case final average?) ...[
+                      const SizedBox(height: 11),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFECFDF5),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          'Match avg $average SR${game.teamSrSpread == null ? '' : ' · ${game.teamSrSpread} SR spread'}',
+                          style: const TextStyle(
+                            color: fieldEmerald700,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    const Divider(color: fieldGray100, height: 1),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _DetailIconText(
+                            icon: Icons.location_on_rounded,
+                            label: game.venue,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        _DetailIconText(
+                          icon: Icons.access_time_rounded,
+                          label: game.timeLabel,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MatchTypeBadge extends StatelessWidget {
+  const _MatchTypeBadge({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          height: 1,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.7,
+        ),
+      ),
+    );
+  }
+}
+
+class _SoloTeamSummary extends StatelessWidget {
+  const _SoloTeamSummary({
+    required this.label,
+    required this.teamCode,
+    required this.alignEnd,
+    required this.dark,
+    required this.averageSr,
+  });
+
+  final String label;
+  final String teamCode;
+  final bool alignEnd;
+  final bool dark;
+  final int? averageSr;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = Container(
+      width: 48,
+      height: 48,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: dark ? fieldGray900 : Colors.white,
+        border: Border.all(color: dark ? fieldGray900 : fieldGray300, width: 2),
+        borderRadius: BorderRadius.circular(12),
+        boxShadow: [
+          BoxShadow(
+            color: fieldGray900.withValues(alpha: dark ? 0.14 : 0.06),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Text(
+        teamCode,
+        style: TextStyle(
+          color: dark ? Colors.white : fieldGray900,
+          fontSize: 18,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+    final text = Expanded(
+      child: Column(
+        crossAxisAlignment: alignEnd
+            ? CrossAxisAlignment.end
+            : CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: alignEnd ? TextAlign.right : TextAlign.left,
+            style: const TextStyle(
+              color: fieldGray900,
+              fontSize: 14,
+              height: 1.05,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            averageSr == null ? 'OPEN QUEUE' : '$averageSr AVG SR',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: alignEnd ? TextAlign.right : TextAlign.left,
+            style: TextStyle(
+              color: averageSr == null ? fieldGray400 : fieldEmerald600,
+              fontSize: 9,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.5,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return Row(
+      mainAxisAlignment: alignEnd
+          ? MainAxisAlignment.end
+          : MainAxisAlignment.start,
+      children: alignEnd
+          ? [text, const SizedBox(width: 9), avatar]
+          : [avatar, const SizedBox(width: 9), text],
+    );
+  }
+}
+
+class _SoloScore extends StatelessWidget {
+  const _SoloScore({required this.whiteScore, required this.blackScore});
+
+  final int whiteScore;
+  final int blackScore;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      '$whiteScore - $blackScore',
+      style: const TextStyle(
+        color: fieldGray900,
+        fontSize: 19,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _SoloPlayerCount extends StatelessWidget {
+  const _SoloPlayerCount({
+    required this.confirmedCount,
+    required this.capacity,
+  });
+
+  final int confirmedCount;
+  final int capacity;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          '$confirmedCount/$capacity',
+          style: const TextStyle(
+            color: fieldGray900,
+            fontSize: 18,
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'PLAYERS',
+          style: TextStyle(
+            color: fieldGray400,
+            fontSize: 8,
+            height: 1,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.7,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -816,6 +1160,49 @@ class _DetailIconText extends StatelessWidget {
       ],
     );
   }
+}
+
+FixtureStatus _soloFixtureStatus(OpenQueueGame game) {
+  return switch (game.status.toUpperCase()) {
+    'OPEN' when game.isFull => FixtureStatus.scheduled,
+    'OPEN' => FixtureStatus.open,
+    'FULL' => FixtureStatus.scheduled,
+    'LIVE' => FixtureStatus.live,
+    'FINAL' => FixtureStatus.finalResult,
+    'CANCELLED' => FixtureStatus.cancelled,
+    _ => FixtureStatus.scheduled,
+  };
+}
+
+String _soloStatusLabel(OpenQueueGame game) {
+  return switch (game.status.toUpperCase()) {
+    'OPEN' when game.isFull => 'Full',
+    'OPEN' => 'Spots available',
+    'FULL' => 'Full',
+    'LIVE' => 'Live Now',
+    'FINAL' => 'Final',
+    'CANCELLED' => 'Cancelled',
+    _ => 'Scheduled',
+  };
+}
+
+String _soloMonthDay(OpenQueueGame game) {
+  final date = game.bahrainStartsAt;
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  return '${months[date.month - 1]} ${date.day}';
 }
 
 ({Color background, Color foreground}) _statusColors(FixtureStatus status) {

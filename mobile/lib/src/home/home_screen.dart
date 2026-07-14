@@ -38,6 +38,8 @@ class _HomeScreenState extends State<HomeScreen> {
       SupabaseOpenQueueRepository();
   int _selectedIndex = 0;
   int _clansActivationTick = 0;
+  int _ranksActivationTick = 0;
+  int _playerRanksActivationTick = 0;
   bool _isSigningOut = false;
 
   void _selectTab(int index) {
@@ -45,7 +47,18 @@ class _HomeScreenState extends State<HomeScreen> {
       if (index == 2) {
         _clansActivationTick++;
       }
+      if (index == 3) {
+        _ranksActivationTick++;
+      }
       _selectedIndex = index;
+    });
+  }
+
+  void _openPlayerRanks() {
+    setState(() {
+      _ranksActivationTick++;
+      _playerRanksActivationTick++;
+      _selectedIndex = 3;
     });
   }
 
@@ -75,11 +88,15 @@ class _HomeScreenState extends State<HomeScreen> {
         openQueueRepository: _openQueueRepository,
         onOpenClans: () => _selectTab(2),
         onOpenFixtures: () => _selectTab(1),
-        onOpenRanks: () => _selectTab(3),
+        onOpenRanks: _openPlayerRanks,
         onOpenProfile: () => _selectTab(4),
         onNavigateTab: _selectTab,
       ),
-      FixturesScreen(fixtureRepository: _fixtureRepository),
+      FixturesScreen(
+        fixtureRepository: _fixtureRepository,
+        openQueueRepository: _openQueueRepository,
+        onNavigateTab: _selectTab,
+      ),
       ClansScreen(
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
@@ -89,9 +106,13 @@ class _HomeScreenState extends State<HomeScreen> {
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         leaderboardRepository: _leaderboardRepository,
+        activationTick: _ranksActivationTick,
+        playerActivationTick: _playerRanksActivationTick,
       ),
       ProfileScreen(
         profileRepository: _profileRepository,
+        fixtureRepository: _fixtureRepository,
+        openQueueRepository: _openQueueRepository,
         devModeEnabled: widget.isDev,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { normalizePhoneNumber } from "@/lib/phone";
+import { formatPlayerSr } from "@/lib/open-queue-ratings";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   AssignableFixture,
@@ -257,18 +258,25 @@ export default function RefereePage() {
     body: FixtureActionBody,
   ) {
     if (!activeFixture) return;
-    await runFixtureAction(activeFixture.id, body, false);
+    await runFixtureAction(
+      activeFixture.id,
+      activeFixture.matchKind,
+      body,
+      false,
+    );
   }
 
   async function runAdminAction(
     fixtureId: string,
     body: FixtureActionBody,
   ) {
-    await runFixtureAction(fixtureId, body, true);
+    const fixture = adminFixtures.find((candidate) => candidate.id === fixtureId);
+    await runFixtureAction(fixtureId, fixture?.matchKind ?? "CLAN", body, true);
   }
 
   async function runFixtureAction(
     fixtureId: string,
+    matchKind: RefereeFixture["matchKind"],
     body: FixtureActionBody,
     refreshAdmin: boolean,
   ) {
@@ -277,7 +285,10 @@ export default function RefereePage() {
     setError(null);
 
     try {
-      const response = await fetch(`/api/referee/fixtures/${fixtureId}/action`, {
+      const actionUrl = matchKind === "SOLO"
+        ? `/api/referee/open-queue-games/${fixtureId}/action`
+        : `/api/referee/fixtures/${fixtureId}/action`;
+      const response = await fetch(actionUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -300,13 +311,17 @@ export default function RefereePage() {
     }
   }
 
-  async function assignReferee(fixtureId: string, refereeId: string) {
+  async function assignReferee(
+    fixtureId: string,
+    refereeId: string,
+    matchKind: RefereeFixture["matchKind"],
+  ) {
     setSubmitting(`assign-${fixtureId}`);
     setError(null);
     setAssignments((current) => ({
       ...current,
       fixtures: current.fixtures.map((fixture) =>
-        fixture.id === fixtureId
+        fixture.id === fixtureId && fixture.matchKind === matchKind
           ? { ...fixture, assignedRefereeId: refereeId || null }
           : fixture,
       ),
@@ -319,7 +334,11 @@ export default function RefereePage() {
           "Content-Type": "application/json",
           ...authHeaders(),
         },
-        body: JSON.stringify({ fixtureId, refereeId: refereeId || null }),
+        body: JSON.stringify({
+          fixtureId,
+          refereeId: refereeId || null,
+          matchKind,
+        }),
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Assignment failed.");
@@ -559,7 +578,11 @@ function AssignView({
   onNameChange: (value: string) => void;
   onPhoneChange: (value: string) => void;
   onCreateReferee: (event: React.FormEvent<HTMLFormElement>) => void;
-  onAssign: (fixtureId: string, refereeId: string) => void;
+  onAssign: (
+    fixtureId: string,
+    refereeId: string,
+    matchKind: RefereeFixture["matchKind"],
+  ) => void;
   onRefresh: () => void;
 }) {
   return (
@@ -609,7 +632,9 @@ function AssignView({
                 referees={assignments.referees}
                 key={fixture.id}
                 submitting={submitting === `assign-${fixture.id}`}
-                onAssign={(refereeId) => onAssign(fixture.id, refereeId)}
+                onAssign={(refereeId) =>
+                  onAssign(fixture.id, refereeId, fixture.matchKind)
+                }
               />
             ))
           )}
@@ -636,6 +661,7 @@ function AssignmentRow({
         <div>
           <div className="event-title">
             {fixture.homeClan.tag} vs {fixture.awayClan.tag}
+            {fixture.matchKind === "SOLO" ? " · SOLO" : ""}
           </div>
           <div className="event-subtitle">
             {fixture.matchDate} · {fixture.timeSlot}
@@ -690,7 +716,6 @@ function AdminControlView({
   const [goalClanId, setGoalClanId] = useState("");
   const [goalPlayerId, setGoalPlayerId] = useState("");
   const [assistPlayerId, setAssistPlayerId] = useState("");
-  const [goalMinute, setGoalMinute] = useState("1");
   const [cardClanId, setCardClanId] = useState("");
   const [cardPlayerId, setCardPlayerId] = useState("");
 
@@ -757,7 +782,6 @@ function AdminControlView({
     setGoalClanId(defaultClanId);
     setGoalPlayerId(firstPlayer);
     setAssistPlayerId("");
-    setGoalMinute("1");
     setCardClanId(defaultClanId);
     setCardPlayerId(firstPlayer);
   }, [activeFixture]);
@@ -768,7 +792,7 @@ function AdminControlView({
   const cardPlayers = activeFixture
     ? playersForClan(activeFixture, cardClanId || activeFixture.homeClan.id)
     : [];
-  const canCorrectGoals = activeFixture?.status === "FINAL";
+  const isFinal = activeFixture?.status === "FINAL";
   const canRecordLive = activeFixture?.status === "LIVE";
 
   return (
@@ -778,7 +802,7 @@ function AdminControlView({
           <div>
             <h2 className="panel-title">Admin Control</h2>
             <p className="small-text">
-              Find historic games and correct timeline or score records.
+              Review historic games and manage live match records.
             </p>
           </div>
           <button
@@ -804,6 +828,7 @@ function AdminControlView({
               <option value="ALL">All Statuses</option>
               <option value="FINAL">Final</option>
               <option value="SCHEDULED">Scheduled</option>
+              <option value="FULL">Full solo games</option>
               <option value="LIVE">Live</option>
               <option value="OPEN">Open</option>
               <option value="CANCELLED">Cancelled</option>
@@ -881,6 +906,7 @@ function AdminControlView({
                 <div>
                   <div className="event-title">
                     {fixture.homeClan.tag} vs {fixture.awayClan.tag}
+                    {fixture.matchKind === "SOLO" ? " · SOLO" : ""}
                   </div>
                   <div className="event-subtitle">
                     {fixture.matchDate} · {fixture.timeSlot} ·{" "}
@@ -929,22 +955,24 @@ function AdminControlView({
             />
           )}
 
-          <ActionPanel
-            title="Goal"
-            fixture={activeFixture}
-            selectedClanId={goalClanId || activeFixture.homeClan.id}
-            selectedPlayerId={goalPlayerId}
-            players={goalPlayers}
-            submitting={submitting}
-            disabled={!canRecordLive && !canCorrectGoals}
-            onTeam={(clanId) => {
-              setGoalClanId(clanId);
-              setGoalPlayerId(playersForClan(activeFixture, clanId)[0]?.id ?? "");
-              setAssistPlayerId("");
-            }}
-            onPlayer={setGoalPlayerId}
-            extra={
-              <>
+          {isFinal ? (
+            <RatedResultLockedPanel />
+          ) : (
+            <ActionPanel
+              title="Goal"
+              fixture={activeFixture}
+              selectedClanId={goalClanId || activeFixture.homeClan.id}
+              selectedPlayerId={goalPlayerId}
+              players={goalPlayers}
+              submitting={submitting}
+              disabled={!canRecordLive}
+              onTeam={(clanId) => {
+                setGoalClanId(clanId);
+                setGoalPlayerId(playersForClan(activeFixture, clanId)[0]?.id ?? "");
+                setAssistPlayerId("");
+              }}
+              onPlayer={setGoalPlayerId}
+              extra={
                 <PlayerSelect
                   label="Assist"
                   optional
@@ -952,52 +980,18 @@ function AdminControlView({
                   players={goalPlayers.filter((player) => player.id !== goalPlayerId)}
                   onChange={setAssistPlayerId}
                 />
-                {canCorrectGoals ? (
-                  <label>
-                    <span className="field-label">Minute</span>
-                    <input
-                      className="input"
-                      inputMode="numeric"
-                      min="1"
-                      max="130"
-                      type="number"
-                      value={goalMinute}
-                      onChange={(event) => setGoalMinute(event.target.value)}
-                    />
-                  </label>
-                ) : null}
-              </>
-            }
-            buttonLabel={canCorrectGoals ? "Add Goal Correction" : "Goal"}
-            onSubmit={() =>
-              onRunAction(activeFixture.id, {
-                action: canCorrectGoals ? "correction_goal" : "goal",
-                clanId: goalClanId || activeFixture.homeClan.id,
-                profileId: goalPlayerId,
-                assistProfileId: assistPlayerId || null,
-                minute: canCorrectGoals ? Number(goalMinute || 1) : undefined,
-              })
-            }
-          />
-
-          {canCorrectGoals ? (
-            <section className="panel">
-              <div className="panel-heading">
-                <h2 className="panel-title">Recorded Goals</h2>
-                <span className="small-text">Score syncs after edits</span>
-              </div>
-              <GoalCorrectionList
-                fixture={activeFixture}
-                submitting={submitting}
-                onDelete={(goalId) =>
-                  onRunAction(activeFixture.id, {
-                    action: "delete_goal",
-                    goalId,
-                  })
-                }
-              />
-            </section>
-          ) : null}
+              }
+              buttonLabel="Goal"
+              onSubmit={() =>
+                onRunAction(activeFixture.id, {
+                  action: "goal",
+                  clanId: goalClanId || activeFixture.homeClan.id,
+                  profileId: goalPlayerId,
+                  assistProfileId: assistPlayerId || null,
+                })
+              }
+            />
+          )}
 
           <ActionPanel
             title="Blue Card"
@@ -1136,7 +1130,9 @@ function GamesView({
             type="button"
           >
             <div className="fixture-meta">
-              <span>{fixture.matchDate}</span>
+              <span>
+                {fixture.matchDate} · {fixture.matchKind === "SOLO" ? "SOLO" : "CLAN"}
+              </span>
               <span>{fixture.status}</span>
             </div>
             <div className="versus">
@@ -1157,38 +1153,42 @@ function GamesView({
         onRunAction={onRunAction}
       />
 
-      <ActionPanel
-        title="Goal"
-        fixture={activeFixture}
-        selectedClanId={goalClanId || activeFixture.homeClan.id}
-        selectedPlayerId={goalPlayerId}
-        players={goalPlayers}
-        submitting={submitting}
-        onTeam={(clanId) => {
-          onGoalClan(clanId);
-          onGoalPlayer(playersForClan(activeFixture, clanId)[0]?.id ?? "");
-          onAssistPlayer("");
-        }}
-        onPlayer={onGoalPlayer}
-        extra={
-          <PlayerSelect
-            label="Assist"
-            optional
-            value={assistPlayerId}
-            players={goalPlayers.filter((player) => player.id !== goalPlayerId)}
-            onChange={onAssistPlayer}
-          />
-        }
-        buttonLabel="Goal"
-        onSubmit={() =>
-          onRunAction({
-            action: "goal",
-            clanId: goalClanId || activeFixture.homeClan.id,
-            profileId: goalPlayerId,
-            assistProfileId: assistPlayerId || null,
-          })
-        }
-      />
+      {activeFixture.status === "FINAL" ? (
+        <RatedResultLockedPanel />
+      ) : (
+        <ActionPanel
+          title="Goal"
+          fixture={activeFixture}
+          selectedClanId={goalClanId || activeFixture.homeClan.id}
+          selectedPlayerId={goalPlayerId}
+          players={goalPlayers}
+          submitting={submitting}
+          onTeam={(clanId) => {
+            onGoalClan(clanId);
+            onGoalPlayer(playersForClan(activeFixture, clanId)[0]?.id ?? "");
+            onAssistPlayer("");
+          }}
+          onPlayer={onGoalPlayer}
+          extra={
+            <PlayerSelect
+              label="Assist"
+              optional
+              value={assistPlayerId}
+              players={goalPlayers.filter((player) => player.id !== goalPlayerId)}
+              onChange={onAssistPlayer}
+            />
+          }
+          buttonLabel="Goal"
+          onSubmit={() =>
+            onRunAction({
+              action: "goal",
+              clanId: goalClanId || activeFixture.homeClan.id,
+              profileId: goalPlayerId,
+              assistProfileId: assistPlayerId || null,
+            })
+          }
+        />
+      )}
 
       <ActionPanel
         title="Blue Card"
@@ -1261,8 +1261,11 @@ function BroadcastControl({
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setIsLoading(true);
     try {
+      const broadcastUrl = fixture.matchKind === "SOLO"
+        ? `/api/referee/open-queue-games/${fixture.id}/broadcast`
+        : `/api/referee/fixtures/${fixture.id}/broadcast`;
       const response = await fetch(
-        `/api/referee/fixtures/${fixture.id}/broadcast`,
+        broadcastUrl,
         {
           headers: { authorization: `Bearer ${accessToken}` },
           cache: "no-store",
@@ -1281,7 +1284,7 @@ function BroadcastControl({
     } finally {
       if (!quiet) setIsLoading(false);
     }
-  }, [accessToken, fixture.id]);
+  }, [accessToken, fixture.id, fixture.matchKind]);
 
   useEffect(() => {
     void load();
@@ -1293,8 +1296,11 @@ function BroadcastControl({
     setAction(nextAction);
     setError(null);
     try {
+      const broadcastUrl = fixture.matchKind === "SOLO"
+        ? `/api/referee/open-queue-games/${fixture.id}/broadcast`
+        : `/api/referee/fixtures/${fixture.id}/broadcast`;
       const response = await fetch(
-        `/api/referee/fixtures/${fixture.id}/broadcast`,
+        broadcastUrl,
         {
           method: "POST",
           headers: {
@@ -1317,11 +1323,22 @@ function BroadcastControl({
   }
 
   const status = state.broadcast?.status ?? "NOT_CONFIGURED";
+  const deviceStreamingThisMatch = state.device?.obsStreaming === true &&
+    (fixture.matchKind === "SOLO"
+      ? state.device.currentOpenQueueGameId === fixture.id &&
+        !state.device.currentFixtureId
+      : state.device.currentFixtureId === fixture.id &&
+        !state.device.currentOpenQueueGameId);
+  const deviceBusy = state.device?.obsStreaming === true &&
+    !deviceStreamingThisMatch;
   const deviceReady = state.device?.obsConnected === true &&
-    state.device.status !== "OFFLINE";
+    state.device.status !== "OFFLINE" &&
+    !deviceBusy;
   const streamActive = ["STARTING", "LIVE", "STOPPING"].includes(status);
   const canStart = deviceReady &&
-    ["SCHEDULED", "LIVE"].includes(fixture.status) &&
+    (fixture.matchKind === "SOLO"
+      ? ["FULL", "LIVE"].includes(fixture.status)
+      : ["SCHEDULED", "LIVE"].includes(fixture.status)) &&
     !streamActive &&
     status !== "PROCESSING";
 
@@ -1338,9 +1355,18 @@ function BroadcastControl({
       <div className="camera-readiness">
         <span className={`camera-dot ${deviceReady ? "ready" : ""}`} />
         <div>
-          <strong>{deviceReady ? "Camera ready" : "Camera offline"}</strong>
+          <strong>
+            {deviceBusy
+              ? "Camera in use"
+              : deviceReady
+              ? "Camera ready"
+              : "Camera offline"}
+          </strong>
           <span>
-            {state.device?.displayName ?? "Open the Field broadcaster on the camera laptop"}
+            {deviceBusy
+              ? "Another match is currently streaming"
+              : state.device?.displayName ??
+                "Open the Field broadcaster on the camera laptop"}
           </span>
         </div>
       </div>
@@ -1353,7 +1379,7 @@ function BroadcastControl({
         {streamActive ? (
           <button
             className="danger-button"
-            disabled={action !== null || status === "STOPPING"}
+            disabled={deviceBusy || action !== null || status === "STOPPING"}
             onClick={() => void run("stop")}
             type="button"
           >
@@ -1416,7 +1442,10 @@ function TimerPanel({
   const duration = fixture.clock?.durationSeconds ?? 3600;
   const progress = Math.min(1, elapsedSeconds / duration);
   const isClosed = fixture.status === "FINAL" || status === "ENDED";
-  const isBeforeStart = fixture.status === "SCHEDULED" && status === "NOT_STARTED";
+  const isBeforeStart = status === "NOT_STARTED" &&
+    (fixture.matchKind === "SOLO"
+      ? fixture.status === "FULL"
+      : fixture.status === "SCHEDULED");
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>(
     () => (isBeforeStart ? [] : fixture.participantIds),
   );
@@ -1502,6 +1531,18 @@ function TimerPanel({
         </div>
         <ScoreTeam fixture={fixture} clanId={fixture.awayClan.id} alignEnd />
       </div>
+      {fixture.matchKind === "SOLO" ? (
+        <div className="solo-sr-summary">
+          <span>
+            <strong>{formatPlayerSr(fixture.matchAverageSr)}</strong>
+            Match avg player SR
+          </span>
+          <span>
+            <strong>{formatPlayerSr(fixture.teamSrSpread)}</strong>
+            Team SR spread
+          </span>
+        </div>
+      ) : null}
       <div className="clock">
         <div className="clock-time">{formatClock(elapsedSeconds)}</div>
         <div className="clock-state">{status}</div>
@@ -1544,7 +1585,7 @@ function TimerPanel({
         ) : (
           <button
             className="primary-button"
-            disabled={submitting !== null || !hasValidLineup}
+            disabled={submitting !== null || !isBeforeStart || !hasValidLineup}
             onClick={() =>
               void onRunAction({
                 action: "start",
@@ -1554,7 +1595,11 @@ function TimerPanel({
             }
             type="button"
           >
-            {hasValidLineup ? "Start" : "Select players from both teams"}
+            {!isBeforeStart && fixture.matchKind === "SOLO"
+              ? "Solo game must be full"
+              : hasValidLineup
+              ? "Start"
+              : "Select players from both teams"}
           </button>
         )}
         {status === "RUNNING" || status === "PAUSED" ? (
@@ -1643,8 +1688,12 @@ function LineupPanel({
           </div>
           <div className="lineup-hint">
             {editable
-              ? "Only selected players receive Player SR for this match."
-              : `${participantIds.length} players confirmed`}
+              ? fixture.matchKind === "SOLO"
+                ? "Selected solo players receive Player SR from this match."
+                : "Only selected clan players receive Player SR from this match."
+              : fixture.matchKind === "SOLO"
+                ? `${participantIds.length} solo players confirmed for Player SR`
+                : `${participantIds.length} clan players confirmed for Player SR`}
           </div>
         </div>
         {!editable ? <span className="lineup-saved">Saved</span> : null}
@@ -1715,7 +1764,12 @@ function LineupPanel({
                         )}
                         <span>
                           <strong>{player.displayName}</strong>
-                          <small>{player.role}</small>
+                          <small>
+                            {player.role}
+                            {fixture.matchKind === "SOLO"
+                              ? ` · ${formatPlayerSr(player.ratingAtTeamAssignment)} SR at assignment`
+                              : ""}
+                          </small>
                         </span>
                       </label>
                     );
@@ -1881,7 +1935,9 @@ function ScoreTeam({
         {clan.tag}
       </div>
       <div className="name" style={{ color: "rgba(255,255,255,0.62)" }}>
-        {clan.skillRating} SR
+        {fixture.matchKind === "SOLO"
+          ? `${formatPlayerSr(teamAverageSr(fixture, clan.id))} AVG PLAYER SR`
+          : `${clan.skillRating} SR`}
       </div>
     </div>
   );
@@ -1952,48 +2008,15 @@ function ActiveBlueCards({
   );
 }
 
-function GoalCorrectionList({
-  fixture,
-  submitting,
-  onDelete,
-}: {
-  fixture: RefereeFixture;
-  submitting: string | null;
-  onDelete: (goalId: string) => Promise<void>;
-}) {
-  if (fixture.goals.length === 0) {
-    return <div className="empty">No goals recorded</div>;
-  }
-
+function RatedResultLockedPanel() {
   return (
-    <div className="event-list">
-      {fixture.goals
-        .slice()
-        .sort((first, second) => first.minute - second.minute)
-        .map((goal) => (
-          <div className="event-card correction-row" key={goal.id}>
-            <div>
-              <div className="event-title">
-                {clanTag(fixture, goal.clanId)} · {playerName(fixture, goal.profileId)}
-              </div>
-              <div className="event-subtitle">
-                {goal.assistProfileId
-                  ? `Assist ${playerName(fixture, goal.assistProfileId)}`
-                  : "No assist"}{" "}
-                · {goal.minute}'
-              </div>
-            </div>
-            <button
-              className="danger-button compact-button"
-              disabled={submitting !== null}
-              onClick={() => void onDelete(goal.id)}
-              type="button"
-            >
-              Remove
-            </button>
-          </div>
-        ))}
-    </div>
+    <section className="panel">
+      <h2 className="panel-title">Rated result locked</h2>
+      <p className="small-text">
+        Goals cannot be added or removed after full time. The final score is now
+        the audit record used for Player SR.
+      </p>
+    </section>
   );
 }
 
@@ -2059,8 +2082,19 @@ function playersForClan(fixture: RefereeFixture, clanId: string) {
   return clanPlayers.filter((player) => participantIdSet.has(player.id));
 }
 
+function teamAverageSr(fixture: RefereeFixture, clanId: string) {
+  return fixture.homeClan.id === clanId
+    ? fixture.whiteAverageSr
+    : fixture.blackAverageSr;
+}
+
 function scoreFor(fixture: RefereeFixture, clanId: string) {
-  return fixture.goals.filter((goal) => goal.clanId === clanId).length;
+  if (fixture.goals.length > 0) {
+    return fixture.goals.filter((goal) => goal.clanId === clanId).length;
+  }
+  if (fixture.homeClan.id === clanId) return fixture.homeScore ?? 0;
+  if (fixture.awayClan.id === clanId) return fixture.awayScore ?? 0;
+  return 0;
 }
 
 function playerName(fixture: RefereeFixture, profileId: string | null) {

@@ -16,8 +16,6 @@ type ActionBody = {
     | "resume"
     | "set_time"
     | "goal"
-    | "correction_goal"
-    | "delete_goal"
     | "blue_card"
     | "expire_blue_card"
     | "finish";
@@ -26,10 +24,7 @@ type ActionBody = {
   profileId?: string;
   assistProfileId?: string | null;
   blueCardId?: string;
-  goalId?: string;
   elapsedSeconds?: number;
-  minute?: number;
-  note?: string;
   participantIds?: string[];
 };
 
@@ -88,14 +83,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       case "goal":
         await recordGoal(db, fixtureId, body, requestReceivedAt);
         break;
-      case "correction_goal":
-        assertAdmin(refereeContext.referee.role);
-        await recordGoalCorrection(db, fixtureId, body);
-        break;
-      case "delete_goal":
-        assertAdmin(refereeContext.referee.role);
-        await deleteGoalCorrection(db, fixtureId, body.goalId);
-        break;
       case "blue_card":
         await recordBlueCard(db, fixtureId, body);
         break;
@@ -128,147 +115,30 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
 }
 
-function assertAdmin(role: "admin" | "referee") {
-  if (role !== "admin") {
-    throw new Error("Admin access required for corrections.");
-  }
-}
-
 async function startFixture(
   db: SupabaseClient,
   fixtureId: string,
   durationSeconds = 3600,
   participantIds: string[] | undefined = undefined,
 ) {
-  const fixture = await loadFixture(db, fixtureId);
-
-  if (fixture.status === "FINAL") {
-    throw new Error("This match is already final.");
-  }
-
-  if (fixture.away_clan_id === null) {
-    throw new Error("Cannot start a match without an opponent.");
-  }
-
-  if (fixture.status === "LIVE") {
-    throw new Error("This match has already started.");
-  }
-
-  if (fixture.status !== "SCHEDULED") {
-    throw new Error("Only scheduled matches can be started.");
-  }
-
-  const selectedParticipantIds = await validateParticipantIds(
-    db,
-    fixture,
-    participantIds,
-  );
-
-  const safeDuration = clamp(Math.round(durationSeconds), 600, 7200);
-  const now = new Date();
-
-  await assertNoError(
-    db.from("fixture_clock_states").upsert(
-      {
-        fixture_id: fixtureId,
-        status: "RUNNING",
-        started_at: now.toISOString(),
-        accumulated_seconds: 0,
-        duration_seconds: safeDuration,
-      },
-      { onConflict: "fixture_id" },
-    ),
-    "Could not start fixture clock",
-  );
-  await assertNoError(
-    db.from("fixtures").update({ status: "LIVE" }).eq("id", fixtureId),
-    "Could not start fixture",
-  );
-  await saveFixtureParticipants(db, fixtureId, selectedParticipantIds);
-  await insertEvent(db, fixtureId, "MATCH_STARTED", 0, 0);
-}
-
-async function validateParticipantIds(
-  db: SupabaseClient,
-  fixture: FixtureRow,
-  participantIds: string[] | undefined,
-) {
   if (!Array.isArray(participantIds)) {
     throw new Error("Confirm the players taking part before starting.");
   }
-
   const selectedIds = [...new Set(participantIds.map((id) => String(id).trim()))]
     .filter(Boolean);
   if (selectedIds.length === 0) {
     throw new Error("Select at least one player from each team.");
   }
+  const safeDuration = clamp(Math.round(durationSeconds), 600, 7200);
 
-  const { data, error } = await db
-    .from("clan_members")
-    .select("profile_id,clan_id")
-    .in("profile_id", selectedIds)
-    .in("clan_id", [fixture.home_clan_id, fixture.away_clan_id])
-    .is("left_at", null);
-
-  if (error) throw new Error(`Could not verify the lineup: ${error.message}`);
-
-  const activeMembers = new Map(
-    (data ?? []).map((row) => [String(row.profile_id), String(row.clan_id)]),
-  );
-  if (
-    activeMembers.size !== selectedIds.length ||
-    selectedIds.some((profileId) => !activeMembers.has(profileId))
-  ) {
-    throw new Error(
-      "Every selected player must be an active member of a team in this match.",
-    );
-  }
-
-  const hasHomePlayer = selectedIds.some(
-    (profileId) => activeMembers.get(profileId) === fixture.home_clan_id,
-  );
-  const hasAwayPlayer = selectedIds.some(
-    (profileId) => activeMembers.get(profileId) === fixture.away_clan_id,
-  );
-  if (!hasHomePlayer || !hasAwayPlayer) {
-    throw new Error("Select at least one player from each team.");
-  }
-
-  return selectedIds;
-}
-
-async function saveFixtureParticipants(
-  db: SupabaseClient,
-  fixtureId: string,
-  participantIds: string[],
-) {
   await assertNoError(
-    db
-      .from("fixture_player_appearances")
-      .update({ played: false })
-      .eq("fixture_id", fixtureId),
-    "Could not clear the fixture lineup",
+    db.rpc("referee_start_fixture_atomic", {
+      fixture_id_to_start: fixtureId,
+      participant_ids_to_use: selectedIds,
+      duration_seconds_to_use: safeDuration,
+    }),
+    "Could not start fixture",
   );
-  const { data, error } = await db
-    .from("fixture_player_appearances")
-    .update({ played: true })
-    .eq("fixture_id", fixtureId)
-    .in("profile_id", participantIds)
-    .select("profile_id");
-
-  if (error) {
-    throw new Error(`Could not save the fixture lineup: ${error.message}`);
-  }
-
-  const savedIds = new Set((data ?? []).map((row) => String(row.profile_id)));
-  if (
-    savedIds.size !== participantIds.length ||
-    participantIds.some((profileId) => !savedIds.has(profileId))
-  ) {
-    throw new Error(
-      "Could not save every selected player in the fixture lineup.",
-    );
-  }
 }
 
 async function pauseFixture(db: SupabaseClient, fixtureId: string) {
@@ -356,119 +226,6 @@ async function recordGoal(
   await syncScoreFromScorers(db, fixture);
 }
 
-async function recordGoalCorrection(
-  db: SupabaseClient,
-  fixtureId: string,
-  body: ActionBody,
-) {
-  const fixture = await loadFixture(db, fixtureId);
-  const clanId = requireString(body.clanId, "Choose the scoring team.");
-  const profileId = requireString(body.profileId, "Choose the scorer.");
-  const assistProfileId = body.assistProfileId || null;
-  const minute = clamp(Math.round(Number(body.minute ?? 1)), 1, 240);
-
-  if (fixture.away_clan_id === null) {
-    throw new Error("Cannot correct a match without an opponent.");
-  }
-
-  if (fixture.status !== "FINAL") {
-    throw new Error(
-      "Historic corrections are only available for final matches.",
-    );
-  }
-
-  assertParticipatingClan(fixture, clanId);
-  await assertPlayerInClan(db, clanId, profileId);
-
-  if (assistProfileId) {
-    await assertPlayerInClan(db, clanId, assistProfileId);
-  }
-
-  await assertNoError(
-    db.from("fixture_scorers").insert({
-      fixture_id: fixtureId,
-      clan_id: clanId,
-      profile_id: profileId,
-      assist_profile_id: assistProfileId,
-      minute,
-    }),
-    "Could not record goal correction",
-  );
-  await insertEvent(
-    db,
-    fixtureId,
-    "GOAL",
-    minute,
-    0,
-    clanId,
-    profileId,
-    assistProfileId,
-    null,
-    "Admin correction",
-  );
-  await syncScoreFromScorers(db, fixture);
-}
-
-async function deleteGoalCorrection(
-  db: SupabaseClient,
-  fixtureId: string,
-  goalId?: string,
-) {
-  const fixture = await loadFixture(db, fixtureId);
-  const id = requireString(goalId, "Missing goal id.");
-
-  if (fixture.status !== "FINAL") {
-    throw new Error(
-      "Historic corrections are only available for final matches.",
-    );
-  }
-
-  const { data: goal, error: goalError } = await db
-    .from("fixture_scorers")
-    .select("id,fixture_id,clan_id,profile_id,assist_profile_id,minute")
-    .eq("id", id)
-    .eq("fixture_id", fixtureId)
-    .single();
-
-  if (goalError) {
-    throw new Error(`Could not load goal correction: ${goalError.message}`);
-  }
-
-  await assertNoError(
-    db.from("fixture_scorers").delete().eq("id", id).eq(
-      "fixture_id",
-      fixtureId,
-    ),
-    "Could not remove goal",
-  );
-
-  await assertNoError(
-    db
-      .from("fixture_events")
-      .delete()
-      .eq("fixture_id", fixtureId)
-      .eq("event_type", "GOAL")
-      .eq("clan_id", String(goal.clan_id))
-      .eq("profile_id", String(goal.profile_id))
-      .eq("minute", Number(goal.minute ?? 1)),
-    "Could not remove matching goal event",
-  );
-
-  await insertEvent(
-    db,
-    fixtureId,
-    "CORRECTION",
-    Number(goal.minute ?? 1),
-    0,
-    String(goal.clan_id),
-    String(goal.profile_id),
-    goal.assist_profile_id ? String(goal.assist_profile_id) : null,
-    null,
-    "Removed goal correction",
-  );
-  await syncScoreFromScorers(db, fixture);
-}
-
 async function recordBlueCard(
   db: SupabaseClient,
   fixtureId: string,
@@ -550,49 +307,11 @@ async function expireBlueCard(
 }
 
 async function finishFixture(db: SupabaseClient, fixtureId: string) {
-  const fixture = await loadFixture(db, fixtureId);
-
-  if (fixture.status === "FINAL") {
-    throw new Error("This match is already final.");
-  }
-
-  const clock = await loadClock(db, fixtureId);
-  const elapsedSeconds = Math.min(elapsedFromClock(clock), MAX_MATCH_SECONDS);
-  const { minute, second } = splitElapsed(elapsedSeconds);
-
   await assertNoError(
-    db
-      .from("fixture_clock_states")
-      .update({
-        status: "ENDED",
-        started_at: null,
-        accumulated_seconds: elapsedSeconds,
-      })
-      .eq("fixture_id", fixtureId),
-    "Could not stop fixture clock",
-  );
-  await insertEvent(db, fixtureId, "MATCH_ENDED", minute, second);
-
-  const { error } = await db.rpc("referee_complete_fixture", {
-    fixture_id_to_complete: fixtureId,
-  });
-
-  if (error) {
-    throw new Error(`Could not finalize fixture: ${error.message}`);
-  }
-
-  // The completion function also handles older clock rows and may clamp them to
-  // the configured match duration. Restore the referee's actual stopped time.
-  await assertNoError(
-    db
-      .from("fixture_clock_states")
-      .update({
-        status: "ENDED",
-        started_at: null,
-        accumulated_seconds: elapsedSeconds,
-      })
-      .eq("fixture_id", fixtureId),
-    "Could not save final match time",
+    db.rpc("referee_finish_fixture_atomic", {
+      fixture_id_to_complete: fixtureId,
+    }),
+    "Could not finalize fixture",
   );
 }
 

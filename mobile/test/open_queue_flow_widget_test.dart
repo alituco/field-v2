@@ -157,6 +157,13 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   Future<List<OpenQueueGame>> listGames() async => games;
 
   @override
+  Future<List<OpenQueueGame>> listFixtureGames() async => games;
+
+  @override
+  Future<OpenQueueMatchDetail> getMatchDetail(String gameId) =>
+      throw UnimplementedError();
+
+  @override
   Future<OpenQueueBooking?> getMyUpcomingBooking() async => null;
 
   @override

@@ -59,12 +59,16 @@ class SupabaseProfileRepository implements ProfileRepository {
       _loadConnectionCounts(profileId),
       _loadHighlights(profileId),
       _loadCareer(profileId),
+      _loadPreviousGames(profileId),
+      _loadPlayerRating(profileId),
     ]);
     final profile = results[0] as _ProfileRow;
     final clan = results[1] as ProfileClan?;
     final connectionCounts = results[2] as _ConnectionCounts;
     final highlights = results[3] as List<ProfileHighlight>;
     final career = results[4] as List<ProfileCareerEntry>;
+    final previousGames = results[5] as List<ProfilePreviousGame>;
+    final playerRating = results[6] as ProfilePlayerRating?;
     final stats = clan == null
         ? const _ProfileStats(appearances: 0, goals: 0, assists: 0)
         : await _loadStats(profileId, clan.id);
@@ -84,6 +88,8 @@ class SupabaseProfileRepository implements ProfileRepository {
       assists: stats.assists,
       highlights: highlights,
       career: career,
+      previousGames: previousGames,
+      playerRating: playerRating,
     );
   }
 
@@ -346,16 +352,18 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<_ProfileStats> _loadStats(String userId, String clanId) async {
-    final fixturesResponse = await _client
-        .from('fixtures')
-        .select('id')
-        .eq('status', 'FINAL')
-        .or('home_clan_id.eq.$clanId,away_clan_id.eq.$clanId');
-    final fixtureRows = fixturesResponse as List<dynamic>;
-    final fixtureIds = [
-      for (final row in fixtureRows)
-        (Map<String, dynamic>.from(row as Map)['id'] as String),
-    ];
+    final appearancesResponse = await _client
+        .from('fixture_player_appearances')
+        .select('fixture_id, fixtures!inner(status)')
+        .eq('profile_id', userId)
+        .eq('clan_id', clanId)
+        .eq('played', true)
+        .eq('fixtures.status', 'FINAL');
+    final appearanceRows = appearancesResponse as List<dynamic>;
+    final fixtureIds = {
+      for (final row in appearanceRows)
+        (Map<String, dynamic>.from(row as Map)['fixture_id'] as String),
+    }.toList(growable: false);
 
     if (fixtureIds.isEmpty) {
       return const _ProfileStats(appearances: 0, goals: 0, assists: 0);
@@ -416,18 +424,51 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<List<ProfileCareerEntry>> _loadCareer(String userId) async {
-    final response = await _client
-        .from('profile_career_entries')
-        .select('id, clan_name, tag, emblem, period, apps, goals, is_current')
-        .eq('profile_id', userId)
-        .order('sort_order')
-        .order('created_at');
-    final rows = response as List<dynamic>;
+    final response = await _client.rpc(
+      'list_profile_career_entries',
+      params: {'profile_id_to_use': userId},
+    );
+    final rows = switch (response) {
+      final List value => value,
+      final Map value => [value],
+      _ => const <dynamic>[],
+    };
 
     return [
       for (final row in rows)
         ProfileCareerEntry.fromJson(Map<String, dynamic>.from(row as Map)),
     ];
+  }
+
+  Future<List<ProfilePreviousGame>> _loadPreviousGames(String userId) async {
+    final response = await _client.rpc(
+      'list_profile_previous_games',
+      params: {'profile_id_to_use': userId},
+    );
+    final rows = switch (response) {
+      final List value => value,
+      final Map value => [value],
+      _ => const <dynamic>[],
+    };
+    return [
+      for (final row in rows)
+        ProfilePreviousGame.fromJson(Map<String, dynamic>.from(row as Map)),
+    ];
+  }
+
+  Future<ProfilePlayerRating?> _loadPlayerRating(String userId) async {
+    final response = await _client.rpc(
+      'get_player_rating_history',
+      params: {'profile_id_to_use': userId, 'limit_to_use': 50},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => null,
+    };
+    return row == null ? null : ProfilePlayerRating.fromJson(row);
   }
 
   Future<void> _ensureProfile(User user) async {

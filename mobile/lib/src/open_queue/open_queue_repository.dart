@@ -5,6 +5,10 @@ import 'open_queue.dart';
 abstract class OpenQueueRepository {
   Future<List<OpenQueueGame>> listGames();
 
+  Future<List<OpenQueueGame>> listFixtureGames();
+
+  Future<OpenQueueMatchDetail> getMatchDetail(String gameId);
+
   Future<OpenQueueBooking?> getMyUpcomingBooking();
 
   Future<OpenQueueBooking> bookGame({
@@ -42,7 +46,12 @@ class SupabaseOpenQueueRepository implements OpenQueueRepository {
       timezone,
       price_fils,
       age_label,
-      capacity
+      capacity,
+      white_average_sr,
+      black_average_sr,
+      match_average_sr,
+      team_sr_spread,
+      teams_assigned_at
     )
   ''';
 
@@ -53,6 +62,31 @@ class SupabaseOpenQueueRepository implements OpenQueueRepository {
       for (final row in response as List<dynamic>)
         OpenQueueGame.fromJson(Map<String, dynamic>.from(row as Map)),
     ];
+  }
+
+  @override
+  Future<List<OpenQueueGame>> listFixtureGames() async {
+    final response = await _client.rpc('list_open_queue_fixture_games');
+    return [
+      for (final row in response as List<dynamic>)
+        OpenQueueGame.fromJson(Map<String, dynamic>.from(row as Map)),
+    ];
+  }
+
+  @override
+  Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async {
+    final response = await _client.rpc(
+      'get_open_queue_match_detail',
+      params: {'game_id_to_use': gameId},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => throw StateError('Solo match not found.'),
+    };
+    return OpenQueueMatchDetail.fromJson(row);
   }
 
   @override

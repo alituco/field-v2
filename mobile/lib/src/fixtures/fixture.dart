@@ -11,6 +11,12 @@ enum FixtureTimeSlot {
   final String label;
 }
 
+const clanFixtureTimeSlots = <FixtureTimeSlot>[FixtureTimeSlot.early];
+
+bool isFixtureMatchDay(DateTime date) {
+  return date.weekday == DateTime.tuesday || date.weekday == DateTime.friday;
+}
+
 class FixtureClan {
   const FixtureClan({
     required this.id,
@@ -187,6 +193,46 @@ class FixtureParticipant {
   }
 }
 
+class FixtureLineupPlayer {
+  const FixtureLineupPlayer({
+    required this.id,
+    required this.displayName,
+    required this.role,
+    required this.side,
+    required this.played,
+    required this.isMe,
+    this.username,
+    this.avatarUrl,
+    this.ratingAtTeamAssignment,
+    this.ratingAtMatchStart,
+    this.ratingChange,
+  });
+
+  final String id;
+  final String displayName;
+  final String? username;
+  final String? avatarUrl;
+  final String role;
+  final String side;
+  final bool played;
+  final bool isMe;
+  final int? ratingAtTeamAssignment;
+  final int? ratingAtMatchStart;
+  final int? ratingChange;
+
+  int? get displayedRating => ratingAtMatchStart ?? ratingAtTeamAssignment;
+
+  String get initials {
+    final words = displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return '?';
+    return words.take(2).map((word) => word[0]).join().toUpperCase();
+  }
+}
+
 class FixtureScorer {
   const FixtureScorer({
     required this.id,
@@ -340,6 +386,13 @@ class Fixture {
     this.broadcast,
     this.scorers = const [],
     this.timeline = const [],
+    this.homeAveragePlayerRating,
+    this.awayAveragePlayerRating,
+    this.matchAveragePlayerRating,
+    this.teamRatingSpread,
+    this.teamsAssignedAt,
+    this.homeLineup = const [],
+    this.awayLineup = const [],
   });
 
   final String id;
@@ -377,6 +430,13 @@ class Fixture {
   final FixtureBroadcast? broadcast;
   final List<FixtureScorer> scorers;
   final List<FixtureTimelineEvent> timeline;
+  final int? homeAveragePlayerRating;
+  final int? awayAveragePlayerRating;
+  final int? matchAveragePlayerRating;
+  final int? teamRatingSpread;
+  final DateTime? teamsAssignedAt;
+  final List<FixtureLineupPlayer> homeLineup;
+  final List<FixtureLineupPlayer> awayLineup;
 
   bool get isOpen => status == FixtureStatus.open;
 
@@ -539,6 +599,19 @@ class Fixture {
     final homePayer = _nestedMap(json['home_payer']);
     final awayPayer = _nestedMap(json['away_payer']);
     final cancellationActor = _nestedMap(json['cancellation_actor']);
+    final homeLineup = _fixtureLineupFromJson(
+      json['fixture_player_appearances'],
+      'HOME',
+    );
+    final awayLineup = _fixtureLineupFromJson(
+      json['fixture_player_appearances'],
+      'AWAY',
+    );
+    final homeAverage = _lineupAverageRating(homeLineup);
+    final awayAverage = _lineupAverageRating(awayLineup);
+    final matchAverage = homeAverage == null || awayAverage == null
+        ? null
+        : ((homeAverage + awayAverage) / 2).round();
 
     return Fixture(
       id: json['id'] as String,
@@ -592,6 +665,20 @@ class Fixture {
           : FixtureBroadcast.fromJson(broadcast),
       scorers: _scorersFromJson(json['fixture_scorers']),
       timeline: _timelineFromJson(json['fixture_events']),
+      homeAveragePlayerRating:
+          _asNullableInt(json['home_average_player_rating']) ?? homeAverage,
+      awayAveragePlayerRating:
+          _asNullableInt(json['away_average_player_rating']) ?? awayAverage,
+      matchAveragePlayerRating:
+          _asNullableInt(json['match_average_player_rating']) ?? matchAverage,
+      teamRatingSpread:
+          _asNullableInt(json['team_rating_spread']) ??
+          (homeAverage == null || awayAverage == null
+              ? null
+              : (homeAverage - awayAverage).abs()),
+      teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      homeLineup: homeLineup,
+      awayLineup: awayLineup,
     );
   }
 }
@@ -644,6 +731,50 @@ Map<String, dynamic> _jsonMap(Object? value) {
   if (value is Map<String, dynamic>) return value;
   if (value is Map) return Map<String, dynamic>.from(value);
   return const {};
+}
+
+List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
+  if (value is! List) return const [];
+  final players = <FixtureLineupPlayer>[];
+  for (final rawRow in value) {
+    if (rawRow is! Map) continue;
+    final row = Map<String, dynamic>.from(rawRow);
+    if ((row['side'] as String? ?? '').toUpperCase() != side) continue;
+    final profile = _nestedMap(row['player']);
+    if (profile == null) continue;
+    players.add(
+      FixtureLineupPlayer(
+        id: row['profile_id'] as String? ?? profile['id'] as String? ?? '',
+        displayName: (profile['display_name'] as String? ?? 'Unknown').trim(),
+        username: (profile['username'] as String?)?.trim(),
+        avatarUrl: (profile['avatar_url'] as String?)?.trim(),
+        role: (row['position'] as String? ?? '').trim(),
+        side: side,
+        played: row['played'] as bool? ?? false,
+        isMe: row['is_me'] as bool? ?? false,
+        ratingAtMatchStart: _asNullableInt(row['rating_at_start']),
+        ratingChange: _asNullableInt(row['rating_change']),
+      ),
+    );
+  }
+  players.sort((left, right) {
+    if (left.played != right.played) return left.played ? -1 : 1;
+    return left.displayName.compareTo(right.displayName);
+  });
+  return players;
+}
+
+int? _lineupAverageRating(List<FixtureLineupPlayer> players) {
+  if (players.isEmpty) return null;
+  final played = players.where((player) => player.played).toList();
+  final included = played.isEmpty ? players : played;
+  final ratings = included
+      .map((player) => player.displayedRating)
+      .whereType<int>()
+      .toList();
+  if (ratings.isEmpty) return null;
+  return (ratings.reduce((total, rating) => total + rating) / ratings.length)
+      .round();
 }
 
 int _asInt(Object? value, {int fallback = 0}) {

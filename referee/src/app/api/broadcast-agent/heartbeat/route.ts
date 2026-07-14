@@ -6,6 +6,7 @@ import {
   isBroadcastAgentRequest,
 } from "@/lib/broadcast-agent-auth";
 import { syncBroadcastFromCloudflare } from "@/lib/broadcasts";
+import { syncOpenQueueBroadcastFromCloudflare } from "@/lib/broadcasts";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
 type HeartbeatBody = {
@@ -14,6 +15,7 @@ type HeartbeatBody = {
   obsConnected?: boolean;
   obsStreaming?: boolean;
   currentFixtureId?: string | null;
+  currentOpenQueueGameId?: string | null;
   errorMessage?: string | null;
   metadata?: Record<string, unknown>;
 };
@@ -31,6 +33,9 @@ export async function POST(request: NextRequest) {
     }
 
     const db = createSupabaseAdmin();
+    if (body.currentFixtureId && body.currentOpenQueueGameId) {
+      throw new Error("The camera can only stream one match at a time.");
+    }
     const obsConnected = body.obsConnected === true;
     const obsStreaming = body.obsStreaming === true;
     const errorMessage = body.errorMessage?.trim() || null;
@@ -49,6 +54,7 @@ export async function POST(request: NextRequest) {
         obs_connected: obsConnected,
         obs_streaming: obsStreaming,
         current_fixture_id: body.currentFixtureId || null,
+        current_open_queue_game_id: body.currentOpenQueueGameId || null,
         last_seen_at: new Date().toISOString(),
         error_message: errorMessage,
         metadata: body.metadata ?? {},
@@ -59,6 +65,8 @@ export async function POST(request: NextRequest) {
 
     if (body.currentFixtureId) {
       await syncBroadcastFromCloudflare(db, body.currentFixtureId);
+    } else if (body.currentOpenQueueGameId) {
+      await syncOpenQueueBroadcastFromCloudflare(db, body.currentOpenQueueGameId);
     }
 
     return NextResponse.json({ ok: true });
@@ -69,4 +77,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

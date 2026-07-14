@@ -13,7 +13,14 @@ type CloudflareVideoPayload = {
   };
   meta?: {
     fixture_id?: unknown;
+    open_queue_game_id?: unknown;
   };
+};
+
+type MatchedBroadcast = {
+  kind: "CLAN" | "SOLO";
+  id: string;
+  streamRequestedAt: string | null;
 };
 
 Deno.serve(async (request) => {
@@ -43,6 +50,9 @@ Deno.serve(async (request) => {
 
   const videoId = stringValue(payload.uid);
   const metadataFixtureId = stringValue(payload.meta?.fixture_id);
+  const metadataOpenQueueGameId = stringValue(
+    payload.meta?.open_queue_game_id,
+  );
   if (!videoId) {
     return json({ received: true, ignored: true });
   }
@@ -51,38 +61,95 @@ Deno.serve(async (request) => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const byVideo = await admin
+  const fixtureByVideo = await admin
     .from("fixture_broadcasts")
-    .select("fixture_id, replay_hls_url, active_video_id, stream_requested_at")
+    .select("fixture_id,stream_requested_at")
     .eq("active_video_id", videoId)
     .limit(1)
     .maybeSingle();
-  if (byVideo.error) {
+  if (fixtureByVideo.error) {
     return json({ error: "Could not match the recording." }, 500);
   }
 
-  let broadcast = byVideo.data;
+  let broadcast: MatchedBroadcast | null = fixtureByVideo.data
+    ? {
+      kind: "CLAN",
+      id: String(fixtureByVideo.data.fixture_id),
+      streamRequestedAt: stringValue(fixtureByVideo.data.stream_requested_at),
+    }
+    : null;
+  if (!broadcast) {
+    const soloByVideo = await admin
+      .from("open_queue_broadcasts")
+      .select("game_id,stream_requested_at")
+      .eq("active_video_id", videoId)
+      .limit(1)
+      .maybeSingle();
+    if (soloByVideo.error) {
+      return json({ error: "Could not match the solo recording." }, 500);
+    }
+    if (soloByVideo.data) {
+      broadcast = {
+        kind: "SOLO",
+        id: String(soloByVideo.data.game_id),
+        streamRequestedAt: stringValue(soloByVideo.data.stream_requested_at),
+      };
+    }
+  }
+
   if (!broadcast && metadataFixtureId && isUuid(metadataFixtureId)) {
     const byFixture = await admin
       .from("fixture_broadcasts")
-      .select("fixture_id, replay_hls_url, active_video_id, stream_requested_at")
+      .select("fixture_id,stream_requested_at")
       .eq("fixture_id", metadataFixtureId)
       .maybeSingle();
     if (byFixture.error) {
       return json({ error: "Could not match the fixture." }, 500);
     }
-    broadcast = byFixture.data;
+    if (byFixture.data) {
+      broadcast = {
+        kind: "CLAN",
+        id: String(byFixture.data.fixture_id),
+        streamRequestedAt: stringValue(byFixture.data.stream_requested_at),
+      };
+    }
+  }
+
+  if (
+    !broadcast &&
+    metadataOpenQueueGameId &&
+    isUuid(metadataOpenQueueGameId)
+  ) {
+    const byGame = await admin
+      .from("open_queue_broadcasts")
+      .select("game_id,stream_requested_at")
+      .eq("game_id", metadataOpenQueueGameId)
+      .maybeSingle();
+    if (byGame.error) {
+      return json({ error: "Could not match the solo game." }, 500);
+    }
+    if (byGame.data) {
+      broadcast = {
+        kind: "SOLO",
+        id: String(byGame.data.game_id),
+        streamRequestedAt: stringValue(byGame.data.stream_requested_at),
+      };
+    }
   }
 
   if (!broadcast) {
     return json({ received: true, ignored: true });
   }
 
-  const fixtureId = String(broadcast.fixture_id);
+  const matchId = broadcast.id;
+  const broadcastTable = broadcast.kind === "SOLO"
+    ? "open_queue_broadcasts"
+    : "fixture_broadcasts";
+  const broadcastIdColumn = broadcast.kind === "SOLO" ? "game_id" : "fixture_id";
   const recordingStartedAt = validRecordingTimestamp(payload.created);
   if (isRecordingOlderThanRequest(
     recordingStartedAt,
-    stringValue(broadcast.stream_requested_at),
+    broadcast.streamRequestedAt,
   )) {
     return json({ received: true, ignored: true, reason: "stale recording" });
   }
@@ -91,15 +158,15 @@ Deno.serve(async (request) => {
     const errorMessage = stringValue(payload.status?.errorReasonText) ??
       "Cloudflare could not process the match recording.";
     const { data, error } = await admin
-      .from("fixture_broadcasts")
+      .from(broadcastTable)
       .update({
         active_video_id: videoId,
         status: "ERROR",
         error_message: errorMessage,
       })
-      .eq("fixture_id", fixtureId)
+      .eq(broadcastIdColumn, matchId)
       .or(`active_video_id.is.null,active_video_id.eq.${videoId}`)
-      .select("fixture_id")
+      .select(broadcastIdColumn)
       .maybeSingle();
     if (error) return json({ error: "Could not save recording error." }, 500);
     if (!data) {
@@ -121,7 +188,7 @@ Deno.serve(async (request) => {
 
   const readyAt = new Date().toISOString();
   const { data: updatedBroadcast, error: broadcastError } = await admin
-    .from("fixture_broadcasts")
+    .from(broadcastTable)
     .update({
       active_video_id: videoId,
       status: "REPLAY_READY",
@@ -132,9 +199,9 @@ Deno.serve(async (request) => {
         : {}),
       error_message: null,
     })
-    .eq("fixture_id", fixtureId)
+    .eq(broadcastIdColumn, matchId)
     .or(`active_video_id.is.null,active_video_id.eq.${videoId}`)
-    .select("fixture_id")
+    .select(broadcastIdColumn)
     .maybeSingle();
   if (broadcastError) {
     return json({ error: "Could not save the finished recording." }, 500);
@@ -143,10 +210,11 @@ Deno.serve(async (request) => {
     return json({ received: true, ignored: true, reason: "stale recording" });
   }
 
+  const matchTable = broadcast.kind === "SOLO" ? "open_queue_games" : "fixtures";
   const { error: fixtureError } = await admin
-    .from("fixtures")
+    .from(matchTable)
     .update({ video_url: replayUrl })
-    .eq("id", fixtureId);
+    .eq("id", matchId);
   if (fixtureError) {
     return json({ error: "Could not attach the recording to the match." }, 500);
   }

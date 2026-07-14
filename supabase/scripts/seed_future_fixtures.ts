@@ -12,17 +12,20 @@ type FixtureSlot = {
   time_slot: TimeSlot;
 };
 
-type TimeSlot =
-  | "7:00 PM - 8:00 PM"
-  | "8:30 PM - 9:30 PM";
+type TimeSlot = "7:00 PM - 8:00 PM";
+
+type PlannedFixture = {
+  home: Clan;
+  away?: Clan;
+  status: "OPEN" | "SCHEDULED";
+  sequence: number;
+};
 
 const MOCK_VENUE_PREFIX = "[MOCK] ";
 const DEFAULT_FIXTURE_COUNT = 32;
 const MAX_FIXTURE_COUNT = 100;
-const TIME_SLOTS: TimeSlot[] = [
-  "7:00 PM - 8:00 PM",
-  "8:30 PM - 9:30 PM",
-];
+const MAX_UPCOMING_MATCHES_PER_CLAN = 2;
+const TIME_SLOTS: TimeSlot[] = ["7:00 PM - 8:00 PM"];
 const VENUES = [
   "Bahrain Bay Arena",
   "Dilmun Field",
@@ -77,8 +80,10 @@ if (clans.length < 2) {
 
 const { data: existingRows, error: existingError } = await admin
   .from("fixtures")
-  .select("match_date,time_slot,venue,status")
-  .gte("match_date", today);
+  .select(
+    "match_date,time_slot,venue,status,home_clan_id,away_clan_id",
+  )
+  .in("status", ["OPEN", "SCHEDULED", "LIVE"]);
 
 if (existingError) {
   throw new Error(`Could not load future fixtures: ${existingError.message}`);
@@ -92,9 +97,31 @@ const occupiedSlots = new Set(
 );
 const existingMockCount =
   existingFixtures.filter((fixture) =>
+    String(fixture.match_date) >= today &&
     String(fixture.venue).startsWith(MOCK_VENUE_PREFIX)
   ).length;
 const fixturesToCreate = Math.max(0, requestedCount - existingMockCount);
+
+const upcomingCounts = new Map(clans.map((clan) => [clan.id, 0]));
+for (const fixture of existingFixtures) {
+  incrementCount(upcomingCounts, String(fixture.home_clan_id));
+  if (fixture.away_clan_id != null) {
+    incrementCount(upcomingCounts, String(fixture.away_clan_id));
+  }
+}
+
+const alreadyOverLimit = clans.filter(
+  (clan) => (upcomingCounts.get(clan.id) ?? 0) > MAX_UPCOMING_MATCHES_PER_CLAN,
+);
+if (alreadyOverLimit.length > 0) {
+  console.warn(
+    "Existing data is already above the 2-upcoming-match clan limit: " +
+      alreadyOverLimit.map((clan) =>
+        `${clan.tag} (${upcomingCounts.get(clan.id)})`
+      ).join(", ") +
+      ". No additional fixtures will be assigned to those clans.",
+  );
+}
 
 if (fixturesToCreate === 0) {
   console.log(
@@ -103,12 +130,34 @@ if (fixturesToCreate === 0) {
   Deno.exit(0);
 }
 
+const shuffledClans = seededShuffle(clans, 0x20260712);
+const plannedFixtures = planFixtures(
+  shuffledClans,
+  upcomingCounts,
+  fixturesToCreate,
+  existingMockCount,
+);
+
+if (plannedFixtures.length === 0) {
+  console.warn(
+    `Could not add future mock fixtures: every eligible clan already has ` +
+      `${MAX_UPCOMING_MATCHES_PER_CLAN} upcoming matches.`,
+  );
+  Deno.exit(0);
+}
+
+if (plannedFixtures.length < fixturesToCreate) {
+  console.warn(
+    `Clan capacity allows ${plannedFixtures.length} more mock fixtures, ` +
+      `so the requested total of ${requestedCount} cannot be reached.`,
+  );
+}
+
 const availableSlots = buildAvailableSlots(
   today,
   occupiedSlots,
-  fixturesToCreate,
+  plannedFixtures.length,
 );
-const shuffledClans = seededShuffle(clans, 0x20260712);
 const inserted: Array<{
   date: string;
   time: TimeSlot;
@@ -117,20 +166,15 @@ const inserted: Array<{
   away?: string;
 }> = [];
 
-for (let index = 0; index < availableSlots.length; index += 1) {
+for (let index = 0; index < plannedFixtures.length; index += 1) {
   const slot = availableSlots[index];
-  const sequence = existingMockCount + index;
-  const home = shuffledClans[sequence % shuffledClans.length];
-  const awayOffset = 1 + ((sequence * 3 + 1) % (shuffledClans.length - 1));
-  const away = shuffledClans[(sequence + awayOffset) % shuffledClans.length];
-  const isOpen = sequence % 4 === 0;
-  const status = isOpen ? "OPEN" : "SCHEDULED";
+  const { away, home, sequence, status } = plannedFixtures[index];
   const paidAt = new Date().toISOString();
 
   const { error } = await admin.from("fixtures").insert({
     status,
     home_clan_id: home.id,
-    away_clan_id: isOpen ? null : away.id,
+    away_clan_id: away?.id ?? null,
     venue: `${MOCK_VENUE_PREFIX}${VENUES[sequence % VENUES.length]}`,
     day: weekdayFor(slot.match_date),
     time_slot: slot.time_slot,
@@ -138,8 +182,8 @@ for (let index = 0; index < availableSlots.length; index += 1) {
     created_by: home.created_by,
     home_paid_by: home.created_by,
     home_paid_at: paidAt,
-    away_paid_by: isOpen ? null : away.created_by,
-    away_paid_at: isOpen ? null : paidAt,
+    away_paid_by: away?.created_by ?? null,
+    away_paid_at: away == null ? null : paidAt,
   });
 
   if (error) {
@@ -153,7 +197,7 @@ for (let index = 0; index < availableSlots.length; index += 1) {
     time: slot.time_slot,
     status,
     home: `${home.name} (${home.tag})`,
-    away: isOpen ? undefined : `${away.name} (${away.tag})`,
+    away: away == null ? undefined : `${away.name} (${away.tag})`,
   });
 }
 
@@ -176,6 +220,77 @@ for (const fixture of inserted) {
   );
 }
 
+function planFixtures(
+  clans: Clan[],
+  existingCounts: Map<string, number>,
+  requested: number,
+  startSequence: number,
+): PlannedFixture[] {
+  const counts = new Map(existingCounts);
+  const remainingClanSlots = clans.reduce(
+    (total, clan) =>
+      total +
+      Math.max(
+        0,
+        MAX_UPCOMING_MATCHES_PER_CLAN - (counts.get(clan.id) ?? 0),
+      ),
+    0,
+  );
+  const target = Math.min(requested, remainingClanSlots);
+  const orderById = new Map(clans.map((clan, index) => [clan.id, index]));
+  const plans: PlannedFixture[] = [];
+
+  while (plans.length < target) {
+    const sequence = startSequence + plans.length;
+    const rotation = sequence % clans.length;
+    const eligible = clans
+      .filter(
+        (clan) => (counts.get(clan.id) ?? 0) < MAX_UPCOMING_MATCHES_PER_CLAN,
+      )
+      .sort((first, second) => {
+        const countDifference = (counts.get(first.id) ?? 0) -
+          (counts.get(second.id) ?? 0);
+        if (countDifference !== 0) return countDifference;
+        const firstOrder =
+          ((orderById.get(first.id) ?? 0) - rotation + clans.length) %
+          clans.length;
+        const secondOrder =
+          ((orderById.get(second.id) ?? 0) - rotation + clans.length) %
+          clans.length;
+        return firstOrder - secondOrder;
+      });
+
+    if (eligible.length === 0) break;
+
+    const slotsLeft = eligible.reduce(
+      (total, clan) =>
+        total +
+        MAX_UPCOMING_MATCHES_PER_CLAN - (counts.get(clan.id) ?? 0),
+      0,
+    );
+    const fixturesLeft = target - plans.length;
+    const prefersOpen = sequence % 4 === 0;
+    const canSchedule = eligible.length >= 2 && slotsLeft >= fixturesLeft + 1;
+    const home = eligible[0];
+    const away = !prefersOpen && canSchedule ? eligible[1] : undefined;
+
+    plans.push({
+      home,
+      away,
+      status: away == null ? "OPEN" : "SCHEDULED",
+      sequence,
+    });
+    incrementCount(counts, home.id);
+    if (away != null) incrementCount(counts, away.id);
+  }
+
+  return plans;
+}
+
+function incrementCount(counts: Map<string, number>, clanId: string) {
+  counts.set(clanId, (counts.get(clanId) ?? 0) + 1);
+}
+
 function buildAvailableSlots(
   startDate: string,
   occupied: Set<string>,
@@ -193,7 +308,7 @@ function buildAvailableSlots(
     }
 
     const weekday = cursor.getUTCDay();
-    if (weekday === 2 || weekday === 4) {
+    if (weekday === 2 || weekday === 5) {
       const matchDate = dateOnly(cursor);
       for (const timeSlot of TIME_SLOTS) {
         if (!occupied.has(slotKey(matchDate, timeSlot))) {
@@ -240,8 +355,8 @@ function parseRequestedCount(raw?: string): number {
   return count;
 }
 
-function weekdayFor(date: string): "TUESDAY" | "THURSDAY" {
-  return parseDate(date).getUTCDay() === 2 ? "TUESDAY" : "THURSDAY";
+function weekdayFor(date: string): "TUESDAY" | "FRIDAY" {
+  return parseDate(date).getUTCDay() === 2 ? "TUESDAY" : "FRIDAY";
 }
 
 function parseDate(value: string): Date {

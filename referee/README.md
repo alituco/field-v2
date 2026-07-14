@@ -1,6 +1,7 @@
 # Field Referee Web App
 
-Mobile-first Next.js app for referees to run a match clock, record goals, assists, and blue cards.
+Mobile-first Next.js app for referees to run clan and solo/Open Queue games,
+including the match clock, goals, assists, blue cards, and livestream.
 
 ## Setup
 
@@ -27,8 +28,11 @@ Open `http://localhost:3001` on the referee phone or simulator browser.
 ## Current Flow
 
 - Referee signs in with phone OTP.
-- Admin referees can create referee profiles and assign referees to games.
+- Admin referees can create referee profiles and assign referees to clan or
+  Open Queue games.
 - Assigned referees see only their own upcoming games.
+- A full Open Queue game appears as White Team vs Black Team using its confirmed
+  bookings and automatically assigned teams.
 - Start the match timer.
 - Record goals with scorer and optional assist.
 - Record blue cards. Active cards count down from 2 minutes and alert when the player can return.

@@ -18,11 +18,15 @@ class LeaderboardScreen extends StatefulWidget {
     required this.clanRepository,
     required this.fixtureRepository,
     required this.leaderboardRepository,
+    this.activationTick = 0,
+    this.playerActivationTick = 0,
   });
 
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
   final LeaderboardRepository leaderboardRepository;
+  final int activationTick;
+  final int playerActivationTick;
 
   @override
   State<LeaderboardScreen> createState() => _LeaderboardScreenState();
@@ -43,27 +47,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     label: 'Bahrain',
   );
 
-  static const _seasons = [
-    LeaderboardSeason(
-      id: 's0',
-      label: 'S0',
-      rangeLabel: 'Jun - Sep 2026',
-      startsOn: '2026-06-01',
-      endsOn: '2026-09-30',
-      active: true,
-    ),
-    LeaderboardSeason(
-      id: 's1',
-      label: 'S1',
-      rangeLabel: 'Oct - Dec 2026',
-      startsOn: '2026-10-01',
-      endsOn: '2026-12-31',
-    ),
-  ];
+  static const _seasons = leaderboardSeasons;
 
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
   _LeaderboardMode _mode = _LeaderboardMode.clans;
   int _seasonIndex = 0;
+  int _loadGeneration = 0;
+  late String _lastActiveSeasonId;
   List<Clan> _clans = const [];
   ClanMembership? _myMembership;
   LeaderboardPlayerStats _playerStats = const LeaderboardPlayerStats(
@@ -80,12 +70,63 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
   @override
   void initState() {
     super.initState();
+    final activeSeason = activeLeaderboardSeason;
+    final activeIndex = _seasons.indexWhere(
+      (season) => season.id == activeSeason.id,
+    );
+    _seasonIndex = activeIndex < 0 ? 0 : activeIndex;
+    _lastActiveSeasonId = activeSeason.id;
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant LeaderboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final playerActivated =
+        widget.playerActivationTick != oldWidget.playerActivationTick;
+    final ranksActivated = widget.activationTick != oldWidget.activationTick;
+    var shouldReload = false;
+
+    if (playerActivated) {
+      _mode = _LeaderboardMode.players;
+      shouldReload = _selectActiveSeasonInState(force: true);
+    } else if (ranksActivated) {
+      shouldReload = _selectActiveSeasonInState();
+    }
+
+    if (shouldReload) {
+      _loadGeneration++;
+      _isLoading = true;
+      _errorText = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _load();
+      });
+    }
   }
 
   LeaderboardSeason get _selectedSeason => _seasons[_seasonIndex];
 
+  bool _selectActiveSeasonInState({bool force = false}) {
+    final activeSeason = activeLeaderboardSeason;
+    final seasonChanged = activeSeason.id != _lastActiveSeasonId;
+    _lastActiveSeasonId = activeSeason.id;
+    if (!force && !seasonChanged) return false;
+
+    final activeIndex = _seasons.indexWhere(
+      (season) => season.id == activeSeason.id,
+    );
+    if (activeIndex < 0 || activeIndex == _seasonIndex) return false;
+    _seasonIndex = activeIndex;
+    return true;
+  }
+
+  Future<void> _refresh() async {
+    _selectActiveSeasonInState();
+    await _load();
+  }
+
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     final season = _selectedSeason;
     setState(() {
       _isLoading = true;
@@ -97,10 +138,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         widget.clanRepository.listClans(),
         widget.clanRepository.getMyClanMembership(),
         widget.leaderboardRepository.loadPlayerStats(season),
-        widget.leaderboardRepository.loadPlayerRatingLeaderboard(),
+        widget.leaderboardRepository.loadPlayerRatingLeaderboard(
+          season: season,
+        ),
         _profileRepository.getCurrentProfile(),
       ]);
-      if (!mounted || season != _selectedSeason) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _clans = (results[0] as List<Clan>).toList()
           ..sort((a, b) {
@@ -114,7 +157,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         _currentProfileId = (results[4] as PlayerProfile).id;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _errorText = userFacingError(
           error,
@@ -122,7 +165,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         );
       });
     } finally {
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(() => _isLoading = false);
       }
     }
@@ -228,7 +271,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       child: RefreshIndicator(
         color: fieldEmerald600,
         edgeOffset: fieldPageHeaderExtent(context),
-        onRefresh: _load,
+        onRefresh: _refresh,
         child: ListView(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: fieldHeaderAwarePadding(context, top: 16, bottom: 124),
@@ -238,17 +281,20 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
               onChanged: (mode) => setState(() => _mode = mode),
             ),
             const SizedBox(height: 18),
+            _SeasonSelector(
+              season: _selectedSeason,
+              canGoPrevious: _seasonIndex > 0,
+              canGoNext: _seasonIndex < _seasons.length - 1,
+              onPrevious: _previousSeason,
+              onNext: _nextSeason,
+            ),
+            const SizedBox(height: 12),
+            if (_mode == _LeaderboardMode.clans)
+              const _ClanLeaderboardEligibilityNote()
+            else
+              const _PlayerLeaderboardEligibilityNote(),
+            const SizedBox(height: 24),
             if (_mode == _LeaderboardMode.clans) ...[
-              _SeasonSelector(
-                season: _selectedSeason,
-                canGoPrevious: _seasonIndex > 0,
-                canGoNext: _seasonIndex < _seasons.length - 1,
-                onPrevious: _previousSeason,
-                onNext: _nextSeason,
-              ),
-              const SizedBox(height: 12),
-              const _LeaderboardEligibilityNote(),
-              const SizedBox(height: 24),
               _SectionHeader(
                 title: 'The Top 10',
                 action: rankedClans.isEmpty
@@ -306,7 +352,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 onPlayerTap: _openPlayerProfile,
               ),
             ] else ...[
-              const _PlayerRatingHero(),
+              _PlayerRatingHero(season: _selectedSeason),
               const SizedBox(height: 18),
               if (_isLoading)
                 const _LeaderboardLoadingState()
@@ -314,7 +360,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 _LeaderboardErrorState(message: _errorText!, onRetry: _load)
               else if (_playerRatings.isEmpty)
                 const _NoLeaderboardDataState(
-                  message: 'No Player Rating data yet.',
+                  message:
+                      'No players have completed 2 rated games this season.',
                 )
               else
                 for (var i = 0; i < _playerRatings.length; i++) ...[
@@ -371,7 +418,9 @@ class _LeaderboardModeSelector extends StatelessWidget {
 }
 
 class _PlayerRatingHero extends StatelessWidget {
-  const _PlayerRatingHero();
+  const _PlayerRatingHero({required this.season});
+
+  final LeaderboardSeason season;
 
   @override
   Widget build(BuildContext context) {
@@ -392,9 +441,9 @@ class _PlayerRatingHero extends StatelessWidget {
           ),
         ],
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Expanded(
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -418,7 +467,7 @@ class _PlayerRatingHero extends StatelessWidget {
                 ),
                 SizedBox(height: 5),
                 Text(
-                  'Bahrain · Current Player Rating',
+                  'Bahrain · Season rankings',
                   style: TextStyle(
                     color: Colors.white70,
                     fontSize: 12,
@@ -428,7 +477,25 @@ class _PlayerRatingHero extends StatelessWidget {
               ],
             ),
           ),
-          Icon(Icons.emoji_events_rounded, color: fieldEmerald200, size: 34),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Icon(
+                Icons.emoji_events_rounded,
+                color: fieldEmerald200,
+                size: 34,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                season.label,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -520,7 +587,7 @@ class _PlayerRatingRow extends StatelessWidget {
                       ],
                     ),
                     Text(
-                      '${player.tierLabel} · ${player.matchesPlayed} matches',
+                      '${player.tierLabel} · ${player.matchesPlayed} season games',
                       style: const TextStyle(
                         color: fieldGray400,
                         fontSize: 10,
@@ -606,7 +673,7 @@ class _AllRankingsScreen extends StatelessWidget {
           children: [
             _RankingsSummaryCard(region: region, clanCount: clans.length),
             const SizedBox(height: 12),
-            const _LeaderboardEligibilityNote(),
+            const _ClanLeaderboardEligibilityNote(),
             const SizedBox(height: 16),
             _SectionHeader(
               title: 'All Clans',
@@ -637,8 +704,8 @@ class _AllRankingsScreen extends StatelessWidget {
   }
 }
 
-class _LeaderboardEligibilityNote extends StatelessWidget {
-  const _LeaderboardEligibilityNote();
+class _ClanLeaderboardEligibilityNote extends StatelessWidget {
+  const _ClanLeaderboardEligibilityNote();
 
   @override
   Widget build(BuildContext context) {
@@ -651,9 +718,38 @@ class _LeaderboardEligibilityNote extends StatelessWidget {
           const SizedBox(width: 7),
           Expanded(
             child: Text(
-              'Clans need at least $minimumLeaderboardMatches completed '
+              'Clans need at least $minimumClanLeaderboardMatches completed '
               'matches in the selected season to be ranked.',
               style: const TextStyle(
+                color: fieldGray500,
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlayerLeaderboardEligibilityNote extends StatelessWidget {
+  const _PlayerLeaderboardEligibilityNote();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded, color: fieldGray400, size: 16),
+          SizedBox(width: 7),
+          Expanded(
+            child: Text(
+              'Players need at least $minimumPlayerLeaderboardMatches completed rated games in the selected season to be ranked. Clan and Open Queue games both count.',
+              style: TextStyle(
                 color: fieldGray500,
                 fontSize: 12,
                 height: 1.35,
@@ -826,7 +922,7 @@ class _SeasonSelector extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      if (season.active) ...[
+                      if (isActiveLeaderboardSeason(season)) ...[
                         const _LiveDot(),
                         const SizedBox(width: 5),
                         const Text(

@@ -39,12 +39,14 @@ export type CloudflareVideo = {
 };
 
 type CreateLiveInputOptions = {
-  fixtureId: string;
+  fixtureId?: string;
+  openQueueGameId?: string;
   name: string;
 };
 
 export async function createCloudflareLiveInput({
   fixtureId,
+  openQueueGameId,
   name,
 }: CreateLiveInputOptions) {
   return cloudflareRequest<CloudflareLiveInput>("/stream/live_inputs", {
@@ -52,7 +54,8 @@ export async function createCloudflareLiveInput({
     body: JSON.stringify({
       meta: {
         name,
-        fixture_id: fixtureId,
+        ...(fixtureId ? { fixture_id: fixtureId } : {}),
+        ...(openQueueGameId ? { open_queue_game_id: openQueueGameId } : {}),
       },
       recording: {
         mode: "automatic",

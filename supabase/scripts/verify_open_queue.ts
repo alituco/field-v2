@@ -22,29 +22,11 @@ let firstClient: SupabaseClient;
 let secondClient: SupabaseClient;
 
 try {
-  first = await createVerificationProfile("One");
-  second = await createVerificationProfile("Two");
-
-  const { data: profileRows, error: profilesError } = await admin
-    .from("profiles")
-    .select("id,phone")
-    .not("phone", "is", null)
-    .order("created_at")
-    .limit(40);
-  if (profilesError) throw profilesError;
-
-  const profiles = (profileRows ?? []) as ProfileRow[];
-  participants = [
-    first,
-    second,
-    ...profiles.filter((profile) =>
-      profile.id !== first.id && profile.id !== second.id
-    ),
-  ].slice(0, 12);
-  assert(
-    participants.length === 12,
-    "Open Queue verification needs 12 profiles.",
-  );
+  participants = [];
+  for (let index = 1; index <= 12; index += 1) {
+    participants.push(await createVerificationProfile(String(index)));
+  }
+  [first, second] = participants;
 
   firstClient = await signedInClient(first.phone!);
   secondClient = await signedInClient(second.phone!);
@@ -61,9 +43,11 @@ try {
   await verifyFinalRoleRace();
   await verifyWaitlistStateIsRejected();
   await verifyFullGameReopensWithHalfRefund();
-  await verifyGameDayCancellationHasNoRefund();
+  const gameDayRefundVerified = await verifyGameDayCancellationHasNoRefund();
   console.log(
-    "Open Queue verified: atomic final spot, no waitlist state, hard caps, FULL→OPEN, 50% before game day, and 0% on game day.",
+    gameDayRefundVerified
+      ? "Open Queue verified: atomic final spot, no waitlist state, hard caps, FULL→OPEN, 50% before game day, and 0% on game day."
+      : "Open Queue verified: atomic final spot, no waitlist state, hard caps, FULL→OPEN, and 50% before game day. The game-day 0% case was skipped.",
   );
 } finally {
   if (testGameIds.length > 0) {
@@ -90,7 +74,7 @@ try {
 }
 
 async function verifyFinalRoleRace() {
-  const game = await createGame(futureBahrainStart(4, 18), "RACE");
+  const game = await createGame(futureBahrainOpenQueueStart(0), "RACE");
   await insertBooking(game.id, participants[2], "GK", "verify-race-existing");
 
   const calls = [firstClient, secondClient].map((client) =>
@@ -119,7 +103,7 @@ async function verifyFinalRoleRace() {
 }
 
 async function verifyFullGameReopensWithHalfRefund() {
-  const game = await createGame(futureBahrainStart(6, 18), "FULL");
+  const game = await createGame(futureBahrainOpenQueueStart(2), "FULL");
   const roles = [
     "GK",
     "GK",
@@ -188,7 +172,10 @@ async function verifyFullGameReopensWithHalfRefund() {
 }
 
 async function verifyWaitlistStateIsRejected() {
-  const game = await createGame(futureBahrainStart(5, 18), "NO-WAITLIST");
+  const game = await createGame(
+    futureBahrainOpenQueueStart(1),
+    "NO-WAITLIST",
+  );
   const { data: rating, error: ratingError } = await admin
     .from("player_ratings")
     .select("skill_rating")
@@ -213,28 +200,26 @@ async function verifyWaitlistStateIsRejected() {
 
 async function verifyGameDayCancellationHasNoRefund() {
   const nowInBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const weekday = nowInBahrain.getUTCDay();
   const startsAt = new Date(Date.UTC(
     nowInBahrain.getUTCFullYear(),
     nowInBahrain.getUTCMonth(),
     nowInBahrain.getUTCDate(),
     17,
+    30,
   ));
-  assert(
-    startsAt.getTime() > Date.now(),
-    "Run game-day verification before 8 PM Bahrain.",
-  );
+  if (
+    (weekday !== 2 && weekday !== 5) || startsAt.getTime() <= Date.now()
+  ) {
+    console.log(
+      "Skipped game-day 0% refund verification: this case only runs on Tuesday or Friday before 8:30 PM Bahrain.",
+    );
+    return false;
+  }
 
-  const game = await createGame(startsAt, "GAME-DAY");
-  const { data: bookingId, error: bookingError } = await firstClient.rpc(
-    "book_open_queue_game",
-    {
-      game_id_to_book: game.id,
-      role_to_book: "MID",
-      payment_method_to_use: "MOCK",
-      payment_reference_to_use: crypto.randomUUID(),
-    },
-  );
-  if (bookingError) throw bookingError;
+  const game = await findOrCreateGameDayGame(startsAt);
+  if (!game) return false;
+  const bookingId = await bookAvailableGameDayRole(game.id);
 
   const { data: previews, error: previewError } = await firstClient.rpc(
     "preview_open_queue_cancellation",
@@ -255,6 +240,43 @@ async function verifyGameDayCancellationHasNoRefund() {
     cancelled.refund_percent === 0,
     "A game-day cancellation must store a 0% refund.",
   );
+  return true;
+}
+
+async function findOrCreateGameDayGame(startsAt: Date) {
+  const { data, error } = await admin
+    .from("open_queue_games")
+    .select("id,status")
+    .eq("starts_at", startsAt.toISOString())
+    .neq("status", "CANCELLED")
+    .maybeSingle();
+  if (error) throw error;
+  if (data) {
+    if (data.status !== "OPEN") {
+      console.log(
+        `Skipped game-day 0% refund verification: today's Open Queue slot is ${data.status} and cannot accept a test booking.`,
+      );
+      return null;
+    }
+    return data as { id: string };
+  }
+  return await createGame(startsAt, "GAME-DAY");
+}
+
+async function bookAvailableGameDayRole(gameId: string) {
+  let lastError: { message: string } | null = null;
+  for (const role of ["MID", "DEF", "ATT", "GK"]) {
+    const { data, error } = await firstClient.rpc("book_open_queue_game", {
+      game_id_to_book: gameId,
+      role_to_book: role,
+      payment_method_to_use: "MOCK",
+      payment_reference_to_use: crypto.randomUUID(),
+    });
+    if (!error) return data as string;
+    lastError = error;
+    if (!error.message.includes("position just filled")) throw error;
+  }
+  throw lastError ?? new Error("The game-day Open Queue slot is full.");
 }
 
 async function createGame(startsAt: Date, suffix: string) {
@@ -342,14 +364,35 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
   return { id: data.user.id, phone };
 }
 
-function futureBahrainStart(daysAhead: number, localHour: number) {
+function futureBahrainOpenQueueStart(slotOffset: number) {
+  assert(
+    Number.isInteger(slotOffset) && slotOffset >= 0,
+    "Open Queue slot offset must be a non-negative integer.",
+  );
   const nowInBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000);
-  return new Date(Date.UTC(
-    nowInBahrain.getUTCFullYear(),
-    nowInBahrain.getUTCMonth(),
-    nowInBahrain.getUTCDate() + daysAhead,
-    localHour - 3,
-  ));
+  let matchingSlot = 0;
+  for (let daysAhead = 3650; daysAhead < 4020; daysAhead += 1) {
+    const localDate = new Date(Date.UTC(
+      nowInBahrain.getUTCFullYear(),
+      nowInBahrain.getUTCMonth(),
+      nowInBahrain.getUTCDate() + daysAhead,
+      12,
+    ));
+    const weekday = localDate.getUTCDay();
+    if (weekday !== 2 && weekday !== 5) continue;
+    if (matchingSlot !== slotOffset) {
+      matchingSlot += 1;
+      continue;
+    }
+    return new Date(Date.UTC(
+      localDate.getUTCFullYear(),
+      localDate.getUTCMonth(),
+      localDate.getUTCDate(),
+      17,
+      30,
+    ));
+  }
+  throw new Error("Could not find a future Tuesday/Friday Open Queue slot.");
 }
 
 function requireEnv(name: string) {

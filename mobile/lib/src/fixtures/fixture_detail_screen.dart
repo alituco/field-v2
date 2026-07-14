@@ -18,19 +18,28 @@ class FixtureDetailScreen extends StatefulWidget {
     required this.fixture,
     required this.fixtureRepository,
     required this.myClanMembership,
+    this.refreshFixture,
+    this.sourceLabel,
+    this.showTeamRatings = true,
   });
 
   final Fixture fixture;
   final FixtureRepository fixtureRepository;
   final MyClanMembership? myClanMembership;
+  final Future<Fixture> Function()? refreshFixture;
+  final String? sourceLabel;
+  final bool showTeamRatings;
 
   @override
   State<FixtureDetailScreen> createState() => _FixtureDetailScreenState();
 }
 
+enum _FixtureDetailSection { watch, timeline, lineups }
+
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
+  _FixtureDetailSection _selectedSection = _FixtureDetailSection.watch;
   Timer? _refreshTimer;
   bool _isJoining = false;
   bool _isCompleting = false;
@@ -208,7 +217,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     _isRefreshing = true;
 
     try {
-      final fixture = await widget.fixtureRepository.getFixture(_fixture.id);
+      final fixture =
+          await (widget.refreshFixture?.call() ??
+              widget.fixtureRepository.getFixture(_fixture.id));
       if (!mounted) return;
       setState(() {
         _fixture = fixture;
@@ -252,6 +263,54 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     }
   }
 
+  Widget _buildSelectedSection() {
+    return switch (_selectedSection) {
+      _FixtureDetailSection.watch => Column(
+        children: [
+          _InfoGrid(fixture: _fixture),
+          if (_canSeePayments) ...[
+            const SizedBox(height: 18),
+            _TeamPaymentsPanel(
+              fixture: _fixture,
+              onOpenProfile: _openPlayerProfile,
+            ),
+          ],
+          if (_fixture.isFinal &&
+              (_fixture.homeSrChange != null ||
+                  _fixture.awaySrChange != null)) ...[
+            const SizedBox(height: 18),
+            _RatingUpdates(fixture: _fixture),
+          ],
+          const SizedBox(height: 18),
+          _BroadcastPanel(fixture: _fixture),
+        ],
+      ),
+      _FixtureDetailSection.timeline =>
+        _fixture.timeline.isEmpty
+            ? const _EmptyFixtureSection(
+                icon: Icons.timeline_rounded,
+                title: 'No timeline yet',
+                message: 'Match events will appear here as the game is played.',
+              )
+            : _MatchTimeline(
+                fixture: _fixture,
+                onOpenProfile: _openPlayerProfile,
+              ),
+      _FixtureDetailSection.lineups =>
+        _fixture.homeLineup.isEmpty && _fixture.awayLineup.isEmpty
+            ? const _EmptyFixtureSection(
+                icon: Icons.groups_2_rounded,
+                title: 'Lineups not available yet',
+                message:
+                    'The team formations will appear here once players are assigned.',
+              )
+            : _FormationLineupsPanel(
+                fixture: _fixture,
+                onOpenProfile: _openPlayerProfile,
+              ),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     final bottomAction = _fixture.isOpen
@@ -272,53 +331,64 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: FieldPageHeader(
-          title: 'Match Details',
+          title: widget.sourceLabel == null
+              ? 'Match Details'
+              : '${widget.sourceLabel} Match',
           showBack: true,
           onBack: () => Navigator.of(context).pop(_didChange),
         ),
         child: ListView(
           padding: fieldHeaderAwarePadding(
             context,
+            left: 0,
+            right: 0,
             bottom: bottomAction == null ? 32 : 116,
           ),
           children: [
-            _Scoreboard(fixture: _fixture),
-            if (_errorText != null) ...[
-              const SizedBox(height: 14),
-              _ErrorCallout(message: _errorText!),
-            ],
-            if (_fixture.isCancelled) ...[
-              const SizedBox(height: 18),
-              _CancellationPanel(fixture: _fixture),
-            ],
-            const SizedBox(height: 18),
-            _InfoGrid(fixture: _fixture),
-            if (_canSeePayments) ...[
-              const SizedBox(height: 18),
-              _TeamPaymentsPanel(
+            SizedBox(
+              width: double.infinity,
+              child: _Scoreboard(
                 fixture: _fixture,
-                onOpenProfile: _openPlayerProfile,
+                sourceLabel: widget.sourceLabel,
+                showTeamRatings: widget.showTeamRatings,
               ),
-            ],
-            if (_fixture.scorers.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              _GoalContributions(fixture: _fixture),
-            ],
-            if (_fixture.timeline.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              _MatchTimeline(
-                fixture: _fixture,
-                onOpenProfile: _openPlayerProfile,
+            ),
+            const SizedBox(height: 14),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: _FixtureSectionSwitcher(
+                selected: _selectedSection,
+                onSelected: (section) {
+                  if (_selectedSection == section) return;
+                  setState(() => _selectedSection = section);
+                },
               ),
-            ],
-            if (_fixture.isFinal &&
-                (_fixture.homeSrChange != null ||
-                    _fixture.awaySrChange != null)) ...[
-              const SizedBox(height: 18),
-              _RatingUpdates(fixture: _fixture),
-            ],
-            const SizedBox(height: 18),
-            _BroadcastPanel(fixture: _fixture),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                children: [
+                  if (_errorText != null) ...[
+                    const SizedBox(height: 14),
+                    _ErrorCallout(message: _errorText!),
+                  ],
+                  if (_fixture.isCancelled) ...[
+                    const SizedBox(height: 18),
+                    _CancellationPanel(fixture: _fixture),
+                  ],
+                  const SizedBox(height: 18),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    switchInCurve: Curves.easeOut,
+                    switchOutCurve: Curves.easeIn,
+                    child: KeyedSubtree(
+                      key: ValueKey(_selectedSection),
+                      child: _buildSelectedSection(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -327,10 +397,174 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   }
 }
 
+class _FixtureSectionSwitcher extends StatelessWidget {
+  const _FixtureSectionSwitcher({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final _FixtureDetailSection selected;
+  final ValueChanged<_FixtureDetailSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    const items = [
+      (_FixtureDetailSection.watch, Icons.play_circle_outline_rounded, 'WATCH'),
+      (_FixtureDetailSection.timeline, Icons.timeline_rounded, 'TIMELINE'),
+      (_FixtureDetailSection.lineups, Icons.groups_2_rounded, 'LINEUPS'),
+    ];
+
+    return Container(
+      key: const ValueKey('fixture-main-switcher'),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: fieldGray100,
+        border: Border.all(color: fieldGray200),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          for (final item in items)
+            Expanded(
+              child: _FixtureSectionButton(
+                icon: item.$2,
+                label: item.$3,
+                selected: selected == item.$1,
+                onTap: () => onSelected(item.$1),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FixtureSectionButton extends StatelessWidget {
+  const _FixtureSectionButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? Colors.white : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        key: ValueKey('fixture-section-${label.toLowerCase()}'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x12111827),
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: selected ? fieldEmerald600 : fieldGray500,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: selected ? fieldGray900 : fieldGray500,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyFixtureSection extends StatelessWidget {
+  const _EmptyFixtureSection({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: fieldGray400, size: 28),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldGray900,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 12,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _Scoreboard extends StatelessWidget {
-  const _Scoreboard({required this.fixture});
+  const _Scoreboard({
+    required this.fixture,
+    required this.sourceLabel,
+    required this.showTeamRatings,
+  });
 
   final Fixture fixture;
+  final String? sourceLabel;
+  final bool showTeamRatings;
 
   @override
   Widget build(BuildContext context) {
@@ -346,6 +580,7 @@ class _Scoreboard extends StatelessWidget {
         fixture.awayScore! > fixture.homeScore!;
 
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
         gradient: const RadialGradient(
@@ -380,28 +615,55 @@ class _Scoreboard extends StatelessWidget {
           ),
           Column(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: fixture.isLive
-                      ? const Color(0xFFEF4444)
-                      : fixture.isFinal
-                      ? Colors.white.withValues(alpha: 0.18)
-                      : fieldEmerald600,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  fixture.detailStatusLabel.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (sourceLabel != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 11,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        sourceLabel!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                  ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 11,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: fixture.isLive
+                          ? const Color(0xFFEF4444)
+                          : fixture.isFinal
+                          ? Colors.white.withValues(alpha: 0.18)
+                          : fieldEmerald600,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      fixture.detailStatusLabel.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
               if (fixture.isLive) ...[
                 const SizedBox(height: 10),
@@ -414,6 +676,8 @@ class _Scoreboard extends StatelessWidget {
                     child: _ScoreboardClan(
                       clan: fixture.homeClan,
                       winner: homeWin,
+                      showRating: showTeamRatings,
+                      averagePlayerRating: fixture.homeAveragePlayerRating,
                     ),
                   ),
                   Padding(
@@ -467,10 +731,20 @@ class _Scoreboard extends StatelessWidget {
                         : _ScoreboardClan(
                             clan: fixture.awayClan!,
                             winner: awayWin,
+                            showRating: showTeamRatings,
+                            averagePlayerRating:
+                                fixture.awayAveragePlayerRating,
                           ),
                   ),
                 ],
               ),
+              if (fixture.matchAveragePlayerRating != null) ...[
+                const SizedBox(height: 18),
+                _MatchAverageRatingPill(
+                  average: fixture.matchAveragePlayerRating!,
+                  spread: fixture.teamRatingSpread,
+                ),
+              ],
             ],
           ),
         ],
@@ -480,10 +754,17 @@ class _Scoreboard extends StatelessWidget {
 }
 
 class _ScoreboardClan extends StatelessWidget {
-  const _ScoreboardClan({required this.clan, required this.winner});
+  const _ScoreboardClan({
+    required this.clan,
+    required this.winner,
+    required this.showRating,
+    required this.averagePlayerRating,
+  });
 
   final FixtureClan clan;
   final bool winner;
+  final bool showRating;
+  final int? averagePlayerRating;
 
   @override
   Widget build(BuildContext context) {
@@ -503,21 +784,68 @@ class _ScoreboardClan extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 8),
-        TierBadge(rank: clan.rank, small: true),
-        const SizedBox(height: 6),
-        Text(
-          '${clan.skillRating} SR${clan.regionRank == null ? '' : ' · ${_regionName(clan.region)} #${clan.regionRank}'}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: fieldGray400,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
+        if (averagePlayerRating case final rating?) ...[
+          const SizedBox(height: 8),
+          Text(
+            '$rating AVG PLAYER SR',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldEmerald200,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.2,
+            ),
           ),
-        ),
+          const SizedBox(height: 10),
+        ] else if (showRating) ...[
+          const SizedBox(height: 8),
+          TierBadge(rank: clan.rank, small: true),
+          const SizedBox(height: 6),
+          Text(
+            '${clan.skillRating} SR${clan.regionRank == null ? '' : ' · ${_regionName(clan.region)} #${clan.regionRank}'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldGray400,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ] else
+          const SizedBox(height: 10),
       ],
+    );
+  }
+}
+
+class _MatchAverageRatingPill extends StatelessWidget {
+  const _MatchAverageRatingPill({required this.average, required this.spread});
+
+  final int average;
+  final int? spread;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        'MATCH AVG $average SR${spread == null ? '' : '  ·  $spread SR SPREAD'}',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.4,
+        ),
+      ),
     );
   }
 }
@@ -636,116 +964,6 @@ class _LiveMinutePillState extends State<_LiveMinutePill> {
           letterSpacing: 0,
         ),
       ),
-    );
-  }
-}
-
-class _GoalContributions extends StatelessWidget {
-  const _GoalContributions({required this.fixture});
-
-  final Fixture fixture;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: fieldGray100),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.sports_soccer_rounded, color: fieldEmerald600),
-              SizedBox(width: 8),
-              Text(
-                'GOALS & ASSISTS',
-                style: TextStyle(
-                  color: fieldGray900,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          for (final scorer in fixture.scorers) ...[
-            _GoalContributionRow(fixture: fixture, scorer: scorer),
-            if (scorer != fixture.scorers.last)
-              const Divider(height: 18, color: fieldGray100),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _GoalContributionRow extends StatelessWidget {
-  const _GoalContributionRow({required this.fixture, required this.scorer});
-
-  final Fixture fixture;
-  final FixtureScorer scorer;
-
-  @override
-  Widget build(BuildContext context) {
-    final team = _teamTagFor(fixture, scorer.clanId);
-    final assistLabel = scorer.assistProfileId == null
-        ? 'No assist'
-        : 'Assist ${scorer.assistName}';
-
-    return Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: const Color(0xFFECFDF5),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            '${scorer.minute}\'',
-            style: const TextStyle(
-              color: fieldEmerald600,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                scorer.scorerName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                '$team · $assistLabel',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: fieldGray500,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -941,6 +1159,450 @@ class _InfoGrid extends StatelessWidget {
       ],
     );
   }
+}
+
+class _FormationLineupsPanel extends StatelessWidget {
+  const _FormationLineupsPanel({
+    required this.fixture,
+    required this.onOpenProfile,
+  });
+
+  final Fixture fixture;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final homePlayers = _visibleLineup(fixture.homeLineup);
+    final awayPlayers = _visibleLineup(fixture.awayLineup);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D111827),
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.groups_2_rounded, color: fieldBlue600, size: 19),
+              SizedBox(width: 8),
+              Text(
+                'TEAM LINEUPS',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            fixture.teamRatingSpread == null
+                ? 'Both 7-a-side formations, including each keeper.'
+                : 'Balanced to a ${fixture.teamRatingSpread} SR average spread.',
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          AspectRatio(
+            aspectRatio: 0.5,
+            child: _FormationPitch(
+              homeName: fixture.homeClan.name,
+              awayName: fixture.awayClan?.name ?? 'Away Team',
+              homeAverage: fixture.homeAveragePlayerRating,
+              awayAverage: fixture.awayAveragePlayerRating,
+              homePlayers: _formationEntries(homePlayers),
+              awayPlayers: _formationEntries(awayPlayers),
+              onOpenProfile: onOpenProfile,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FormationPitch extends StatelessWidget {
+  const _FormationPitch({
+    required this.homeName,
+    required this.awayName,
+    required this.homeAverage,
+    required this.awayAverage,
+    required this.homePlayers,
+    required this.awayPlayers,
+    required this.onOpenProfile,
+  });
+
+  final String homeName;
+  final String awayName;
+  final int? homeAverage;
+  final int? awayAverage;
+  final List<_FormationEntry> homePlayers;
+  final List<_FormationEntry> awayPlayers;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      key: const ValueKey('fixture-formation-pitch'),
+      borderRadius: BorderRadius.circular(22),
+      child: CustomPaint(
+        painter: const _PitchPainter(),
+        child: Stack(
+          children: [
+            Positioned(
+              top: 13,
+              left: 13,
+              right: 13,
+              child: _PitchTeamLabel(
+                name: homeName,
+                averageRating: homeAverage,
+                alignRight: false,
+              ),
+            ),
+            Positioned.fill(
+              top: 44,
+              bottom: 44,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 7),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: _TeamFormation(
+                        entries: homePlayers,
+                        direction: _FormationDirection.down,
+                        onOpenProfile: onOpenProfile,
+                      ),
+                    ),
+                    Expanded(
+                      child: _TeamFormation(
+                        entries: awayPlayers,
+                        direction: _FormationDirection.up,
+                        onOpenProfile: onOpenProfile,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 13,
+              left: 13,
+              right: 13,
+              child: _PitchTeamLabel(
+                name: awayName,
+                averageRating: awayAverage,
+                alignRight: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _FormationDirection { down, up }
+
+class _TeamFormation extends StatelessWidget {
+  const _TeamFormation({
+    required this.entries,
+    required this.direction,
+    required this.onOpenProfile,
+  });
+
+  final List<_FormationEntry> entries;
+  final _FormationDirection direction;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) {
+      return const Center(
+        child: Text(
+          'LINEUP PENDING',
+          style: TextStyle(
+            color: Color(0xBFFFFFFF),
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1,
+          ),
+        ),
+      );
+    }
+
+    const orderedRoles = ['GK', 'DEF', 'MID', 'ATT'];
+    final roles = direction == _FormationDirection.down
+        ? orderedRoles
+        : orderedRoles.reversed.toList();
+
+    return Column(
+      children: [
+        for (final role in roles)
+          Expanded(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                for (final entry in entries.where(
+                  (entry) => entry.role == role,
+                ))
+                  _FormationPlayerMarker(
+                    entry: entry,
+                    onTap: () => onOpenProfile(entry.player.id),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _FormationPlayerMarker extends StatelessWidget {
+  const _FormationPlayerMarker({required this.entry, required this.onTap});
+
+  final _FormationEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = entry.player;
+    final avatarUrl = player.avatarUrl?.trim();
+    final rating = player.displayedRating;
+    return SizedBox(
+      width: 96,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: EdgeInsets.zero,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: player.isMe ? fieldEmerald200 : Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x35111827),
+                        blurRadius: 5,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: CircleAvatar(
+                    radius: 22,
+                    backgroundColor: player.side.toUpperCase() == 'AWAY'
+                        ? fieldGray900
+                        : fieldGray100,
+                    backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+                        ? NetworkImage(avatarUrl)
+                        : null,
+                    child: avatarUrl != null && avatarUrl.isNotEmpty
+                        ? null
+                        : Text(
+                            player.initials,
+                            style: TextStyle(
+                              color: player.side.toUpperCase() == 'AWAY'
+                                  ? Colors.white
+                                  : fieldGray700,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  player.isMe
+                      ? '${player.displayName} (You)'
+                      : player.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    height: 1,
+                    fontWeight: FontWeight.w900,
+                    shadows: [Shadow(color: Color(0x80111827), blurRadius: 3)],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  rating == null ? entry.role : '${entry.role} · $rating SR',
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    height: 1,
+                    fontWeight: FontWeight.w800,
+                    shadows: [Shadow(color: Color(0x80111827), blurRadius: 2)],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PitchTeamLabel extends StatelessWidget {
+  const _PitchTeamLabel({
+    required this.name,
+    required this.averageRating,
+    required this.alignRight,
+  });
+
+  final String name;
+  final int? averageRating;
+  final bool alignRight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignRight ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xC9111827),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          '${name.toUpperCase()}${averageRating == null ? '' : ' · $averageRating AVG SR'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 8,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PitchPainter extends CustomPainter {
+  const _PitchPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bounds = Offset.zero & size;
+    canvas.drawRect(bounds, Paint()..color = const Color(0xFF07845F));
+
+    final stripePaint = Paint()..color = Colors.white.withValues(alpha: 0.055);
+    final stripeHeight = size.height / 8;
+    for (var index = 0; index < 8; index += 2) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, index * stripeHeight, size.width, stripeHeight),
+        stripePaint,
+      );
+    }
+
+    final linePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.52)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8;
+    final inset = Rect.fromLTWH(14, 14, size.width - 28, size.height - 28);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(inset, const Radius.circular(16)),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(14, size.height / 2),
+      Offset(size.width - 14, size.height / 2),
+      linePaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      size.width * 0.16,
+      linePaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      2.2,
+      Paint()..color = Colors.white.withValues(alpha: 0.62),
+    );
+    final boxWidth = size.width * 0.48;
+    final boxHeight = size.height * 0.12;
+    canvas.drawRect(
+      Rect.fromLTWH((size.width - boxWidth) / 2, 14, boxWidth, boxHeight),
+      linePaint,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(
+        (size.width - boxWidth) / 2,
+        size.height - 14 - boxHeight,
+        boxWidth,
+        boxHeight,
+      ),
+      linePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PitchPainter oldDelegate) => false;
+}
+
+class _FormationEntry {
+  const _FormationEntry({required this.player, required this.role});
+
+  final FixtureLineupPlayer player;
+  final String role;
+}
+
+List<FixtureLineupPlayer> _visibleLineup(List<FixtureLineupPlayer> players) {
+  final played = players.where((player) => player.played).toList();
+  final visible = played.isEmpty ? players : played;
+  return visible.take(7).toList();
+}
+
+List<_FormationEntry> _formationEntries(List<FixtureLineupPlayer> players) {
+  const fallback = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'ATT', 'ATT'];
+  return [
+    for (var index = 0; index < players.length; index++)
+      _FormationEntry(
+        player: players[index],
+        role: _formationRole(
+          players[index].role,
+          fallback[index % fallback.length],
+        ),
+      ),
+  ];
+}
+
+String _formationRole(String rawRole, String fallback) {
+  final role = rawRole.trim().toUpperCase();
+  if (role == 'GK' || role.contains('GOALKEEP')) return 'GK';
+  if (role == 'DEF' || role.contains('DEFEND')) return 'DEF';
+  if (role == 'MID' || role.contains('MIDFIELD')) return 'MID';
+  if (role == 'ATT' || role.contains('ATTACK') || role.contains('FORWARD')) {
+    return 'ATT';
+  }
+  return fallback;
 }
 
 class _CancellationPanel extends StatelessWidget {

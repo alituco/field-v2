@@ -7,9 +7,12 @@ import {
 } from "@/lib/broadcast-agent-auth";
 import {
   getFixtureBroadcast,
+  getOpenQueueBroadcast,
   getStreamCredentials,
   markBroadcastStopped,
+  markOpenQueueBroadcastStopped,
   syncBroadcastFromCloudflare,
+  syncOpenQueueBroadcastFromCloudflare,
 } from "@/lib/broadcasts";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
@@ -42,7 +45,7 @@ export async function GET(request: NextRequest) {
 
     const { data: queued, error: queuedError } = await db
       .from("broadcast_commands")
-      .select("id,fixture_id,action")
+      .select("id,fixture_id,open_queue_game_id,action")
       .eq("device_key", configuredKey)
       .eq("status", "PENDING")
       .lte("available_at", new Date().toISOString())
@@ -57,18 +60,31 @@ export async function GET(request: NextRequest) {
       .update({ status: "CLAIMED", claimed_at: new Date().toISOString() })
       .eq("id", queued.id)
       .eq("status", "PENDING")
-      .select("id,fixture_id,action")
+      .select("id,fixture_id,open_queue_game_id,action")
       .maybeSingle();
     if (claimError) throw claimError;
     if (!claimed) return NextResponse.json({ command: null });
 
-    const fixtureId = String(claimed.fixture_id);
-    const broadcast = await getFixtureBroadcast(db, fixtureId);
+    const fixtureId = claimed.fixture_id ? String(claimed.fixture_id) : null;
+    const openQueueGameId = claimed.open_queue_game_id
+      ? String(claimed.open_queue_game_id)
+      : null;
+    const matchId = fixtureId ?? openQueueGameId;
+    if (!matchId || Boolean(fixtureId) === Boolean(openQueueGameId)) {
+      throw new Error("Broadcast command has an invalid match target.");
+    }
+    const isSolo = openQueueGameId !== null;
+    const broadcast = isSolo
+      ? await getOpenQueueBroadcast(db, matchId)
+      : await getFixtureBroadcast(db, matchId);
     if (!broadcast?.liveInputId) throw new Error("Fixture stream input is missing.");
 
     const command: Record<string, unknown> = {
       id: String(claimed.id),
+      matchKind: isSolo ? "SOLO" : "CLAN",
+      matchId,
       fixtureId,
+      openQueueGameId,
       action: String(claimed.action),
     };
 
@@ -79,9 +95,10 @@ export async function GET(request: NextRequest) {
         overlayOrigin.hostname = "127.0.0.1";
       }
       const overlayUrl = new URL(
-        `/broadcast/obs/${fixtureId}`,
+        `/broadcast/obs/${matchId}`,
         overlayOrigin,
       );
+      if (isSolo) overlayUrl.searchParams.set("kind", "solo");
       overlayUrl.hash = `token=${encodeURIComponent(broadcastOverlayToken())}`;
       command.rtmpsUrl = credentials.url;
       command.streamKey = credentials.streamKey;
@@ -109,7 +126,7 @@ export async function POST(request: NextRequest) {
     const db = createSupabaseAdmin();
     const { data: command, error: commandError } = await db
       .from("broadcast_commands")
-      .select("id,fixture_id,device_key,action,status")
+      .select("id,fixture_id,open_queue_game_id,device_key,action,status")
       .eq("id", body.commandId)
       .eq("device_key", broadcastDeviceKey())
       .single();
@@ -128,24 +145,36 @@ export async function POST(request: NextRequest) {
       .eq("id", command.id);
     if (ackError) throw ackError;
 
-    const fixtureId = String(command.fixture_id);
+    const fixtureId = command.fixture_id ? String(command.fixture_id) : null;
+    const openQueueGameId = command.open_queue_game_id
+      ? String(command.open_queue_game_id)
+      : null;
+    const matchId = fixtureId ?? openQueueGameId;
+    if (!matchId || Boolean(fixtureId) === Boolean(openQueueGameId)) {
+      throw new Error("Broadcast command has an invalid match target.");
+    }
+    const isSolo = openQueueGameId !== null;
+    const broadcastTable = isSolo ? "open_queue_broadcasts" : "fixture_broadcasts";
+    const broadcastIdColumn = isSolo ? "game_id" : "fixture_id";
     if (ok && command.action === "STOP_STREAM") {
-      await markBroadcastStopped(db, fixtureId);
+      if (isSolo) await markOpenQueueBroadcastStopped(db, matchId);
+      else await markBroadcastStopped(db, matchId);
     } else if (ok) {
       if (command.action === "START_STREAM" && body.obsStreaming === true) {
         const { error: startedAtError } = await db
-          .from("fixture_broadcasts")
+          .from(broadcastTable)
           .update({ stream_started_at: completedAt })
-          .eq("fixture_id", fixtureId)
+          .eq(broadcastIdColumn, matchId)
           .is("stream_started_at", null);
         if (startedAtError) throw startedAtError;
       }
-      await syncBroadcastFromCloudflare(db, fixtureId);
+      if (isSolo) await syncOpenQueueBroadcastFromCloudflare(db, matchId);
+      else await syncBroadcastFromCloudflare(db, matchId);
     } else {
       await db
-        .from("fixture_broadcasts")
+        .from(broadcastTable)
         .update({ status: "ERROR", error_message: errorMessage })
-        .eq("fixture_id", fixtureId);
+        .eq(broadcastIdColumn, matchId);
     }
 
     await db
@@ -158,6 +187,7 @@ export async function POST(request: NextRequest) {
           : "READY",
         obs_streaming: body.obsStreaming === true,
         current_fixture_id: body.obsStreaming ? fixtureId : null,
+        current_open_queue_game_id: body.obsStreaming ? openQueueGameId : null,
         error_message: errorMessage,
         last_seen_at: new Date().toISOString(),
       })

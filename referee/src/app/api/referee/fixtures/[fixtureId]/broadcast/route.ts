@@ -75,12 +75,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
       if (!device || device.status === "OFFLINE" || !device.obsConnected) {
         throw new Error("Camera laptop is offline. Open the Field broadcaster first.");
       }
+      if (
+        device.obsStreaming &&
+        (device.currentFixtureId !== fixtureId || device.currentOpenQueueGameId)
+      ) {
+        throw new Error("Camera is already streaming another match.");
+      }
       await queueBroadcastStart(
         refereeContext.db,
         fixtureId,
         refereeContext.referee.profileId,
       );
     } else if (body.action === "stop") {
+      const device = await getBroadcastDevice(refereeContext.db);
+      if (
+        device?.obsStreaming &&
+        (device.currentFixtureId !== fixtureId || device.currentOpenQueueGameId)
+      ) {
+        throw new Error("Camera is streaming another match and cannot be stopped here.");
+      }
       await queueBroadcastStop(
         refereeContext.db,
         fixtureId,

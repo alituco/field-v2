@@ -1,4 +1,12 @@
-export type FixtureStatus = "OPEN" | "SCHEDULED" | "LIVE" | "FINAL" | "CANCELLED";
+export type MatchKind = "CLAN" | "SOLO";
+
+export type FixtureStatus =
+  | "OPEN"
+  | "FULL"
+  | "SCHEDULED"
+  | "LIVE"
+  | "FINAL"
+  | "CANCELLED";
 
 export type ClockStatus = "NOT_STARTED" | "RUNNING" | "PAUSED" | "ENDED";
 
@@ -25,7 +33,9 @@ export type BroadcastStatus =
   | "ERROR";
 
 export type FixtureBroadcastState = {
+  matchKind?: MatchKind;
   fixtureId: string;
+  openQueueGameId?: string | null;
   liveInputId: string | null;
   activeVideoId: string | null;
   status: BroadcastStatus;
@@ -45,6 +55,7 @@ export type BroadcastDeviceState = {
   obsConnected: boolean;
   obsStreaming: boolean;
   currentFixtureId: string | null;
+  currentOpenQueueGameId?: string | null;
   lastSeenAt: string | null;
   errorMessage: string | null;
 };
@@ -69,6 +80,7 @@ export type Player = {
   displayName: string;
   username: string | null;
   avatarUrl: string | null;
+  ratingAtTeamAssignment: number | null;
 };
 
 export type FixtureClock = {
@@ -116,6 +128,7 @@ export type BlueCard = {
 };
 
 export type RefereeFixture = {
+  matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
   venue: string;
@@ -126,6 +139,12 @@ export type RefereeFixture = {
   cancellationReason: string | null;
   cancelledAt: string | null;
   cancelledBy: string | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  whiteAverageSr: number | null;
+  blackAverageSr: number | null;
+  matchAverageSr: number | null;
+  teamSrSpread: number | null;
   homeClan: Clan;
   awayClan: Clan;
   players: Player[];
@@ -154,6 +173,7 @@ export type RefereeListItem = {
 };
 
 export type AssignableFixture = {
+  matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
   venue: string;

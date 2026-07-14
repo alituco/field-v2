@@ -4,13 +4,14 @@ type RouteContext = {
   params: Promise<{ fixtureId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   const { fixtureId } = await context.params;
   if (!isUuid(fixtureId)) {
     return new NextResponse("Invalid fixture.", { status: 404 });
   }
 
-  return new NextResponse(overlayHtml(fixtureId), {
+  const isSolo = new URL(request.url).searchParams.get("kind") === "solo";
+  return new NextResponse(overlayHtml(fixtureId, isSolo), {
     headers: {
       "Cache-Control": "no-store",
       "Content-Type": "text/html; charset=utf-8",
@@ -18,8 +19,11 @@ export async function GET(_request: Request, context: RouteContext) {
   });
 }
 
-function overlayHtml(fixtureId: string) {
+function overlayHtml(fixtureId: string, isSolo: boolean) {
   const serializedFixtureId = JSON.stringify(fixtureId);
+  const serializedApiPath = JSON.stringify(
+    isSolo ? "/api/broadcast-overlay/open-queue/" : "/api/broadcast-overlay/",
+  );
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -104,7 +108,7 @@ function overlayHtml(fixtureId: string) {
       const load = async () => {
         if (!token) return;
         try {
-          const response = await fetch("/api/broadcast-overlay/" + fixtureId, { headers: { authorization: "Bearer " + token }, cache: "no-store" });
+          const response = await fetch(${serializedApiPath} + fixtureId, { headers: { authorization: "Bearer " + token }, cache: "no-store" });
           if (!response.ok) return;
           payload = await response.json();
           render();
