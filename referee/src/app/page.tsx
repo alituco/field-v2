@@ -1535,7 +1535,7 @@ function TimerPanel({
         <div className="solo-sr-summary">
           <span>
             <strong>{formatPlayerSr(fixture.matchAverageSr)}</strong>
-            Match avg player SR
+            Match avg player rating
           </span>
           <span>
             <strong>{formatPlayerSr(fixture.teamSrSpread)}</strong>
@@ -1936,7 +1936,7 @@ function ScoreTeam({
       </div>
       <div className="name" style={{ color: "rgba(255,255,255,0.62)" }}>
         {fixture.matchKind === "SOLO"
-          ? `${formatPlayerSr(teamAverageSr(fixture, clan.id))} AVG PLAYER SR`
+          ? `${formatPlayerSr(teamAverageSr(fixture, clan.id))} AVG PLAYER RATING`
           : `${clan.skillRating} SR`}
       </div>
     </div>

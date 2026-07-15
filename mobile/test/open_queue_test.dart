@@ -101,6 +101,33 @@ void main() {
     expect(game.timeLabel, '8:30 PM–9:30 PM');
   });
 
+  test('booking game JSON keeps the live confirmed player count', () {
+    final booking = OpenQueueBooking.fromJson({
+      'id': 'booking',
+      'game_id': 'game',
+      'profile_id': 'profile',
+      'role': 'MID',
+      'status': 'CONFIRMED',
+      'amount_paid_fils': 3000,
+      'booked_at': '2026-07-14T12:00:00Z',
+      'game': {
+        'id': 'game',
+        'status': 'OPEN',
+        'venue': 'TFA, Saar',
+        'starts_at': '2026-07-15T17:30:00Z',
+        'ends_at': '2026-07-15T18:30:00Z',
+        'timezone': 'Asia/Bahrain',
+        'price_fils': 3000,
+        'age_label': 'All ages',
+        'capacity': 12,
+        'confirmed_count': 8,
+      },
+    });
+
+    expect(booking.game.confirmedCount, 8);
+    expect(booking.game.isFull, isFalse);
+  });
+
   test('solo match detail maps teams, clock, goals, and replay data', () {
     final detail = OpenQueueMatchDetail.fromJson({
       'id': 'solo-detail',
@@ -203,7 +230,7 @@ void main() {
     );
     expect(
       fixture.highlightMoments.single.end,
-      const Duration(minutes: 24, seconds: 21),
+      const Duration(minutes: 24, seconds: 31),
     );
   });
 }

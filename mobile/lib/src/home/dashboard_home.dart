@@ -704,6 +704,15 @@ class _ConfirmedQueueHero extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final game = booking.game;
+    final isConfirmed = game.isFull;
+    final isClose = game.isToday || game.isTomorrow;
+    final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
+    final accent = isConfirmed ? fieldEmerald100 : const Color(0xFFFEF3C7);
+    final dateForeground = isConfirmed
+        ? fieldEmerald800
+        : const Color(0xFF78350F);
+
     return Material(
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(28),
@@ -713,15 +722,23 @@ class _ConfirmedQueueHero extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
-            gradient: const RadialGradient(
+            gradient: RadialGradient(
               center: Alignment.topLeft,
               radius: 1.4,
-              colors: [fieldEmerald500, fieldEmerald600, Color(0xFF0B3D2E)],
+              colors: isConfirmed
+                  ? const [fieldEmerald500, fieldEmerald600, Color(0xFF0B3D2E)]
+                  : const [
+                      Color(0xFFF59E0B),
+                      Color(0xFF92400E),
+                      Color(0xFF3B2106),
+                    ],
             ),
             borderRadius: BorderRadius.circular(28),
-            boxShadow: const [
+            boxShadow: [
               BoxShadow(
-                color: Color(0x4410B981),
+                color: isConfirmed
+                    ? const Color(0x4410B981)
+                    : const Color(0x44F59E0B),
                 blurRadius: 22,
                 offset: Offset(0, 10),
               ),
@@ -730,43 +747,135 @@ class _ConfirmedQueueHero extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Row(
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  Icon(
-                    Icons.check_circle_rounded,
-                    color: Colors.white,
-                    size: 19,
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        isConfirmed
+                            ? Icons.check_circle_rounded
+                            : Icons.hourglass_top_rounded,
+                        color: Colors.white,
+                        size: 19,
+                      ),
+                      const SizedBox(width: 7),
+                      Text(
+                        isConfirmed ? 'MATCH CONFIRMED' : 'MATCH PENDING',
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ],
                   ),
-                  SizedBox(width: 7),
-                  Text(
-                    'MATCH CONFIRMED',
-                    style: TextStyle(
-                      color: fieldEmerald100,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      border: Border.all(
+                        color: Colors.white.withValues(alpha: 0.2),
+                      ),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      '$confirmedCount / ${game.capacity} CONFIRMED',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.3,
+                      ),
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 11),
               Text(
-                '${booking.role.label} · ${booking.game.startTimeLabel}',
+                '${booking.role.label} · ${game.startTimeLabel}',
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 23,
                   fontWeight: FontWeight.w900,
                 ),
               ),
-              const SizedBox(height: 5),
-              Text(
-                booking.team == null
-                    ? '${booking.game.venue} · ${booking.game.dateGroup}'
-                    : '${booking.team} TEAM · ${_bookingTeamAverage(booking)} AVG SR',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
                 ),
+                decoration: BoxDecoration(
+                  color: isClose
+                      ? Colors.white
+                      : Colors.white.withValues(alpha: 0.12),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: isClose ? 0.9 : 0.2),
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_month_rounded,
+                      color: isClose ? dateForeground : Colors.white,
+                      size: 18,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        game.prominentDateLabel,
+                        style: TextStyle(
+                          color: isClose ? dateForeground : Colors.white,
+                          fontSize: isClose ? 15 : 13,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: isClose ? 0.5 : 0.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(
+                    Icons.location_on_outlined,
+                    color: Colors.white70,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      game.venue,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (booking.team != null)
+                    Text(
+                      '${booking.team} · ${_bookingTeamAverage(booking)} AVG SR',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                ],
               ),
               const SizedBox(height: 13),
               const Text(

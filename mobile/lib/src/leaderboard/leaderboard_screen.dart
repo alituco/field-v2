@@ -530,9 +530,12 @@ class _PlayerRatingRow extends StatelessWidget {
           child: Row(
             children: [
               SizedBox(
-                width: 30,
+                width: 42,
                 child: Text(
                   '#${player.rank}',
+                  maxLines: 1,
+                  softWrap: false,
+                  overflow: TextOverflow.visible,
                   style: TextStyle(
                     color: player.rank <= 3 ? fieldEmerald700 : fieldGray400,
                     fontWeight: FontWeight.w900,

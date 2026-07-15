@@ -93,14 +93,42 @@ class OpenQueueGame {
 
   DateTime get bahrainEndsAt => endsAt.toUtc().add(const Duration(hours: 3));
 
-  String get dateGroup {
+  bool get isToday {
     final value = bahrainStartsAt;
     final now = DateTime.now().toUtc().add(const Duration(hours: 3));
-    final date = DateTime.utc(value.year, value.month, value.day);
-    final today = DateTime.utc(now.year, now.month, now.day);
-    if (date == today) return 'TODAY';
-    if (date == today.add(const Duration(days: 1))) return 'TOMORROW';
+    return value.year == now.year &&
+        value.month == now.month &&
+        value.day == now.day;
+  }
+
+  bool get isTomorrow {
+    final value = bahrainStartsAt;
+    final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+    final tomorrow = DateTime.utc(
+      now.year,
+      now.month,
+      now.day,
+    ).add(const Duration(days: 1));
+    return value.year == tomorrow.year &&
+        value.month == tomorrow.month &&
+        value.day == tomorrow.day;
+  }
+
+  String get calendarDateLabel {
+    final value = bahrainStartsAt;
     return '${_weekday(value.weekday)}, ${value.day} ${_month(value.month)}';
+  }
+
+  String get prominentDateLabel {
+    if (isToday) return 'TODAY · $calendarDateLabel';
+    if (isTomorrow) return 'TOMORROW · $calendarDateLabel';
+    return calendarDateLabel;
+  }
+
+  String get dateGroup {
+    if (isToday) return 'TODAY';
+    if (isTomorrow) return 'TOMORROW';
+    return calendarDateLabel;
   }
 
   String get timeLabel => '${_clock(bahrainStartsAt)}–${_clock(bahrainEndsAt)}';
@@ -159,7 +187,7 @@ class OpenQueueGame {
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
-      confirmedCount: 0,
+      confirmedCount: _asInt(json['confirmed_count']),
       spots: const {},
       whiteAverageSr: _asNullableRoundedInt(json['white_average_sr']),
       blackAverageSr: _asNullableRoundedInt(json['black_average_sr']),
@@ -394,6 +422,23 @@ class OpenQueueBooking {
   final int? refundPercent;
   final int? refundAmountFils;
   final OpenQueueGame game;
+
+  OpenQueueBooking copyWith({OpenQueueGame? game}) {
+    return OpenQueueBooking(
+      id: id,
+      gameId: gameId,
+      profileId: profileId,
+      role: role,
+      status: status,
+      team: team,
+      amountPaidFils: amountPaidFils,
+      bookedAt: bookedAt,
+      cancelledAt: cancelledAt,
+      refundPercent: refundPercent,
+      refundAmountFils: refundAmountFils,
+      game: game ?? this.game,
+    );
+  }
 
   factory OpenQueueBooking.fromJson(Map<String, dynamic> json) {
     final rawGame = json['game'] ?? json['open_queue_games'];

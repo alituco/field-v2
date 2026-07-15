@@ -135,15 +135,20 @@ export async function POST(request: NextRequest) {
     const completedAt = new Date().toISOString();
     const ok = body.ok === true;
     const errorMessage = ok ? null : body.errorMessage?.trim() || "OBS command failed.";
-    const { error: ackError } = await db
-      .from("broadcast_commands")
-      .update({
-        status: ok ? "ACKNOWLEDGED" : "FAILED",
-        completed_at: completedAt,
-        error_message: errorMessage,
-      })
-      .eq("id", command.id);
-    if (ackError) throw ackError;
+    const repeatedSuccessfulStop = ok &&
+      command.action === "STOP_STREAM" &&
+      command.status === "ACKNOWLEDGED";
+    if (!repeatedSuccessfulStop) {
+      const { error: ackError } = await db
+        .from("broadcast_commands")
+        .update({
+          status: ok ? "ACKNOWLEDGED" : "FAILED",
+          completed_at: completedAt,
+          error_message: errorMessage,
+        })
+        .eq("id", command.id);
+      if (ackError) throw ackError;
+    }
 
     const fixtureId = command.fixture_id ? String(command.fixture_id) : null;
     const openQueueGameId = command.open_queue_game_id

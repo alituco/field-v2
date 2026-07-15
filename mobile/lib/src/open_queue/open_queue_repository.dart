@@ -106,7 +106,7 @@ class SupabaseOpenQueueRepository implements OpenQueueRepository {
         OpenQueueBooking.fromJson(Map<String, dynamic>.from(row as Map)),
     ]..removeWhere((booking) => !booking.game.startsAt.isAfter(DateTime.now()));
     bookings.sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
-    return bookings.isEmpty ? null : bookings.first;
+    return bookings.isEmpty ? null : _hydrateBookingGame(bookings.first);
   }
 
   @override
@@ -130,7 +130,9 @@ class SupabaseOpenQueueRepository implements OpenQueueRepository {
         .select(_bookingSelect)
         .eq('id', bookingId as String)
         .single();
-    return OpenQueueBooking.fromJson(Map<String, dynamic>.from(response));
+    return _hydrateBookingGame(
+      OpenQueueBooking.fromJson(Map<String, dynamic>.from(response)),
+    );
   }
 
   @override
@@ -160,5 +162,13 @@ class SupabaseOpenQueueRepository implements OpenQueueRepository {
         .eq('id', bookingId)
         .single();
     return OpenQueueBooking.fromJson(Map<String, dynamic>.from(response));
+  }
+
+  Future<OpenQueueBooking> _hydrateBookingGame(OpenQueueBooking booking) async {
+    final games = await listGames();
+    for (final game in games) {
+      if (game.id == booking.gameId) return booking.copyWith(game: game);
+    }
+    return booking;
   }
 }

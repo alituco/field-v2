@@ -458,17 +458,46 @@ class Fixture {
   }
 
   /// Goal windows aligned from the finalized replay rather than its delayed
-  /// live-status timestamp. Cloudflare's replay duration and our recorded stop
-  /// time identify video time zero even when live startup reporting was late.
+  /// live-status timestamp. Both known recording boundaries are considered
+  /// because either boundary can be stale: startup reporting can be delayed,
+  /// while a repeated stop request can move the recorded stop time forward.
   List<FixtureHighlightMoment> highlightMomentsForReplay(
     Duration replayDuration,
   ) {
+    final startedAtMoments = _highlightMomentsFromOrigin(
+      broadcast?.streamStartedAt,
+    );
     final streamStoppedAt = broadcast?.streamStoppedAt;
-    final replayOrigin =
-        streamStoppedAt != null && replayDuration > Duration.zero
-        ? streamStoppedAt.subtract(replayDuration)
-        : broadcast?.streamStartedAt;
-    return _highlightMomentsFromOrigin(replayOrigin);
+    if (streamStoppedAt == null || replayDuration <= Duration.zero) {
+      return startedAtMoments;
+    }
+
+    final stoppedAtMoments = _highlightMomentsFromOrigin(
+      streamStoppedAt.subtract(replayDuration),
+    );
+    final stoppedAtUsableGoals = _usableHighlightCount(
+      stoppedAtMoments,
+      replayDuration,
+    );
+    final startedAtUsableGoals = _usableHighlightCount(
+      startedAtMoments,
+      replayDuration,
+    );
+
+    // Prefer the stop-derived boundary on a tie. It is the more accurate
+    // correction when the live-start notification arrived late, and preserves
+    // the existing replay alignment in that case. The start boundary only
+    // takes over when it demonstrably recovers more playable goal windows.
+    return startedAtUsableGoals > stoppedAtUsableGoals
+        ? startedAtMoments
+        : stoppedAtMoments;
+  }
+
+  int _usableHighlightCount(
+    List<FixtureHighlightMoment> moments,
+    Duration replayDuration,
+  ) {
+    return moments.where((moment) => moment.start < replayDuration).length;
   }
 
   List<FixtureHighlightMoment> _highlightMomentsFromOrigin(
@@ -479,7 +508,10 @@ class Fixture {
     if (replayOrigin == null) return const [];
 
     const leadIn = Duration(seconds: 10);
-    const followThrough = Duration(seconds: 10);
+    // Referee events use wall-clock time while the encoded recording can trail
+    // that clock. The extra ten seconds absorbs that playback offset and still
+    // leaves a full reaction window after the visible goal.
+    const followThrough = Duration(seconds: 20);
     final moments = <FixtureHighlightMoment>[];
     final goals =
         timeline.where((event) {

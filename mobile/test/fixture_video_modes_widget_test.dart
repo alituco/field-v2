@@ -8,6 +8,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 void main() {
+  testWidgets('match scoreboard owns the full top edge', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await _pumpDetail(tester, _fixture(status: FixtureStatus.finalResult));
+
+    final scoreboardFinder = find.byKey(const ValueKey('fixture-scoreboard'));
+    final scoreboard = tester.widget<Container>(scoreboardFinder);
+    final decoration = scoreboard.decoration! as BoxDecoration;
+    final radius = decoration.borderRadius!.resolve(TextDirection.ltr);
+
+    expect(tester.getTopLeft(scoreboardFinder), Offset.zero);
+    expect(tester.getSize(scoreboardFinder).width, 390);
+    expect(radius.topLeft, Radius.zero);
+    expect(radius.topRight, Radius.zero);
+    expect(radius.bottomLeft, const Radius.circular(26));
+    expect(radius.bottomRight, const Radius.circular(26));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('fixture-detail-header'))).dy,
+      0,
+    );
+    expect(find.text('MATCH DETAILS'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('completed fixtures default to highlights and allow full game', (
     tester,
   ) async {
@@ -67,6 +94,70 @@ void main() {
     // Removing the live detail screen cancels its periodic refresh timer.
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
+  });
+
+  testWidgets('highlight keeps its reaction window after the visible goal', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final originalPlatform = VideoPlayerPlatform.instance;
+    final videoPlatform = _FakeVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = videoPlatform;
+    addTearDown(() {
+      VideoPlayerPlatform.instance = originalPlatform;
+    });
+
+    final playbackStartedAt = DateTime.utc(2026, 7, 11, 18);
+    final fixture = _fixture(
+      status: FixtureStatus.finalResult,
+      broadcast: FixtureBroadcast(
+        status: 'REPLAY_READY',
+        streamStartedAt: playbackStartedAt,
+        streamStoppedAt: playbackStartedAt.add(const Duration(hours: 1)),
+        replayHlsUrl: 'https://example.com/replay.m3u8',
+      ),
+      timeline: [
+        _goal(
+          id: 'goal',
+          minute: 8,
+          occurredAt: playbackStartedAt.add(const Duration(minutes: 8)),
+        ),
+      ],
+    );
+
+    await _pumpDetail(tester, fixture);
+    await _scrollToBroadcast(tester, 'WATCH MATCH');
+    await tester.pumpAndSettle();
+
+    final restart = find.byKey(const ValueKey('highlight-restart'));
+    await tester.ensureVisible(restart);
+    await tester.tap(restart);
+    await tester.pump();
+    expect(videoPlatform.playCalls, 1);
+    final pausesBeforeOldCutoff = videoPlatform.pauseCalls;
+
+    // The old cutoff was 8:10. Playback must continue through that point.
+    videoPlatform.setPosition(const Duration(minutes: 8, seconds: 10));
+    await tester.pump(const Duration(milliseconds: 600));
+    expect(videoPlatform.pauseCalls, pausesBeforeOldCutoff);
+
+    // The compensated tail ends at 8:20 and only pauses there.
+    videoPlatform.setPosition(const Duration(minutes: 8, seconds: 20));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+    expect(videoPlatform.pauseCalls, pausesBeforeOldCutoff + 1);
+    expect(
+      videoPlatform.seekPositions.last,
+      const Duration(minutes: 8, seconds: 20),
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -344,6 +435,13 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   final List<Duration> seekPositions = [];
   int _nextPlayerId = 0;
   int playCalls = 0;
+  int pauseCalls = 0;
+
+  void setPosition(Duration position) {
+    for (final playerId in _positions.keys) {
+      _positions[playerId] = position;
+    }
+  }
 
   @override
   Future<void> init() async {}
@@ -383,6 +481,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
 
   @override
   Future<void> pause(int playerId) async {
+    pauseCalls += 1;
     _events[playerId]?.add(
       VideoEvent(
         eventType: VideoEventType.isPlayingStateUpdate,

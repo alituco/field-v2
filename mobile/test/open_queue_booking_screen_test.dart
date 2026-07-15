@@ -9,6 +9,10 @@ void main() {
   testWidgets('Go back home clears the open queue navigation stack', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final repository = _FakeOpenQueueRepository();
     final booking = _booking();
 
@@ -55,6 +59,23 @@ void main() {
     await tester.tap(find.text('Reserve spot'));
     await tester.pumpAndSettle();
 
+    expect(find.text('MATCH PENDING'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('booking-player-status-card')),
+      findsOneWidget,
+    );
+    expect(find.text('10'), findsOneWidget);
+    expect(find.text('/ 12'), findsOneWidget);
+    expect(find.text('PLAYERS CONFIRMED'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('booking-average-player-rating')),
+      findsNothing,
+    );
+    expect(
+      find.text('2 more players needed to confirm this match.'),
+      findsOneWidget,
+    );
+
     final homeButton = find.widgetWithText(FilledButton, 'Go back home');
     await tester.scrollUntilVisible(
       homeButton,
@@ -66,7 +87,7 @@ void main() {
 
     expect(find.text('Open queue'), findsOneWidget);
     expect(find.text('Reserve spot'), findsNothing);
-    expect(find.text('YOUR SPOT IS RESERVED'), findsNothing);
+    expect(find.text('MATCH PENDING'), findsNothing);
   });
 
   testWidgets('Go back home after checkout keeps the app root route alive', (
@@ -174,13 +195,58 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('WHITE'), findsOneWidget);
-    expect(find.text('White 1211 · Black 1209 · Avg 1210'), findsOneWidget);
+    expect(find.text('WHITE TEAM'), findsOneWidget);
+    expect(find.text('MATCH CONFIRMED'), findsOneWidget);
+    expect(find.text('12'), findsOneWidget);
+    expect(find.text('/ 12'), findsOneWidget);
+    expect(
+      find.text('Full squad confirmed. This match is on.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('booking-average-player-rating')),
+      findsOneWidget,
+    );
+    expect(find.text('1210 AVG PLAYER RATING'), findsOneWidget);
+    expect(find.text('White 1211 · Black 1209 · 2 SR spread'), findsOneWidget);
     expect(
       find.text('Teams assigned. The two team averages are only 2 SR apart.'),
       findsOneWidget,
     );
     expect(find.textContaining("We'll notify you"), findsNothing);
+  });
+
+  testWidgets('booking details refreshes the live player count on entry', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: _FakeOpenQueueRepository(
+            upcomingBooking: _booking(assigned: true),
+          ),
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('MATCH CONFIRMED'), findsOneWidget);
+    expect(find.text('12'), findsOneWidget);
+    expect(
+      find.text('2 more players needed to confirm this match.'),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('refresh-booking-player-count')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
   });
 }
 
@@ -223,6 +289,10 @@ OpenQueueBooking _booking({bool assigned = false}) {
 }
 
 class _FakeOpenQueueRepository implements OpenQueueRepository {
+  const _FakeOpenQueueRepository({this.upcomingBooking});
+
+  final OpenQueueBooking? upcomingBooking;
+
   @override
   Future<List<OpenQueueGame>> listGames() async => const [];
 
@@ -234,7 +304,7 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
       throw UnimplementedError();
 
   @override
-  Future<OpenQueueBooking?> getMyUpcomingBooking() async => null;
+  Future<OpenQueueBooking?> getMyUpcomingBooking() async => upcomingBooking;
 
   @override
   Future<OpenQueueBooking> bookGame({

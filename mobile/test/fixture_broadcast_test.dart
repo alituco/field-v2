@@ -82,7 +82,7 @@ void main() {
     expect(fixture.highlightMoments, hasLength(2));
     expect(fixture.highlightMoments.first.event.id, 'early');
     expect(fixture.highlightMoments.first.start, Duration.zero);
-    expect(fixture.highlightMoments.first.end, const Duration(seconds: 18));
+    expect(fixture.highlightMoments.first.end, const Duration(seconds: 28));
     expect(fixture.highlightMoments.last.event.id, 'late');
     expect(
       fixture.highlightMoments.last.start,
@@ -90,7 +90,7 @@ void main() {
     );
     expect(
       fixture.highlightMoments.last.end,
-      const Duration(minutes: 18, seconds: 10),
+      const Duration(minutes: 18, seconds: 20),
     );
   });
 
@@ -140,45 +140,85 @@ void main() {
     );
     expect(
       fixture.highlightMoments.single.end,
-      const Duration(minutes: 15, seconds: 10),
+      const Duration(minutes: 15, seconds: 20),
     );
   });
 
-  test('final replay duration repairs a delayed live-stream origin', () {
-    final incorrectLiveOrigin = DateTime.parse('2026-07-13T00:51:25.848Z');
-    final streamStoppedAt = DateTime.parse('2026-07-13T00:55:08.653Z');
+  test(
+    'final replay duration repairs a delayed live-stream origin on a tie',
+    () {
+      final incorrectLiveOrigin = DateTime.parse('2026-07-13T00:51:25.848Z');
+      final streamStoppedAt = DateTime.parse('2026-07-13T00:55:08.653Z');
+      final fixture = _fixture(
+        status: FixtureStatus.finalResult,
+        broadcast: FixtureBroadcast(
+          status: 'REPLAY_READY',
+          streamStartedAt: incorrectLiveOrigin,
+          streamStoppedAt: streamStoppedAt,
+        ),
+        timeline: [
+          _goal(
+            id: 'mint-goal',
+            minute: 1,
+            occurredAt: DateTime.parse('2026-07-13T00:53:03.443Z'),
+            createdAt: DateTime.parse('2026-07-13T00:53:04.727704Z'),
+          ),
+          _goal(
+            id: 'riffa-goal',
+            minute: 2,
+            occurredAt: DateTime.parse('2026-07-13T00:54:20.868Z'),
+            createdAt: DateTime.parse('2026-07-13T00:54:22.148953Z'),
+          ),
+        ],
+      );
+
+      final highlights = fixture.highlightMomentsForReplay(
+        const Duration(milliseconds: 262930),
+      );
+
+      expect(highlights, hasLength(2));
+      expect(highlights.first.start, const Duration(milliseconds: 127720));
+      expect(highlights.first.end, const Duration(milliseconds: 157720));
+      expect(highlights.last.start, const Duration(milliseconds: 205145));
+      expect(highlights.last.end, const Duration(milliseconds: 235145));
+    },
+  );
+
+  test('final replay falls back to stream start after a stale stop time', () {
     final fixture = _fixture(
       status: FixtureStatus.finalResult,
       broadcast: FixtureBroadcast(
         status: 'REPLAY_READY',
-        streamStartedAt: incorrectLiveOrigin,
-        streamStoppedAt: streamStoppedAt,
+        streamStartedAt: DateTime.parse('2026-07-14T19:00:38.056Z'),
+        streamStoppedAt: DateTime.parse('2026-07-14T19:08:14.025Z'),
       ),
       timeline: [
         _goal(
-          id: 'mint-goal',
-          minute: 1,
-          occurredAt: DateTime.parse('2026-07-13T00:53:03.443Z'),
-          createdAt: DateTime.parse('2026-07-13T00:53:04.727704Z'),
+          id: 'pearl-goal',
+          minute: 2,
+          occurredAt: DateTime.parse('2026-07-14T19:02:46.247Z'),
+          createdAt: DateTime.parse('2026-07-14T19:02:46.247Z'),
         ),
         _goal(
-          id: 'riffa-goal',
-          minute: 2,
-          occurredAt: DateTime.parse('2026-07-13T00:54:20.868Z'),
-          createdAt: DateTime.parse('2026-07-13T00:54:22.148953Z'),
+          id: 'dilmun-goal',
+          minute: 3,
+          occurredAt: DateTime.parse('2026-07-14T19:03:58.899Z'),
+          createdAt: DateTime.parse('2026-07-14T19:03:58.899Z'),
         ),
       ],
     );
 
     final highlights = fixture.highlightMomentsForReplay(
-      const Duration(milliseconds: 262930),
+      const Duration(milliseconds: 241666),
     );
 
     expect(highlights, hasLength(2));
-    expect(highlights.first.start, const Duration(milliseconds: 127720));
-    expect(highlights.first.end, const Duration(milliseconds: 147720));
-    expect(highlights.last.start, const Duration(milliseconds: 205145));
-    expect(highlights.last.end, const Duration(milliseconds: 225145));
+    expect(highlights.first.event.id, 'pearl-goal');
+    expect(highlights.first.start, const Duration(milliseconds: 118191));
+    expect(highlights.first.end, const Duration(milliseconds: 148191));
+    expect(highlights.last.event.id, 'dilmun-goal');
+    expect(highlights.last.start, const Duration(milliseconds: 190843));
+    expect(highlights.last.end, const Duration(milliseconds: 220843));
   });
 
   test('clan fixture appearances become balanced formation lineups', () {

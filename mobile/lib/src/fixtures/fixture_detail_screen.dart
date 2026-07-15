@@ -327,72 +327,160 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
           )
         : null;
 
-    return Scaffold(
-      backgroundColor: fieldBackground,
-      body: FieldHeaderOverlay(
-        header: FieldPageHeader(
-          title: widget.sourceLabel == null
-              ? 'Match Details'
-              : '${widget.sourceLabel} Match',
-          showBack: true,
-          onBack: () => Navigator.of(context).pop(_didChange),
-        ),
-        child: ListView(
-          padding: fieldHeaderAwarePadding(
-            context,
-            left: 0,
-            right: 0,
-            bottom: bottomAction == null ? 32 : 116,
+    final title = widget.sourceLabel == null
+        ? 'Match Details'
+        : '${widget.sourceLabel} Match';
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: fieldBackground,
+        body: FieldHeaderOverlay(
+          header: _FixtureDetailHeader(
+            title: title,
+            onBack: () => Navigator.of(context).pop(_didChange),
           ),
-          children: [
-            SizedBox(
-              width: double.infinity,
-              child: _Scoreboard(
-                fixture: _fixture,
-                sourceLabel: widget.sourceLabel,
-                showTeamRatings: widget.showTeamRatings,
+          child: ListView(
+            padding: EdgeInsets.only(bottom: bottomAction == null ? 32 : 116),
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: _Scoreboard(
+                  fixture: _fixture,
+                  sourceLabel: widget.sourceLabel,
+                  showTeamRatings: widget.showTeamRatings,
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _FixtureSectionSwitcher(
-                selected: _selectedSection,
-                onSelected: (section) {
-                  if (_selectedSection == section) return;
-                  setState(() => _selectedSection = section);
-                },
+              const SizedBox(height: 14),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _FixtureSectionSwitcher(
+                  selected: _selectedSection,
+                  onSelected: (section) {
+                    if (_selectedSection == section) return;
+                    setState(() => _selectedSection = section);
+                  },
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                children: [
-                  if (_errorText != null) ...[
-                    const SizedBox(height: 14),
-                    _ErrorCallout(message: _errorText!),
-                  ],
-                  if (_fixture.isCancelled) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    if (_errorText != null) ...[
+                      const SizedBox(height: 14),
+                      _ErrorCallout(message: _errorText!),
+                    ],
+                    if (_fixture.isCancelled) ...[
+                      const SizedBox(height: 18),
+                      _CancellationPanel(fixture: _fixture),
+                    ],
                     const SizedBox(height: 18),
-                    _CancellationPanel(fixture: _fixture),
-                  ],
-                  const SizedBox(height: 18),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 180),
-                    switchInCurve: Curves.easeOut,
-                    switchOutCurve: Curves.easeIn,
-                    child: KeyedSubtree(
-                      key: ValueKey(_selectedSection),
-                      child: _buildSelectedSection(),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      child: KeyedSubtree(
+                        key: ValueKey(_selectedSection),
+                        child: _buildSelectedSection(),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+            ],
+          ),
+        ),
+        bottomNavigationBar: bottomAction,
+      ),
+    );
+  }
+}
+
+class _FixtureDetailHeader extends StatelessWidget {
+  const _FixtureDetailHeader({required this.title, required this.onBack});
+
+  final String title;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final topInset = MediaQuery.paddingOf(context).top;
+
+    return Container(
+      key: const ValueKey('fixture-detail-header'),
+      height: topInset + 64,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.42),
+            Colors.black.withValues(alpha: 0.12),
+            Colors.transparent,
           ],
         ),
       ),
-      bottomNavigationBar: bottomAction,
+      padding: EdgeInsets.fromLTRB(16, topInset, 16, 0),
+      child: Row(
+        children: [
+          Material(
+            color: Colors.white.withValues(alpha: 0.13),
+            shape: const CircleBorder(),
+            child: InkWell(
+              onTap: onBack,
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.24),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: Colors.white,
+                  size: 21,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const SizedBox(
+            width: 4,
+            height: 25,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [fieldEmerald500, fieldBlue600],
+                ),
+                borderRadius: BorderRadius.all(Radius.circular(99)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              title.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                height: 1,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -580,8 +668,14 @@ class _Scoreboard extends StatelessWidget {
         fixture.awayScore! > fixture.homeScore!;
 
     return Container(
+      key: const ValueKey('fixture-scoreboard'),
       width: double.infinity,
-      padding: const EdgeInsets.all(22),
+      padding: EdgeInsets.fromLTRB(
+        22,
+        fieldPageHeaderExtent(context) + 38,
+        22,
+        22,
+      ),
       decoration: BoxDecoration(
         gradient: const RadialGradient(
           center: Alignment(0.8, -0.8),
@@ -589,7 +683,7 @@ class _Scoreboard extends StatelessWidget {
           colors: [Color(0xFF374151), Color(0xFF111827), Color(0xFF000000)],
           stops: [0, 0.52, 1],
         ),
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(26)),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.22),
@@ -787,7 +881,7 @@ class _ScoreboardClan extends StatelessWidget {
         if (averagePlayerRating case final rating?) ...[
           const SizedBox(height: 8),
           Text(
-            '$rating AVG PLAYER SR',
+            '$rating AVG PLAYER RATING',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
