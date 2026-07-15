@@ -223,6 +223,7 @@ void main() {
       date: _bahrainDateNow().add(const Duration(days: 2)),
       status: 'OPEN',
       confirmedCount: 8,
+      venue: '[SCHEDULE SEED] Solo Future 1',
     );
 
     await _pumpHome(tester, soloGames: [game]);
@@ -238,6 +239,18 @@ void main() {
     expect(find.text('Solo match · 4 spots left'), findsOneWidget);
     expect(find.text('JOIN'), findsOneWidget);
     expect(find.textContaining('8/12 JOINED'), findsNothing);
+    expect(find.text(game.timeLabel), findsOneWidget);
+    expect(find.text('Solo Future 1'), findsOneWidget);
+    expect(find.textContaining('[SCHEDULE SEED]'), findsNothing);
+    final headline = find.text('Solo match · 4 spots left');
+    final time = find.text(game.timeLabel);
+    final venue = find.text('Solo Future 1');
+    expect(tester.widget<Text>(headline).style?.fontSize, 15);
+    expect(
+      tester.getTopLeft(headline).dy,
+      lessThan(tester.getTopLeft(time).dy),
+    );
+    expect(tester.getTopLeft(time).dy, lessThan(tester.getTopLeft(venue).dy));
 
     await tester.drag(find.byType(ListView).first, const Offset(0, -100));
     await tester.pump();
@@ -711,12 +724,13 @@ OpenQueueGame _fixtureGame({
   String? myBookingId,
   OpenQueueRole? myBookingRole,
   String? myBookingTeam,
+  String venue = 'TFA, Saar',
 }) {
   final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
   return OpenQueueGame(
     id: id,
     status: status,
-    venue: 'TFA, Saar',
+    venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),
     timezone: 'Asia/Bahrain',

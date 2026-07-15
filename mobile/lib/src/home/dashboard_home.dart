@@ -1178,8 +1178,8 @@ class _MyClanSection extends StatelessWidget {
                   Row(
                     children: [
                       Container(
-                        width: 46,
-                        height: 46,
+                        width: 50,
+                        height: 50,
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [clan.theme.from, clan.theme.to],
@@ -1191,7 +1191,7 @@ class _MyClanSection extends StatelessWidget {
                         child: Center(
                           child: Text(
                             clan.emblem,
-                            style: const TextStyle(fontSize: 22),
+                            style: const TextStyle(fontSize: 24),
                           ),
                         ),
                       ),
@@ -1206,7 +1206,7 @@ class _MyClanSection extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
                                 color: fieldGray900,
-                                fontSize: 15,
+                                fontSize: 16,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
@@ -1215,7 +1215,7 @@ class _MyClanSection extends StatelessWidget {
                               rankLine,
                               style: const TextStyle(
                                 color: fieldGray600,
-                                fontSize: 11,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w700,
                               ),
                             ),
@@ -1232,7 +1232,7 @@ class _MyClanSection extends StatelessWidget {
                     const SizedBox(height: 14),
                     Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.all(13),
+                      padding: const EdgeInsets.all(15),
                       decoration: BoxDecoration(
                         color: fieldGray900,
                         borderRadius: BorderRadius.circular(16),
@@ -1240,8 +1240,8 @@ class _MyClanSection extends StatelessWidget {
                       child: Row(
                         children: [
                           Container(
-                            width: 38,
-                            height: 38,
+                            width: 42,
+                            height: 42,
                             decoration: BoxDecoration(
                               color: Colors.white.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(12),
@@ -1249,7 +1249,7 @@ class _MyClanSection extends StatelessWidget {
                             child: Icon(
                               Icons.sports_soccer_rounded,
                               color: fixtureAccent,
-                              size: 20,
+                              size: 22,
                             ),
                           ),
                           const SizedBox(width: 11),
@@ -1263,12 +1263,12 @@ class _MyClanSection extends StatelessWidget {
                                       : 'UPCOMING CLAN FIXTURE',
                                   style: TextStyle(
                                     color: fixtureAccent,
-                                    fontSize: 9,
+                                    fontSize: 10,
                                     fontWeight: FontWeight.w900,
                                     letterSpacing: 0.8,
                                   ),
                                 ),
-                                const SizedBox(height: 3),
+                                const SizedBox(height: 5),
                                 Text(
                                   fixture.homeClanId == clan.id
                                       ? 'vs ${fixture.awayClan?.name ?? 'Opponent TBD'}'
@@ -1277,20 +1277,33 @@ class _MyClanSection extends StatelessWidget {
                                   overflow: TextOverflow.ellipsis,
                                   style: const TextStyle(
                                     color: Colors.white,
-                                    fontSize: 13,
+                                    fontSize: 15,
                                     fontWeight: FontWeight.w900,
                                   ),
                                 ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  '${_relativeMatchLabel(fixture.matchDate, _fixtureStart(fixture))} · ${fixture.venue}',
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    color: fieldGray300,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 16,
+                                  runSpacing: 7,
+                                  children: [
+                                    _InlineMatchMeta(
+                                      icon: Icons.calendar_today_rounded,
+                                      label: _relativeDateLabel(
+                                        fixture.matchDate,
+                                      ),
+                                      color: fieldGray300,
+                                    ),
+                                    _InlineMatchMeta(
+                                      icon: Icons.schedule_rounded,
+                                      label: _fixtureStart(fixture),
+                                      color: fieldGray300,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 7),
+                                _LocationMatchMeta(
+                                  label: _displayVenue(fixture.venue),
+                                  color: fieldGray300,
                                 ),
                               ],
                             ),
@@ -1614,7 +1627,7 @@ class _HomeActivityItem {
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
 
   String get eyebrowLabel {
-    final context = switch (status) {
+    return switch (status) {
       FixtureStatus.live => 'LIVE NOW',
       FixtureStatus.finalResult when previousGame != null => 'YOUR RESULT',
       FixtureStatus.finalResult when isMyClanMatch => 'CLAN RESULT',
@@ -1624,20 +1637,10 @@ class _HomeActivityItem {
       _ when isMyClanMatch => 'YOUR CLAN',
       _ => 'UPCOMING',
     };
-    return isCompleted ? '$context · ${_compactMatchDate(matchDate)}' : context;
   }
 
   String get detailLabel {
-    if (!isCompleted) {
-      final matchAverageSr = soloGame?.matchAverageSr;
-      final parts = [
-        _relativeMatchLabel(matchDate, timeLabel),
-        venue,
-        if (canJoinSolo && matchAverageSr != null)
-          'Players around $matchAverageSr SR',
-      ];
-      return parts.join(' · ');
-    }
+    if (!isCompleted) return '';
 
     final ratingUpdate = fixturePlayerRatingUpdate;
     final parts = <String>[
@@ -1648,10 +1651,13 @@ class _HomeActivityItem {
         'Full match ready'
       else
         'Full time',
-      venue,
     ];
     return parts.join(' · ');
   }
+
+  String get dateLabel => _relativeDateLabel(matchDate);
+
+  String get venueLabel => _displayVenue(venue);
 
   String get actionLabel {
     if (canJoinSolo) return 'JOIN';
@@ -1718,7 +1724,7 @@ class _ActivitySection extends StatelessWidget {
                     'UP NEXT',
                     style: TextStyle(
                       color: fieldGray600,
-                      fontSize: 10,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 1.2,
                     ),
@@ -1726,7 +1732,7 @@ class _ActivitySection extends StatelessWidget {
                 ),
                 if (featuredClan case final clan?) clan,
                 if (featuredClan != null && feed.upNext.isNotEmpty)
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 16),
                 if (feed.upNext.isNotEmpty)
                   _ActivityGroup(
                     label: 'UP NEXT',
@@ -1738,7 +1744,7 @@ class _ActivitySection extends StatelessWidget {
             ),
           if ((feed.upNext.isNotEmpty || featuredClan != null) &&
               feed.recent.isNotEmpty)
-            const SizedBox(height: 15),
+            const SizedBox(height: 22),
           if (feed.recent.isNotEmpty)
             _ActivityGroup(
               key: const ValueKey('home-matchday-recent'),
@@ -1778,7 +1784,7 @@ class _ActivityGroup extends StatelessWidget {
               label,
               style: const TextStyle(
                 color: fieldGray600,
-                fontSize: 10,
+                fontSize: 11.5,
                 fontWeight: FontWeight.w900,
                 letterSpacing: 1.2,
               ),
@@ -1848,7 +1854,8 @@ class _ActivityRow extends StatelessWidget {
 
     return Semantics(
       button: true,
-      label: '${item.eyebrowLabel}. ${item.matchup}. ${item.detailLabel}',
+      label:
+          '${item.eyebrowLabel}. ${item.matchup}. ${item.detailLabel}. ${item.dateLabel}. ${item.timeLabel}. ${item.venueLabel}',
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -1857,20 +1864,20 @@ class _ActivityRow extends StatelessWidget {
           ),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 17),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
-                  width: 45,
-                  height: 45,
+                  width: 50,
+                  height: 50,
                   decoration: BoxDecoration(
                     color: accentBackground,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                   ),
-                  child: Icon(icon, color: accentColor, size: 22),
+                  child: Icon(icon, color: accentColor, size: 24),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1881,43 +1888,65 @@ class _ActivityRow extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: accentColor,
-                          fontSize: 8.5,
+                          fontSize: 10,
                           fontWeight: FontWeight.w900,
-                          letterSpacing: 0.65,
+                          letterSpacing: 0.75,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 5),
                       Text(
                         item.matchup,
                         style: const TextStyle(
                           color: fieldGray900,
-                          fontSize: 13,
+                          fontSize: 15,
+                          height: 1.2,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      const SizedBox(height: 3),
-                      Text(
-                        item.detailLabel,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: fieldGray600,
-                          fontSize: 9.5,
-                          height: 1.25,
-                          fontWeight: FontWeight.w600,
+                      if (item.detailLabel.isNotEmpty) ...[
+                        const SizedBox(height: 7),
+                        Text(
+                          item.detailLabel,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: fieldGray700,
+                            fontSize: 11.5,
+                            height: 1.3,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
+                      ],
+                      const SizedBox(height: 10),
+                      _InlineMatchMeta(
+                        icon: Icons.calendar_today_rounded,
+                        label: item.dateLabel,
+                        color: fieldGray600,
+                      ),
+                      if (!item.isCompleted) ...[
+                        const SizedBox(height: 7),
+                        _InlineMatchMeta(
+                          icon: Icons.schedule_rounded,
+                          label: item.timeLabel,
+                          color: fieldGray600,
+                        ),
+                      ],
+                      const SizedBox(height: 7),
+                      _LocationMatchMeta(
+                        label: item.venueLabel,
+                        color: fieldGray600,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 10),
                 Container(
                   key: item.canJoinSolo
                       ? ValueKey('home-activity-join-${item.id}')
                       : null,
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
+                    horizontal: 12,
+                    vertical: 10,
                   ),
                   decoration: BoxDecoration(
                     color: item.actionLabel == 'VIEW'
@@ -1943,7 +1972,7 @@ class _ActivityRow extends StatelessWidget {
                               ? Icons.bolt_rounded
                               : Icons.play_arrow_rounded,
                           color: Colors.white,
-                          size: 12,
+                          size: 14,
                         ),
                         const SizedBox(width: 2),
                       ],
@@ -1953,7 +1982,7 @@ class _ActivityRow extends StatelessWidget {
                           color: item.actionLabel == 'VIEW'
                               ? fieldGray700
                               : Colors.white,
-                          fontSize: 8.5,
+                          fontSize: 10,
                           fontWeight: FontWeight.w900,
                           letterSpacing: 0.55,
                         ),
@@ -1970,6 +1999,77 @@ class _ActivityRow extends StatelessWidget {
   }
 }
 
+class _InlineMatchMeta extends StatelessWidget {
+  const _InlineMatchMeta({
+    required this.icon,
+    required this.label,
+    required this.color,
+  });
+
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, color: color, size: 13),
+        const SizedBox(width: 5),
+        Flexible(
+          fit: FlexFit.loose,
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 11.5,
+              height: 1.25,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LocationMatchMeta extends StatelessWidget {
+  const _LocationMatchMeta({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 1),
+          child: Icon(Icons.location_on_outlined, color: color, size: 14),
+        ),
+        const SizedBox(width: 5),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: color,
+              fontSize: 11.5,
+              height: 1.3,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _HomeSectionLabel extends StatelessWidget {
   const _HomeSectionLabel(this.text);
   final String text;
@@ -1979,7 +2079,7 @@ class _HomeSectionLabel extends StatelessWidget {
       text,
       style: const TextStyle(
         color: fieldGray500,
-        fontSize: 11,
+        fontSize: 12,
         fontWeight: FontWeight.w900,
         letterSpacing: 1.25,
       ),
@@ -2085,12 +2185,19 @@ bool _sameCalendarDate(DateTime left, DateTime right) {
       left.day == right.day;
 }
 
-String _relativeMatchLabel(DateTime date, String time) {
+String _relativeDateLabel(DateTime date) {
   final today = _bahrainTodayDate();
   final tomorrow = today.add(const Duration(days: 1));
-  if (_sameCalendarDate(date, today)) return 'TODAY · $time';
-  if (_sameCalendarDate(date, tomorrow)) return 'TOMORROW · $time';
-  return '${_compactMatchDate(date)} · $time';
+  if (_sameCalendarDate(date, today)) return 'TODAY';
+  if (_sameCalendarDate(date, tomorrow)) return 'TOMORROW';
+  return _compactMatchDate(date);
+}
+
+String _displayVenue(String venue) {
+  final cleaned = venue
+      .replaceFirst(RegExp(r'^\[SCHEDULE SEED\]\s*'), '')
+      .trim();
+  return cleaned.isEmpty ? 'Venue TBC' : cleaned;
 }
 
 String _compactMatchDate(DateTime value) {
