@@ -181,9 +181,11 @@ void main() {
     expect(find.text('Black Team'), findsOneWidget);
     expect(find.text('1232 AVG PLAYER RATING'), findsOneWidget);
     expect(find.text('1228 AVG PLAYER RATING'), findsOneWidget);
-    expect(find.text('MATCH AVG 1230 PLAYER RATING  ·  4 SR SPREAD'), findsOneWidget);
+    expect(find.text('MATCH AVG 1230 SR  ·  4 SR SPREAD'), findsOneWidget);
     expect(find.byKey(const ValueKey('fixture-main-switcher')), findsOneWidget);
     expect(find.text('GOALS & ASSISTS'), findsNothing);
+    expect(find.text('PLAYER RATING UPDATE'), findsOneWidget);
+    expect(find.text('+12 SR'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('fixture-section-lineups')));
     await tester.pumpAndSettle();
@@ -355,7 +357,7 @@ void main() {
     expect(find.text('SOLO MATCH'), findsOneWidget);
     expect(find.text('1204 AVG PLAYER RATING'), findsOneWidget);
     expect(find.text('1202 AVG PLAYER RATING'), findsOneWidget);
-    expect(find.text('MATCH AVG 1203 PLAYER RATING  ·  2 SR SPREAD'), findsOneWidget);
+    expect(find.text('MATCH AVG 1203 SR  ·  2 SR SPREAD'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('fixture-section-lineups')));
     await tester.pumpAndSettle();
     expect(find.text('White Player (You)'), findsOneWidget);

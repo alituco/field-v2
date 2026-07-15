@@ -35,6 +35,35 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('fixture opens on match timeline with details and rating', (
+    tester,
+  ) async {
+    await _pumpDetail(
+      tester,
+      _fixture(status: FixtureStatus.finalResult),
+      playerRatingUpdate: const FixturePlayerRatingUpdate(
+        ratingBefore: 1200,
+        ratingChange: 14,
+        ratingAfter: 1214,
+        result: 'WIN',
+      ),
+    );
+
+    expect(find.text('SATURDAY'), findsOneWidget);
+    expect(find.text('Jul 11'), findsOneWidget);
+    expect(find.text('Field'), findsOneWidget);
+    expect(find.text('PLAYER RATING UPDATE'), findsOneWidget);
+    expect(find.text('+14 SR'), findsOneWidget);
+    expect(find.text('WATCH MATCH'), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('fixture-section-watch')));
+    await tester.pumpAndSettle();
+    expect(find.text('WATCH MATCH'), findsOneWidget);
+    expect(find.text('PLAYER RATING UPDATE'), findsNothing);
+    expect(find.text('Field'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('completed fixtures default to highlights and allow full game', (
     tester,
   ) async {
@@ -134,7 +163,13 @@ void main() {
     await tester.pumpAndSettle();
 
     final restart = find.byKey(const ValueKey('highlight-restart'));
-    await tester.ensureVisible(restart);
+    await tester.scrollUntilVisible(
+      restart,
+      160,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -70));
+    await tester.pump();
     await tester.tap(restart);
     await tester.pump();
     expect(videoPlatform.playCalls, 1);
@@ -327,13 +362,18 @@ void main() {
   );
 }
 
-Future<void> _pumpDetail(WidgetTester tester, Fixture fixture) async {
+Future<void> _pumpDetail(
+  WidgetTester tester,
+  Fixture fixture, {
+  FixturePlayerRatingUpdate? playerRatingUpdate,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: FixtureDetailScreen(
         fixture: fixture,
         fixtureRepository: _FakeFixtureRepository(fixture),
         myClanMembership: null,
+        playerRatingUpdate: playerRatingUpdate,
       ),
     ),
   );
@@ -349,6 +389,8 @@ double _fullscreenControlsOpacity(WidgetTester tester) {
 }
 
 Future<void> _scrollToBroadcast(WidgetTester tester, String heading) async {
+  await tester.tap(find.byKey(const ValueKey('fixture-section-watch')));
+  await tester.pump(const Duration(milliseconds: 250));
   await tester.scrollUntilVisible(
     find.text(heading),
     300,

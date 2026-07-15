@@ -104,6 +104,7 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
             earliestBackup.game.startsAt.isBefore(earliestMain.startsAt));
 
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Games for you', showBack: true),
@@ -112,7 +113,7 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
           onRefresh: _load,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: fieldHeaderAwarePadding(context, top: 16, bottom: 32),
+            padding: fieldHeaderAwarePadding(context, top: 16, bottom: 100),
             children: [
               _SelectedRolesCard(
                 mainRole: widget.mainRole,

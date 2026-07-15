@@ -8,11 +8,14 @@ import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
+import '../fixtures/fixtures_screen.dart';
 import '../leaderboard/leaderboard.dart';
 import '../leaderboard/leaderboard_repository.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_booking_screen.dart';
+import '../open_queue/open_queue_kit_indicator.dart';
 import '../open_queue/open_queue_repository.dart';
+import '../open_queue/open_queue_review_screen.dart';
 import '../open_queue/open_queue_screen.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
@@ -58,6 +61,7 @@ class _DashboardHomeState extends State<DashboardHome> {
   ClanMembership? _clanMembership;
   MyClanMembership? _fixtureMembership;
   List<Fixture> _fixtures = const [];
+  List<OpenQueueGame> _soloFixtureGames = const [];
   bool _loading = true;
   String? _error;
 
@@ -83,6 +87,7 @@ class _DashboardHomeState extends State<DashboardHome> {
         widget.clanRepository.getMyClanMembership(),
         widget.fixtureRepository.getMyClanMembership(),
         widget.fixtureRepository.listFixtures(),
+        widget.openQueueRepository.listFixtureGames(),
       ]);
       if (!mounted) return;
       final profile = results[0] as PlayerProfile;
@@ -109,6 +114,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                 orElse: () => null,
               );
         _fixtures = results[7] as List<Fixture>;
+        _soloFixtureGames = results[8] as List<OpenQueueGame>;
       });
     } catch (error) {
       if (!mounted) return;
@@ -179,24 +185,121 @@ class _DashboardHomeState extends State<DashboardHome> {
     if (mounted) await _load();
   }
 
-  List<Fixture> get _activity {
-    final rows = [..._fixtures];
-    int priority(Fixture fixture) => switch (fixture.status) {
-      FixtureStatus.live => 0,
-      FixtureStatus.scheduled => 1,
-      FixtureStatus.open => 2,
-      FixtureStatus.finalResult => 3,
-      FixtureStatus.cancelled => 4,
-    };
-    rows.sort((a, b) {
-      final status = priority(a).compareTo(priority(b));
-      if (status != 0) return status;
-      if (a.status == FixtureStatus.finalResult) {
-        return b.matchDate.compareTo(a.matchDate);
-      }
-      return a.matchDate.compareTo(b.matchDate);
-    });
-    return rows.where((fixture) => !fixture.isCancelled).take(4).toList();
+  Future<void> _openSoloGame(OpenQueueGame game) async {
+    final status = game.status.toUpperCase();
+    if (status == 'FULL' ||
+        status == 'LIVE' ||
+        status == 'FINAL' ||
+        game.isFull) {
+      await _openSoloMatchDetail(game);
+      return;
+    }
+
+    final role = await showSoloFixtureAvailabilitySheet(context, game);
+    if (role == null || !mounted) return;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => OpenQueueReviewScreen(
+          repository: widget.openQueueRepository,
+          game: game,
+          role: role,
+          onNavigateTab: widget.onNavigateTab,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _openSoloMatchDetail(OpenQueueGame game) async {
+    try {
+      final detail = await widget.openQueueRepository.getMatchDetail(game.id);
+      if (!mounted) return;
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (_) => FixtureDetailScreen(
+            fixture: detail.toFixture(),
+            fixtureRepository: widget.fixtureRepository,
+            myClanMembership: null,
+            sourceLabel: 'SOLO',
+            showTeamRatings: false,
+            playerRatingUpdate: detail.viewerRatingUpdate,
+            refreshFixture: () async {
+              final next = await widget.openQueueRepository.getMatchDetail(
+                game.id,
+              );
+              return next.toFixture();
+            },
+          ),
+        ),
+      );
+      if (mounted) await _load();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open this solo match. Try again.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _openActivity(_HomeActivityItem item) {
+    final fixture = item.fixture;
+    if (fixture != null) return _openFixture(fixture);
+    return _openSoloGame(item.soloGame!);
+  }
+
+  List<_HomeMatchdayGroup> get _activityMatchdays {
+    final items = <_HomeActivityItem>[
+      for (final fixture in _fixtures)
+        if (!fixture.isCancelled) _HomeActivityItem.clan(fixture),
+      for (final game in _soloFixtureGames)
+        if (game.status.toUpperCase() != 'CANCELLED')
+          _HomeActivityItem.solo(game),
+    ];
+    final today = _bahrainTodayDate();
+    final past = items
+        .where(
+          (item) =>
+              item.status == FixtureStatus.finalResult &&
+              item.matchDate.isBefore(today),
+        )
+        .toList();
+    final currentOrFuture = items
+        .where((item) => !item.matchDate.isBefore(today))
+        .toList();
+
+    final groups = <_HomeMatchdayGroup>[];
+    if (currentOrFuture.isNotEmpty) {
+      final date = currentOrFuture
+          .map((item) => item.matchDate)
+          .reduce((left, right) => left.isBefore(right) ? left : right);
+      groups.add(
+        _HomeMatchdayGroup(
+          date: date,
+          isUpcoming: true,
+          items: _matchdayItems(currentOrFuture, date),
+        ),
+      );
+    }
+    if (past.isNotEmpty) {
+      final date = past
+          .map((item) => item.matchDate)
+          .reduce((left, right) => left.isAfter(right) ? left : right);
+      groups.add(
+        _HomeMatchdayGroup(
+          date: date,
+          isUpcoming: false,
+          items: _matchdayItems(past, date),
+        ),
+      );
+    }
+    return groups;
   }
 
   Fixture? get _nextClanFixture {
@@ -263,9 +366,9 @@ class _DashboardHomeState extends State<DashboardHome> {
                 ),
               const SizedBox(height: 23),
               _ActivitySection(
-                fixtures: _activity,
+                matchdays: _activityMatchdays,
                 onSeeAll: widget.onOpenFixtures,
-                onFixture: _openFixture,
+                onMatch: _openActivity,
               ),
               if (_error != null) ...[
                 const SizedBox(height: 14),
@@ -681,12 +784,16 @@ class _FindGameHero extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              Text(
-                '$playerCount player${playerCount == 1 ? '' : 's'} already booked',
-                style: const TextStyle(
-                  color: fieldEmerald200,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
+              Flexible(
+                child: Text(
+                  '$playerCount player${playerCount == 1 ? '' : 's'} already booked',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: fieldEmerald200,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
             ],
@@ -705,7 +812,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final game = booking.game;
-    final isConfirmed = game.isFull;
+    final isConfirmed = game.isUpcomingMatchConfirmed;
     final isClose = game.isToday || game.isTomorrow;
     final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
     final accent = isConfirmed ? fieldEmerald100 : const Color(0xFFFEF3C7);
@@ -809,6 +916,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Container(
+                key: const ValueKey('match-day-kit-panel'),
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
@@ -823,25 +931,41 @@ class _ConfirmedQueueHero extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      Icons.calendar_month_rounded,
-                      color: isClose ? dateForeground : Colors.white,
-                      size: 18,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        game.prominentDateLabel,
-                        style: TextStyle(
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.calendar_month_rounded,
                           color: isClose ? dateForeground : Colors.white,
-                          fontSize: isClose ? 15 : 13,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: isClose ? 0.5 : 0.2,
+                          size: 18,
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            game.prominentDateLabel,
+                            style: TextStyle(
+                              color: isClose ? dateForeground : Colors.white,
+                              fontSize: isClose ? 15 : 13,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: isClose ? 0.5 : 0.2,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    if (isConfirmed) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        height: 1,
+                        color: isClose
+                            ? fieldGray200
+                            : Colors.white.withValues(alpha: 0.18),
+                      ),
+                      const SizedBox(height: 10),
+                      OpenQueueKitIndicator(booking: booking),
+                    ],
                   ],
                 ),
               ),
@@ -866,15 +990,16 @@ class _ConfirmedQueueHero extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (booking.team != null)
-                    Text(
-                      '${booking.team} · ${_bookingTeamAverage(booking)} AVG SR',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
+                  if (isConfirmed)
+                    if (booking.assignedTeam case final team?)
+                      Text(
+                        '$team · ${_bookingTeamAverage(booking)} AVG SR',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
                       ),
-                    ),
                 ],
               ),
               const SizedBox(height: 13),
@@ -895,9 +1020,11 @@ class _ConfirmedQueueHero extends StatelessWidget {
 }
 
 String _bookingTeamAverage(OpenQueueBooking booking) {
-  final rating = booking.team == openQueueWhiteTeamId
-      ? booking.game.whiteAverageSr
-      : booking.game.blackAverageSr;
+  final rating = switch (booking.assignedTeam) {
+    openQueueWhiteTeamId => booking.game.whiteAverageSr,
+    openQueueBlackTeamId => booking.game.blackAverageSr,
+    _ => null,
+  };
   return rating?.toString() ?? '—';
 }
 
@@ -1117,15 +1244,126 @@ class _FindClanSection extends StatelessWidget {
   }
 }
 
+class _HomeMatchdayGroup {
+  const _HomeMatchdayGroup({
+    required this.date,
+    required this.isUpcoming,
+    required this.items,
+  });
+
+  final DateTime date;
+  final bool isUpcoming;
+  final List<_HomeActivityItem> items;
+}
+
+class _HomeActivityItem {
+  const _HomeActivityItem._({this.fixture, this.soloGame});
+
+  factory _HomeActivityItem.clan(Fixture fixture) {
+    return _HomeActivityItem._(fixture: fixture);
+  }
+
+  factory _HomeActivityItem.solo(OpenQueueGame game) {
+    return _HomeActivityItem._(soloGame: game);
+  }
+
+  final Fixture? fixture;
+  final OpenQueueGame? soloGame;
+
+  bool get isSolo => soloGame != null;
+
+  bool get canJoinSolo {
+    final game = soloGame;
+    if (game == null) return false;
+    return status == FixtureStatus.open &&
+        !game.isFull &&
+        !game.hasMyBooking &&
+        game.startsAt.isAfter(DateTime.now());
+  }
+
+  String get id => fixture?.id ?? soloGame!.id;
+
+  DateTime get matchDate {
+    final clanFixture = fixture;
+    if (clanFixture != null) return _calendarDate(clanFixture.matchDate);
+    final startsAt = soloGame!.bahrainStartsAt;
+    return DateTime(startsAt.year, startsAt.month, startsAt.day);
+  }
+
+  FixtureStatus get status {
+    final clanFixture = fixture;
+    if (clanFixture != null) return clanFixture.status;
+    final game = soloGame!;
+    return switch (game.status.toUpperCase()) {
+      'FULL' => FixtureStatus.scheduled,
+      'LIVE' => FixtureStatus.live,
+      'FINAL' => FixtureStatus.finalResult,
+      'CANCELLED' => FixtureStatus.cancelled,
+      _ when game.isFull => FixtureStatus.scheduled,
+      _ => FixtureStatus.open,
+    };
+  }
+
+  int get sortMinutes {
+    final game = soloGame;
+    if (game != null) {
+      final startsAt = game.bahrainStartsAt;
+      return startsAt.hour * 60 + startsAt.minute;
+    }
+    return fixture!.timeSlot.startsWith('8:30') ? 20 * 60 + 30 : 19 * 60;
+  }
+
+  String get matchup {
+    final clanFixture = fixture;
+    if (clanFixture != null) {
+      final away = clanFixture.awayClan?.tag ?? 'TBD';
+      if (clanFixture.isFinal || clanFixture.isLive) {
+        return '${clanFixture.homeClan.tag}  ${clanFixture.homeScore}–${clanFixture.awayScore}  $away';
+      }
+      return '${clanFixture.homeClan.tag} vs $away';
+    }
+    final game = soloGame!;
+    if (status == FixtureStatus.finalResult || status == FixtureStatus.live) {
+      return 'WHITE  ${game.whiteScore ?? 0}–${game.blackScore ?? 0}  BLACK';
+    }
+    if (canJoinSolo) return 'Spots open — join this game';
+    return 'Open Queue Game';
+  }
+
+  String get venue => fixture?.venue ?? soloGame!.venue;
+
+  String get timeLabel {
+    final game = soloGame;
+    return game?.timeLabel ?? _fixtureStart(fixture!);
+  }
+
+  String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
+
+  String get statusLabel {
+    if (status == FixtureStatus.finalResult) return 'FT';
+    if (status == FixtureStatus.live) return 'LIVE';
+    if (isSolo && status == FixtureStatus.open) {
+      final game = soloGame!;
+      return '${game.confirmedCount}/${game.capacity}';
+    }
+    return switch (status) {
+      FixtureStatus.open => 'OPEN',
+      FixtureStatus.scheduled => 'CONFIRMED',
+      FixtureStatus.cancelled => 'CANCELLED',
+      _ => 'UPCOMING',
+    };
+  }
+}
+
 class _ActivitySection extends StatelessWidget {
   const _ActivitySection({
-    required this.fixtures,
+    required this.matchdays,
     required this.onSeeAll,
-    required this.onFixture,
+    required this.onMatch,
   });
-  final List<Fixture> fixtures;
+  final List<_HomeMatchdayGroup> matchdays;
   final VoidCallback onSeeAll;
-  final ValueChanged<Fixture> onFixture;
+  final ValueChanged<_HomeActivityItem> onMatch;
 
   @override
   Widget build(BuildContext context) {
@@ -1145,110 +1383,344 @@ class _ActivitySection extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 7),
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(23),
-            border: Border.all(color: fieldGray100),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: fixtures.isEmpty
-              ? const Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text(
-                    'No fixture activity yet.',
-                    style: TextStyle(color: fieldGray500),
-                  ),
-                )
-              : Column(
-                  children: [
-                    for (var index = 0; index < fixtures.length; index++) ...[
-                      _ActivityRow(
-                        fixture: fixtures[index],
-                        onTap: () => onFixture(fixtures[index]),
-                      ),
-                      if (index != fixtures.length - 1)
-                        const Divider(height: 1, color: fieldGray100),
-                    ],
-                  ],
-                ),
-        ),
+        if (matchdays.isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(23),
+              border: Border.all(color: fieldGray100),
+            ),
+            child: const Text(
+              'No matchday activity yet.',
+              style: TextStyle(color: fieldGray500),
+            ),
+          )
+        else
+          for (var index = 0; index < matchdays.length; index++) ...[
+            _ActivityMatchdayCard(matchday: matchdays[index], onMatch: onMatch),
+            if (index != matchdays.length - 1) const SizedBox(height: 12),
+          ],
       ],
     );
   }
 }
 
+class _ActivityMatchdayCard extends StatelessWidget {
+  const _ActivityMatchdayCard({required this.matchday, required this.onMatch});
+
+  final _HomeMatchdayGroup matchday;
+  final ValueChanged<_HomeActivityItem> onMatch;
+
+  @override
+  Widget build(BuildContext context) {
+    final isToday = _sameCalendarDate(matchday.date, _bahrainTodayDate());
+    final heading = matchday.isUpcoming
+        ? isToday
+              ? 'TODAY'
+              : 'NEXT MATCHDAY'
+        : 'LAST MATCHDAY';
+    final accent = matchday.isUpcoming ? fieldEmerald600 : fieldBlue600;
+    final accentBackground = matchday.isUpcoming
+        ? fieldEmerald50
+        : const Color(0xFFEFF6FF);
+
+    return Container(
+      key: ValueKey('home-activity-matchday-${_dateKey(matchday.date)}'),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(23),
+        border: Border.all(color: fieldGray100),
+        boxShadow: [
+          BoxShadow(
+            color: fieldGray900.withValues(alpha: 0.035),
+            blurRadius: 14,
+            offset: const Offset(0, 5),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(15, 14, 15, 12),
+            child: Row(
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: accentBackground,
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(
+                    matchday.isUpcoming
+                        ? Icons.event_available_rounded
+                        : Icons.sports_score_rounded,
+                    color: accent,
+                    size: 18,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        heading,
+                        style: TextStyle(
+                          color: accent,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        _matchdayDateLabel(matchday.date),
+                        style: const TextStyle(
+                          color: fieldGray900,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${matchday.items.length} GAME${matchday.items.length == 1 ? '' : 'S'}',
+                  style: const TextStyle(
+                    color: fieldGray400,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: fieldGray100),
+          for (var index = 0; index < matchday.items.length; index++) ...[
+            _ActivityRow(
+              item: matchday.items[index],
+              onTap: () => onMatch(matchday.items[index]),
+            ),
+            if (index != matchday.items.length - 1)
+              const Divider(height: 1, indent: 70, color: fieldGray100),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({required this.fixture, required this.onTap});
-  final Fixture fixture;
+  const _ActivityRow({required this.item, required this.onTap});
+  final _HomeActivityItem item;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final status = switch (fixture.status) {
-      FixtureStatus.live => ('LIVE', Colors.orange, Icons.circle),
-      FixtureStatus.finalResult => ('FT', fieldGray400, Icons.circle),
-      FixtureStatus.open => ('OPEN', fieldBlue600, Icons.group_outlined),
-      _ => ('UP', fieldEmerald600, Icons.sensors_rounded),
+    final typeColor = item.isSolo ? fieldBlue600 : fieldEmerald600;
+    final typeBackground = item.isSolo
+        ? const Color(0xFFEFF6FF)
+        : fieldEmerald50;
+    final statusColor = switch (item.status) {
+      FixtureStatus.live => const Color(0xFFDC2626),
+      FixtureStatus.finalResult => fieldGray600,
+      FixtureStatus.open => fieldBlue600,
+      _ => fieldEmerald700,
     };
-    final matchup = fixture.isFinal
-        ? '${fixture.homeClan.tag}  ${fixture.homeScore}–${fixture.awayScore}  ${fixture.awayClan?.tag ?? 'TBD'}'
-        : '${fixture.homeClan.tag}  vs  ${fixture.awayClan?.tag ?? 'TBD'}';
-    return InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 38,
-              child: Column(
-                children: [
-                  Icon(status.$3, color: status.$2, size: 13),
-                  Text(
-                    status.$1,
-                    style: TextStyle(
-                      color: status.$2,
-                      fontSize: 8,
-                      fontWeight: FontWeight.w900,
-                    ),
+    final statusBackground = switch (item.status) {
+      FixtureStatus.live => const Color(0xFFFEF2F2),
+      FixtureStatus.finalResult => fieldGray100,
+      FixtureStatus.open => const Color(0xFFEFF6FF),
+      _ => fieldEmerald50,
+    };
+
+    return Semantics(
+      button: true,
+      label: item.canJoinSolo
+          ? 'Join open queue match, ${item.statusLabel} players confirmed'
+          : 'Open ${item.typeLabel.toLowerCase()} match ${item.matchup}',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: ValueKey(
+            'home-activity-${item.isSolo ? 'solo' : 'clan'}-${item.id}',
+          ),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            child: Row(
+              children: [
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: typeBackground,
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    matchup,
-                    style: const TextStyle(
-                      color: fieldGray900,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                    ),
+                  child: Icon(
+                    item.isSolo ? Icons.person_rounded : Icons.shield_rounded,
+                    color: typeColor,
+                    size: 21,
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    '${fixture.venue} · ${_fixtureStart(fixture)}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: fieldGray400,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w600,
-                    ),
+                ),
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: typeBackground,
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              item.typeLabel,
+                              style: TextStyle(
+                                color: typeColor,
+                                fontSize: 8,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.7,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              item.matchup,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: fieldGray900,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        '${item.timeLabel} · ${item.venue}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: fieldGray400,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(width: 9),
+                if (item.canJoinSolo)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        '${item.statusLabel} JOINED',
+                        style: const TextStyle(
+                          color: fieldEmerald700,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.35,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Container(
+                        key: ValueKey('home-activity-join-${item.id}'),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [fieldEmerald500, fieldEmerald700],
+                          ),
+                          borderRadius: BorderRadius.circular(11),
+                          boxShadow: [
+                            BoxShadow(
+                              color: fieldEmerald500.withValues(alpha: 0.25),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4),
+                            ),
+                          ],
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.bolt_rounded,
+                              color: Colors.white,
+                              size: 13,
+                            ),
+                            SizedBox(width: 2),
+                            Text(
+                              'JOIN',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 0.7,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusBackground,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          item.statusLabel,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontSize: 8,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Container(
+                        width: 22,
+                        height: 22,
+                        decoration: BoxDecoration(
+                          color: fieldGray100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(
+                          Icons.arrow_forward_rounded,
+                          color: fieldGray500,
+                          size: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
             ),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: fieldGray300,
-              size: 18,
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -1296,4 +1768,59 @@ class _HomeError extends StatelessWidget {
 
 String _fixtureStart(Fixture fixture) {
   return fixture.timeSlot.split(' - ').first;
+}
+
+List<_HomeActivityItem> _matchdayItems(
+  List<_HomeActivityItem> candidates,
+  DateTime date,
+) {
+  final rows =
+      candidates
+          .where((item) => _sameCalendarDate(item.matchDate, date))
+          .toList()
+        ..sort((left, right) {
+          final time = left.sortMinutes.compareTo(right.sortMinutes);
+          return time != 0 ? time : left.id.compareTo(right.id);
+        });
+  return rows.take(2).toList();
+}
+
+DateTime _bahrainTodayDate() {
+  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+  return DateTime(now.year, now.month, now.day);
+}
+
+DateTime _calendarDate(DateTime value) {
+  return DateTime(value.year, value.month, value.day);
+}
+
+bool _sameCalendarDate(DateTime left, DateTime right) {
+  return left.year == right.year &&
+      left.month == right.month &&
+      left.day == right.day;
+}
+
+String _dateKey(DateTime value) {
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  return '${value.year}-$month-$day';
+}
+
+String _matchdayDateLabel(DateTime value) {
+  const weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+  const months = [
+    'JAN',
+    'FEB',
+    'MAR',
+    'APR',
+    'MAY',
+    'JUN',
+    'JUL',
+    'AUG',
+    'SEP',
+    'OCT',
+    'NOV',
+    'DEC',
+  ];
+  return '${weekdays[value.weekday - 1]}, ${months[value.month - 1]} ${value.day}';
 }

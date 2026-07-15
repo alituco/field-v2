@@ -21,6 +21,7 @@ class FixtureDetailScreen extends StatefulWidget {
     this.refreshFixture,
     this.sourceLabel,
     this.showTeamRatings = true,
+    this.playerRatingUpdate,
   });
 
   final Fixture fixture;
@@ -29,6 +30,7 @@ class FixtureDetailScreen extends StatefulWidget {
   final Future<Fixture> Function()? refreshFixture;
   final String? sourceLabel;
   final bool showTeamRatings;
+  final FixturePlayerRatingUpdate? playerRatingUpdate;
 
   @override
   State<FixtureDetailScreen> createState() => _FixtureDetailScreenState();
@@ -39,7 +41,7 @@ enum _FixtureDetailSection { watch, timeline, lineups }
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
-  _FixtureDetailSection _selectedSection = _FixtureDetailSection.watch;
+  _FixtureDetailSection _selectedSection = _FixtureDetailSection.timeline;
   Timer? _refreshTimer;
   bool _isJoining = false;
   bool _isCompleting = false;
@@ -265,7 +267,8 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   Widget _buildSelectedSection() {
     return switch (_selectedSection) {
-      _FixtureDetailSection.watch => Column(
+      _FixtureDetailSection.watch => _BroadcastPanel(fixture: _fixture),
+      _FixtureDetailSection.timeline => Column(
         children: [
           _InfoGrid(fixture: _fixture),
           if (_canSeePayments) ...[
@@ -275,6 +278,10 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
               onOpenProfile: _openPlayerProfile,
             ),
           ],
+          if (_fixture.isFinal && widget.playerRatingUpdate != null) ...[
+            const SizedBox(height: 18),
+            _PlayerRatingUpdateCard(update: widget.playerRatingUpdate!),
+          ],
           if (_fixture.isFinal &&
               (_fixture.homeSrChange != null ||
                   _fixture.awaySrChange != null)) ...[
@@ -282,20 +289,19 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
             _RatingUpdates(fixture: _fixture),
           ],
           const SizedBox(height: 18),
-          _BroadcastPanel(fixture: _fixture),
+          if (_fixture.timeline.isEmpty)
+            const _EmptyFixtureSection(
+              icon: Icons.timeline_rounded,
+              title: 'No timeline yet',
+              message: 'Match events will appear here as the game is played.',
+            )
+          else
+            _MatchTimeline(
+              fixture: _fixture,
+              onOpenProfile: _openPlayerProfile,
+            ),
         ],
       ),
-      _FixtureDetailSection.timeline =>
-        _fixture.timeline.isEmpty
-            ? const _EmptyFixtureSection(
-                icon: Icons.timeline_rounded,
-                title: 'No timeline yet',
-                message: 'Match events will appear here as the game is played.',
-              )
-            : _MatchTimeline(
-                fixture: _fixture,
-                onOpenProfile: _openPlayerProfile,
-              ),
       _FixtureDetailSection.lineups =>
         _fixture.homeLineup.isEmpty && _fixture.awayLineup.isEmpty
             ? const _EmptyFixtureSection(
@@ -2061,6 +2067,163 @@ String _shortPaymentDate(DateTime value) {
   ];
   final local = value.toLocal();
   return '${months[local.month - 1]} ${local.day}';
+}
+
+class _PlayerRatingUpdateCard extends StatelessWidget {
+  const _PlayerRatingUpdateCard({required this.update});
+
+  final FixturePlayerRatingUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    final change = update.ratingChange;
+    final positive = change > 0;
+    final negative = change < 0;
+    final changeColor = positive
+        ? fieldEmerald600
+        : negative
+        ? const Color(0xFFDC2626)
+        : fieldGray500;
+    final changeBackground = positive
+        ? fieldEmerald50
+        : negative
+        ? const Color(0xFFFEF2F2)
+        : fieldGray100;
+    final result = update.result?.trim().toUpperCase();
+
+    return Container(
+      key: const ValueKey('fixture-player-rating-update'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.trending_up_rounded,
+                color: fieldBlue600,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'PLAYER RATING UPDATE',
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (result != null && result.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: switch (result) {
+                      'WIN' => fieldEmerald50,
+                      'LOSS' => const Color(0xFFFEF2F2),
+                      _ => fieldGray100,
+                    },
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    result,
+                    style: TextStyle(
+                      color: switch (result) {
+                        'WIN' => fieldEmerald700,
+                        'LOSS' => const Color(0xFFDC2626),
+                        _ => fieldGray600,
+                      },
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _PlayerRatingValue(label: 'BEFORE', value: update.ratingBefore),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Icon(
+                  Icons.arrow_forward_rounded,
+                  color: fieldGray300,
+                  size: 20,
+                ),
+              ),
+              _PlayerRatingValue(label: 'AFTER', value: update.ratingAfter),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: changeBackground,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${change > 0 ? '+' : ''}$change SR',
+                  style: TextStyle(
+                    color: changeColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PlayerRatingValue extends StatelessWidget {
+  const _PlayerRatingValue({required this.label, required this.value});
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 8,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '$value',
+          style: const TextStyle(
+            color: fieldGray900,
+            fontSize: 20,
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _RatingUpdates extends StatelessWidget {

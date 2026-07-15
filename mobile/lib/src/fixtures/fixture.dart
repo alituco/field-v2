@@ -233,6 +233,20 @@ class FixtureLineupPlayer {
   }
 }
 
+class FixturePlayerRatingUpdate {
+  const FixturePlayerRatingUpdate({
+    required this.ratingBefore,
+    required this.ratingChange,
+    required this.ratingAfter,
+    this.result,
+  });
+
+  final int ratingBefore;
+  final int ratingChange;
+  final int ratingAfter;
+  final String? result;
+}
+
 class FixtureScorer {
   const FixtureScorer({
     required this.id,

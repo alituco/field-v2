@@ -13,6 +13,18 @@ import 'fixture_play_chooser.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
 
+Future<OpenQueueRole?> showSoloFixtureAvailabilitySheet(
+  BuildContext context,
+  OpenQueueGame game,
+) {
+  return showModalBottomSheet<OpenQueueRole>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => _SoloFixtureSheet(game: game),
+  );
+}
+
 class FixturesScreen extends StatefulWidget {
   const FixturesScreen({
     super.key,
@@ -187,12 +199,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
       return;
     }
 
-    final role = await showModalBottomSheet<OpenQueueRole>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _SoloFixtureSheet(game: game),
-    );
+    final role = await showSoloFixtureAvailabilitySheet(context, game);
     if (role == null || !mounted) return;
 
     await Navigator.of(context).push<bool>(
@@ -220,6 +227,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
             myClanMembership: null,
             sourceLabel: 'SOLO',
             showTeamRatings: false,
+            playerRatingUpdate: detail.viewerRatingUpdate,
             refreshFixture: () async {
               final next = await widget.openQueueRepository.getMatchDetail(
                 game.id,

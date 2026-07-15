@@ -82,6 +82,26 @@ class OpenQueueGame {
 
   bool get isFull => status == 'FULL' || confirmedCount >= capacity;
 
+  bool get hasRecordedScore => whiteScore != null || blackScore != null;
+
+  bool get isUpcomingReservation {
+    return (status == 'OPEN' || status == 'FULL') &&
+        !hasRecordedScore &&
+        startsAt.isAfter(DateTime.now());
+  }
+
+  bool get isUpcomingMatchConfirmed {
+    return status == 'FULL' && confirmedCount >= capacity && !hasRecordedScore;
+  }
+
+  bool get hasActiveTeamAssignment {
+    return isUpcomingMatchConfirmed &&
+        teamsAssignedAt != null &&
+        whiteAverageSr != null &&
+        blackAverageSr != null &&
+        matchAverageSr != null;
+  }
+
   bool get hasMyBooking => myBookingId != null;
 
   int spotsFor(OpenQueueRole role) => spots[role] ?? 0;
@@ -189,6 +209,8 @@ class OpenQueueGame {
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
       spots: const {},
+      whiteScore: _asNullableInt(json['white_score']),
+      blackScore: _asNullableInt(json['black_score']),
       whiteAverageSr: _asNullableRoundedInt(json['white_average_sr']),
       blackAverageSr: _asNullableRoundedInt(json['black_average_sr']),
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
@@ -262,6 +284,21 @@ class OpenQueueMatchDetail {
       players: _openQueuePlayers(json['players']),
       videoUrl: _nonEmptyString(json['video_url'] ?? gameJson['video_url']),
     );
+  }
+
+  FixturePlayerRatingUpdate? get viewerRatingUpdate {
+    for (final player in players) {
+      if (!player.isMe) continue;
+      final ratingBefore = player.displayedRating;
+      final ratingChange = player.ratingChange;
+      if (ratingBefore == null || ratingChange == null) return null;
+      return FixturePlayerRatingUpdate(
+        ratingBefore: ratingBefore,
+        ratingChange: ratingChange,
+        ratingAfter: ratingBefore + ratingChange,
+      );
+    }
+    return null;
   }
 
   Fixture toFixture() {
@@ -423,6 +460,23 @@ class OpenQueueBooking {
   final int? refundAmountFils;
   final OpenQueueGame game;
 
+  String? get assignedTeam {
+    if (!game.hasActiveTeamAssignment) return null;
+    return switch (team?.trim().toUpperCase()) {
+      openQueueWhiteTeamId => openQueueWhiteTeamId,
+      openQueueBlackTeamId => openQueueBlackTeamId,
+      _ => null,
+    };
+  }
+
+  String? get kitInstruction {
+    return switch (assignedTeam) {
+      openQueueWhiteTeamId => 'WEAR WHITE',
+      openQueueBlackTeamId => 'WEAR BLACK',
+      _ => null,
+    };
+  }
+
   OpenQueueBooking copyWith({OpenQueueGame? game}) {
     return OpenQueueBooking(
       id: id,
@@ -451,7 +505,7 @@ class OpenQueueBooking {
       profileId: json['profile_id'] as String? ?? '',
       role: OpenQueueRoleX.fromCode(json['role'] as String? ?? 'MID'),
       status: (json['status'] as String? ?? 'CONFIRMED').toUpperCase(),
-      team: json['team'] as String?,
+      team: _openQueueTeam(json['team']),
       amountPaidFils: _asInt(json['amount_paid_fils']),
       bookedAt: DateTime.parse(json['booked_at'] as String).toLocal(),
       cancelledAt: _asDate(json['cancelled_at']),

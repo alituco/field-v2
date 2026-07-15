@@ -1,3 +1,6 @@
+import 'package:field/src/clans/clan.dart';
+import 'package:field/src/clans/clan_detail_screen.dart';
+import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
@@ -9,6 +12,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('career history keeps its row id separate from its clan id', () {
+    final entry = ProfileCareerEntry.fromJson({
+      'id': 'career-row',
+      'clan_id': 'clan-id',
+      'clan_name': 'Mint Mavericks',
+      'tag': 'MMAV',
+      'emblem': '⚡',
+      'period': '2026 - Present',
+      'apps': 3,
+      'goals': 1,
+      'is_current': true,
+    });
+
+    expect(entry.id, 'career-row');
+    expect(entry.clanId, 'clan-id');
+  });
+
   test('Player SR history parses every frozen calculation input', () {
     final rating = ProfilePlayerRating.fromJson({
       'skill_rating': 1242,
@@ -43,6 +63,45 @@ void main() {
     expect(rating.events.single.teamAverageRating, 1231.5);
     expect(rating.events.single.opponentAverageRating, 1234.25);
     expect(rating.events.single.expectedScore, 0.492804);
+  });
+
+  test('match outcome is calculated from the player historical side', () {
+    expect(_clanHistoryGame('home-win', 1).outcome, ProfileGameOutcome.win);
+    expect(
+      _clanHistoryGame(
+        'away-win',
+        1,
+        playerSide: 'AWAY',
+        homeScore: 1,
+        awayScore: 2,
+      ).outcome,
+      ProfileGameOutcome.win,
+    );
+    expect(
+      _clanHistoryGame(
+        'white-loss',
+        1,
+        playerSide: 'WHITE',
+        homeScore: 1,
+        awayScore: 2,
+      ).outcome,
+      ProfileGameOutcome.loss,
+    );
+    expect(
+      _clanHistoryGame(
+        'black-win',
+        1,
+        playerSide: 'BLACK',
+        homeScore: 1,
+        awayScore: 2,
+      ).outcome,
+      ProfileGameOutcome.win,
+    );
+    expect(
+      _clanHistoryGame('draw', 1, homeScore: 2, awayScore: 2).outcome,
+      ProfileGameOutcome.draw,
+    );
+    expect(_clanHistoryGame('unknown', 1, playerSide: '').outcome, isNull);
   });
 
   testWidgets('Career precedes a collapsible Match History at the bottom', (
@@ -97,6 +156,7 @@ void main() {
       career: const [
         ProfileCareerEntry(
           id: 'career-one',
+          clanId: 'mint-mavericks',
           clanName: 'Mint Mavericks',
           tag: 'MINT',
           emblem: '⚡',
@@ -166,8 +226,8 @@ void main() {
           awayScore: 1,
           playerSide: 'HOME',
         ),
-        _clanHistoryGame('clan-history-2', 3),
-        _clanHistoryGame('clan-history-3', 1),
+        _clanHistoryGame('clan-history-2', 3, playerSide: 'AWAY'),
+        _clanHistoryGame('clan-history-3', 1, homeScore: 2, awayScore: 2),
         _clanHistoryGame('clan-history-4', 6),
       ],
     );
@@ -178,6 +238,7 @@ void main() {
         home: Scaffold(
           body: ProfileScreen(
             profileRepository: _FakeProfileRepository(profile),
+            clanRepository: const _FakeClanRepository(),
             fixtureRepository: const _FakeFixtureRepository(),
             openQueueRepository: _FakeOpenQueueRepository(detail),
             onSignOut: () => signOutCount += 1,
@@ -197,6 +258,35 @@ void main() {
     expect(find.byTooltip('Share profile'), findsNothing);
     expect(find.text(profile.clan!.rank.label.toUpperCase()), findsNothing);
 
+    expect(
+      find.byKey(const ValueKey('profile-clan-mint-mavericks')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('profile-clan-mint-mavericks')));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(ClanDetailScreen), findsOneWidget);
+    Navigator.of(tester.element(find.byType(ClanDetailScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('profile-career-clan-career-one')),
+      180,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey('profile-career-clan-career-one')),
+    );
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(ClanDetailScreen), findsOneWidget);
+    Navigator.of(tester.element(find.byType(ClanDetailScreen))).pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
     await tester.tap(find.byTooltip('Sign out'));
     expect(signOutCount, 1);
 
@@ -210,6 +300,13 @@ void main() {
     expect(find.text('WHITE vs BLACK'), findsOneWidget);
     expect(find.text('MINT vs RIF'), findsNWidgets(2));
     expect(find.text('4 - 3'), findsOneWidget);
+    expect(find.text('WIN'), findsNWidgets(2));
+    expect(find.text('LOSS'), findsOneWidget);
+    expect(find.text('DRAW'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('profile-game-result-solo-history')),
+      findsOneWidget,
+    );
     expect(
       find.byKey(const ValueKey('profile-previous-game-clan-history-4')),
       findsNothing,
@@ -222,6 +319,11 @@ void main() {
     expect(find.text('SHOW LESS'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('profile-previous-game-clan-history-4')),
+      findsOneWidget,
+    );
+    expect(find.text('DRAW'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('profile-game-result-clan-history-3')),
       findsOneWidget,
     );
 
@@ -239,12 +341,35 @@ void main() {
     expect(find.text('SOLO MATCH'), findsOneWidget);
     expect(find.text('White Team'), findsOneWidget);
     expect(find.text('Black Team'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixture-section-timeline')),
+      findsOneWidget,
+    );
+    expect(find.text('WATCH MATCH'), findsNothing);
+    expect(find.text('TFA, Saar'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixture-player-rating-update')),
+      findsOneWidget,
+    );
+    expect(find.text('PLAYER RATING UPDATE'), findsOneWidget);
+    expect(find.text('1230'), findsOneWidget);
+    expect(find.text('1242'), findsOneWidget);
+    expect(find.text('+12 SR'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('fixture-section-watch')));
+    await tester.pumpAndSettle();
     expect(find.text('WATCH MATCH'), findsOneWidget);
+    expect(find.text('PLAYER RATING UPDATE'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
 
-ProfilePreviousGame _clanHistoryGame(String id, int day) {
+ProfilePreviousGame _clanHistoryGame(
+  String id,
+  int day, {
+  String playerSide = 'HOME',
+  int homeScore = 2,
+  int awayScore = 1,
+}) {
   return ProfilePreviousGame(
     id: id,
     type: ProfileGameType.clan,
@@ -256,9 +381,9 @@ ProfilePreviousGame _clanHistoryGame(String id, int day) {
     awayName: 'Riffa Raiders',
     awayTag: 'RIF',
     awayEmblem: '🛡️',
-    homeScore: 2,
-    awayScore: 1,
-    playerSide: 'HOME',
+    homeScore: homeScore,
+    awayScore: awayScore,
+    playerSide: playerSide,
   );
 }
 
@@ -279,6 +404,48 @@ class _FakeProfileRepository implements ProfileRepository {
 
 class _FakeFixtureRepository implements FixtureRepository {
   const _FakeFixtureRepository();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeClanRepository implements ClanRepository {
+  const _FakeClanRepository();
+
+  static const clan = Clan(
+    id: 'mint-mavericks',
+    name: 'Mint Mavericks',
+    tag: 'MMAV',
+    motto: 'Play together.',
+    emblem: '⚡',
+    themeId: 'mint',
+    patternId: 'solid',
+    skillRating: 1199,
+    wins: 2,
+    losses: 1,
+    memberCount: 1,
+    createdBy: 'profile-one',
+  );
+
+  @override
+  Future<ClanMembership?> getMyClanMembership() => Future.delayed(
+    const Duration(milliseconds: 50),
+    () => const ClanMembership(clanId: 'mint-mavericks', role: 'leader'),
+  );
+
+  @override
+  Future<List<Clan>> listClans() =>
+      Future.delayed(const Duration(milliseconds: 50), () => const [clan]);
+
+  @override
+  Future<List<Fixture>> listClanFixtures(String clanId) async => const [];
+
+  @override
+  Future<List<ClanMember>> listClanMembers(String clanId) async => const [];
+
+  @override
+  Future<List<ClanJoinRequest>> listPendingJoinRequests(String clanId) async =>
+      const [];
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

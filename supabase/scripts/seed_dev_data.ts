@@ -496,7 +496,7 @@ await seedFixtureMatchControl(
   fixtureIdsByKey,
 );
 await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
-await seedProfileDetails(admin, usersByPhone);
+await seedProfileDetails(admin, usersByPhone, clanIdsByTag);
 await seedFollows(admin, usersByPhone);
 
 console.log("");
@@ -1798,6 +1798,7 @@ function fixtureEventRow(
 async function seedProfileDetails(
   admin: AdminClient,
   userIdsByPhone: Map<string, string>,
+  clanIdsByTag: Map<string, string>,
 ) {
   const highlightRows = fakeUsers.flatMap((fakeUser) => {
     const profileId = requireUserId(userIdsByPhone, fakeUser.phone);
@@ -1823,6 +1824,7 @@ async function seedProfileDetails(
     const profileId = requireUserId(userIdsByPhone, fakeUser.phone);
     return (fakeUser.career ?? []).map((entry, index) => ({
       profile_id: profileId,
+      clan_id: clanIdsByTag.get(entry.tag) ?? null,
       clan_name: entry.clanName,
       tag: entry.tag,
       emblem: entry.emblem,

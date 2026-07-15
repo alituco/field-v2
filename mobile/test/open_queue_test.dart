@@ -101,13 +101,14 @@ void main() {
     expect(game.timeLabel, '8:30 PM–9:30 PM');
   });
 
-  test('booking game JSON keeps the live confirmed player count', () {
+  test('pending booking ignores a stale team assignment', () {
     final booking = OpenQueueBooking.fromJson({
       'id': 'booking',
       'game_id': 'game',
       'profile_id': 'profile',
       'role': 'MID',
       'status': 'CONFIRMED',
+      'team': ' white ',
       'amount_paid_fils': 3000,
       'booked_at': '2026-07-14T12:00:00Z',
       'game': {
@@ -126,6 +127,33 @@ void main() {
 
     expect(booking.game.confirmedCount, 8);
     expect(booking.game.isFull, isFalse);
+    expect(booking.assignedTeam, isNull);
+    expect(booking.kitInstruction, isNull);
+  });
+
+  test('played or scored games are never upcoming reservations', () {
+    final startsAt = DateTime.now().add(const Duration(days: 10));
+    OpenQueueGame game({required String status, int? whiteScore}) {
+      return OpenQueueGame(
+        id: '$status-$whiteScore',
+        status: status,
+        venue: 'TFA, Saar',
+        startsAt: startsAt,
+        endsAt: startsAt.add(const Duration(hours: 1)),
+        timezone: 'Asia/Bahrain',
+        priceFils: 3000,
+        ageLabel: 'All ages',
+        capacity: 12,
+        confirmedCount: 12,
+        spots: const {},
+        whiteScore: whiteScore,
+        blackScore: whiteScore == null ? null : 1,
+      );
+    }
+
+    expect(game(status: 'FULL').isUpcomingReservation, isTrue);
+    expect(game(status: 'FINAL', whiteScore: 2).isUpcomingReservation, isFalse);
+    expect(game(status: 'OPEN', whiteScore: 2).isUpcomingReservation, isFalse);
   });
 
   test('solo match detail maps teams, clock, goals, and replay data', () {

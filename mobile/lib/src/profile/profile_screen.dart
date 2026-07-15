@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../clans/clan.dart';
+import '../clans/clan_detail_screen.dart';
+import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../leaderboard/leaderboard.dart';
+import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_repository.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
@@ -17,6 +22,7 @@ class ProfileScreen extends StatefulWidget {
   const ProfileScreen({
     super.key,
     required this.profileRepository,
+    this.clanRepository,
     this.fixtureRepository,
     this.openQueueRepository,
     this.profileId,
@@ -27,6 +33,7 @@ class ProfileScreen extends StatefulWidget {
   });
 
   final ProfileRepository profileRepository;
+  final ClanRepository? clanRepository;
   final FixtureRepository? fixtureRepository;
   final OpenQueueRepository? openQueueRepository;
   final String? profileId;
@@ -41,16 +48,19 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   late Future<PlayerProfile> _profileFuture;
+  late final ClanRepository _clanRepository;
   late final FixtureRepository _fixtureRepository;
   late final OpenQueueRepository _openQueueRepository;
   PlayerProfile? _latestProfile;
   String? _openingGameId;
+  bool _isOpeningClan = false;
 
   bool get _isCurrentProfile => widget.profileId == null;
 
   @override
   void initState() {
     super.initState();
+    _clanRepository = widget.clanRepository ?? SupabaseClanRepository();
     _fixtureRepository =
         widget.fixtureRepository ?? SupabaseFixtureRepository();
     _openQueueRepository =
@@ -93,16 +103,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _openPreviousGame(ProfilePreviousGame game) {
-    return _openRatedMatch(game.id, isSolo: game.isSolo);
+    return _openRatedMatch(game);
   }
 
-  Future<void> _openRatedMatch(String matchId, {required bool isSolo}) async {
+  Future<void> _openRatedMatch(ProfilePreviousGame game) async {
+    final matchId = game.id;
+    final isSolo = game.isSolo;
     if (_openingGameId != null) return;
     if (matchId.trim().isEmpty) return;
     setState(() => _openingGameId = matchId);
     try {
       if (isSolo) {
         final detail = await _openQueueRepository.getMatchDetail(matchId);
+        final playerRatingUpdate = _playerRatingUpdateFor(game, detail);
         if (!mounted) return;
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(
@@ -112,6 +125,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               myClanMembership: null,
               sourceLabel: 'SOLO',
               showTeamRatings: false,
+              playerRatingUpdate: playerRatingUpdate,
               refreshFixture: () async {
                 final next = await _openQueueRepository.getMatchDetail(matchId);
                 return next.toFixture();
@@ -147,6 +161,64 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     } finally {
       if (mounted) setState(() => _openingGameId = null);
+    }
+  }
+
+  FixturePlayerRatingUpdate? _playerRatingUpdateFor(
+    ProfilePreviousGame game,
+    OpenQueueMatchDetail detail,
+  ) {
+    final ratingEvents = _latestProfile?.playerRating?.events ?? const [];
+    for (final event in ratingEvents) {
+      if (event.sourceId.trim() != game.id.trim() ||
+          event.isSolo != game.isSolo) {
+        continue;
+      }
+      return FixturePlayerRatingUpdate(
+        ratingBefore: event.ratingBefore,
+        ratingChange: event.ratingChange,
+        ratingAfter: event.ratingAfter,
+        result: event.result.isEmpty ? game.outcome?.label : event.result,
+      );
+    }
+
+    final profileId = _latestProfile?.id;
+    if (profileId == null || profileId.isEmpty) return null;
+    for (final player in detail.players) {
+      if (player.id != profileId) continue;
+      final ratingBefore = player.displayedRating;
+      final ratingChange = player.ratingChange;
+      if (ratingBefore == null || ratingChange == null) return null;
+      return FixturePlayerRatingUpdate(
+        ratingBefore: ratingBefore,
+        ratingChange: ratingChange,
+        ratingAfter: ratingBefore + ratingChange,
+        result: game.outcome?.label,
+      );
+    }
+    return null;
+  }
+
+  Future<void> _openClan({
+    required String clanId,
+    required String clanName,
+  }) async {
+    if (_isOpeningClan || clanId.trim().isEmpty) return;
+    setState(() => _isOpeningClan = true);
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => _ProfileClanRoute(
+            clanId: clanId,
+            clanName: clanName,
+            clanRepository: _clanRepository,
+            fixtureRepository: _fixtureRepository,
+          ),
+        ),
+      );
+      if (mounted) await _refresh();
+    } finally {
+      if (mounted) setState(() => _isOpeningClan = false);
     }
   }
 
@@ -290,6 +362,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
               children: [
                 _IdentityCard(
                   profile: profile,
+                  onOpenClan: profile.clan == null
+                      ? null
+                      : () => _openClan(
+                          clanId: profile.clan!.id,
+                          clanName: profile.clan!.name,
+                        ),
                   onOpenFollowing: _isCurrentProfile
                       ? () => _openConnections(ProfileConnectionTab.following)
                       : null,
@@ -305,7 +383,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
                 if (profile.career.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _CareerCard(entries: profile.career),
+                  _CareerCard(
+                    entries: profile.career,
+                    onOpenClan: (entry) {
+                      final clanId = entry.clanId;
+                      if (clanId == null) return;
+                      _openClan(clanId: clanId, clanName: entry.clanName);
+                    },
+                  ),
                 ],
                 if (profile.highlights.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -331,11 +416,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 class _IdentityCard extends StatelessWidget {
   const _IdentityCard({
     required this.profile,
+    required this.onOpenClan,
     required this.onOpenFollowing,
     required this.onOpenFans,
   });
 
   final PlayerProfile profile;
+  final VoidCallback? onOpenClan;
   final VoidCallback? onOpenFollowing;
   final VoidCallback? onOpenFans;
 
@@ -392,7 +479,7 @@ class _IdentityCard extends StatelessWidget {
                         ),
                       )
                     else
-                      _ClanLine(clan: clan),
+                      _ClanLine(clan: clan, onTap: onOpenClan),
                   ],
                 ),
               ),
@@ -439,35 +526,64 @@ class _IdentityCard extends StatelessWidget {
 }
 
 class _ClanLine extends StatelessWidget {
-  const _ClanLine({required this.clan});
+  const _ClanLine({required this.clan, required this.onTap});
 
   final ProfileClan clan;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        Text(clan.emblem, style: const TextStyle(fontSize: 16, height: 1)),
-        Text(
-          clan.name,
-          style: const TextStyle(
-            color: fieldGray700,
-            fontSize: 14,
-            fontWeight: FontWeight.w800,
+    return Semantics(
+      button: true,
+      label: 'Open ${clan.name} clan',
+      child: Material(
+        color: fieldEmerald50,
+        borderRadius: BorderRadius.circular(11),
+        child: InkWell(
+          key: ValueKey('profile-clan-${clan.id}'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(11),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+            child: Row(
+              children: [
+                Text(
+                  clan.emblem,
+                  style: const TextStyle(fontSize: 16, height: 1),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    clan.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: fieldGray700,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  clan.tag,
+                  style: const TextStyle(
+                    color: fieldEmerald700,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(width: 3),
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: fieldEmerald700,
+                  size: 18,
+                ),
+              ],
+            ),
           ),
         ),
-        Text(
-          clan.tag,
-          style: const TextStyle(
-            color: fieldGray400,
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -939,9 +1055,10 @@ class _HighlightRow extends StatelessWidget {
 }
 
 class _CareerCard extends StatelessWidget {
-  const _CareerCard({required this.entries});
+  const _CareerCard({required this.entries, required this.onOpenClan});
 
   final List<ProfileCareerEntry> entries;
+  final ValueChanged<ProfileCareerEntry> onOpenClan;
 
   @override
   Widget build(BuildContext context) {
@@ -970,7 +1087,12 @@ class _CareerCard extends StatelessWidget {
           for (var index = 0; index < entries.length; index++) ...[
             if (index > 0)
               const Divider(height: 1, indent: 20, color: fieldGray100),
-            _CareerRow(entry: entries[index]),
+            _CareerRow(
+              entry: entries[index],
+              onTap: entries[index].clanId == null
+                  ? null
+                  : () => onOpenClan(entries[index]),
+            ),
           ],
         ],
       ),
@@ -1004,13 +1126,14 @@ class _CareerSubheading extends StatelessWidget {
 }
 
 class _CareerRow extends StatelessWidget {
-  const _CareerRow({required this.entry});
+  const _CareerRow({required this.entry, required this.onTap});
 
   final ProfileCareerEntry entry;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
+    final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       child: Row(
         children: [
@@ -1117,7 +1240,29 @@ class _CareerRow extends StatelessWidget {
               ),
             ],
           ),
+          if (onTap != null) ...[
+            const SizedBox(width: 5),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: fieldGray300,
+              size: 19,
+            ),
+          ],
         ],
+      ),
+    );
+
+    if (onTap == null) return content;
+    return Semantics(
+      button: true,
+      label: 'Open ${entry.clanName} clan',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: ValueKey('profile-career-clan-${entry.id}'),
+          onTap: onTap,
+          child: content,
+        ),
       ),
     );
   }
@@ -1139,6 +1284,7 @@ class _PreviousGameRow extends StatelessWidget {
     final date = game.playedAt;
     final role = game.playerRole?.toUpperCase();
     final side = game.playerSide.isEmpty ? null : game.playerSide;
+    final outcome = game.outcome;
     final contextLabel = [
       _shortProfileGameDate(date),
       if (side != null) side,
@@ -1226,29 +1372,92 @@ class _PreviousGameRow extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 10),
-            if (isLoading)
-              const SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else ...[
-              Text(
-                '${game.homeScore} - ${game.awayScore}',
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: fieldGray300,
-                size: 20,
-              ),
-            ],
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (outcome != null) ...[
+                  _ProfileGameOutcomeBadge(gameId: game.id, outcome: outcome),
+                  const SizedBox(height: 4),
+                ],
+                if (isLoading)
+                  const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                else
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${game.homeScore} - ${game.awayScore}',
+                        style: const TextStyle(
+                          color: fieldGray900,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        color: fieldGray300,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileGameOutcomeBadge extends StatelessWidget {
+  const _ProfileGameOutcomeBadge({required this.gameId, required this.outcome});
+
+  final String gameId;
+  final ProfileGameOutcome outcome;
+
+  @override
+  Widget build(BuildContext context) {
+    final (foreground, background, border) = switch (outcome) {
+      ProfileGameOutcome.win => (
+        fieldEmerald700,
+        fieldEmerald50,
+        fieldEmerald200,
+      ),
+      ProfileGameOutcome.loss => (
+        const Color(0xFFDC2626),
+        const Color(0xFFFEF2F2),
+        const Color(0xFFFECACA),
+      ),
+      ProfileGameOutcome.draw => (fieldGray600, fieldGray100, fieldGray200),
+    };
+
+    return Semantics(
+      label: 'Result: ${outcome.label.toLowerCase()}',
+      child: ExcludeSemantics(
+        child: Container(
+          key: ValueKey('profile-game-result-$gameId'),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: background,
+            border: Border.all(color: border),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            outcome.label,
+            style: TextStyle(
+              color: foreground,
+              fontSize: 9,
+              height: 1,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.7,
+            ),
+          ),
         ),
       ),
     );
@@ -1459,6 +1668,184 @@ class _HeaderIconButton extends StatelessWidget {
                   )
                 : Icon(icon, color: fieldGray600, size: 18),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileClanRoute extends StatefulWidget {
+  const _ProfileClanRoute({
+    required this.clanId,
+    required this.clanName,
+    required this.clanRepository,
+    required this.fixtureRepository,
+  });
+
+  final String clanId;
+  final String clanName;
+  final ClanRepository clanRepository;
+  final FixtureRepository fixtureRepository;
+
+  @override
+  State<_ProfileClanRoute> createState() => _ProfileClanRouteState();
+}
+
+class _ProfileClanRouteState extends State<_ProfileClanRoute> {
+  late Future<_ProfileClanRouteData> _future = _load();
+
+  Future<_ProfileClanRouteData> _load() async {
+    final results = await Future.wait<dynamic>([
+      widget.clanRepository.listClans(),
+      widget.clanRepository.getMyClanMembership(),
+    ]);
+    final clans = results[0] as List<Clan>;
+    final membership = results[1] as ClanMembership?;
+    Clan? clan;
+    for (final candidate in clans) {
+      if (candidate.id.trim() == widget.clanId.trim()) {
+        clan = candidate;
+        break;
+      }
+    }
+    if (clan == null) throw StateError('Clan is unavailable.');
+    return _ProfileClanRouteData(clan: clan, membership: membership);
+  }
+
+  void _retry() {
+    setState(() => _future = _load());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<_ProfileClanRouteData>(
+      future: _future,
+      builder: (context, snapshot) {
+        if (snapshot.hasData) {
+          final data = snapshot.data!;
+          return ClanDetailScreen(
+            clan: data.clan,
+            clanRepository: widget.clanRepository,
+            fixtureRepository: widget.fixtureRepository,
+            currentMembership: data.membership,
+          );
+        }
+        if (snapshot.hasError) {
+          return _ProfileClanLoadError(
+            clanName: widget.clanName,
+            onRetry: _retry,
+          );
+        }
+        return _ProfileClanLoadingView(clanName: widget.clanName);
+      },
+    );
+  }
+}
+
+class _ProfileClanRouteData {
+  const _ProfileClanRouteData({required this.clan, required this.membership});
+
+  final Clan clan;
+  final ClanMembership? membership;
+}
+
+class _ProfileClanLoadingView extends StatelessWidget {
+  const _ProfileClanLoadingView({required this.clanName});
+
+  final String clanName;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      key: const ValueKey('profile-clan-route-loading'),
+      backgroundColor: fieldBackground,
+      body: FieldHeaderOverlay(
+        header: FieldPageHeader(title: clanName, showBack: true),
+        child: ListView(
+          padding: fieldHeaderAwarePadding(context, top: 18, bottom: 32),
+          children: const [
+            FieldSkeletonCard(
+              height: 230,
+              borderRadius: 24,
+              padding: EdgeInsets.all(20),
+              children: [
+                Center(
+                  child: FieldSkeletonBox(
+                    width: 82,
+                    height: 82,
+                    borderRadius: 24,
+                  ),
+                ),
+                SizedBox(height: 18),
+                Center(
+                  child: FieldSkeletonBox(
+                    width: 180,
+                    height: 22,
+                    borderRadius: 7,
+                  ),
+                ),
+                SizedBox(height: 12),
+                Center(
+                  child: FieldSkeletonBox(
+                    width: 125,
+                    height: 14,
+                    borderRadius: 7,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 16),
+            FieldSkeletonBox(height: 52, borderRadius: 16),
+            SizedBox(height: 16),
+            FieldSkeletonCard(height: 210, borderRadius: 22),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileClanLoadError extends StatelessWidget {
+  const _ProfileClanLoadError({required this.clanName, required this.onRetry});
+
+  final String clanName;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: fieldBackground,
+      body: FieldHeaderOverlay(
+        header: FieldPageHeader(title: clanName, showBack: true),
+        child: ListView(
+          padding: fieldHeaderAwarePadding(context, top: 80, bottom: 32),
+          children: [
+            const Icon(Icons.shield_outlined, color: fieldGray300, size: 44),
+            const SizedBox(height: 14),
+            const Text(
+              'Clan unavailable',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: fieldGray900,
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 7),
+            const Text(
+              'This clan may have been archived or removed.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: fieldGray500, fontSize: 13),
+            ),
+            const SizedBox(height: 18),
+            Center(
+              child: OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Try again'),
+              ),
+            ),
+          ],
         ),
       ),
     );

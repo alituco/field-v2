@@ -6,6 +6,7 @@ import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
 import 'open_queue.dart';
+import 'open_queue_kit_indicator.dart';
 import 'open_queue_repository.dart';
 
 class OpenQueueBookingScreen extends StatefulWidget {
@@ -141,9 +142,12 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
   Widget build(BuildContext context) {
     final booking = _booking;
     final game = booking.game;
-    final isConfirmed = game.isFull;
+    final isConfirmed = game.isUpcomingMatchConfirmed;
+    final hasTeamAssignment = game.hasActiveTeamAssignment;
+    final assignedTeam = booking.assignedTeam;
     final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Booking Details', showBack: true),
@@ -153,16 +157,20 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
           onRefresh: _refreshBooking,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: fieldHeaderAwarePadding(context, top: 20, bottom: 92),
+            padding: fieldHeaderAwarePadding(context, top: 20, bottom: 116),
             children: [
               _BookingPlayerStatusCard(
                 confirmedCount: confirmedCount,
                 capacity: game.capacity,
-                averagePlayerRating: game.matchAverageSr,
+                averagePlayerRating: hasTeamAssignment
+                    ? game.matchAverageSr
+                    : null,
                 isConfirmed: isConfirmed,
                 isRefreshing: _refreshing,
                 onRefresh: _refreshBooking,
               ),
+              const SizedBox(height: 12),
+              _BookingMatchDayCard(booking: booking),
               const SizedBox(height: 20),
               const Text(
                 'YOUR BOOKING',
@@ -187,13 +195,6 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                 child: Column(
                   children: [
                     _bookingRow(
-                      Icons.calendar_month_rounded,
-                      'DATE',
-                      game.prominentDateLabel,
-                      highlight: game.isToday || game.isTomorrow,
-                    ),
-                    const Divider(height: 1, color: fieldGray100),
-                    _bookingRow(
                       Icons.schedule_rounded,
                       'KICKOFF',
                       game.timeLabel,
@@ -215,11 +216,13 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                     _bookingRow(
                       Icons.shield_outlined,
                       'TEAM',
-                      booking.team == null
-                          ? 'Assigned when the match fills'
-                          : '${booking.team!.toUpperCase()} TEAM',
+                      assignedTeam == null
+                          ? isConfirmed
+                                ? 'Assignment updating'
+                                : 'Assigned when the match fills'
+                          : '$assignedTeam TEAM',
                     ),
-                    if (game.matchAverageSr != null) ...[
+                    if (hasTeamAssignment && game.matchAverageSr != null) ...[
                       const Divider(height: 1, color: fieldGray100),
                       _bookingRow(
                         Icons.balance_rounded,
@@ -249,8 +252,10 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        booking.team == null
-                            ? 'Your spot is secured. Teams are assigned automatically when ${game.capacity}/${game.capacity} players confirm.'
+                        assignedTeam == null
+                            ? isConfirmed
+                                  ? 'Your match is confirmed. Pull to refresh while your kit assignment finishes updating.'
+                                  : 'Your spot is secured. Teams are assigned automatically when ${game.capacity}/${game.capacity} players confirm.'
                             : 'Teams assigned. The two team averages are only ${game.teamSrSpread ?? 0} SR apart.',
                         style: const TextStyle(
                           color: fieldGray600,
@@ -352,6 +357,101 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BookingMatchDayCard extends StatelessWidget {
+  const _BookingMatchDayCard({required this.booking});
+
+  final OpenQueueBooking booking;
+
+  @override
+  Widget build(BuildContext context) {
+    final game = booking.game;
+    final isConfirmed = game.isUpcomingMatchConfirmed;
+    final isClose = game.isToday || game.isTomorrow;
+
+    return Container(
+      key: const ValueKey('match-day-kit-panel'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(17),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isConfirmed
+              ? const [Color(0xFFECFDF5), Colors.white]
+              : const [Colors.white, Color(0xFFF9FAFB)],
+        ),
+        border: Border.all(
+          color: isConfirmed ? fieldEmerald200 : fieldGray200,
+          width: 1.3,
+        ),
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D111827),
+            blurRadius: 16,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: isClose ? fieldEmerald600 : fieldGray900,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(
+                  Icons.calendar_month_rounded,
+                  color: Colors.white,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MATCH DATE',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      game.prominentDateLabel,
+                      style: TextStyle(
+                        color: isClose ? fieldEmerald800 : fieldGray900,
+                        fontSize: isClose ? 16 : 14,
+                        height: 1.15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (isConfirmed) ...[
+            const SizedBox(height: 13),
+            const Divider(height: 1, color: fieldGray200),
+            const SizedBox(height: 13),
+            OpenQueueKitIndicator(booking: booking),
+          ],
         ],
       ),
     );

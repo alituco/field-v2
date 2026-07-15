@@ -67,6 +67,7 @@ class OpenQueueReviewScreen extends StatelessWidget {
     ];
 
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(
@@ -74,7 +75,7 @@ class OpenQueueReviewScreen extends StatelessWidget {
           showBack: true,
         ),
         child: ListView(
-          padding: fieldHeaderAwarePadding(context, top: 16, bottom: 92),
+          padding: fieldHeaderAwarePadding(context, top: 16, bottom: 116),
           children: [
             Container(
               decoration: BoxDecoration(
@@ -301,11 +302,12 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Payment', showBack: true),
         child: ListView(
-          padding: fieldHeaderAwarePadding(context, top: 16, bottom: 92),
+          padding: fieldHeaderAwarePadding(context, top: 16, bottom: 116),
           children: [
             _PaymentSummary(game: widget.game, role: widget.role),
             const SizedBox(height: 18),

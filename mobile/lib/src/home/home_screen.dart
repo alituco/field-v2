@@ -111,6 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       ProfileScreen(
         profileRepository: _profileRepository,
+        clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
         devModeEnabled: widget.isDev,
@@ -121,6 +122,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: FieldBottomNav(

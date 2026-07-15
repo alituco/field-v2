@@ -98,6 +98,8 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
           backgroundColor: fieldBackground,
           body: ProfileScreen(
             profileRepository: _profileRepository,
+            clanRepository: widget.clanRepository,
+            fixtureRepository: widget.fixtureRepository,
             profileId: member.profileId,
           ),
         ),

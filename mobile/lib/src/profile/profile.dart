@@ -376,6 +376,7 @@ class ProfileHighlight {
 class ProfileCareerEntry {
   const ProfileCareerEntry({
     required this.id,
+    this.clanId,
     required this.clanName,
     required this.tag,
     required this.emblem,
@@ -386,6 +387,7 @@ class ProfileCareerEntry {
   });
 
   final String id;
+  final String? clanId;
   final String clanName;
   final String tag;
   final String emblem;
@@ -395,8 +397,10 @@ class ProfileCareerEntry {
   final bool isCurrent;
 
   factory ProfileCareerEntry.fromJson(Map<String, dynamic> json) {
+    final clanId = (json['clan_id'] as String?)?.trim();
     return ProfileCareerEntry(
       id: json['id'] as String? ?? '',
+      clanId: clanId == null || clanId.isEmpty ? null : clanId,
       clanName: (json['clan_name'] as String? ?? '').trim(),
       tag: (json['tag'] as String? ?? '').trim().toUpperCase(),
       emblem: json['emblem'] as String? ?? '⚽',
@@ -409,6 +413,16 @@ class ProfileCareerEntry {
 }
 
 enum ProfileGameType { clan, solo }
+
+enum ProfileGameOutcome { win, loss, draw }
+
+extension ProfileGameOutcomeX on ProfileGameOutcome {
+  String get label => switch (this) {
+    ProfileGameOutcome.win => 'WIN',
+    ProfileGameOutcome.loss => 'LOSS',
+    ProfileGameOutcome.draw => 'DRAW',
+  };
+}
 
 class ProfilePreviousGame {
   const ProfilePreviousGame({
@@ -446,6 +460,21 @@ class ProfilePreviousGame {
   bool get isSolo => type == ProfileGameType.solo;
 
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
+
+  ProfileGameOutcome? get outcome {
+    final isHomeSide = switch (playerSide.trim().toUpperCase()) {
+      'HOME' || 'WHITE' => true,
+      'AWAY' || 'BLACK' => false,
+      _ => null,
+    };
+    if (isHomeSide == null) return null;
+    if (homeScore == awayScore) return ProfileGameOutcome.draw;
+
+    final playerWon = isHomeSide
+        ? homeScore > awayScore
+        : awayScore > homeScore;
+    return playerWon ? ProfileGameOutcome.win : ProfileGameOutcome.loss;
+  }
 
   factory ProfilePreviousGame.fromJson(Map<String, dynamic> json) {
     final rawType = (json['match_type'] ?? json['source_type'] ?? 'CLAN')

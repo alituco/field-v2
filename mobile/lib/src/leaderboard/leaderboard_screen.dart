@@ -220,6 +220,8 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           backgroundColor: fieldBackground,
           body: ProfileScreen(
             profileRepository: _profileRepository,
+            clanRepository: widget.clanRepository,
+            fixtureRepository: widget.fixtureRepository,
             profileId: profileId,
           ),
         ),

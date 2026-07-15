@@ -134,6 +134,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      extendBody: true,
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Open Queue', showBack: true),
@@ -145,7 +146,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
             padding: fieldHeaderAwarePadding(
               context,
               top: 18,
-              bottom: _mainRole == null ? 92 : 218,
+              bottom: _mainRole == null ? 116 : 218,
             ),
             children: [
               const Text(
