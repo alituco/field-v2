@@ -15,6 +15,7 @@ import '../open_queue/open_queue_repository.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'profile.dart';
+import 'profile_clip_screen.dart';
 import 'profile_connections_screen.dart';
 import 'profile_repository.dart';
 
@@ -106,6 +107,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return _openRatedMatch(game);
   }
 
+  Future<void> _openHighlight(ProfileHighlight highlight) async {
+    await Navigator.of(context).push<ProfileHighlight>(
+      MaterialPageRoute<ProfileHighlight>(
+        builder: (_) => ProfileClipScreen(
+          highlight: highlight,
+          profileRepository: widget.profileRepository,
+        ),
+      ),
+    );
+    if (mounted) await _refresh();
+  }
+
   Future<void> _openRatedMatch(ProfilePreviousGame game) async {
     final matchId = game.id;
     final isSolo = game.isSolo;
@@ -127,6 +140,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               sourceLabel: 'SOLO',
               showTeamRatings: false,
               playerRatingUpdate: playerRatingUpdate,
+              profileRepository: widget.profileRepository,
               refreshFixture: () async {
                 final next = await _openQueueRepository.getMatchDetail(matchId);
                 return next.toFixture();
@@ -145,6 +159,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               clanRepository: _clanRepository,
               myClanMembership: null,
               sourceLabel: 'CLAN',
+              profileRepository: widget.profileRepository,
             ),
           ),
         );
@@ -394,9 +409,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                 ],
-                if (profile.highlights.isNotEmpty) ...[
+                if (_isCurrentProfile || profile.highlights.isNotEmpty) ...[
                   const SizedBox(height: 16),
-                  _HighlightsCard(highlights: profile.highlights),
+                  _HighlightsCard(
+                    highlights: profile.highlights,
+                    showEmptyState: _isCurrentProfile,
+                    onOpenHighlight: _openHighlight,
+                  ),
                 ],
                 if (profile.previousGames.isNotEmpty) ...[
                   const SizedBox(height: 16),
@@ -882,9 +901,15 @@ class _MatchHistoryCardState extends State<_MatchHistoryCard> {
 }
 
 class _HighlightsCard extends StatelessWidget {
-  const _HighlightsCard({required this.highlights});
+  const _HighlightsCard({
+    required this.highlights,
+    required this.showEmptyState,
+    required this.onOpenHighlight,
+  });
 
   final List<ProfileHighlight> highlights;
+  final bool showEmptyState;
+  final ValueChanged<ProfileHighlight> onOpenHighlight;
 
   @override
   Widget build(BuildContext context) {
@@ -902,7 +927,7 @@ class _HighlightsCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 const Text(
-                  'HIGHLIGHTS',
+                  'CLIPS',
                   style: TextStyle(
                     color: fieldGray700,
                     fontSize: 14,
@@ -922,10 +947,39 @@ class _HighlightsCard extends StatelessWidget {
               ],
             ),
           ),
+          if (highlights.isEmpty && showEmptyState)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 4, 20, 22),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    color: fieldEmerald600,
+                    size: 20,
+                  ),
+                  SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      'Your goals will live here. Open a finished match, choose one of your goal chapters, and add it to your profile.',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 13,
+                        height: 1.45,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           for (var index = 0; index < highlights.length; index++) ...[
             if (index > 0)
               const Divider(height: 1, indent: 20, color: fieldGray100),
-            _HighlightRow(highlight: highlights[index]),
+            _HighlightRow(
+              highlight: highlights[index],
+              onTap: () => onOpenHighlight(highlights[index]),
+            ),
           ],
         ],
       ),
@@ -934,18 +988,15 @@ class _HighlightsCard extends StatelessWidget {
 }
 
 class _HighlightRow extends StatelessWidget {
-  const _HighlightRow({required this.highlight});
+  const _HighlightRow({required this.highlight, required this.onTap});
 
   final ProfileHighlight highlight;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
-      onTap: () {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(highlight.title)));
-      },
+      onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
         child: Row(
@@ -968,8 +1019,13 @@ class _HighlightRow extends StatelessWidget {
                           color: Colors.white.withValues(alpha: 0.84),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
-                          Icons.play_arrow_rounded,
+                        child: Icon(
+                          highlight.isProcessing
+                              ? Icons.hourglass_top_rounded
+                              : highlight.status ==
+                                    ProfileHighlightStatus.failed
+                              ? Icons.error_outline_rounded
+                              : Icons.play_arrow_rounded,
                           color: Colors.black,
                           size: 20,
                         ),
@@ -1020,15 +1076,24 @@ class _HighlightRow extends StatelessWidget {
                   const SizedBox(height: 7),
                   Row(
                     children: [
-                      const Icon(
-                        Icons.remove_red_eye_outlined,
+                      Icon(
+                        highlight.isProcessing
+                            ? Icons.auto_awesome_rounded
+                            : highlight.status == ProfileHighlightStatus.failed
+                            ? Icons.error_outline_rounded
+                            : Icons.remove_red_eye_outlined,
                         color: fieldGray400,
                         size: 13,
                       ),
                       const SizedBox(width: 4),
                       Flexible(
                         child: Text(
-                          _viewsLabel(highlight.views, highlight.clanTag),
+                          highlight.isProcessing
+                              ? 'Preparing clip...'
+                              : highlight.status ==
+                                    ProfileHighlightStatus.failed
+                              ? 'Clip needs attention'
+                              : _viewsLabel(highlight.views, highlight.clanTag),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(

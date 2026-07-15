@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Field lets you choose a profile photo from your library.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Field saves your goal clips to Photos.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

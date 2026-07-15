@@ -349,7 +349,10 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
     phone,
     password,
     phone_confirm: true,
-    user_metadata: { display_name: `Open Queue Verify ${label}` },
+    user_metadata: {
+      display_name: `Open Queue Verify ${label}`,
+      date_of_birth: "2000-01-01",
+    },
   });
   if (error) throw error;
   testUserIds.push(data.user.id);
@@ -358,6 +361,7 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
     id: data.user.id,
     phone,
     display_name: `Open Queue Verify ${label}`,
+    date_of_birth: "2000-01-01",
     username: `oq_verify_${digits}`,
   });
   if (profileError) throw profileError;

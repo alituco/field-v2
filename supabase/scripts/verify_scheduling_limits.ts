@@ -242,7 +242,10 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
     phone,
     password,
     phone_confirm: true,
-    user_metadata: { display_name: `Limit Verify ${label}` },
+    user_metadata: {
+      display_name: `Limit Verify ${label}`,
+      date_of_birth: "2000-01-01",
+    },
   });
   if (error) throw error;
   userIds.add(data.user.id);
@@ -251,6 +254,7 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
     id: data.user.id,
     phone,
     display_name: `Limit Verify ${label}`,
+    date_of_birth: "2000-01-01",
     username: `limit_verify_${digits}`,
   });
   if (profileError) throw profileError;

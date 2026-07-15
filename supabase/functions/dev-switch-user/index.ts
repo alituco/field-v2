@@ -78,7 +78,7 @@ Deno.serve(async (request) => {
 
     const { data: profile, error: profileError } = await admin
       .from("profiles")
-      .select("id, display_name, username")
+      .select("id, display_name, username, date_of_birth")
       .eq("id", body.profile_id)
       .maybeSingle();
     if (profileError) throw profileError;
@@ -97,6 +97,7 @@ Deno.serve(async (request) => {
       ...target.user_metadata,
       display_name: profile.display_name,
       name: profile.display_name,
+      date_of_birth: profile.date_of_birth,
     };
     const session = target.email
       ? await createEmailSession({

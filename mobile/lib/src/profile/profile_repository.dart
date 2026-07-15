@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'profile.dart';
 
 abstract class ProfileRepository {
+  String? get currentUserId;
+
   Future<PlayerProfile> getCurrentProfile();
 
   Future<PlayerProfile> getProfile(String profileId);
@@ -24,12 +26,161 @@ abstract class ProfileRepository {
     required String fileExtension,
     required String contentType,
   });
+
+  Future<ProfileHighlight> createGoalClip(ProfileGoalClipRequest request);
+
+  Future<ProfileClipMedia> getGoalClipDownload({
+    required ProfileHighlightSource sourceType,
+    required String matchId,
+    required String eventId,
+  });
+
+  Future<ProfileHighlight> createCustomClip(ProfileCustomClipRequest request);
+
+  Future<ProfileClipMedia> getCustomClipDownload(
+    ProfileCustomClipRequest request,
+  );
+
+  Future<ProfileFullGameDownload> prepareFullGameDownload({
+    required ProfileHighlightSource sourceType,
+    required String matchId,
+  });
+
+  Future<ProfileHighlight> refreshHighlight(String highlightId);
+
+  Future<int> recordHighlightView(String highlightId);
 }
 
 class SupabaseProfileRepository implements ProfileRepository {
   static const _avatarBucket = 'profile-avatars';
 
   SupabaseClient get _client => Supabase.instance.client;
+
+  @override
+  String? get currentUserId => _client.auth.currentUser?.id;
+
+  @override
+  Future<ProfileHighlight> createGoalClip(
+    ProfileGoalClipRequest request,
+  ) async {
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: request.toJson(),
+    );
+    return _highlightFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<ProfileClipMedia> getGoalClipDownload({
+    required ProfileHighlightSource sourceType,
+    required String matchId,
+    required String eventId,
+  }) async {
+    final normalizedMatchId = matchId.trim();
+    final normalizedEventId = eventId.trim();
+    if (normalizedMatchId.isEmpty || normalizedEventId.isEmpty) {
+      throw ArgumentError('A match and goal are required.');
+    }
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: {
+        'action': 'goal_download',
+        'source_type': sourceType.wireValue,
+        'match_id': normalizedMatchId,
+        'event_id': normalizedEventId,
+      },
+    );
+    return _mediaFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<ProfileHighlight> createCustomClip(
+    ProfileCustomClipRequest request,
+  ) async {
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: request.toJson(saveToProfile: true),
+    );
+    return _highlightFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<ProfileClipMedia> getCustomClipDownload(
+    ProfileCustomClipRequest request,
+  ) async {
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: request.toJson(saveToProfile: false),
+    );
+    return _mediaFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<ProfileFullGameDownload> prepareFullGameDownload({
+    required ProfileHighlightSource sourceType,
+    required String matchId,
+  }) async {
+    final normalizedMatchId = matchId.trim();
+    if (normalizedMatchId.isEmpty) throw ArgumentError('A match is required.');
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: {
+        'action': 'full_game_download',
+        'source_type': sourceType.wireValue,
+        'match_id': normalizedMatchId,
+      },
+    );
+    final data = response.data;
+    if (data is! Map) {
+      throw StateError('The full-game download returned an invalid response.');
+    }
+    return ProfileFullGameDownload.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  @override
+  Future<ProfileHighlight> refreshHighlight(String highlightId) async {
+    final id = highlightId.trim();
+    if (id.isEmpty) throw ArgumentError('A clip is required.');
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: {'action': 'status', 'highlight_id': id},
+    );
+    return _highlightFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<int> recordHighlightView(String highlightId) async {
+    final id = highlightId.trim();
+    if (id.isEmpty) throw ArgumentError('A clip is required.');
+    final response = await _client.rpc(
+      'record_profile_highlight_view',
+      params: {'highlight_id_to_use': id},
+    );
+    if (response is num) return response.toInt();
+    if (response is Map) {
+      final value = response['views'];
+      if (value is num) return value.toInt();
+    }
+    throw StateError('The clip view could not be recorded.');
+  }
+
+  ProfileHighlight _highlightFromFunctionResponse(Object? data) {
+    final value = data is Map && data['highlight'] is Map
+        ? data['highlight']
+        : data;
+    if (value is! Map) {
+      throw StateError('The clip service returned an invalid response.');
+    }
+    return ProfileHighlight.fromJson(Map<String, dynamic>.from(value));
+  }
+
+  ProfileClipMedia _mediaFromFunctionResponse(Object? data) {
+    final value = data is Map && data['media'] is Map ? data['media'] : data;
+    if (value is! Map) {
+      throw StateError('The clip service returned an invalid response.');
+    }
+    return ProfileClipMedia.fromJson(Map<String, dynamic>.from(value));
+  }
 
   @override
   Future<PlayerProfile> getCurrentProfile() async {
@@ -394,17 +545,26 @@ class SupabaseProfileRepository implements ProfileRepository {
     final response = await _client
         .from('profile_highlights')
         .select(
-          'id, title, thumbnail_url, video_url, duration, views, clan_tag',
+          'id, title, thumbnail_url, video_url, duration, views, clan_tag, '
+          'download_url, source_type, source_match_id, source_event_id, '
+          'provider_video_id, processing_status, processing_error',
         )
         .eq('profile_id', userId)
         .order('sort_order')
         .order('created_at');
     final rows = response as List<dynamic>;
 
-    return [
+    final highlights = [
       for (final row in rows)
         ProfileHighlight.fromJson(Map<String, dynamic>.from(row as Map)),
     ];
+    return highlights
+        .where((highlight) {
+          final videoUrl = highlight.videoUrl?.trim();
+          return highlight.sourceType != null ||
+              (videoUrl != null && videoUrl.isNotEmpty);
+        })
+        .toList(growable: false);
   }
 
   Future<_ConnectionCounts> _loadConnectionCounts(String userId) async {

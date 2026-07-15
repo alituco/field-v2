@@ -216,3 +216,103 @@ account's Stream webhook, and store the returned signing secret as
 `CLOUDFLARE_STREAM_WEBHOOK_SECRET`. Cloudflare permits one Stream recording
 webhook per account, so use a separate Cloudflare account for production or
 route one webhook to both environments deliberately.
+
+## Profile Goal Clips
+
+`profile-goal-clip` exposes authenticated download and profile-save workflows
+for finished clan and solo recordings. The database RPC verifies that the
+signed-in user scored or assisted a selected goal and prevents that player from
+adding the same goal twice. A scorer and the credited assister can each save the
+same goal. Any signed-in viewer can download any goal without saving it. The
+function uses the source recording duration to apply the same replay-origin
+selection as the app, then returns exact Cloudflare live-instant HLS and MP4
+URLs covering 10 seconds before the goal through 20 seconds after it.
+
+Viewers can also select a custom range from the full replay. The server checks
+the trusted final-match recording and enforces a range within the source video
+of at most 60 seconds. Custom clips can either be downloaded immediately or
+saved to the caller's profile. Instant clips depend on the original match
+recording, so that recording must remain in Cloudflare Stream. Whole-match MP4
+downloads use Cloudflare's generated-download API and may require polling while
+Cloudflare prepares the file.
+
+Configure the Cloudflare account credentials used to create clips and MP4
+downloads, then deploy the authenticated function with JWT verification:
+
+```sh
+supabase secrets set \
+  CLOUDFLARE_ACCOUNT_ID='replace-with-account-id' \
+  CLOUDFLARE_STREAM_API_TOKEN='replace-with-stream-write-token'
+supabase functions deploy profile-goal-clip
+```
+
+The existing `CLOUDFLARE_STREAM_CUSTOMER_CODE` secret is also required. The API
+accepts these POST bodies:
+
+```json
+{
+  "action": "create",
+  "source_type": "CLAN",
+  "match_id": "fixture-or-solo-game-uuid",
+  "event_id": "goal-event-uuid",
+  "title": "Top corner finish"
+}
+```
+
+```json
+{ "action": "status", "highlight_id": "profile-highlight-uuid" }
+```
+
+Both actions return `{ "highlight": { ... } }`. A `202` response means the
+request needs another status check. `processing_status` and `download_status`
+are stored for recovery and legacy compatibility.
+
+Download any goal without adding it to a profile:
+
+```json
+{
+  "action": "goal_download",
+  "source_type": "SOLO",
+  "match_id": "solo-game-uuid",
+  "event_id": "goal-event-uuid"
+}
+```
+
+The response is `{ "media": { ... } }`. `media` contains `video_url`,
+`download_url`, `thumbnail_url`, the formatted `duration`, numeric
+`duration_seconds`, and numeric `start_seconds` / `end_seconds` replay bounds.
+
+Create a custom replay clip for immediate download:
+
+```json
+{
+  "action": "custom_clip",
+  "source_type": "CLAN",
+  "match_id": "fixture-uuid",
+  "start_seconds": 42.5,
+  "end_seconds": 88.25,
+  "save_to_profile": false
+}
+```
+
+Set `save_to_profile` to `true` and include a 2–80 character `title` to
+receive `{ "highlight": { ... } }` instead of `{ "media": { ... } }`.
+
+Enable or poll a whole-match MP4 download:
+
+```json
+{
+  "action": "full_game_download",
+  "source_type": "CLAN",
+  "match_id": "fixture-uuid"
+}
+```
+
+The response status is `PROCESSING`, `READY`, or `FAILED`. A ready response
+includes `download_url`; call the same action again while processing.
+
+Record one view when profile-clip playback actually begins with:
+
+```sql
+select public.record_profile_highlight_view('profile-highlight-uuid');
+```

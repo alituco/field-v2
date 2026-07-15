@@ -5,6 +5,7 @@ type AdminClient = ReturnType<typeof createClient<any, "public", any>>;
 type FakeUser = {
   phone: string;
   displayName: string;
+  dateOfBirth: string;
   username: string;
   bio: string;
   avatarUrl: string;
@@ -88,6 +89,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883671",
     displayName: "Zara Haddad",
+    dateOfBirth: "1999-03-12",
     username: "zara_strikes",
     bio: "Left foot, late runs, no wasted touches.",
     avatarUrl:
@@ -151,6 +153,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883672",
     displayName: "Omar Saleh",
+    dateOfBirth: "1997-11-04",
     username: "omar_gloves",
     bio: "Keeper first, captain when it gets loud.",
     avatarUrl:
@@ -172,6 +175,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883673",
     displayName: "Noor Khalid",
+    dateOfBirth: "2001-06-18",
     username: "noor_engine",
     bio: "Tempo setter. Finds the pass before the pass.",
     avatarUrl:
@@ -193,6 +197,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883674",
     displayName: "Maya Faris",
+    dateOfBirth: "2003-02-09",
     username: "maya_mint",
     bio: "Quick turns, clean finishes, calm head.",
     avatarUrl:
@@ -224,6 +229,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883675",
     displayName: "Sami Nasser",
+    dateOfBirth: "1998-08-27",
     username: "sami_switch",
     bio: "Box-to-box runner with one more sprint left.",
     avatarUrl:
@@ -245,6 +251,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883676",
     displayName: "Lina Abbas",
+    dateOfBirth: "2002-12-15",
     username: "lina_lines",
     bio: "Press trigger, recovery run, repeat.",
     avatarUrl:
@@ -266,6 +273,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883677",
     displayName: "Rami Darwish",
+    dateOfBirth: "1996-05-22",
     username: "rami_drift",
     bio: "Direct winger. Likes the far post.",
     avatarUrl:
@@ -287,6 +295,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883678",
     displayName: "Hala Mansour",
+    dateOfBirth: "2000-09-30",
     username: "hala_hold",
     bio: "Anchor in midfield, first outlet under pressure.",
     avatarUrl:
@@ -308,6 +317,7 @@ const fakeUsers: FakeUser[] = [
   {
     phone: "+97338883679",
     displayName: "Madeline Coffey",
+    dateOfBirth: "2004-01-19",
     username: "madeline_coffey",
     bio: "Free agent. Ready for the next match.",
     avatarUrl: "",
@@ -424,6 +434,7 @@ const generatedSeed = buildGeneratedSeedData();
 
 fakeUsers.push(...generatedSeed.users);
 fakeFollows.push(...generatedSeed.follows);
+assertSeedUserAges(fakeUsers);
 
 for (
   const [tag, memberPhones] of Object.entries(
@@ -462,6 +473,7 @@ for (const fakeUser of fakeUsers) {
     phone: fakeUser.phone,
     password: seedPassword,
     displayName: fakeUser.displayName,
+    dateOfBirth: fakeUser.dateOfBirth,
   });
   usersByPhone.set(fakeUser.phone, userId);
 }
@@ -562,6 +574,26 @@ function assertUpcomingFixtureLimits(fixtures: FakeFixture[]) {
   throw new Error(
     "Dev fixture seed exceeds the 2-upcoming-match clan limit: " +
       violations.map(([tag, count]) => `${tag} (${count})`).join(", "),
+  );
+}
+
+function assertSeedUserAges(users: FakeUser[]) {
+  const today = new Date();
+  const latestEligibleDate = new Date(Date.UTC(
+    today.getUTCFullYear() - 16,
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  ));
+  const invalidUsers = users.filter((user) => {
+    const dateOfBirth = new Date(`${user.dateOfBirth}T00:00:00Z`);
+    return Number.isNaN(dateOfBirth.getTime()) ||
+      dateOfBirth > latestEligibleDate;
+  });
+
+  if (invalidUsers.length === 0) return;
+  throw new Error(
+    "Every seeded user must be at least 16: " +
+      invalidUsers.map((user) => user.displayName).join(", "),
   );
 }
 
@@ -1122,10 +1154,17 @@ function buildGeneratedUsers(count: number): FakeUser[] {
         .toString()
         .padStart(2, "0")
     }`;
+    const birthYear = 1990 + (index % 19);
+    const birthMonth = ((index * 5) % 12) + 1;
+    const birthDay = ((index * 7) % 28) + 1;
+    const paddedBirthMonth = birthMonth.toString().padStart(2, "0");
+    const paddedBirthDay = birthDay.toString().padStart(2, "0");
+    const dateOfBirth = `${birthYear}-${paddedBirthMonth}-${paddedBirthDay}`;
 
     return {
       phone: generatedPhone(index),
       displayName: `${firstName} ${lastName}`,
+      dateOfBirth,
       username,
       bio: "Dev league player. Seeded for match history.",
       avatarUrl:
@@ -1162,11 +1201,13 @@ async function ensureUser({
   phone,
   password,
   displayName,
+  dateOfBirth,
 }: {
   admin: AdminClient;
   phone: string;
   password: string;
   displayName: string;
+  dateOfBirth: string;
 }) {
   const { data, error } = await admin.auth.admin.createUser({
     phone,
@@ -1175,6 +1216,7 @@ async function ensureUser({
     user_metadata: {
       display_name: displayName,
       name: displayName,
+      date_of_birth: dateOfBirth,
     },
   });
 
@@ -1199,6 +1241,7 @@ async function ensureUser({
         ...existingUser.user_metadata,
         display_name: displayName,
         name: displayName,
+        date_of_birth: dateOfBirth,
       },
     },
   );
@@ -1218,6 +1261,7 @@ async function upsertProfiles(
     id: requireUserId(userIdsByPhone, fakeUser.phone),
     phone: fakeUser.phone,
     display_name: fakeUser.displayName,
+    date_of_birth: fakeUser.dateOfBirth,
     username: fakeUser.username,
     bio: fakeUser.bio,
     avatar_url: fakeUser.avatarUrl || null,

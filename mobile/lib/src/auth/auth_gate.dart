@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../home/home_screen.dart';
 import 'auth_flow_screen.dart';
 import 'auth_repository.dart';
+import 'date_of_birth.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key, required this.authRepository, this.isDev = false});
@@ -42,7 +43,7 @@ class _AuthGateState extends State<AuthGate> {
   @override
   Widget build(BuildContext context) {
     if (_session != null &&
-        _hasDisplayName(widget.authRepository.currentUser)) {
+        _hasCompletedOnboarding(widget.authRepository.currentUser)) {
       return HomeScreen(
         key: ValueKey(_session!.user.id),
         authRepository: widget.authRepository,
@@ -52,10 +53,22 @@ class _AuthGateState extends State<AuthGate> {
 
     return AuthFlowScreen(
       authRepository: widget.authRepository,
-      initialStep: _session == null ? AuthStep.welcome : AuthStep.name,
-      onNameSaved: () =>
+      initialStep: _initialStep(widget.authRepository.currentUser),
+      onOnboardingCompleted: () =>
           setState(() => _session = widget.authRepository.currentSession),
     );
+  }
+
+  AuthStep _initialStep(User? user) {
+    if (_session == null) return AuthStep.welcome;
+    if (!_hasDisplayName(user)) return AuthStep.name;
+    return AuthStep.dateOfBirth;
+  }
+
+  bool _hasCompletedOnboarding(User? user) {
+    if (!_hasDisplayName(user)) return false;
+    final dateOfBirth = parseDateOfBirth(user?.userMetadata?['date_of_birth']);
+    return dateOfBirth != null && isEligibleDateOfBirth(dateOfBirth);
   }
 
   bool _hasDisplayName(User? user) {

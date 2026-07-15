@@ -5,8 +5,9 @@ import 'package:flutter/services.dart';
 
 import '../core/user_facing_error.dart';
 import 'auth_repository.dart';
+import 'date_of_birth.dart';
 
-enum AuthStep { welcome, phone, otp, name }
+enum AuthStep { welcome, phone, otp, name, dateOfBirth }
 
 const _steps = AuthStep.values;
 
@@ -48,12 +49,12 @@ class AuthFlowScreen extends StatefulWidget {
     super.key,
     required this.authRepository,
     required this.initialStep,
-    required this.onNameSaved,
+    required this.onOnboardingCompleted,
   });
 
   final AuthRepository authRepository;
   final AuthStep initialStep;
-  final VoidCallback onNameSaved;
+  final VoidCallback onOnboardingCompleted;
 
   @override
   State<AuthFlowScreen> createState() => _AuthFlowScreenState();
@@ -81,6 +82,8 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
   bool _isVerifying = false;
   bool _isResending = false;
   bool _isSavingName = false;
+  bool _isSavingDateOfBirth = false;
+  DateTime? _dateOfBirth;
   String? _errorText;
 
   @override
@@ -149,6 +152,8 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
         _go(AuthStep.phone);
       case AuthStep.name:
         _go(AuthStep.otp);
+      case AuthStep.dateOfBirth:
+        _go(AuthStep.name);
     }
   }
 
@@ -157,6 +162,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
       AuthStep.phone => _phoneFocusNode,
       AuthStep.otp => _otpFocusNode,
       AuthStep.name => _nameFocusNode,
+      AuthStep.dateOfBirth => null,
       AuthStep.welcome => null,
     };
     if (focusNode == null) return;
@@ -266,7 +272,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     try {
       await widget.authRepository.updateDisplayName(name);
       if (!mounted) return;
-      widget.onNameSaved();
+      _go(AuthStep.dateOfBirth);
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -278,6 +284,72 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     } finally {
       if (mounted) {
         setState(() => _isSavingName = false);
+      }
+    }
+  }
+
+  Future<void> _chooseDateOfBirth() async {
+    FocusScope.of(context).unfocus();
+    final today = DateTime.now();
+    final lastDate = latestEligibleDateOfBirth(today: today);
+    final initialDate =
+        _dateOfBirth ??
+        DateTime(lastDate.year - 2, lastDate.month, lastDate.day);
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(today.year - 100, 1, 1),
+      lastDate: lastDate,
+      helpText: 'SELECT DATE OF BIRTH',
+      fieldLabelText: 'Date of birth',
+      initialEntryMode: DatePickerEntryMode.calendarOnly,
+      builder: (context, child) {
+        final theme = Theme.of(context);
+        return Theme(
+          data: theme.copyWith(
+            colorScheme: ColorScheme.fromSeed(
+              seedColor: const Color(0xFF10B981),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _dateOfBirth = selected;
+      _errorText = null;
+    });
+  }
+
+  Future<void> _saveDateOfBirth() async {
+    final dateOfBirth = _dateOfBirth;
+    if (dateOfBirth == null || !isEligibleDateOfBirth(dateOfBirth)) {
+      setState(() {
+        _errorText = 'You must be at least 16 years old to play.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isSavingDateOfBirth = true;
+      _errorText = null;
+    });
+    try {
+      await widget.authRepository.updateDateOfBirth(dateOfBirth);
+      if (!mounted) return;
+      widget.onOnboardingCompleted();
+    } catch (error) {
+      if (!mounted) return;
+      setState(
+        () => _errorText = userFacingError(
+          error,
+          fallback: 'We could not save your date of birth. Try again.',
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSavingDateOfBirth = false);
       }
     }
   }
@@ -294,6 +366,9 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
   bool get _phoneIsValid => _phoneDigits.length == _selectedCountry.maxDigits;
 
   bool get _nameIsValid => _nameController.text.trim().length >= 2;
+
+  bool get _dateOfBirthIsValid =>
+      _dateOfBirth != null && isEligibleDateOfBirth(_dateOfBirth!);
 
   void _changeCountry(_PhoneCountry country) {
     if (country == _selectedCountry) return;
@@ -460,6 +535,19 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
           isSaving: _isSavingName,
           onChanged: () => setState(() => _errorText = null),
           onSubmit: _saveName,
+        ),
+      ),
+      AuthStep.dateOfBirth => _StepShell(
+        icon: Icons.cake_outlined,
+        title: 'When were you born?',
+        subtitle: 'Your age helps us keep matches safe and age-appropriate.',
+        errorText: _errorText,
+        child: _DateOfBirthStepBody(
+          dateOfBirth: _dateOfBirth,
+          isValid: _dateOfBirthIsValid,
+          isSaving: _isSavingDateOfBirth,
+          onChoose: _chooseDateOfBirth,
+          onSubmit: _saveDateOfBirth,
         ),
       ),
     };
@@ -1303,6 +1391,125 @@ class _NameStepBody extends StatelessWidget {
         const SizedBox(height: 32),
         _PrimaryButton(
           label: isSaving ? 'Saving' : 'Enter the pitch',
+          disabled: !isValid || isSaving,
+          isLoading: isSaving,
+          onPressed: isValid && !isSaving ? onSubmit : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _DateOfBirthStepBody extends StatelessWidget {
+  const _DateOfBirthStepBody({
+    required this.dateOfBirth,
+    required this.isValid,
+    required this.isSaving,
+    required this.onChoose,
+    required this.onSubmit,
+  });
+
+  final DateTime? dateOfBirth;
+  final bool isValid;
+  final bool isSaving;
+  final VoidCallback onChoose;
+  final VoidCallback onSubmit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Semantics(
+          button: true,
+          label: dateOfBirth == null
+              ? 'Choose date of birth'
+              : 'Date of birth ${formatDateOfBirth(dateOfBirth!)}',
+          child: InkWell(
+            key: const ValueKey('date-of-birth-selector'),
+            onTap: isSaving ? null : onChoose,
+            borderRadius: BorderRadius.circular(16),
+            child: _GlassField(
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6EE7B7).withValues(alpha: 0.13),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.calendar_month_rounded,
+                      color: Color(0xFF6EE7B7),
+                      size: 23,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'DATE OF BIRTH',
+                          style: TextStyle(
+                            color: Color(0x996EE7B7),
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.4,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          dateOfBirth == null
+                              ? 'Choose your birthday'
+                              : formatDateOfBirth(dateOfBirth!),
+                          style: TextStyle(
+                            color: dateOfBirth == null
+                                ? const Color(0x80FFFFFF)
+                                : Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: Color(0x99FFFFFF),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        const Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              Icons.lock_outline_rounded,
+              color: Color(0x806EE7B7),
+              size: 16,
+            ),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'You must be 16 or older. Your full birthday stays private.',
+                style: TextStyle(
+                  color: Color(0x99FFFFFF),
+                  fontSize: 12,
+                  height: 1.4,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 30),
+        _PrimaryButton(
+          label: isSaving ? 'Saving' : 'Finish setup',
           disabled: !isValid || isSaving,
           isLoading: isSaving,
           onPressed: isValid && !isSaving ? onSubmit : null,

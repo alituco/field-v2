@@ -6,6 +6,9 @@ import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
+import 'package:field/src/profile/goal_clip_downloader.dart';
+import 'package:field/src/profile/profile.dart';
+import 'package:field/src/profile/profile_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
@@ -216,7 +219,7 @@ void main() {
     await _scrollToBroadcast(tester, 'WATCH MATCH');
     await tester.pumpAndSettle();
 
-    final restart = find.byKey(const ValueKey('highlight-restart'));
+    final restart = find.byKey(const ValueKey('highlight-goal-0'));
     await tester.scrollUntilVisible(
       restart,
       160,
@@ -249,8 +252,280 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('a scorer can title and add their active goal to profile', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final originalPlatform = VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+    addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+
+    final playbackStartedAt = DateTime.utc(2026, 7, 11, 18);
+    final profileRepository = _FakeProfileRepository('player-one');
+    await _pumpDetail(
+      tester,
+      _fixture(
+        status: FixtureStatus.finalResult,
+        broadcast: FixtureBroadcast(
+          status: 'REPLAY_READY',
+          streamStartedAt: playbackStartedAt,
+          streamStoppedAt: playbackStartedAt.add(const Duration(hours: 1)),
+          replayHlsUrl: 'https://example.com/replay.m3u8',
+        ),
+        timeline: [
+          _goal(
+            id: 'my-goal',
+            minute: 8,
+            occurredAt: playbackStartedAt.add(const Duration(minutes: 8)),
+            profileId: 'player-one',
+          ),
+        ],
+      ),
+      initiallyShowWatch: true,
+      profileRepository: profileRepository,
+    );
+    await tester.pumpAndSettle();
+
+    final addButton = find.byKey(const ValueKey('add-goal-to-profile'));
+    await tester.scrollUntilVisible(
+      addButton,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.drag(find.byType(Scrollable).first, const Offset(0, -100));
+    await tester.pump();
+    await tester.tap(addButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('ADD GOAL TO PROFILE'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('goal-clip-title-field')),
+      'Outside foot finish',
+    );
+    await tester.tap(find.byKey(const ValueKey('save-goal-clip')));
+    await tester.pumpAndSettle();
+
+    expect(profileRepository.createdRequests, hasLength(1));
+    final request = profileRepository.createdRequests.single;
+    expect(request.sourceType, ProfileHighlightSource.clan);
+    expect(request.matchId, 'fixture');
+    expect(request.eventId, 'my-goal');
+    expect(request.title, 'Outside foot finish');
+    expect(find.text('Added to your profile'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a credited assister can add the goal clip to their profile', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final originalPlatform = VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+    addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+
+    final playbackStartedAt = DateTime.utc(2026, 7, 11, 18);
+    final profileRepository = _FakeProfileRepository('assistant-one');
+    await _pumpDetail(
+      tester,
+      _fixture(
+        status: FixtureStatus.finalResult,
+        broadcast: FixtureBroadcast(
+          status: 'REPLAY_READY',
+          streamStartedAt: playbackStartedAt,
+          streamStoppedAt: playbackStartedAt.add(const Duration(hours: 1)),
+          replayHlsUrl: 'https://example.com/replay.m3u8',
+        ),
+        timeline: [
+          _goal(
+            id: 'assisted-goal',
+            minute: 12,
+            occurredAt: playbackStartedAt.add(const Duration(minutes: 12)),
+            profileId: 'scorer-one',
+            assistProfileId: 'assistant-one',
+          ),
+        ],
+      ),
+      initiallyShowWatch: true,
+      profileRepository: profileRepository,
+    );
+    await tester.pumpAndSettle();
+
+    final addButton = find.byKey(const ValueKey('add-goal-to-profile'));
+    await tester.scrollUntilVisible(
+      addButton,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    await tester.tap(addButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('ADD ASSIST TO PROFILE'), findsOneWidget);
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const ValueKey('goal-clip-title-field')),
+          )
+          .controller!
+          .text,
+      "Assist · 12'",
+    );
+    await tester.tap(find.byKey(const ValueKey('save-goal-clip')));
+    await tester.pumpAndSettle();
+
+    expect(profileRepository.createdRequests, hasLength(1));
+    expect(profileRepository.createdRequests.single.eventId, 'assisted-goal');
+    expect(find.textContaining('Assist'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
-    'finished video has goal navigation and a draggable full timeline',
+    'any authenticated viewer can download a highlight without posting it',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final originalPlatform = VideoPlayerPlatform.instance;
+      VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+      addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+
+      final playbackStartedAt = DateTime.utc(2026, 7, 11, 18);
+      final profileRepository = _FakeProfileRepository('unrelated-viewer');
+      final downloader = _FakeGoalClipDownloader();
+      await _pumpDetail(
+        tester,
+        _fixture(
+          status: FixtureStatus.finalResult,
+          broadcast: FixtureBroadcast(
+            status: 'REPLAY_READY',
+            streamStartedAt: playbackStartedAt,
+            streamStoppedAt: playbackStartedAt.add(const Duration(hours: 1)),
+            replayHlsUrl: 'https://example.com/replay.m3u8',
+          ),
+          timeline: [
+            _goal(
+              id: 'someone-elses-goal',
+              minute: 19,
+              occurredAt: playbackStartedAt.add(const Duration(minutes: 19)),
+              profileId: 'different-player',
+            ),
+          ],
+        ),
+        initiallyShowWatch: true,
+        profileRepository: profileRepository,
+        goalClipDownloader: downloader,
+      );
+      await tester.pumpAndSettle();
+
+      final downloadButton = find.byKey(
+        const ValueKey('download-highlight-clip'),
+      );
+      await tester.scrollUntilVisible(
+        downloadButton,
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('add-goal-to-profile')), findsNothing);
+      await tester.tap(downloadButton);
+      await tester.pumpAndSettle();
+
+      expect(profileRepository.goalDownloadEventIds, ['someone-elses-goal']);
+      expect(profileRepository.createdRequests, isEmpty);
+      expect(downloader.urls, ['https://cdn.example.com/goal.mp4']);
+      expect(find.text('Goal saved to your Photos.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'watch overflow offers full download and custom clip download without posting',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final originalPlatform = VideoPlayerPlatform.instance;
+      VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+      addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+
+      final profileRepository = _FakeProfileRepository('viewer');
+      final downloader = _FakeGoalClipDownloader();
+      await _pumpDetail(
+        tester,
+        _fixture(
+          status: FixtureStatus.finalResult,
+          broadcast: const FixtureBroadcast(
+            status: 'REPLAY_READY',
+            replayHlsUrl: 'https://example.com/replay.m3u8',
+          ),
+        ),
+        initiallyShowWatch: true,
+        profileRepository: profileRepository,
+        goalClipDownloader: downloader,
+      );
+      await tester.pumpAndSettle();
+
+      final menu = find.byKey(const ValueKey('watch-actions-menu'));
+      await tester.scrollUntilVisible(
+        menu,
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pump();
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Download full game'), findsOneWidget);
+      expect(find.text('Create a clip'), findsOneWidget);
+      expect(find.text('Choose up to 60 seconds'), findsOneWidget);
+
+      await tester.tap(find.text('Create a clip'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('CREATE A MATCH CLIP'), findsOneWidget);
+      expect(
+        find.text('Drag either end. Clips can be up to 60 seconds.'),
+        findsOneWidget,
+      );
+      final range = tester.widget<RangeSlider>(
+        find.byKey(const ValueKey('custom-clip-range')),
+      );
+      expect(range.values.end - range.values.start, lessThanOrEqualTo(60));
+
+      await tester.tap(find.byKey(const ValueKey('custom-clip-continue')));
+      await tester.pumpAndSettle();
+      expect(find.text('WHAT DO YOU WANT TO DO?'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('custom-clip-download')));
+      await tester.pumpAndSettle();
+
+      expect(profileRepository.customDownloadRequests, hasLength(1));
+      expect(
+        profileRepository.customDownloadRequests.single.durationSeconds,
+        lessThanOrEqualTo(60),
+      );
+      expect(profileRepository.createdCustomRequests, isEmpty);
+      expect(downloader.urls, ['https://cdn.example.com/custom.mp4']);
+      expect(find.text('Clip saved to your Photos.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'finished video has goal chapters and draggable inline timelines',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1;
@@ -294,7 +569,14 @@ void main() {
 
       expect(find.text("Goal 1 · 8'"), findsOneWidget);
       expect(find.text("Goal 2 · 18'"), findsOneWidget);
-      expect(find.byKey(const ValueKey('highlight-restart')), findsOneWidget);
+      expect(find.text('Previous'), findsNothing);
+      expect(find.text('Restart'), findsNothing);
+      expect(find.text('Next'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('highlight-video-seek')),
+        findsOneWidget,
+      );
+      expect(find.text('0:00 / 0:30'), findsWidgets);
       expect(
         videoPlatform.seekPositions.last,
         const Duration(minutes: 7, seconds: 50),
@@ -314,28 +596,36 @@ void main() {
       );
       expect(videoPlatform.playCalls, greaterThan(0));
 
-      final restart = find.byKey(const ValueKey('highlight-restart'));
-      await tester.ensureVisible(restart);
+      final highlightSlider = find.byKey(
+        const ValueKey('highlight-video-seek'),
+      );
+      await tester.ensureVisible(highlightSlider);
       await tester.pump();
-      final playsBeforeRestart = videoPlatform.playCalls;
-      await tester.tap(restart);
-      await tester.pump();
+      final highlightSliderBounds = tester.getRect(highlightSlider);
+      final highlightGesture = await tester.startGesture(
+        Offset(
+          highlightSliderBounds.left + 20,
+          highlightSliderBounds.center.dy,
+        ),
+      );
+      await highlightGesture.moveTo(
+        Offset(
+          highlightSliderBounds.right - 20,
+          highlightSliderBounds.center.dy,
+        ),
+      );
+      await highlightGesture.up();
       await tester.pump();
       expect(
         videoPlatform.seekPositions.last,
-        const Duration(minutes: 17, seconds: 50),
+        greaterThan(const Duration(minutes: 18, seconds: 10)),
       );
-      expect(videoPlatform.playCalls, greaterThan(playsBeforeRestart));
-
-      await tester.tap(find.text('Previous'));
-      await tester.pump();
-      await tester.pump();
       expect(
         videoPlatform.seekPositions.last,
-        const Duration(minutes: 7, seconds: 50),
+        lessThanOrEqualTo(const Duration(minutes: 18, seconds: 20)),
       );
 
-      await tester.tap(find.text('Next'));
+      await tester.tap(secondGoal);
       await tester.pump();
       await tester.pump();
       expect(
@@ -354,9 +644,19 @@ void main() {
         find.byKey(const ValueKey('fullscreen-controls-opacity')),
         findsOneWidget,
       );
-      expect(find.text('17:50 / 1:00:00'), findsOneWidget);
-      expect(find.byKey(const ValueKey('full-game-seek')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('fullscreen-video-seek')),
+        findsOneWidget,
+      );
+      expect(find.text('0:00 / 0:30'), findsWidgets);
+      expect(find.byTooltip('Close'), findsNothing);
+      expect(find.byKey(const ValueKey('fullscreen-exit')), findsOneWidget);
       expect(_fullscreenControlsOpacity(tester), 1);
+
+      await tester.tap(find.byTooltip('Forward 10 seconds'));
+      await tester.pump();
+      await tester.pump();
+      expect(videoPlatform.seekPositions.last, const Duration(minutes: 18));
 
       await tester.pump(const Duration(seconds: 3, milliseconds: 50));
       await tester.pump(const Duration(milliseconds: 180));
@@ -370,7 +670,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 180));
       expect(_fullscreenControlsOpacity(tester), 1);
 
-      await tester.tap(find.byTooltip('Close'));
+      await tester.tap(find.byTooltip('Exit fullscreen'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
@@ -382,13 +682,6 @@ void main() {
 
       expect(find.byKey(const ValueKey('full-game-seek')), findsOneWidget);
       expect(find.text('0:00 / 1:00:00'), findsOneWidget);
-
-      final forwardTen = find.byTooltip('Forward 10 seconds');
-      await tester.ensureVisible(forwardTen);
-      await tester.pump();
-      await tester.tap(forwardTen);
-      await tester.pump();
-      expect(videoPlatform.seekPositions.last, const Duration(seconds: 10));
 
       final slider = find.byKey(const ValueKey('full-game-seek'));
       await tester.ensureVisible(slider);
@@ -422,6 +715,8 @@ Future<void> _pumpDetail(
   FixturePlayerRatingUpdate? playerRatingUpdate,
   bool initiallyShowWatch = false,
   ClanRepository? clanRepository,
+  ProfileRepository? profileRepository,
+  GoalClipDownloader? goalClipDownloader,
   String? sourceLabel,
 }) async {
   await tester.pumpWidget(
@@ -434,6 +729,8 @@ Future<void> _pumpDetail(
         sourceLabel: sourceLabel,
         playerRatingUpdate: playerRatingUpdate,
         initiallyShowWatch: initiallyShowWatch,
+        profileRepository: profileRepository ?? _FakeProfileRepository(null),
+        goalClipDownloader: goalClipDownloader,
       ),
     ),
   );
@@ -577,6 +874,8 @@ FixtureTimelineEvent _goal({
   required String id,
   required int minute,
   required DateTime occurredAt,
+  String? profileId,
+  String? assistProfileId,
 }) {
   return FixtureTimelineEvent(
     id: id,
@@ -584,9 +883,109 @@ FixtureTimelineEvent _goal({
     eventType: 'GOAL',
     minute: minute,
     second: 0,
+    profileId: profileId,
+    assistProfileId: assistProfileId,
     occurredAt: occurredAt,
     createdAt: occurredAt,
   );
+}
+
+class _FakeProfileRepository implements ProfileRepository {
+  _FakeProfileRepository(this.currentUserId);
+
+  @override
+  final String? currentUserId;
+  final List<ProfileGoalClipRequest> createdRequests = [];
+  final List<String> goalDownloadEventIds = [];
+  final List<ProfileCustomClipRequest> createdCustomRequests = [];
+  final List<ProfileCustomClipRequest> customDownloadRequests = [];
+
+  @override
+  Future<ProfileHighlight> createGoalClip(
+    ProfileGoalClipRequest request,
+  ) async {
+    createdRequests.add(request);
+    return const ProfileHighlight(
+      id: 'clip-one',
+      title: 'Outside foot finish',
+      thumbnailUrl: '',
+      duration: '0:30',
+      views: 0,
+      sourceType: ProfileHighlightSource.clan,
+      sourceMatchId: 'fixture',
+      sourceEventId: 'my-goal',
+      status: ProfileHighlightStatus.processing,
+    );
+  }
+
+  @override
+  Future<ProfileClipMedia> getGoalClipDownload({
+    required ProfileHighlightSource sourceType,
+    required String matchId,
+    required String eventId,
+  }) async {
+    goalDownloadEventIds.add(eventId);
+    return const ProfileClipMedia(
+      videoUrl: 'https://cdn.example.com/goal.m3u8',
+      downloadUrl: 'https://cdn.example.com/goal.mp4',
+      thumbnailUrl: '',
+      duration: '0:30',
+      startSeconds: 10,
+      endSeconds: 40,
+    );
+  }
+
+  @override
+  Future<ProfileHighlight> createCustomClip(
+    ProfileCustomClipRequest request,
+  ) async {
+    createdCustomRequests.add(request);
+    return ProfileHighlight(
+      id: 'custom-clip',
+      title: request.title,
+      thumbnailUrl: '',
+      duration: '0:${request.durationSeconds.round()}',
+      views: 0,
+      sourceType: request.sourceType,
+      sourceMatchId: request.matchId,
+      status: ProfileHighlightStatus.processing,
+    );
+  }
+
+  @override
+  Future<ProfileClipMedia> getCustomClipDownload(
+    ProfileCustomClipRequest request,
+  ) async {
+    customDownloadRequests.add(request);
+    return ProfileClipMedia(
+      videoUrl: 'https://cdn.example.com/custom.m3u8',
+      downloadUrl: 'https://cdn.example.com/custom.mp4',
+      thumbnailUrl: '',
+      duration: '0:${request.durationSeconds.round()}',
+      startSeconds: request.startSeconds,
+      endSeconds: request.endSeconds,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _FakeGoalClipDownloader implements GoalClipDownloader {
+  final List<String> urls = [];
+  final List<String> fileNames = [];
+
+  @override
+  Future<void> downloadToGallery({
+    required String url,
+    required String fileName,
+    ValueChanged<double>? onProgress,
+  }) async {
+    urls.add(url);
+    fileNames.add(fileName);
+    onProgress?.call(0.5);
+    onProgress?.call(1);
+  }
 }
 
 class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
