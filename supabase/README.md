@@ -264,8 +264,11 @@ accepts these POST bodies:
 ```
 
 Both actions return `{ "highlight": { ... } }`. A `202` response means the
-request needs another status check. `processing_status` and `download_status`
-are stored for recovery and legacy compatibility.
+request needs another status check. Owners can poll all of their clips; any
+authenticated viewer can poll a public clip. Private clips return `404` to
+non-owners. A public viewer's status request is read-only: only the owner can
+trigger recovery mutations for an incomplete clip. `processing_status` and
+`download_status` are stored for recovery and legacy compatibility.
 
 Download any goal without adding it to a profile:
 
@@ -310,6 +313,41 @@ Enable or poll a whole-match MP4 download:
 
 The response status is `PROCESSING`, `READY`, or `FAILED`. A ready response
 includes `download_url`; call the same action again while processing.
+
+Clips are public by default. Public clips can be read by any authenticated
+user; private clips remain readable by their owner. Legacy clips are migrated
+as public. Change only one of your own clips with:
+
+```json
+{
+  "action": "update_visibility",
+  "highlight_id": "profile-highlight-uuid",
+  "is_public": false
+}
+```
+
+The response is `{ "highlight": { ... } }`, including the authoritative
+`is_public` value. Delete only one of your own clips with:
+
+```json
+{
+  "action": "delete",
+  "highlight_id": "profile-highlight-uuid"
+}
+```
+
+The response is `{ "deleted": true, "highlight_id": "..." }`. Direct
+client inserts, updates, and deletes on `profile_highlights` are revoked so
+ownership checks cannot be bypassed; these authenticated function actions are
+the supported mutation API.
+
+Verify visibility RLS, owner-only mutations, private view counting, and remote
+cleanup with:
+
+```sh
+deno run --allow-env --allow-net --env-file=.env \
+  supabase/scripts/verify_profile_clip_privacy.ts
+```
 
 Record one view when profile-clip playback actually begins with:
 

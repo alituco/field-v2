@@ -6,7 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../home/home_screen.dart';
 import 'auth_flow_screen.dart';
 import 'auth_repository.dart';
-import 'date_of_birth.dart';
+import 'onboarding_status.dart';
 
 class AuthGate extends StatefulWidget {
   const AuthGate({super.key, required this.authRepository, this.isDev = false});
@@ -42,8 +42,10 @@ class _AuthGateState extends State<AuthGate> {
 
   @override
   Widget build(BuildContext context) {
-    if (_session != null &&
-        _hasCompletedOnboarding(widget.authRepository.currentUser)) {
+    final user = _session?.user;
+    final requirement = onboardingRequirementForUser(user);
+
+    if (_session != null && requirement == OnboardingRequirement.complete) {
       return HomeScreen(
         key: ValueKey(_session!.user.id),
         authRepository: widget.authRepository,
@@ -53,27 +55,18 @@ class _AuthGateState extends State<AuthGate> {
 
     return AuthFlowScreen(
       authRepository: widget.authRepository,
-      initialStep: _initialStep(widget.authRepository.currentUser),
+      initialStep: _initialStep(requirement),
       onOnboardingCompleted: () =>
           setState(() => _session = widget.authRepository.currentSession),
     );
   }
 
-  AuthStep _initialStep(User? user) {
+  AuthStep _initialStep(OnboardingRequirement requirement) {
     if (_session == null) return AuthStep.welcome;
-    if (!_hasDisplayName(user)) return AuthStep.name;
-    return AuthStep.dateOfBirth;
-  }
-
-  bool _hasCompletedOnboarding(User? user) {
-    if (!_hasDisplayName(user)) return false;
-    final dateOfBirth = parseDateOfBirth(user?.userMetadata?['date_of_birth']);
-    return dateOfBirth != null && isEligibleDateOfBirth(dateOfBirth);
-  }
-
-  bool _hasDisplayName(User? user) {
-    final metadata = user?.userMetadata;
-    final displayName = metadata?['display_name'] ?? metadata?['name'];
-    return displayName is String && displayName.trim().isNotEmpty;
+    return switch (requirement) {
+      OnboardingRequirement.displayName => AuthStep.name,
+      OnboardingRequirement.dateOfBirth => AuthStep.dateOfBirth,
+      OnboardingRequirement.complete => AuthStep.dateOfBirth,
+    };
   }
 }

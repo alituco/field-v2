@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import 'fixture.dart';
 
@@ -42,61 +43,20 @@ Future<bool> showClanScheduleBlockedDialog({
 }) async {
   final hasClan = membership != null;
   final clanName = membership?.clan.name;
-  final goToClans = await showDialog<bool>(
+  final goToClans = await showFieldConfirmDialog(
     context: context,
-    builder: (context) => AlertDialog(
-      icon: Container(
-        width: 54,
-        height: 54,
-        decoration: BoxDecoration(
-          color: const Color(0xFFFFF7ED),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: const Icon(
-          Icons.lock_outline_rounded,
-          color: Color(0xFFEA580C),
-          size: 28,
-        ),
-      ),
-      title: Text(
-        hasClan ? 'Only owners and leaders can schedule' : 'Join a clan first',
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: fieldGray900,
-          fontSize: 20,
-          fontWeight: FontWeight.w900,
-        ),
-      ),
-      content: Text(
-        hasClan
-            ? 'You are a member of $clanName. Only the owner or a leader can schedule or join games for this clan. Ask one of them to schedule the game or promote you.'
-            : 'Clan games must be scheduled by a clan owner or leader. Join or create a clan, then come back here to play for it.',
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-          color: fieldGray600,
-          fontSize: 14,
-          height: 1.45,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-      actionsAlignment: MainAxisAlignment.center,
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(false),
-          child: const Text('Got it'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(context).pop(true),
-          style: FilledButton.styleFrom(
-            backgroundColor: fieldEmerald600,
-            foregroundColor: Colors.white,
-          ),
-          child: const Text('Go to Clans'),
-        ),
-      ],
-    ),
+    icon: Icons.lock_outline_rounded,
+    eyebrow: 'Access required',
+    title: hasClan
+        ? 'Only owners and leaders can schedule'
+        : 'Join a clan first',
+    message: hasClan
+        ? 'You are a member of $clanName. Only the owner or a leader can schedule or join games for this clan. Ask one of them to schedule the game or promote you.'
+        : 'Clan games must be scheduled by a clan owner or leader. Join or create a clan, then come back here to play for it.',
+    cancelLabel: 'Got it',
+    confirmLabel: 'Go to Clans',
   );
-  return goToClans == true;
+  return goToClans;
 }
 
 class _FixturePlayChooser extends StatefulWidget {

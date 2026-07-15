@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import 'goal_clip_downloader.dart';
 import 'profile.dart';
@@ -14,11 +15,13 @@ class ProfileClipScreen extends StatefulWidget {
     super.key,
     required this.highlight,
     required this.profileRepository,
+    required this.canManage,
     this.downloader,
   });
 
   final ProfileHighlight highlight;
   final ProfileRepository profileRepository;
+  final bool canManage;
   final GoalClipDownloader? downloader;
 
   @override
@@ -37,6 +40,8 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   bool _isRefreshing = false;
   bool _viewRecorded = false;
   bool _isDownloading = false;
+  bool _isUpdatingVisibility = false;
+  bool _isDeleting = false;
   double? _downloadProgress;
   int _loadGeneration = 0;
 
@@ -246,9 +251,91 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     }
   }
 
+  Future<void> _setVisibility(bool isPublic) async {
+    if (!widget.canManage ||
+        _isUpdatingVisibility ||
+        _isDeleting ||
+        _highlight.isPublic == isPublic) {
+      return;
+    }
+    setState(() => _isUpdatingVisibility = true);
+    try {
+      final next = await widget.profileRepository.updateHighlightVisibility(
+        highlightId: _highlight.id,
+        isPublic: isPublic,
+      );
+      if (!mounted) return;
+      setState(() => _highlight = next);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isPublic
+                ? 'Clip is now public on your profile.'
+                : 'Clip is now private. Only you can see it.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not change this clip’s visibility.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isUpdatingVisibility = false);
+    }
+  }
+
+  Future<void> _deleteClip() async {
+    if (!widget.canManage || _isDeleting || _isUpdatingVisibility) return;
+    final confirmed = await showFieldConfirmDialog(
+      context: context,
+      icon: Icons.delete_outline_rounded,
+      eyebrow: 'Remove clip',
+      title: 'Delete this clip?',
+      message:
+          '“${_highlight.title}” will be removed from your profile. The original match recording will not be affected.',
+      detail: 'This cannot be undone.',
+      confirmLabel: 'Delete clip',
+      cancelLabel: 'Keep clip',
+      destructive: true,
+    );
+    if (!mounted || !confirmed) return;
+    setState(() => _isDeleting = true);
+    try {
+      await widget.profileRepository.deleteHighlight(_highlight.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Clip deleted.')));
+      Navigator.of(context).pop();
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isDeleting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not delete this clip. Try again.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final isMutating = _isUpdatingVisibility || _isDeleting;
     return PopScope(
+      canPop: !isMutating,
       onPopInvokedWithResult: (didPop, result) {
         if (!didPop) return;
       },
@@ -258,7 +345,9 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
           backgroundColor: Colors.white,
           surfaceTintColor: Colors.transparent,
           leading: IconButton(
-            onPressed: () => Navigator.of(context).pop(_highlight),
+            onPressed: isMutating
+                ? null
+                : () => Navigator.of(context).pop(_highlight),
             icon: const Icon(Icons.arrow_back_rounded),
           ),
           title: const Text(
@@ -343,6 +432,15 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                             ],
                           ],
                         ),
+                        if (widget.canManage) ...[
+                          const SizedBox(height: 18),
+                          _ClipVisibilityCard(
+                            isPublic: _highlight.isPublic,
+                            isLoading: _isUpdatingVisibility,
+                            onChanged: (value) =>
+                                unawaited(_setVisibility(value)),
+                          ),
+                        ],
                         const SizedBox(height: 18),
                         SizedBox(
                           width: double.infinity,
@@ -381,6 +479,47 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                             ),
                           ),
                         ),
+                        if (widget.canManage) ...[
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 48,
+                            child: OutlinedButton.icon(
+                              key: const ValueKey('delete-profile-clip'),
+                              onPressed: _isDeleting || _isUpdatingVisibility
+                                  ? null
+                                  : () => unawaited(_deleteClip()),
+                              icon: _isDeleting
+                                  ? const SizedBox(
+                                      width: 17,
+                                      height: 17,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFFDC2626),
+                                      ),
+                                    )
+                                  : const Icon(Icons.delete_outline_rounded),
+                              label: Text(
+                                _isDeleting
+                                    ? 'Deleting clip...'
+                                    : 'Delete clip',
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFFDC2626),
+                                side: const BorderSide(
+                                  color: Color(0xFFFECACA),
+                                ),
+                                textStyle: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -552,6 +691,110 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _ClipVisibilityCard extends StatelessWidget {
+  const _ClipVisibilityCard({
+    required this.isPublic,
+    required this.isLoading,
+    required this.onChanged,
+  });
+
+  final bool isPublic;
+  final bool isLoading;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(15),
+        border: Border.all(color: fieldGray200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isPublic ? Icons.public_rounded : Icons.lock_rounded,
+                color: isPublic ? fieldEmerald600 : fieldGray600,
+                size: 18,
+              ),
+              const SizedBox(width: 7),
+              const Text(
+                'VISIBILITY',
+                style: TextStyle(
+                  color: fieldGray700,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              if (isLoading) ...[
+                const Spacer(),
+                const SizedBox(
+                  width: 15,
+                  height: 15,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 11),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<bool>(
+              key: const ValueKey('clip-visibility-selector'),
+              showSelectedIcon: true,
+              expandedInsets: EdgeInsets.zero,
+              segments: const [
+                ButtonSegment<bool>(
+                  value: true,
+                  icon: Icon(Icons.public_rounded, size: 17),
+                  label: Text('Public'),
+                ),
+                ButtonSegment<bool>(
+                  value: false,
+                  icon: Icon(Icons.lock_rounded, size: 17),
+                  label: Text('Private'),
+                ),
+              ],
+              selected: {isPublic},
+              onSelectionChanged: isLoading
+                  ? null
+                  : (selection) => onChanged(selection.first),
+              style: SegmentedButton.styleFrom(
+                selectedBackgroundColor: fieldGray900,
+                selectedForegroundColor: Colors.white,
+                foregroundColor: fieldGray600,
+                side: const BorderSide(color: fieldGray200),
+                textStyle: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 9),
+          Text(
+            isPublic
+                ? 'Anyone can watch this clip from your profile.'
+                : 'Only you can see this clip on your profile.',
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 12,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
       ),
     );
   }

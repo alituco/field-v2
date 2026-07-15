@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/create_fixture_screen.dart';
 import '../fixtures/fixture.dart';
@@ -554,29 +555,18 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     required String confirmLabel,
     bool destructive = false,
   }) async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (dialogContext) => AlertDialog(
-            title: Text(title),
-            content: Text(message),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(dialogContext).pop(false),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () => Navigator.of(dialogContext).pop(true),
-                style: FilledButton.styleFrom(
-                  backgroundColor: destructive
-                      ? const Color(0xFFDC2626)
-                      : fieldEmerald600,
-                ),
-                child: Text(confirmLabel),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+    return showFieldConfirmDialog(
+      context: context,
+      icon: destructive
+          ? Icons.warning_amber_rounded
+          : Icons.admin_panel_settings_outlined,
+      eyebrow: destructive ? 'Please confirm' : 'Clan action',
+      title: title,
+      message: message,
+      confirmLabel: confirmLabel,
+      cancelLabel: 'Cancel',
+      destructive: destructive,
+    );
   }
 
   @override

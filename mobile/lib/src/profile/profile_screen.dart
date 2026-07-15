@@ -57,6 +57,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isOpeningClan = false;
 
   bool get _isCurrentProfile => widget.profileId == null;
+  bool get _canManageProfile =>
+      _isCurrentProfile ||
+      widget.profileId == widget.profileRepository.currentUserId;
 
   @override
   void initState() {
@@ -113,6 +116,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         builder: (_) => ProfileClipScreen(
           highlight: highlight,
           profileRepository: widget.profileRepository,
+          canManage: _canManageProfile,
         ),
       ),
     );
@@ -1103,6 +1107,39 @@ class _HighlightRow extends StatelessWidget {
                           ),
                         ),
                       ),
+                      if (!highlight.isPublic) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: fieldGray100,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.lock_rounded,
+                                color: fieldGray600,
+                                size: 11,
+                              ),
+                              SizedBox(width: 3),
+                              Text(
+                                'PRIVATE',
+                                style: TextStyle(
+                                  color: fieldGray600,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],

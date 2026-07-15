@@ -59,10 +59,12 @@ async function verifyProfileMatchClips() {
   assert(assistantSave.status === 200, "The assister could not save the goal.");
   const assistantHighlight = objectValue(assistantSave.body.highlight);
   assert(
-    assistantHighlight.profile_id === source.assistProfileId,
+    assistantHighlight.profile_id === source.assistProfileId &&
+      assistantHighlight.is_public === true,
     "The assist clip was saved to the wrong profile.",
   );
-  cleanupHighlightIds.push(requiredString(assistantHighlight.id));
+  const assistantHighlightId = requiredString(assistantHighlight.id);
+  cleanupHighlightIds.push(assistantHighlightId);
 
   const scorerSave = await invoke(scorer, {
     action: "create",
@@ -81,6 +83,70 @@ async function verifyProfileMatchClips() {
     "The scorer clip was saved to the wrong profile.",
   );
   cleanupHighlightIds.push(requiredString(scorerHighlight.id));
+
+  assert(
+    (await visibleHighlight(scorer, assistantHighlightId))?.is_public === true,
+    "A public clip was hidden from another authenticated user.",
+  );
+
+  const rejectedVisibilityUpdate = await invoke(scorer, {
+    action: "update_visibility",
+    highlight_id: assistantHighlightId,
+    is_public: false,
+  });
+  assert(
+    rejectedVisibilityUpdate.status === 404,
+    "A non-owner changed another player's clip visibility.",
+  );
+
+  const privateUpdate = await invoke(assistant, {
+    action: "update_visibility",
+    highlight_id: assistantHighlightId,
+    is_public: false,
+  });
+  assert(
+    privateUpdate.status === 200 &&
+      objectValue(privateUpdate.body.highlight).is_public === false,
+    "The owner could not make their clip private.",
+  );
+  assert(
+    await visibleHighlight(scorer, assistantHighlightId) == null,
+    "A private clip was visible to another authenticated user.",
+  );
+  assert(
+    (await visibleHighlight(assistant, assistantHighlightId))?.is_public ===
+      false,
+    "The owner could not read their private clip.",
+  );
+
+  const { error: privateViewError } = await scorer.rpc(
+    "record_profile_highlight_view",
+    { highlight_id_to_use: assistantHighlightId },
+  );
+  assert(
+    privateViewError != null,
+    "A non-owner recorded a view against a private clip.",
+  );
+  const { error: ownerViewError } = await assistant.rpc(
+    "record_profile_highlight_view",
+    { highlight_id_to_use: assistantHighlightId },
+  );
+  assert(
+    ownerViewError == null,
+    "The owner could not play their private clip.",
+  );
+
+  const publicUpdate = await invoke(assistant, {
+    action: "update_visibility",
+    highlight_id: assistantHighlightId,
+    is_public: true,
+  });
+  assert(
+    publicUpdate.status === 200 &&
+      objectValue(publicUpdate.body.highlight).is_public === true &&
+      (await visibleHighlight(scorer, assistantHighlightId)) != null,
+    "The owner could not make their clip public again.",
+  );
 
   const goalRowsBeforeDownload = await highlightsForGoal(source);
   const goalDownload = await invoke(viewer, {
@@ -163,6 +229,31 @@ async function verifyProfileMatchClips() {
     assertUrl(fullGame.body.download_url, "Full-game download");
   }
 
+  const rejectedDelete = await invoke(scorer, {
+    action: "delete",
+    highlight_id: assistantHighlightId,
+  });
+  assert(
+    rejectedDelete.status === 404 &&
+      (await visibleHighlight(assistant, assistantHighlightId)) != null,
+    "A non-owner deleted another player's clip.",
+  );
+  const ownerDelete = await invoke(assistant, {
+    action: "delete",
+    highlight_id: assistantHighlightId,
+  });
+  assert(
+    ownerDelete.status === 200 &&
+      ownerDelete.body.deleted === true &&
+      ownerDelete.body.highlight_id === assistantHighlightId &&
+      (await visibleHighlight(assistant, assistantHighlightId)) == null,
+    "The owner could not delete their clip.",
+  );
+  cleanupHighlightIds.splice(
+    cleanupHighlightIds.indexOf(assistantHighlightId),
+    1,
+  );
+
   console.log("Profile match clips verified:");
   console.log(
     `- assisted ${source.sourceType.toLowerCase()} goal saved by both credited players`,
@@ -175,6 +266,10 @@ async function verifyProfileMatchClips() {
   );
   console.log("- 15-second custom clip saved with trusted source bounds");
   console.log(`- full-game download returned ${fullGameStatus}`);
+  console.log("- owner-only public/private and delete actions enforced");
+  console.log(
+    "- private clip reads and view recording restricted to its owner",
+  );
 }
 
 async function findRecordedAssistedGoal() {
@@ -325,6 +420,19 @@ async function invoke(
   });
   const value = await response.json();
   return { status: response.status, body: objectValue(value) };
+}
+
+async function visibleHighlight(
+  client: SupabaseAnyClient,
+  highlightId: string,
+) {
+  const { data, error } = await client
+    .from("profile_highlights")
+    .select("id,is_public")
+    .eq("id", highlightId)
+    .maybeSingle();
+  if (error) throw error;
+  return data as { id: string; is_public: boolean } | null;
 }
 
 function assertMedia(

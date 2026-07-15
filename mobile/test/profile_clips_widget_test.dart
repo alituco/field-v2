@@ -108,6 +108,180 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('owner can make a profile clip private', (tester) async {
+    _installFakeVideoPlatform();
+    final repository = _FakeProfileRepository(profile: _emptyProfile);
+
+    await _pumpClip(
+      tester,
+      repository: repository,
+      downloader: _FakeGoalClipDownloader(),
+    );
+
+    expect(
+      find.byKey(const ValueKey('clip-visibility-selector')),
+      findsOneWidget,
+    );
+    await _scrollClipControlIntoView(
+      tester,
+      find.byKey(const ValueKey('clip-visibility-selector')),
+    );
+    await tester.tap(find.text('Private'));
+    await tester.pumpAndSettle();
+
+    expect(repository.visibilityUpdates, [
+      (highlightId: 'clip-one', isPublic: false),
+    ]);
+    expect(
+      find.text('Only you can see this clip on your profile.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Clip is now private. Only you can see it.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a failed visibility change keeps the previous clip state', (
+    tester,
+  ) async {
+    _installFakeVideoPlatform();
+    final repository = _FakeProfileRepository(
+      profile: _emptyProfile,
+      visibilityError: StateError('Internal server error'),
+    );
+
+    await _pumpClip(
+      tester,
+      repository: repository,
+      downloader: _FakeGoalClipDownloader(),
+    );
+    await _scrollClipControlIntoView(
+      tester,
+      find.byKey(const ValueKey('clip-visibility-selector')),
+    );
+    await tester.tap(find.text('Private'));
+    await tester.pumpAndSettle();
+
+    expect(repository.visibilityUpdates, [
+      (highlightId: 'clip-one', isPublic: false),
+    ]);
+    expect(
+      find.text('Anyone can watch this clip from your profile.'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('We could not change this clip’s visibility.'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'clip deletion uses the themed confirmation and can be cancelled',
+    (tester) async {
+      _installFakeVideoPlatform();
+      final repository = _FakeProfileRepository(profile: _emptyProfile);
+
+      await _pumpClipOnRoute(tester, repository: repository);
+
+      final deleteButton = find.byKey(const ValueKey('delete-profile-clip'));
+      await _scrollClipControlIntoView(tester, deleteButton);
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('field-confirmation-dialog')),
+        findsOneWidget,
+      );
+      expect(find.text('Delete this clip?'), findsOneWidget);
+      expect(find.text('This cannot be undone.'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
+      await tester.pumpAndSettle();
+      expect(repository.deletedHighlightIds, isEmpty);
+      expect(find.byKey(const ValueKey('delete-profile-clip')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'confirmed clip deletion removes the clip through the repository',
+    (tester) async {
+      _installFakeVideoPlatform();
+      final repository = _FakeProfileRepository(profile: _emptyProfile);
+
+      await _pumpClipOnRoute(tester, repository: repository);
+
+      final deleteButton = find.byKey(const ValueKey('delete-profile-clip'));
+      await _scrollClipControlIntoView(tester, deleteButton);
+      await tester.tap(deleteButton);
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('field-confirmation-confirm')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(repository.deletedHighlightIds, ['clip-one']);
+      expect(find.byType(ProfileClipScreen), findsNothing);
+      expect(find.byKey(const ValueKey('open-profile-clip')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('a failed clip deletion keeps the clip and restores its action', (
+    tester,
+  ) async {
+    _installFakeVideoPlatform();
+    final repository = _FakeProfileRepository(
+      profile: _emptyProfile,
+      deleteError: StateError('Internal server error'),
+    );
+
+    await _pumpClipOnRoute(tester, repository: repository);
+    final deleteButton = find.byKey(const ValueKey('delete-profile-clip'));
+    await _scrollClipControlIntoView(tester, deleteButton);
+    await tester.tap(deleteButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('field-confirmation-confirm')));
+    await tester.pumpAndSettle();
+
+    expect(repository.deletedHighlightIds, ['clip-one']);
+    expect(find.byType(ProfileClipScreen), findsOneWidget);
+    expect(
+      find.text('We could not delete this clip. Try again.'),
+      findsOneWidget,
+    );
+    expect(tester.widget<OutlinedButton>(deleteButton).onPressed, isNotNull);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('other players cannot manage a profile clip', (tester) async {
+    _installFakeVideoPlatform();
+    final repository = _FakeProfileRepository(profile: _emptyProfile);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProfileClipScreen(
+          highlight: _readyClip,
+          profileRepository: repository,
+          canManage: false,
+          downloader: _FakeGoalClipDownloader(),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 20));
+
+    expect(
+      find.byKey(const ValueKey('clip-visibility-selector')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('delete-profile-clip')), findsNothing);
+    expect(find.byKey(const ValueKey('download-goal-clip')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('an owned goal chapter can be titled and added to the profile', (
     tester,
   ) async {
@@ -159,17 +333,69 @@ Future<void> _pumpClip(
   required _FakeProfileRepository repository,
   required GoalClipDownloader downloader,
 }) async {
+  _configurePhoneViewport(tester);
   await tester.pumpWidget(
     MaterialApp(
       home: ProfileClipScreen(
         highlight: _readyClip,
         profileRepository: repository,
+        canManage: true,
         downloader: downloader,
       ),
     ),
   );
   await tester.pump();
   await tester.pump(const Duration(milliseconds: 20));
+}
+
+Future<void> _pumpClipOnRoute(
+  WidgetTester tester, {
+  required _FakeProfileRepository repository,
+}) async {
+  _configurePhoneViewport(tester);
+  await tester.pumpWidget(
+    MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            key: const ValueKey('open-profile-clip'),
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute<void>(
+                builder: (_) => ProfileClipScreen(
+                  highlight: _readyClip,
+                  profileRepository: repository,
+                  canManage: true,
+                  downloader: _FakeGoalClipDownloader(),
+                ),
+              ),
+            ),
+            child: const Text('Open clip'),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.byKey(const ValueKey('open-profile-clip')));
+  await tester.pumpAndSettle();
+}
+
+void _configurePhoneViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(390, 844);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(tester.view.resetDevicePixelRatio);
+}
+
+Future<void> _scrollClipControlIntoView(
+  WidgetTester tester,
+  Finder control,
+) async {
+  await tester.scrollUntilVisible(
+    control,
+    180,
+    scrollable: find.byType(Scrollable).last,
+  );
+  await tester.pumpAndSettle();
 }
 
 _FakeVideoPlayerPlatform _installFakeVideoPlatform() {
@@ -268,13 +494,22 @@ Fixture _ownedGoalFixture() {
 }
 
 class _FakeProfileRepository implements ProfileRepository {
-  _FakeProfileRepository({required this.profile, this.recordedViews = 1});
+  _FakeProfileRepository({
+    required this.profile,
+    this.recordedViews = 1,
+    this.visibilityError,
+    this.deleteError,
+  });
 
   final PlayerProfile profile;
   final int recordedViews;
+  final Object? visibilityError;
+  final Object? deleteError;
   int recordViewCalls = 0;
   final List<String> recordedHighlightIds = [];
   final List<ProfileGoalClipRequest> createdRequests = [];
+  final List<({String highlightId, bool isPublic})> visibilityUpdates = [];
+  final List<String> deletedHighlightIds = [];
 
   @override
   String? get currentUserId => profile.id;
@@ -295,6 +530,22 @@ class _FakeProfileRepository implements ProfileRepository {
   @override
   Future<ProfileHighlight> refreshHighlight(String highlightId) async =>
       _readyClip;
+
+  @override
+  Future<ProfileHighlight> updateHighlightVisibility({
+    required String highlightId,
+    required bool isPublic,
+  }) async {
+    visibilityUpdates.add((highlightId: highlightId, isPublic: isPublic));
+    if (visibilityError case final error?) throw error;
+    return _readyClip.copyWith(isPublic: isPublic);
+  }
+
+  @override
+  Future<void> deleteHighlight(String highlightId) async {
+    deletedHighlightIds.add(highlightId);
+    if (deleteError case final error?) throw error;
+  }
 
   @override
   Future<ProfileHighlight> createGoalClip(

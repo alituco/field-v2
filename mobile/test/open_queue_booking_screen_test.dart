@@ -302,6 +302,53 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('cancelling a booking uses the themed refund confirmation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _FakeOpenQueueRepository(
+      cancellationPreview: OpenQueueCancellationPreview(
+        canCancel: true,
+        refundPercent: 50,
+        refundAmountFils: 1500,
+        refundCutoffAt: DateTime.now().add(const Duration(days: 1)),
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final cancelBooking = find.text('Cancel booking');
+    await _bringAboveFloatingNav(tester, cancelBooking);
+    await tester.tap(cancelBooking);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('field-confirmation-dialog')),
+      findsOneWidget,
+    );
+    expect(find.text('Cancel your spot?'), findsOneWidget);
+    expect(find.text('50% refund · 1.500 BHD refund'), findsOneWidget);
+    expect(find.text('Keep my spot'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
+    await tester.pumpAndSettle();
+
+    expect(repository.cancelCalls, 0);
+    expect(find.text('BOOKING DETAILS'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _bringAboveFloatingNav(WidgetTester tester, Finder target) async {
@@ -364,9 +411,11 @@ OpenQueueBooking _booking({
 }
 
 class _FakeOpenQueueRepository implements OpenQueueRepository {
-  const _FakeOpenQueueRepository({this.upcomingBooking});
+  _FakeOpenQueueRepository({this.upcomingBooking, this.cancellationPreview});
 
   final OpenQueueBooking? upcomingBooking;
+  final OpenQueueCancellationPreview? cancellationPreview;
+  int cancelCalls = 0;
 
   @override
   Future<List<OpenQueueGame>> listGames() async => const [];
@@ -389,12 +438,20 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   }) async => _booking();
 
   @override
-  Future<OpenQueueBooking> cancelBooking(String bookingId) {
-    throw UnimplementedError();
+  Future<OpenQueueBooking> cancelBooking(String bookingId) async {
+    cancelCalls += 1;
+    return _booking();
   }
 
   @override
-  Future<OpenQueueCancellationPreview> previewCancellation(String bookingId) {
-    throw UnimplementedError();
-  }
+  Future<OpenQueueCancellationPreview> previewCancellation(
+    String bookingId,
+  ) async =>
+      cancellationPreview ??
+      OpenQueueCancellationPreview(
+        canCancel: true,
+        refundPercent: 0,
+        refundAmountFils: 0,
+        refundCutoffAt: DateTime.now(),
+      );
 }

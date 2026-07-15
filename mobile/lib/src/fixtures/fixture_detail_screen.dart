@@ -9,6 +9,7 @@ import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../core/field_confirmation_dialog.dart';
 import '../profile/goal_clip_downloader.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
@@ -771,9 +772,9 @@ class _Scoreboard extends StatelessWidget {
       width: double.infinity,
       padding: EdgeInsets.fromLTRB(
         22,
-        fieldPageHeaderExtent(context) + 38,
+        fieldPageHeaderExtent(context) + 14,
         22,
-        22,
+        12,
       ),
       decoration: BoxDecoration(
         gradient: const RadialGradient(
@@ -782,7 +783,7 @@ class _Scoreboard extends StatelessWidget {
           colors: [Color(0xFF374151), Color(0xFF111827), Color(0xFF000000)],
           stops: [0, 0.52, 1],
         ),
-        borderRadius: const BorderRadius.vertical(bottom: Radius.circular(26)),
+        borderRadius: BorderRadius.zero,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.22),
@@ -815,7 +816,7 @@ class _Scoreboard extends StatelessWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 11,
-                        vertical: 6,
+                        vertical: 4,
                       ),
                       decoration: BoxDecoration(
                         color: Colors.white.withValues(alpha: 0.12),
@@ -836,7 +837,7 @@ class _Scoreboard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 11,
-                      vertical: 6,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
                       color: fixture.isLive
@@ -862,7 +863,7 @@ class _Scoreboard extends StatelessWidget {
                 const SizedBox(height: 10),
                 _LiveMinutePill(clock: fixture.clock),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
@@ -935,8 +936,9 @@ class _Scoreboard extends StatelessWidget {
                   ),
                 ],
               ),
-              if (fixture.matchAveragePlayerRating != null) ...[
-                const SizedBox(height: 18),
+              if (!showTeamRatings &&
+                  fixture.matchAveragePlayerRating != null) ...[
+                const SizedBox(height: 12),
                 _MatchAverageRatingPill(
                   average: fixture.matchAveragePlayerRating!,
                   spread: fixture.teamRatingSpread,
@@ -971,8 +973,8 @@ class _ScoreboardClan extends StatelessWidget {
   Widget build(BuildContext context) {
     final content = Column(
       children: [
-        FixtureClanAvatar(clan: clan, size: 64),
-        const SizedBox(height: 10),
+        FixtureClanAvatar(clan: clan, size: 56),
+        const SizedBox(height: 7),
         Text(
           clan.name,
           maxLines: 2,
@@ -986,7 +988,7 @@ class _ScoreboardClan extends StatelessWidget {
           ),
         ),
         if (onTap != null) ...[
-          const SizedBox(height: 5),
+          const SizedBox(height: 3),
           if (isOpening)
             const SizedBox.square(
               dimension: 12,
@@ -1017,8 +1019,38 @@ class _ScoreboardClan extends StatelessWidget {
               ],
             ),
         ],
-        if (averagePlayerRating case final rating?) ...[
-          const SizedBox(height: 8),
+        if (showRating) ...[
+          const SizedBox(height: 5),
+          Text(
+            '${clan.skillRating} CLAN SR',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldEmerald200,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.35,
+            ),
+          ),
+          if (clan.regionRank case final regionRank?) ...[
+            const SizedBox(height: 2),
+            Text(
+              '#$regionRank ${_regionName(clan.region).toUpperCase()}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: fieldGray400,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.25,
+              ),
+            ),
+          ],
+          const SizedBox(height: 3),
+        ] else if (averagePlayerRating case final rating?) ...[
+          const SizedBox(height: 5),
           Text(
             '$rating AVG PLAYER RATING',
             maxLines: 1,
@@ -1031,24 +1063,9 @@ class _ScoreboardClan extends StatelessWidget {
               letterSpacing: 0.2,
             ),
           ),
-          const SizedBox(height: 10),
-        ] else if (showRating) ...[
-          const SizedBox(height: 8),
-          TierBadge(rank: clan.rank, small: true),
-          const SizedBox(height: 6),
-          Text(
-            '${clan.skillRating} SR${clan.regionRank == null ? '' : ' · ${_regionName(clan.region)} #${clan.regionRank}'}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: fieldGray400,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          const SizedBox(height: 3),
         ] else
-          const SizedBox(height: 10),
+          const SizedBox(height: 3),
       ],
     );
 
@@ -3002,28 +3019,18 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
 
   Future<void> _confirmFullGameDownload() async {
     if (_isDownloadingFullGame || _isCreatingCustomClip) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFieldConfirmDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Download the full game?'),
-        content: const Text(
+      icon: Icons.download_rounded,
+      eyebrow: 'Save recording',
+      title: 'Download the full game?',
+      message:
           'The full recording can be a large file. Keep Field open while it saves to Photos.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton.icon(
-            key: const ValueKey('confirm-full-game-download'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            icon: const Icon(Icons.download_rounded),
-            label: const Text('Download'),
-          ),
-        ],
-      ),
+      detail: 'Highlights and custom clips are much smaller downloads.',
+      confirmLabel: 'Download game',
+      cancelLabel: 'Not now',
     );
-    if (confirmed == true && mounted) await _downloadFullGame();
+    if (confirmed && mounted) await _downloadFullGame();
   }
 
   Future<void> _downloadFullGame() async {
@@ -3100,19 +3107,13 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
     }
     if (!mounted) return;
 
-    final range = await showModalBottomSheet<_ClipRange>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (_) => _CustomClipEditorSheet(
-        recordingDuration: controller.value.duration,
-        initialPosition: controller.value.position,
-        onSeek: (position) => unawaited(
-          controller.seekTo(_boundedPosition(position, controller)),
+    final range = await Navigator.of(context).push<_ClipRange>(
+      MaterialPageRoute<_ClipRange>(
+        fullscreenDialog: true,
+        builder: (_) => _CustomClipEditorPage(
+          controller: controller,
+          thumbnailUrls: _clipTimelineThumbnailUrls(controller.value.duration),
+          initialPosition: controller.value.position,
         ),
       ),
     );
@@ -3211,6 +3212,94 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
     }
   }
 
+  List<String> _clipTimelineThumbnailUrls(Duration duration) {
+    final playbackUri = Uri.tryParse(fixture.fullGamePlaybackUrl ?? '');
+    final videoId = fixture.broadcast?.activeVideoId?.trim();
+    if (playbackUri == null ||
+        !playbackUri.hasScheme ||
+        videoId == null ||
+        videoId.isEmpty ||
+        !(playbackUri.host.endsWith('cloudflarestream.com') ||
+            playbackUri.host.endsWith('videodelivery.net'))) {
+      return const [];
+    }
+    const count = 10;
+    final durationSeconds = duration.inMilliseconds / 1000;
+    return [
+      for (var index = 0; index < count; index++)
+        playbackUri
+            .replace(
+              path: '/$videoId/thumbnails/thumbnail.jpg',
+              queryParameters: {
+                'time': '${(durationSeconds * index / (count - 1)).round()}s',
+                'height': '96',
+                'fit': 'crop',
+              },
+            )
+            .toString(),
+    ];
+  }
+
+  Widget _buildVideoActionOverlay() {
+    if (_isDownloadingFullGame || _isCreatingCustomClip) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xCC111827),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: _WatchMediaProgress(
+          progress: _isDownloadingFullGame
+              ? _fullGameDownloadProgress
+              : _customClipDownloadProgress,
+          label: _isDownloadingFullGame ? 'Full game' : 'Creating clip',
+          onDark: true,
+        ),
+      );
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xB3111827),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white24),
+      ),
+      child: PopupMenuButton<_MatchVideoAction>(
+        key: const ValueKey('watch-actions-menu'),
+        tooltip: 'Match video options',
+        color: Colors.white,
+        surfaceTintColor: Colors.white,
+        elevation: 12,
+        position: PopupMenuPosition.under,
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
+        onSelected: _handleVideoAction,
+        itemBuilder: (_) => const [
+          PopupMenuItem<_MatchVideoAction>(
+            key: ValueKey('download-full-game'),
+            value: _MatchVideoAction.downloadFullGame,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.download_rounded),
+              title: Text('Download full game'),
+              subtitle: Text('Save the entire recording'),
+            ),
+          ),
+          PopupMenuItem<_MatchVideoAction>(
+            key: ValueKey('create-match-clip'),
+            value: _MatchVideoAction.createClip,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.content_cut_rounded),
+              title: Text('Create a clip'),
+              subtitle: Text('Choose up to 60 seconds'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showMediaError(Object error, String fallback) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -3253,50 +3342,6 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
                     letterSpacing: 0,
                   ),
                 ),
-                if (fixture.isFinal && fixture.fullGamePlaybackUrl != null) ...[
-                  const Spacer(),
-                  if (_isDownloadingFullGame || _isCreatingCustomClip)
-                    _WatchMediaProgress(
-                      progress: _isDownloadingFullGame
-                          ? _fullGameDownloadProgress
-                          : _customClipDownloadProgress,
-                      label: _isDownloadingFullGame
-                          ? 'Full game'
-                          : 'Creating clip',
-                    )
-                  else
-                    PopupMenuButton<_MatchVideoAction>(
-                      key: const ValueKey('watch-actions-menu'),
-                      tooltip: 'Match video options',
-                      icon: const Icon(
-                        Icons.more_horiz_rounded,
-                        color: fieldGray700,
-                      ),
-                      onSelected: _handleVideoAction,
-                      itemBuilder: (_) => const [
-                        PopupMenuItem<_MatchVideoAction>(
-                          key: ValueKey('download-full-game'),
-                          value: _MatchVideoAction.downloadFullGame,
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.download_rounded),
-                            title: Text('Download full game'),
-                            subtitle: Text('Save the entire recording'),
-                          ),
-                        ),
-                        PopupMenuItem<_MatchVideoAction>(
-                          key: ValueKey('create-match-clip'),
-                          value: _MatchVideoAction.createClip,
-                          child: ListTile(
-                            contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.content_cut_rounded),
-                            title: Text('Create a clip'),
-                            subtitle: Text('Choose up to 60 seconds'),
-                          ),
-                        ),
-                      ],
-                    ),
-                ],
                 if (isLive) ...[
                   const Spacer(),
                   Container(
@@ -3453,6 +3498,9 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
         ),
         onTogglePlayback: _togglePlayback,
         onOpenFullscreen: _openFullscreen,
+        actionOverlay: fixture.isFinal && fixture.fullGamePlaybackUrl != null
+            ? _buildVideoActionOverlay()
+            : null,
       );
     }
 
@@ -3721,30 +3769,43 @@ class _ClipTitleSheetState extends State<_ClipTitleSheet> {
   }
 }
 
-class _CustomClipEditorSheet extends StatefulWidget {
-  const _CustomClipEditorSheet({
-    required this.recordingDuration,
+class _CustomClipEditorPage extends StatefulWidget {
+  const _CustomClipEditorPage({
+    required this.controller,
     required this.initialPosition,
-    required this.onSeek,
+    required this.thumbnailUrls,
   });
 
-  final Duration recordingDuration;
+  final VideoPlayerController controller;
   final Duration initialPosition;
-  final ValueChanged<Duration> onSeek;
+  final List<String> thumbnailUrls;
 
   @override
-  State<_CustomClipEditorSheet> createState() => _CustomClipEditorSheetState();
+  State<_CustomClipEditorPage> createState() => _CustomClipEditorPageState();
 }
 
-class _CustomClipEditorSheetState extends State<_CustomClipEditorSheet> {
+class _CustomClipEditorPageState extends State<_CustomClipEditorPage> {
+  static const _maxClipSeconds = 60.0;
+  static const _seekDebounceDuration = Duration(milliseconds: 45);
+  static const _previewEndTolerance = Duration(milliseconds: 120);
+
   late final double _recordingSeconds;
   late RangeValues _range;
+  late double _timelineStart;
+  late double _timelineEnd;
+  Timer? _seekDebounce;
+  int _seekGeneration = 0;
   bool _lastMovedStart = false;
+  bool _isPreviewing = false;
+  bool _isStoppingAtEnd = false;
+  bool _isClosing = false;
+  bool _isDraggingPlayhead = false;
+  double? _draggedPlayheadSeconds;
 
   @override
   void initState() {
     super.initState();
-    _recordingSeconds = (widget.recordingDuration.inMilliseconds / 1000)
+    _recordingSeconds = (widget.controller.value.duration.inMilliseconds / 1000)
         .clamp(1.0, double.infinity)
         .toDouble();
     final current = (widget.initialPosition.inMilliseconds / 1000)
@@ -3752,27 +3813,105 @@ class _CustomClipEditorSheetState extends State<_CustomClipEditorSheet> {
         .toDouble();
     var start = (current - 10).clamp(0.0, _recordingSeconds).toDouble();
     var end = (current + 20).clamp(0.0, _recordingSeconds).toDouble();
-    if (end - start > 60) end = start + 60;
+    if (end - start > _maxClipSeconds) end = start + _maxClipSeconds;
     if (end - start < 1) {
       end = (start + 1).clamp(0.0, _recordingSeconds).toDouble();
       start = (end - 1).clamp(0.0, _recordingSeconds).toDouble();
     }
     _range = RangeValues(start, end);
+    _setTimelineWindowAround(current);
+    widget.controller.addListener(_handleControllerTick);
+  }
+
+  @override
+  void dispose() {
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    widget.controller.removeListener(_handleControllerTick);
+    super.dispose();
   }
 
   double get _clipDuration => _range.end - _range.start;
+  double get _clipCenter => (_range.start + _range.end) / 2;
 
-  void _updateRange(RangeValues next, {bool seekToStart = false}) {
+  Duration _durationAt(double seconds) {
+    return Duration(
+      milliseconds: (seconds * Duration.millisecondsPerSecond).round(),
+    );
+  }
+
+  String _time(double seconds) => _formatVideoTime(_durationAt(seconds));
+
+  void _setTimelineWindowAround(double center) {
+    final windowLength = _recordingSeconds < 120 ? _recordingSeconds : 120.0;
+    final maxStart = (_recordingSeconds - windowLength).clamp(
+      0.0,
+      _recordingSeconds,
+    );
+    _timelineStart = (center - (windowLength / 2))
+        .clamp(0.0, maxStart)
+        .toDouble();
+    _timelineEnd = _timelineStart + windowLength;
+  }
+
+  void _handleControllerTick() {
+    if (!_isPreviewing || _isStoppingAtEnd || !mounted) return;
+    final value = widget.controller.value;
+    if (!value.isInitialized || !value.isPlaying) return;
+    final end = _durationAt(_range.end);
+    if (value.position + _previewEndTolerance < end) return;
+    _isStoppingAtEnd = true;
+    unawaited(_stopPreviewAtEnd());
+  }
+
+  Future<void> _stopPreviewAtEnd() async {
+    try {
+      await widget.controller.pause();
+      await widget.controller.seekTo(_durationAt(_range.end));
+      if (mounted) setState(() => _isPreviewing = false);
+    } finally {
+      _isStoppingAtEnd = false;
+    }
+  }
+
+  void _queueSeek(double seconds, {bool immediate = false}) {
+    _seekDebounce?.cancel();
+    final generation = ++_seekGeneration;
+    final target = seconds.clamp(0.0, _recordingSeconds).toDouble();
+    if (immediate) {
+      unawaited(_performSeek(target, generation));
+      return;
+    }
+    _seekDebounce = Timer(
+      _seekDebounceDuration,
+      () => unawaited(_performSeek(target, generation)),
+    );
+  }
+
+  Future<void> _performSeek(double seconds, int generation) async {
+    if (widget.controller.value.isPlaying) await widget.controller.pause();
+    if (!mounted || generation != _seekGeneration) return;
+    if (_isPreviewing) setState(() => _isPreviewing = false);
+    await widget.controller.seekTo(_durationAt(seconds));
+    if (!mounted || generation != _seekGeneration || _isDraggingPlayhead) {
+      return;
+    }
+    if (_draggedPlayheadSeconds != null) {
+      setState(() => _draggedPlayheadSeconds = null);
+    }
+  }
+
+  void _updateRange(RangeValues next, {bool immediate = false}) {
     final movedStart = (next.start - _range.start).abs();
     final movedEnd = (next.end - _range.end).abs();
     _lastMovedStart = movedStart > movedEnd;
-    var start = next.start.clamp(0.0, _recordingSeconds).toDouble();
-    var end = next.end.clamp(0.0, _recordingSeconds).toDouble();
-    if (end - start > 60) {
+    var start = next.start.clamp(_timelineStart, _timelineEnd).toDouble();
+    var end = next.end.clamp(_timelineStart, _timelineEnd).toDouble();
+    if (end - start > _maxClipSeconds) {
       if (_lastMovedStart) {
-        start = end - 60;
+        start = end - _maxClipSeconds;
       } else {
-        end = start + 60;
+        end = start + _maxClipSeconds;
       }
     }
     if (end - start < 1) {
@@ -3782,214 +3921,822 @@ class _CustomClipEditorSheetState extends State<_CustomClipEditorSheet> {
         end = start + 1;
       }
     }
-    start = start.clamp(0.0, _recordingSeconds).toDouble();
-    end = end.clamp(0.0, _recordingSeconds).toDouble();
+    start = start.clamp(_timelineStart, _timelineEnd).toDouble();
+    end = end.clamp(_timelineStart, _timelineEnd).toDouble();
     if (end - start < 1) {
-      start = (end - 1).clamp(0.0, _recordingSeconds).toDouble();
-      end = (start + 1).clamp(0.0, _recordingSeconds).toDouble();
+      start = (end - 1).clamp(_timelineStart, _timelineEnd).toDouble();
+      end = (start + 1).clamp(_timelineStart, _timelineEnd).toDouble();
     }
-    setState(() => _range = RangeValues(start, end));
-    if (seekToStart) _preview(start);
+    setState(() {
+      _range = RangeValues(start, end);
+      _draggedPlayheadSeconds = null;
+    });
+    _queueSeek(_lastMovedStart ? start : end, immediate: immediate);
+  }
+
+  void _finishRangeDrag() {
+    _queueSeek(_lastMovedStart ? _range.start : _range.end, immediate: true);
   }
 
   void _adjustStart(double delta) {
-    final start = (_range.start + delta)
-        .clamp((_range.end - 60).clamp(0.0, _recordingSeconds), _range.end - 1)
+    final lowerBound = (_range.end - _maxClipSeconds)
+        .clamp(_timelineStart, _timelineEnd)
         .toDouble();
-    _updateRange(RangeValues(start, _range.end), seekToStart: true);
+    final start = (_range.start + delta)
+        .clamp(lowerBound, _range.end - 1)
+        .toDouble();
+    _updateRange(RangeValues(start, _range.end), immediate: true);
   }
 
   void _adjustEnd(double delta) {
-    final end = (_range.end + delta)
-        .clamp(
-          _range.start + 1,
-          (_range.start + 60).clamp(0.0, _recordingSeconds),
-        )
+    final upperBound = (_range.start + _maxClipSeconds)
+        .clamp(_timelineStart, _timelineEnd)
         .toDouble();
-    _updateRange(RangeValues(_range.start, end));
-    _preview(end);
+    final end = (_range.end + delta)
+        .clamp(_range.start + 1, upperBound)
+        .toDouble();
+    _updateRange(RangeValues(_range.start, end), immediate: true);
   }
 
-  void _preview(double seconds) {
-    widget.onSeek(
-      Duration(
-        milliseconds: (seconds * Duration.millisecondsPerSecond).round(),
-      ),
+  void _moveClipThroughMatch(double requestedCenter, {bool immediate = false}) {
+    final duration = _clipDuration;
+    final maxStart = (_recordingSeconds - duration).clamp(
+      0.0,
+      _recordingSeconds,
     );
+    final start = (requestedCenter - (duration / 2))
+        .clamp(0.0, maxStart)
+        .toDouble();
+    final end = start + duration;
+    final center = (start + end) / 2;
+    setState(() {
+      _range = RangeValues(start, end);
+      _setTimelineWindowAround(center);
+      _draggedPlayheadSeconds = null;
+    });
+    _queueSeek(center, immediate: immediate);
   }
 
-  String _time(double seconds) {
-    return _formatVideoTime(
-      Duration(
-        milliseconds: (seconds * Duration.millisecondsPerSecond).round(),
-      ),
-    );
+  void _startPlayheadDrag(double seconds) {
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    if (widget.controller.value.isPlaying) {
+      unawaited(widget.controller.pause());
+    }
+    setState(() {
+      _isPreviewing = false;
+      _isDraggingPlayhead = true;
+      _draggedPlayheadSeconds = seconds;
+    });
+  }
+
+  void _dragPlayhead(double seconds) {
+    setState(() => _draggedPlayheadSeconds = seconds);
+    _queueSeek(seconds);
+  }
+
+  void _finishPlayheadDrag(double seconds) {
+    setState(() {
+      _isDraggingPlayhead = false;
+      _draggedPlayheadSeconds = seconds;
+    });
+    _queueSeek(seconds, immediate: true);
+  }
+
+  Future<void> _previewSelection() async {
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    if (widget.controller.value.isPlaying) await widget.controller.pause();
+    await widget.controller.seekTo(_durationAt(_range.start));
+    if (!mounted) return;
+    setState(() {
+      _isPreviewing = true;
+      _draggedPlayheadSeconds = null;
+    });
+    await widget.controller.play();
+  }
+
+  Future<void> _togglePlayback() async {
+    if (widget.controller.value.isPlaying) {
+      await widget.controller.pause();
+      if (mounted) setState(() => _isPreviewing = false);
+      return;
+    }
+    final positionSeconds =
+        widget.controller.value.position.inMilliseconds / 1000;
+    if (positionSeconds < _range.start ||
+        positionSeconds >= _range.end - 0.12) {
+      await widget.controller.seekTo(_durationAt(_range.start));
+    }
+    if (!mounted) return;
+    setState(() {
+      _isPreviewing = true;
+      _draggedPlayheadSeconds = null;
+    });
+    await widget.controller.play();
+  }
+
+  Future<void> _close([_ClipRange? result]) async {
+    if (_isClosing) return;
+    _isClosing = true;
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    if (widget.controller.value.isPlaying) await widget.controller.pause();
+    if (!mounted) return;
+    Navigator.of(context).pop(result);
   }
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        20,
-        16,
-        20,
-        20 + MediaQuery.paddingOf(context).bottom,
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Center(
-            child: Container(
-              width: 38,
-              height: 4,
-              decoration: BoxDecoration(
-                color: fieldGray200,
-                borderRadius: BorderRadius.circular(999),
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          const Row(
+    return PopScope<_ClipRange>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_close());
+      },
+      child: Scaffold(
+        backgroundColor: fieldGray900,
+        body: SafeArea(
+          child: Column(
             children: [
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Color(0xFFE8FFF6),
-                  shape: BoxShape.circle,
-                ),
-                child: SizedBox(
-                  width: 42,
-                  height: 42,
-                  child: Icon(
-                    Icons.content_cut_rounded,
-                    color: fieldEmerald600,
-                  ),
-                ),
-              ),
-              SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'CREATE A MATCH CLIP',
-                      style: TextStyle(
-                        color: fieldGray900,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      'Drag either end. Clips can be up to 60 seconds.',
-                      style: TextStyle(
-                        color: fieldGray500,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildHeader(),
+              _buildVideoPreview(),
+              Expanded(child: _buildEditorPanel()),
             ],
           ),
-          const SizedBox(height: 20),
-          Container(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8FAFC),
-              border: Border.all(color: fieldGray200),
-              borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return SizedBox(
+      height: 58,
+      child: Row(
+        children: [
+          IconButton(
+            key: const ValueKey('custom-clip-cancel'),
+            tooltip: 'Cancel clip',
+            onPressed: () => unawaited(_close()),
+            color: Colors.white,
+            icon: const Icon(Icons.close_rounded),
+          ),
+          const Expanded(
+            child: Text(
+              'CREATE A MATCH CLIP',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
             ),
-            child: Column(
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoPreview() {
+    return AspectRatio(
+      key: const ValueKey('custom-clip-video-preview'),
+      aspectRatio: 16 / 9,
+      child: ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: widget.controller,
+        builder: (context, value, _) {
+          final rawPosition = value.position.inMilliseconds / 1000;
+          final shownPosition = rawPosition
+              .clamp(_range.start, _range.end)
+              .toDouble();
+          final progress = _clipDuration <= 0
+              ? 0.0
+              : ((shownPosition - _range.start) / _clipDuration)
+                    .clamp(0.0, 1.0)
+                    .toDouble();
+          return ColoredBox(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _ClipEndpoint(
-                        label: 'START',
-                        value: _time(_range.start),
-                        onPreview: () => _preview(_range.start),
-                        onBack: () => _adjustStart(-1),
-                        onForward: () => _adjustStart(1),
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: value.aspectRatio == 0
+                        ? 16 / 9
+                        : value.aspectRatio,
+                    child: VideoPlayer(widget.controller),
+                  ),
+                ),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0x52000000),
+                        Color(0x00000000),
+                        Color(0x00000000),
+                        Color(0xB8000000),
+                      ],
+                      stops: [0, 0.28, 0.58, 1],
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  key: const ValueKey('custom-clip-video-tap-target'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(_togglePlayback()),
+                ),
+                Center(
+                  child: AnimatedOpacity(
+                    opacity: value.isPlaying ? 0 : 1,
+                    duration: const Duration(milliseconds: 160),
+                    child: IgnorePointer(
+                      ignoring: value.isPlaying,
+                      child: IconButton(
+                        key: const ValueKey('custom-clip-video-play'),
+                        tooltip: 'Play selected clip',
+                        onPressed: () => unawaited(_togglePlayback()),
+                        iconSize: 38,
+                        padding: const EdgeInsets.all(12),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xB3111827),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(62, 62),
+                        ),
+                        icon: const Icon(Icons.play_arrow_rounded),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                      child: Column(
+                  ),
+                ),
+                Positioned(
+                  top: 10,
+                  right: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xB3111827),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Text(
+                      '${_clipDuration.round()} SEC MAX 60',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 10,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      LinearProgressIndicator(
+                        key: const ValueKey('custom-clip-preview-progress'),
+                        value: progress,
+                        minHeight: 3,
+                        borderRadius: BorderRadius.circular(999),
+                        backgroundColor: Colors.white30,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          fieldEmerald500,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
                         children: [
-                          const Icon(
-                            Icons.arrow_forward_rounded,
-                            color: fieldGray400,
-                            size: 19,
-                          ),
-                          const SizedBox(height: 4),
                           Text(
-                            '${_clipDuration.round()} SEC',
-                            key: const ValueKey('custom-clip-duration'),
+                            _time(shownPosition),
                             style: const TextStyle(
-                              color: fieldEmerald600,
+                              color: Colors.white,
                               fontSize: 11,
-                              fontWeight: FontWeight.w900,
+                              fontWeight: FontWeight.w800,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${_time(_range.start)} – ${_time(_range.end)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              fontFeatures: [FontFeature.tabularFigures()],
                             ),
                           ),
                         ],
                       ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildEditorPanel() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: Color(0xFFF7F9FC),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          18,
+          18,
+          18 + MediaQuery.paddingOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'SELECT YOUR MOMENT',
+              style: TextStyle(
+                color: fieldGray900,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 3),
+            const Text(
+              'Move through the match, trim both ends, then preview it before continuing.',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 15),
+            _buildMatchNavigator(),
+            const SizedBox(height: 14),
+            _buildTrimEditor(),
+            const SizedBox(height: 14),
+            _buildEndpointControls(),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: widget.controller,
+                builder: (context, value, _) {
+                  return OutlinedButton.icon(
+                    key: const ValueKey('custom-clip-preview-selection'),
+                    onPressed: value.isPlaying && _isPreviewing
+                        ? () => unawaited(_togglePlayback())
+                        : () => unawaited(_previewSelection()),
+                    icon: Icon(
+                      value.isPlaying && _isPreviewing
+                          ? Icons.pause_rounded
+                          : Icons.replay_rounded,
                     ),
-                    Expanded(
-                      child: _ClipEndpoint(
-                        label: 'END',
-                        value: _time(_range.end),
-                        onPreview: () => _preview(_range.end),
-                        onBack: () => _adjustEnd(-1),
-                        onForward: () => _adjustEnd(1),
+                    label: Text(
+                      value.isPlaying && _isPreviewing
+                          ? 'Pause preview'
+                          : 'Preview selection',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: fieldGray900,
+                      side: const BorderSide(color: fieldGray300),
+                      textStyle: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
                       ),
                     ),
-                  ],
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 9),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton.icon(
+                key: const ValueKey('custom-clip-continue'),
+                onPressed: () => unawaited(
+                  _close(
+                    _ClipRange(
+                      startSeconds: _range.start,
+                      endSeconds: _range.end,
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 8),
-                RangeSlider(
-                  key: const ValueKey('custom-clip-range'),
-                  values: _range,
-                  min: 0,
-                  max: _recordingSeconds,
-                  divisions: _recordingSeconds.round().clamp(1, 3600),
-                  labels: RangeLabels(_time(_range.start), _time(_range.end)),
-                  activeColor: fieldEmerald600,
-                  inactiveColor: fieldGray200,
-                  onChanged: _updateRange,
-                  onChangeEnd: (_) {
-                    _preview(_lastMovedStart ? _range.start : _range.end);
-                  },
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text('Continue'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: fieldEmerald600,
+                  foregroundColor: Colors.white,
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMatchNavigator() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'MOVE THROUGH MATCH',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              _time(_clipCenter),
+              style: const TextStyle(
+                color: fieldGray900,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            height: 56,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _ClipFilmstrip(thumbnailUrls: widget.thumbnailUrls),
+                ColoredBox(color: Colors.black.withValues(alpha: 0.2)),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 2,
+                    activeTrackColor: Colors.white54,
+                    inactiveTrackColor: Colors.white38,
+                    thumbColor: fieldEmerald500,
+                    overlayColor: fieldEmerald500.withValues(alpha: 0.18),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 8,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 16,
+                    ),
+                  ),
+                  child: Slider(
+                    key: const ValueKey('custom-clip-match-position'),
+                    min: 0,
+                    max: _recordingSeconds,
+                    value: _clipCenter.clamp(0.0, _recordingSeconds),
+                    label: _time(_clipCenter),
+                    onChanged: _moveClipThroughMatch,
+                    onChangeEnd: (value) =>
+                        _moveClipThroughMatch(value, immediate: true),
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: FilledButton.icon(
-              key: const ValueKey('custom-clip-continue'),
-              onPressed: () => Navigator.of(context).pop(
-                _ClipRange(startSeconds: _range.start, endSeconds: _range.end),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTrimEditor() {
+    final windowDuration = _timelineEnd - _timelineStart;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'TRIM CLIP',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
               ),
-              icon: const Icon(Icons.arrow_forward_rounded),
-              label: const Text('Continue'),
-              style: FilledButton.styleFrom(
-                backgroundColor: fieldEmerald600,
-                foregroundColor: Colors.white,
-                textStyle: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
+            ),
+            const Spacer(),
+            Text(
+              '${_time(_timelineStart)} – ${_time(_timelineEnd)}',
+              style: const TextStyle(
+                color: fieldGray500,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final startFraction = windowDuration <= 0
+                ? 0.0
+                : ((_range.start - _timelineStart) / windowDuration)
+                      .clamp(0.0, 1.0)
+                      .toDouble();
+            final endFraction = windowDuration <= 0
+                ? 1.0
+                : ((_range.end - _timelineStart) / windowDuration)
+                      .clamp(0.0, 1.0)
+                      .toDouble();
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 64,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const _ClipTrimTrackBackground(),
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: width * startFraction,
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.58),
+                      ),
+                    ),
+                    Positioned(
+                      left: width * endFraction,
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.58),
+                      ),
+                    ),
+                    Positioned(
+                      left: width * startFraction,
+                      width: (width * (endFraction - startFraction)).clamp(
+                        2.0,
+                        width,
+                      ),
+                      top: 0,
+                      bottom: 0,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: fieldEmerald500,
+                              width: 3,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 4,
+                        activeTrackColor: fieldEmerald500,
+                        inactiveTrackColor: Colors.transparent,
+                        rangeThumbShape: const RoundRangeSliderThumbShape(
+                          enabledThumbRadius: 8,
+                        ),
+                        thumbColor: Colors.white,
+                        overlayColor: fieldEmerald500.withValues(alpha: 0.2),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 17,
+                        ),
+                      ),
+                      child: RangeSlider(
+                        key: const ValueKey('custom-clip-range'),
+                        min: _timelineStart,
+                        max: _timelineEnd,
+                        values: _range,
+                        labels: RangeLabels(
+                          _time(_range.start),
+                          _time(_range.end),
+                        ),
+                        onChanged: _updateRange,
+                        onChangeEnd: (_) => _finishRangeDrag(),
+                      ),
+                    ),
+                  ],
                 ),
               ),
+            );
+          },
+        ),
+        const SizedBox(height: 6),
+        ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: widget.controller,
+          builder: (context, value, _) {
+            final controllerSeconds = value.position.inMilliseconds / 1000;
+            final playhead = (_draggedPlayheadSeconds ?? controllerSeconds)
+                .clamp(_range.start, _range.end)
+                .toDouble();
+            return Row(
+              children: [
+                const Icon(
+                  Icons.drag_indicator_rounded,
+                  size: 17,
+                  color: fieldGray400,
+                ),
+                const SizedBox(width: 3),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      activeTrackColor: fieldEmerald500,
+                      inactiveTrackColor: fieldGray200,
+                      thumbColor: fieldGray900,
+                      overlayColor: fieldGray900.withValues(alpha: 0.1),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 7,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 15,
+                      ),
+                    ),
+                    child: Slider(
+                      key: const ValueKey('custom-clip-playhead'),
+                      min: _range.start,
+                      max: _range.end,
+                      value: playhead,
+                      label: _time(playhead),
+                      semanticFormatterCallback: (_) =>
+                          'Preview frame at ${_time(playhead)}',
+                      onChangeStart: _startPlayheadDrag,
+                      onChanged: _dragPlayhead,
+                      onChangeEnd: _finishPlayheadDrag,
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 42,
+                  child: Text(
+                    _time(playhead),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: fieldGray700,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEndpointControls() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray200),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ClipEndpoint(
+              label: 'START',
+              value: _time(_range.start),
+              onPreview: () => _queueSeek(_range.start, immediate: true),
+              onBack: () => _adjustStart(-1),
+              onForward: () => _adjustStart(1),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: fieldGray400,
+                  size: 19,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_clipDuration.round()} SEC',
+                  key: const ValueKey('custom-clip-duration'),
+                  style: const TextStyle(
+                    color: fieldEmerald600,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _ClipEndpoint(
+              label: 'END',
+              value: _time(_range.end),
+              onPreview: () => _queueSeek(_range.end, immediate: true),
+              onBack: () => _adjustEnd(-1),
+              onForward: () => _adjustEnd(1),
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ClipFilmstrip extends StatelessWidget {
+  const _ClipFilmstrip({required this.thumbnailUrls});
+
+  final List<String> thumbnailUrls;
+
+  @override
+  Widget build(BuildContext context) {
+    if (thumbnailUrls.isEmpty) return const _ClipTrimTrackBackground();
+    return Row(
+      children: [
+        for (var index = 0; index < thumbnailUrls.length; index++)
+          Expanded(
+            child: Image.network(
+              thumbnailUrls[index],
+              height: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => _ClipFrameFallback(index: index),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ClipTrimTrackBackground extends StatelessWidget {
+  const _ClipTrimTrackBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var index = 0; index < 10; index++)
+          Expanded(child: _ClipFrameFallback(index: index)),
+      ],
+    );
+  }
+}
+
+class _ClipFrameFallback extends StatelessWidget {
+  const _ClipFrameFallback({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final even = index.isEven;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: even
+              ? const [Color(0xFF233148), Color(0xFF0F172A)]
+              : const [Color(0xFF145F50), Color(0xFF111827)],
+        ),
+        border: const Border(
+          right: BorderSide(color: Colors.white12, width: 0.5),
+        ),
+      ),
+      child: const Center(
+        child: Icon(
+          Icons.sports_soccer_rounded,
+          color: Colors.white24,
+          size: 15,
+        ),
       ),
     );
   }
@@ -4211,10 +4958,15 @@ class _ClipOutcomeButton extends StatelessWidget {
 }
 
 class _WatchMediaProgress extends StatelessWidget {
-  const _WatchMediaProgress({required this.label, this.progress});
+  const _WatchMediaProgress({
+    required this.label,
+    this.progress,
+    this.onDark = false,
+  });
 
   final String label;
   final double? progress;
+  final bool onDark;
 
   @override
   Widget build(BuildContext context) {
@@ -4230,14 +4982,14 @@ class _WatchMediaProgress extends StatelessWidget {
             child: CircularProgressIndicator(
               value: value,
               strokeWidth: 2.2,
-              color: fieldEmerald600,
+              color: onDark ? Colors.white : fieldEmerald600,
             ),
           ),
           const SizedBox(width: 7),
           Text(
             _progressActionLabel(label, value),
-            style: const TextStyle(
-              color: fieldGray600,
+            style: TextStyle(
+              color: onDark ? Colors.white : fieldGray600,
               fontSize: 11,
               fontWeight: FontWeight.w800,
             ),
@@ -4459,6 +5211,7 @@ class _InlineVideoPlayer extends StatefulWidget {
     required this.seekKey,
     required this.onTogglePlayback,
     required this.onOpenFullscreen,
+    this.actionOverlay,
   });
 
   final VideoPlayerController controller;
@@ -4469,6 +5222,7 @@ class _InlineVideoPlayer extends StatefulWidget {
   final Key seekKey;
   final Future<void> Function() onTogglePlayback;
   final VoidCallback onOpenFullscreen;
+  final Widget? actionOverlay;
 
   @override
   State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
@@ -4530,6 +5284,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
       valueListenable: widget.controller,
       builder: (context, value, _) {
         return Stack(
+          key: const ValueKey('inline-video-player'),
           fit: StackFit.expand,
           children: [
             Center(
@@ -4573,7 +5328,7 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
                       Positioned(
                         top: 10,
                         left: 12,
-                        right: 12,
+                        right: widget.actionOverlay == null ? 12 : 62,
                         child: Align(
                           alignment: Alignment.centerLeft,
                           child: Container(
@@ -4639,6 +5394,8 @@ class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
                 ),
               ),
             ),
+            if (widget.actionOverlay != null)
+              Positioned(top: 8, right: 8, child: widget.actionOverlay!),
           ],
         );
       },

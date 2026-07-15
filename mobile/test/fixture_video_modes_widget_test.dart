@@ -29,10 +29,11 @@ void main() {
 
     expect(tester.getTopLeft(scoreboardFinder), Offset.zero);
     expect(tester.getSize(scoreboardFinder).width, 390);
+    expect(tester.getSize(scoreboardFinder).height, lessThan(320));
     expect(radius.topLeft, Radius.zero);
     expect(radius.topRight, Radius.zero);
-    expect(radius.bottomLeft, const Radius.circular(26));
-    expect(radius.bottomRight, const Radius.circular(26));
+    expect(radius.bottomLeft, Radius.zero);
+    expect(radius.bottomRight, Radius.zero);
     expect(
       tester.getTopLeft(find.byKey(const ValueKey('fixture-detail-header'))).dy,
       0,
@@ -105,6 +106,56 @@ void main() {
 
     expect(find.byType(ClanDetailScreen), findsOneWidget);
     expect(find.text('HOME'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('clan scoreboard shows clan SR and Bahrain rank, not averages', (
+    tester,
+  ) async {
+    final fixture = Fixture(
+      id: 'ranked-clan-fixture',
+      status: FixtureStatus.scheduled,
+      homeClanId: 'home',
+      awayClanId: 'away',
+      venue: 'Field',
+      day: 'FRIDAY',
+      timeSlot: FixtureTimeSlot.early.label,
+      matchDate: DateTime.utc(2026, 7, 17),
+      createdBy: 'owner',
+      homeClan: const FixtureClan(
+        id: 'home',
+        name: 'Home',
+        tag: 'HOM',
+        emblem: '⚽',
+        themeId: 'pitch',
+        patternId: 'solid',
+        skillRating: 1542,
+        regionRank: 3,
+      ),
+      awayClan: const FixtureClan(
+        id: 'away',
+        name: 'Away',
+        tag: 'AWY',
+        emblem: '⚽',
+        themeId: 'ocean',
+        patternId: 'solid',
+        skillRating: 1498,
+        regionRank: 8,
+      ),
+      homeAveragePlayerRating: 1204,
+      awayAveragePlayerRating: 1202,
+      matchAveragePlayerRating: 1203,
+      teamRatingSpread: 2,
+    );
+
+    await _pumpDetail(tester, fixture, sourceLabel: 'CLAN');
+
+    expect(find.text('1542 CLAN SR'), findsOneWidget);
+    expect(find.text('#3 BAHRAIN'), findsOneWidget);
+    expect(find.text('1498 CLAN SR'), findsOneWidget);
+    expect(find.text('#8 BAHRAIN'), findsOneWidget);
+    expect(find.textContaining('AVG PLAYER RATING'), findsNothing);
+    expect(find.textContaining('MATCH AVG'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -458,7 +509,8 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       final originalPlatform = VideoPlayerPlatform.instance;
-      VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+      final videoPlatform = _FakeVideoPlayerPlatform();
+      VideoPlayerPlatform.instance = videoPlatform;
       addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
 
       final profileRepository = _FakeProfileRepository('viewer');
@@ -478,6 +530,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
+      await tester.tap(find.text('Full Game'));
+      await tester.pumpAndSettle();
+
       final menu = find.byKey(const ValueKey('watch-actions-menu'));
       await tester.scrollUntilVisible(
         menu,
@@ -485,6 +540,12 @@ void main() {
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pump();
+
+      final playerBounds = tester.getRect(
+        find.byKey(const ValueKey('inline-video-player')),
+      );
+      expect(playerBounds.contains(tester.getCenter(menu)), isTrue);
+
       await tester.tap(menu);
       await tester.pumpAndSettle();
 
@@ -496,8 +557,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('CREATE A MATCH CLIP'), findsOneWidget);
+      expect(find.textContaining('trim both ends'), findsOneWidget);
       expect(
-        find.text('Drag either end. Clips can be up to 60 seconds.'),
+        find.byKey(const ValueKey('custom-clip-video-preview')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('custom-clip-playhead')),
         findsOneWidget,
       );
       final range = tester.widget<RangeSlider>(
@@ -505,8 +571,33 @@ void main() {
       );
       expect(range.values.end - range.values.start, lessThanOrEqualTo(60));
 
-      await tester.tap(find.byKey(const ValueKey('custom-clip-continue')));
+      final playhead = find.byKey(const ValueKey('custom-clip-playhead'));
+      await tester.ensureVisible(playhead);
+      await tester.pump();
+      final seekCountBeforeDrag = videoPlatform.seekPositions.length;
+      await tester.drag(playhead, const Offset(80, 0));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        videoPlatform.seekPositions.length,
+        greaterThan(seekCountBeforeDrag),
+      );
+
+      final preview = find.byKey(
+        const ValueKey('custom-clip-preview-selection'),
+      );
+      await tester.ensureVisible(preview);
+      await tester.pump();
+      await tester.tap(preview);
+      await tester.pump();
+      expect(videoPlatform.playCalls, greaterThan(0));
+
+      final continueButton = find.byKey(const ValueKey('custom-clip-continue'));
+      await tester.ensureVisible(continueButton);
+      await tester.pump();
+      final pauseCountBeforeContinue = videoPlatform.pauseCalls;
+      await tester.tap(continueButton);
       await tester.pumpAndSettle();
+      expect(videoPlatform.pauseCalls, greaterThan(pauseCountBeforeContinue));
       expect(find.text('WHAT DO YOU WANT TO DO?'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('custom-clip-download')));
@@ -520,6 +611,97 @@ void main() {
       expect(profileRepository.createdCustomRequests, isEmpty);
       expect(downloader.urls, ['https://cdn.example.com/custom.mp4']);
       expect(find.text('Clip saved to your Photos.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'custom clip editor seeks while trimming and stops preview at its end',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final originalPlatform = VideoPlayerPlatform.instance;
+      final videoPlatform = _FakeVideoPlayerPlatform();
+      VideoPlayerPlatform.instance = videoPlatform;
+      addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+
+      final profileRepository = _FakeProfileRepository('viewer');
+      await _pumpDetail(
+        tester,
+        _fixture(
+          status: FixtureStatus.finalResult,
+          broadcast: const FixtureBroadcast(
+            status: 'REPLAY_READY',
+            replayHlsUrl: 'https://example.com/replay.m3u8',
+          ),
+        ),
+        initiallyShowWatch: true,
+        profileRepository: profileRepository,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Full Game'));
+      await tester.pumpAndSettle();
+
+      final menu = find.byKey(const ValueKey('watch-actions-menu'));
+      await tester.ensureVisible(menu);
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Create a clip'));
+      await tester.pumpAndSettle();
+
+      var range = tester.widget<RangeSlider>(
+        find.byKey(const ValueKey('custom-clip-range')),
+      );
+      final seekCountBeforeTrim = videoPlatform.seekPositions.length;
+      range.onChanged!(
+        RangeValues(
+          range.values.start,
+          (range.values.start + 90).clamp(range.min, range.max).toDouble(),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 80));
+
+      range = tester.widget<RangeSlider>(
+        find.byKey(const ValueKey('custom-clip-range')),
+      );
+      expect(range.values.end - range.values.start, lessThanOrEqualTo(60));
+      expect(
+        videoPlatform.seekPositions.length,
+        greaterThan(seekCountBeforeTrim),
+      );
+
+      final preview = find.byKey(
+        const ValueKey('custom-clip-preview-selection'),
+      );
+      await tester.ensureVisible(preview);
+      await tester.tap(preview);
+      await tester.pump();
+      expect(videoPlatform.playCalls, 1);
+
+      final expectedEnd = Duration(
+        milliseconds: (range.values.end * 1000).round(),
+      );
+      videoPlatform.setPosition(expectedEnd);
+      await tester.pump(const Duration(milliseconds: 650));
+      await tester.pump();
+
+      expect(videoPlatform.pauseCalls, greaterThan(0));
+      expect(videoPlatform.seekPositions.last, expectedEnd);
+
+      await tester.tap(preview);
+      await tester.pump();
+      final pauseCountBeforeCancel = videoPlatform.pauseCalls;
+      await tester.tap(find.byKey(const ValueKey('custom-clip-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(videoPlatform.pauseCalls, greaterThan(pauseCountBeforeCancel));
+      expect(videoPlatform.disposeCalls, 0);
+      expect(profileRepository.createdCustomRequests, isEmpty);
+      expect(profileRepository.customDownloadRequests, isEmpty);
+      expect(find.text('WATCH MATCH'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -995,6 +1177,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   int _nextPlayerId = 0;
   int playCalls = 0;
   int pauseCalls = 0;
+  int disposeCalls = 0;
 
   void setPosition(Duration position) {
     for (final playerId in _positions.keys) {
@@ -1029,6 +1212,7 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
 
   @override
   Future<void> dispose(int playerId) async {
+    disposeCalls += 1;
     await _events.remove(playerId)?.close();
     _positions.remove(playerId);
   }

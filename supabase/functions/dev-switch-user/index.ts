@@ -97,7 +97,8 @@ Deno.serve(async (request) => {
       ...target.user_metadata,
       display_name: profile.display_name,
       name: profile.display_name,
-      date_of_birth: profile.date_of_birth,
+      date_of_birth: profile.date_of_birth ??
+        target.user_metadata?.date_of_birth ?? null,
     };
     const session = target.email
       ? await createEmailSession({

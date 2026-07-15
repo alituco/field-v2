@@ -546,6 +546,7 @@ class ProfileHighlight {
     this.sourceMatchId,
     this.sourceEventId,
     this.providerVideoId,
+    this.isPublic = true,
     this.status = ProfileHighlightStatus.ready,
     this.errorMessage,
   });
@@ -562,6 +563,7 @@ class ProfileHighlight {
   final String? sourceMatchId;
   final String? sourceEventId;
   final String? providerVideoId;
+  final bool isPublic;
   final ProfileHighlightStatus status;
   final String? errorMessage;
 
@@ -588,6 +590,7 @@ class ProfileHighlight {
       providerVideoId: _nonEmptyString(
         json['provider_video_id'] ?? json['stream_video_id'],
       ),
+      isPublic: json['is_public'] as bool? ?? true,
       status: ProfileHighlightStatusX.fromWireValue(
         json['processing_status'] ?? json['status'],
       ),
@@ -597,7 +600,7 @@ class ProfileHighlight {
     );
   }
 
-  ProfileHighlight copyWith({int? views}) {
+  ProfileHighlight copyWith({int? views, bool? isPublic}) {
     return ProfileHighlight(
       id: id,
       title: title,
@@ -611,6 +614,7 @@ class ProfileHighlight {
       sourceMatchId: sourceMatchId,
       sourceEventId: sourceEventId,
       providerVideoId: providerVideoId,
+      isPublic: isPublic ?? this.isPublic,
       status: status,
       errorMessage: errorMessage,
     );

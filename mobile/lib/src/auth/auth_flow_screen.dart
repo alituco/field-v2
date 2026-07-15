@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../core/user_facing_error.dart';
 import 'auth_repository.dart';
 import 'date_of_birth.dart';
+import 'onboarding_status.dart';
 
 enum AuthStep { welcome, phone, otp, name, dateOfBirth }
 
@@ -215,7 +216,21 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     try {
       await widget.authRepository.verifyPhoneOtp(phone: phone, token: token);
       if (!mounted) return;
-      _go(AuthStep.name);
+      final requirement = onboardingRequirementForUser(
+        widget.authRepository.currentSession?.user ??
+            widget.authRepository.currentUser,
+      );
+      switch (requirement) {
+        case OnboardingRequirement.displayName:
+          _go(AuthStep.name);
+          return;
+        case OnboardingRequirement.dateOfBirth:
+          _go(AuthStep.dateOfBirth);
+          return;
+        case OnboardingRequirement.complete:
+          widget.onOnboardingCompleted();
+          return;
+      }
     } catch (error) {
       if (!mounted) return;
       setState(

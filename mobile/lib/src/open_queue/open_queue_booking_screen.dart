@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
 import 'open_queue.dart';
@@ -94,31 +95,24 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       return;
     }
     if (!mounted) return;
-    final confirmed = await showDialog<bool>(
+    final receivesRefund = preview.refundPercent > 0;
+    final confirmed = await showFieldConfirmDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel your spot?'),
-        content: Text(
-          preview.refundPercent == 50
-              ? 'You will receive a 50% refund (${preview.refundLabel}). Your position will reopen immediately.'
-              : 'Game-day cancellations are not refundable. Your position will reopen immediately.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep spot'),
-          ),
-          FilledButton(
-            onPressed: preview.canCancel
-                ? () => Navigator.pop(context, true)
-                : null,
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            child: const Text('Cancel booking'),
-          ),
-        ],
-      ),
+      icon: Icons.event_busy_rounded,
+      eyebrow: 'Your booking',
+      title: 'Cancel your spot?',
+      message: receivesRefund
+          ? 'Your position will reopen immediately for another player.'
+          : 'This is a game-day cancellation. Your position will reopen immediately for another player.',
+      detail: receivesRefund
+          ? '${preview.refundPercent}% refund · ${preview.refundLabel}'
+          : 'No refund is available after the game day begins.',
+      cancelLabel: 'Keep my spot',
+      confirmLabel: 'Cancel booking',
+      destructive: true,
+      confirmEnabled: preview.canCancel,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _cancelling = true);
     try {
       await widget.repository.cancelBooking(_booking.id);

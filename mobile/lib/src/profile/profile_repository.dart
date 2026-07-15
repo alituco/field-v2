@@ -48,6 +48,13 @@ abstract class ProfileRepository {
 
   Future<ProfileHighlight> refreshHighlight(String highlightId);
 
+  Future<ProfileHighlight> updateHighlightVisibility({
+    required String highlightId,
+    required bool isPublic,
+  });
+
+  Future<void> deleteHighlight(String highlightId);
+
   Future<int> recordHighlightView(String highlightId);
 }
 
@@ -146,6 +153,38 @@ class SupabaseProfileRepository implements ProfileRepository {
       body: {'action': 'status', 'highlight_id': id},
     );
     return _highlightFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<ProfileHighlight> updateHighlightVisibility({
+    required String highlightId,
+    required bool isPublic,
+  }) async {
+    final id = highlightId.trim();
+    if (id.isEmpty) throw ArgumentError('A clip is required.');
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: {
+        'action': 'update_visibility',
+        'highlight_id': id,
+        'is_public': isPublic,
+      },
+    );
+    return _highlightFromFunctionResponse(response.data);
+  }
+
+  @override
+  Future<void> deleteHighlight(String highlightId) async {
+    final id = highlightId.trim();
+    if (id.isEmpty) throw ArgumentError('A clip is required.');
+    final response = await _client.functions.invoke(
+      'profile-goal-clip',
+      body: {'action': 'delete', 'highlight_id': id},
+    );
+    final data = response.data;
+    if (data is! Map || data['deleted'] != true || data['highlight_id'] != id) {
+      throw StateError('The clip deletion could not be confirmed.');
+    }
   }
 
   @override
@@ -547,7 +586,7 @@ class SupabaseProfileRepository implements ProfileRepository {
         .select(
           'id, title, thumbnail_url, video_url, duration, views, clan_tag, '
           'download_url, source_type, source_match_id, source_event_id, '
-          'provider_video_id, processing_status, processing_error',
+          'is_public, provider_video_id, processing_status, processing_error',
         )
         .eq('profile_id', userId)
         .order('sort_order')

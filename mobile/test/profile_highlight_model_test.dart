@@ -17,6 +17,7 @@ void main() {
         'source_match_id': 'fixture-one',
         'source_event_id': 'goal-one',
         'provider_video_id': 'cloudflare-clip-one',
+        'is_public': false,
         'status': 'READY',
         'error_message': null,
       });
@@ -29,6 +30,7 @@ void main() {
       expect(highlight.sourceMatchId, 'fixture-one');
       expect(highlight.sourceEventId, 'goal-one');
       expect(highlight.providerVideoId, 'cloudflare-clip-one');
+      expect(highlight.isPublic, isFalse);
       expect(highlight.status, ProfileHighlightStatus.ready);
       expect(highlight.isReady, isTrue);
       expect(highlight.isProcessing, isFalse);
@@ -100,6 +102,7 @@ void main() {
       expect(highlight.sourceEventId, isNull);
       expect(highlight.providerVideoId, isNull);
       expect(highlight.downloadUrl, isNull);
+      expect(highlight.isPublic, isTrue);
     });
   });
 

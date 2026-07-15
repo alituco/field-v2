@@ -23,6 +23,7 @@ type JsonBody = {
   start_seconds?: unknown;
   end_seconds?: unknown;
   save_to_profile?: unknown;
+  is_public?: unknown;
 };
 
 type ProfileHighlightRow = {
@@ -52,6 +53,7 @@ type ProfileHighlightRow = {
     | "READY"
     | "FAILED";
   download_url: string | null;
+  is_public: boolean;
 };
 
 type GoalClipRequest = {
@@ -208,6 +210,12 @@ Deno.serve(async (request) => {
     if (action === "full_game_download") {
       return await prepareFullGameDownload(context, body);
     }
+    if (action === "update_visibility") {
+      return await updateHighlightVisibility(context, body);
+    }
+    if (action === "delete") {
+      return await deleteHighlight(context, body);
+    }
     throw new HttpError("Choose a valid match clip action.", 400);
   } catch (error) {
     if (error instanceof HttpError) {
@@ -360,7 +368,7 @@ async function refreshGoalClip(
   context: FunctionContext,
   highlightId: string,
 ) {
-  let highlight = await loadOwnedHighlight(context, highlightId);
+  let highlight = await loadVisibleHighlight(context, highlightId);
   if (!highlight.source_type) {
     throw new HttpError("That legacy highlight cannot be processed.", 400);
   }
@@ -371,6 +379,12 @@ async function refreshGoalClip(
     highlight.download_url
   ) {
     return json({ highlight });
+  }
+  if (highlight.profile_id !== context.userId) {
+    return json(
+      { highlight },
+      highlight.processing_status === "FAILED" ? 200 : 202,
+    );
   }
   if (
     highlight.provider_source_video_id &&
@@ -404,6 +418,43 @@ async function refreshGoalClip(
     { highlight },
     highlight.processing_status === "FAILED" ? 200 : 202,
   );
+}
+
+async function updateHighlightVisibility(
+  context: FunctionContext,
+  body: JsonBody,
+) {
+  const highlightId = requireUuid(
+    body.highlight_id,
+    "Choose a valid clip.",
+  );
+  if (typeof body.is_public !== "boolean") {
+    throw new HttpError("Choose whether the clip is public or private.", 400);
+  }
+  const highlight = await updateOwnedHighlight(context, highlightId, {
+    is_public: body.is_public,
+  });
+  return json({ highlight });
+}
+
+async function deleteHighlight(
+  context: FunctionContext,
+  body: JsonBody,
+) {
+  const highlightId = requireUuid(
+    body.highlight_id,
+    "Choose a valid clip.",
+  );
+  const { data, error } = await context.admin
+    .from("profile_highlights")
+    .delete()
+    .eq("id", highlightId)
+    .eq("profile_id", context.userId)
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new HttpError("Clip not found.", 404);
+  return json({ deleted: true, highlight_id: highlightId });
 }
 
 async function downloadGoalClip(
@@ -808,6 +859,24 @@ async function loadOwnedHighlight(
   return profileHighlightRow(data);
 }
 
+async function loadVisibleHighlight(
+  context: FunctionContext,
+  highlightId: string,
+) {
+  const { data, error } = await context.admin
+    .from("profile_highlights")
+    .select(highlightSelect)
+    .eq("id", highlightId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new HttpError("Goal clip not found.", 404);
+  const highlight = profileHighlightRow(data);
+  if (!highlight.is_public && highlight.profile_id !== context.userId) {
+    throw new HttpError("Goal clip not found.", 404);
+  }
+  return highlight;
+}
+
 async function updateOwnedHighlight(
   context: FunctionContext,
   highlightId: string,
@@ -819,8 +888,9 @@ async function updateOwnedHighlight(
     .eq("id", highlightId)
     .eq("profile_id", context.userId)
     .select(highlightSelect)
-    .single();
+    .maybeSingle();
   if (error) throw error;
+  if (!data) throw new HttpError("Clip not found.", 404);
   return profileHighlightRow(data);
 }
 
@@ -1096,6 +1166,7 @@ const highlightSelect = `
   processing_error,
   download_status,
   download_url,
+  is_public,
   created_at,
   updated_at
 `;

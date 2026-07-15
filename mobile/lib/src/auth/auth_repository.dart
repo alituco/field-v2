@@ -105,15 +105,17 @@ class SupabaseAuthRepository implements AuthRepository {
       throw AuthSessionMissingException();
     }
 
+    await _client.rpc(
+      'save_my_onboarding_profile',
+      params: {
+        'display_name_to_use': trimmedName,
+        'date_of_birth_to_use': null,
+      },
+    );
+
     await _client.auth.updateUser(
       UserAttributes(data: {'display_name': trimmedName, 'name': trimmedName}),
     );
-
-    await _client.from('profiles').upsert({
-      'id': user.id,
-      'phone': user.phone,
-      'display_name': trimmedName,
-    }, onConflict: 'id');
   }
 
   @override
@@ -127,23 +129,14 @@ class SupabaseAuthRepository implements AuthRepository {
     }
 
     final isoDate = dateOfBirthToIso(dateOfBirth);
-    final metadata = user.userMetadata;
-    final metadataName = metadata?['display_name'] ?? metadata?['name'];
-    final displayName =
-        metadataName is String && metadataName.trim().length >= 2
-        ? metadataName.trim()
-        : 'Player';
+    await _client.rpc(
+      'save_my_onboarding_profile',
+      params: {'display_name_to_use': null, 'date_of_birth_to_use': isoDate},
+    );
 
     await _client.auth.updateUser(
       UserAttributes(data: {'date_of_birth': isoDate}),
     );
-
-    await _client.from('profiles').upsert({
-      'id': user.id,
-      'phone': user.phone,
-      'display_name': displayName,
-      'date_of_birth': isoDate,
-    }, onConflict: 'id');
   }
 
   @override

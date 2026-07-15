@@ -135,6 +135,10 @@ void main() {
 
     expect(find.text('Only owners and leaders can schedule'), findsOneWidget);
     expect(
+      find.byKey(const ValueKey('field-confirmation-dialog')),
+      findsOneWidget,
+    );
+    expect(
       find.textContaining(
         'Only the owner or a leader can schedule or join games for this clan',
       ),
@@ -170,6 +174,10 @@ void main() {
     await _pumpAsync(tester);
 
     expect(find.text('Join a clan first'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('field-confirmation-dialog')),
+      findsOneWidget,
+    );
     expect(
       find.textContaining('Join or create a clan, then come back here'),
       findsOneWidget,
