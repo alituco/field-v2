@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:field/src/clans/clan.dart';
+import 'package:field/src/clans/clan_detail_screen.dart';
+import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
@@ -61,6 +64,57 @@ void main() {
     expect(find.text('WATCH MATCH'), findsOneWidget);
     expect(find.text('PLAYER RATING UPDATE'), findsNothing);
     expect(find.text('Field'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('fixture can open directly on watch', (tester) async {
+    await _pumpDetail(
+      tester,
+      _fixture(status: FixtureStatus.finalResult),
+      initiallyShowWatch: true,
+    );
+
+    expect(find.text('WATCH MATCH'), findsOneWidget);
+    expect(find.text('Field'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('clan fixture teams open their clan details', (tester) async {
+    final clanRepository = _FakeClanRepository();
+    await _pumpDetail(
+      tester,
+      _fixture(status: FixtureStatus.scheduled),
+      clanRepository: clanRepository,
+    );
+
+    expect(
+      find.byKey(const ValueKey('fixture-clan-link-home')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('fixture-clan-link-away')),
+      findsOneWidget,
+    );
+    expect(find.text('VIEW CLAN'), findsNWidgets(2));
+
+    await tester.tap(find.byKey(const ValueKey('fixture-clan-link-home')));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ClanDetailScreen), findsOneWidget);
+    expect(find.text('HOME'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('solo match teams are not clan links', (tester) async {
+    await _pumpDetail(
+      tester,
+      _fixture(status: FixtureStatus.finalResult),
+      sourceLabel: 'SOLO',
+    );
+
+    expect(find.byKey(const ValueKey('fixture-clan-link-home')), findsNothing);
+    expect(find.byKey(const ValueKey('fixture-clan-link-away')), findsNothing);
+    expect(find.text('VIEW CLAN'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -366,14 +420,20 @@ Future<void> _pumpDetail(
   WidgetTester tester,
   Fixture fixture, {
   FixturePlayerRatingUpdate? playerRatingUpdate,
+  bool initiallyShowWatch = false,
+  ClanRepository? clanRepository,
+  String? sourceLabel,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       home: FixtureDetailScreen(
         fixture: fixture,
         fixtureRepository: _FakeFixtureRepository(fixture),
+        clanRepository: clanRepository,
         myClanMembership: null,
+        sourceLabel: sourceLabel,
         playerRatingUpdate: playerRatingUpdate,
+        initiallyShowWatch: initiallyShowWatch,
       ),
     ),
   );
@@ -442,6 +502,64 @@ const _awayClan = FixtureClan(
   patternId: 'solid',
   skillRating: 1500,
 );
+
+const _homeClanDetail = Clan(
+  id: 'home',
+  name: 'Home',
+  tag: 'HOM',
+  motto: 'Home together',
+  emblem: '⚽',
+  themeId: 'pitch',
+  patternId: 'solid',
+  skillRating: 1500,
+  wins: 2,
+  losses: 1,
+  memberCount: 7,
+  createdBy: 'owner',
+);
+
+const _awayClanDetail = Clan(
+  id: 'away',
+  name: 'Away',
+  tag: 'AWY',
+  motto: 'Away together',
+  emblem: '⚽',
+  themeId: 'shadow',
+  patternId: 'solid',
+  skillRating: 1500,
+  wins: 1,
+  losses: 2,
+  memberCount: 7,
+  createdBy: 'away-owner',
+);
+
+class _FakeClanRepository implements ClanRepository {
+  @override
+  Future<List<Clan>> listClans() async => const [
+    _homeClanDetail,
+    _awayClanDetail,
+  ];
+
+  @override
+  Future<ClanMembership?> getMyClanMembership() async =>
+      const ClanMembership(clanId: 'home', role: 'owner');
+
+  @override
+  Future<List<ClanMember>> listClanMembers(String clanId) async => const [];
+
+  @override
+  Future<List<Fixture>> listClanFixtures(String clanId) async => const [];
+
+  @override
+  Future<List<ClanJoinRequest>> listPendingJoinRequests(String clanId) async =>
+      const [];
+
+  @override
+  Future<ClanJoinRequest?> getMyPendingJoinRequest(String clanId) async => null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 class _FakeFixtureRepository implements FixtureRepository {
   const _FakeFixtureRepository(this.fixture);

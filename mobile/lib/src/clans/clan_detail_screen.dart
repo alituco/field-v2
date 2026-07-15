@@ -172,6 +172,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
         builder: (context) => FixtureDetailScreen(
           fixture: fixture,
           fixtureRepository: widget.fixtureRepository,
+          clanRepository: widget.clanRepository,
           myClanMembership: _fixtureMembership(),
         ),
       ),

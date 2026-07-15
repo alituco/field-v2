@@ -122,6 +122,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             builder: (_) => FixtureDetailScreen(
               fixture: detail.toFixture(),
               fixtureRepository: _fixtureRepository,
+              clanRepository: _clanRepository,
               myClanMembership: null,
               sourceLabel: 'SOLO',
               showTeamRatings: false,
@@ -141,6 +142,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             builder: (_) => FixtureDetailScreen(
               fixture: fixture,
               fixtureRepository: _fixtureRepository,
+              clanRepository: _clanRepository,
               myClanMembership: null,
               sourceLabel: 'CLAN',
             ),

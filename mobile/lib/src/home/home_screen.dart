@@ -95,6 +95,7 @@ class _HomeScreenState extends State<HomeScreen> {
       FixturesScreen(
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
+        clanRepository: _clanRepository,
         onNavigateTab: _selectTab,
       ),
       ClansScreen(

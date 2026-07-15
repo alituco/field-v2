@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../open_queue/open_queue.dart';
@@ -30,11 +31,13 @@ class FixturesScreen extends StatefulWidget {
     super.key,
     required this.fixtureRepository,
     required this.openQueueRepository,
+    this.clanRepository,
     this.onNavigateTab,
   });
 
   final FixtureRepository fixtureRepository;
   final OpenQueueRepository openQueueRepository;
+  final ClanRepository? clanRepository;
   final ValueChanged<int>? onNavigateTab;
 
   @override
@@ -182,6 +185,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
         builder: (context) => FixtureDetailScreen(
           fixture: fixture,
           fixtureRepository: widget.fixtureRepository,
+          clanRepository: widget.clanRepository,
           myClanMembership: _myClanMembership,
         ),
       ),
@@ -224,6 +228,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
           builder: (_) => FixtureDetailScreen(
             fixture: detail.toFixture(),
             fixtureRepository: widget.fixtureRepository,
+            clanRepository: widget.clanRepository,
             myClanMembership: null,
             sourceLabel: 'SOLO',
             showTeamRatings: false,

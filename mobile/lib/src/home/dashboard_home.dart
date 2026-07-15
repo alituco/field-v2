@@ -62,6 +62,7 @@ class _DashboardHomeState extends State<DashboardHome> {
   MyClanMembership? _fixtureMembership;
   List<Fixture> _fixtures = const [];
   List<OpenQueueGame> _soloFixtureGames = const [];
+  Map<String, OpenQueueMatchDetail> _recentSoloDetails = const {};
   bool _loading = true;
   String? _error;
 
@@ -95,6 +96,31 @@ class _DashboardHomeState extends State<DashboardHome> {
       final games = results[3] as List<OpenQueueGame>;
       final clans = results[4] as List<Clan>;
       final membership = results[5] as ClanMembership?;
+      final soloFixtureGames = results[8] as List<OpenQueueGame>;
+      final soloFixtureIds = {for (final game in soloFixtureGames) game.id};
+      final recentSoloGames =
+          profile.previousGames
+              .where((game) => game.isSolo && soloFixtureIds.contains(game.id))
+              .toList()
+            ..sort((left, right) => right.playedAt.compareTo(left.playedAt));
+      final recentSoloIds = recentSoloGames
+          .map((game) => game.id)
+          .toSet()
+          .take(2);
+      final detailEntries =
+          await Future.wait<MapEntry<String, OpenQueueMatchDetail>?>([
+            for (final gameId in recentSoloIds)
+              () async {
+                try {
+                  final detail = await widget.openQueueRepository
+                      .getMatchDetail(gameId);
+                  return MapEntry(gameId, detail);
+                } catch (_) {
+                  return null;
+                }
+              }(),
+          ]);
+      if (!mounted) return;
       setState(() {
         _profile = profile;
         _rating = rating;
@@ -114,7 +140,11 @@ class _DashboardHomeState extends State<DashboardHome> {
                 orElse: () => null,
               );
         _fixtures = results[7] as List<Fixture>;
-        _soloFixtureGames = results[8] as List<OpenQueueGame>;
+        _soloFixtureGames = soloFixtureGames;
+        _recentSoloDetails = {
+          for (final entry in detailEntries)
+            if (entry != null) entry.key: entry.value,
+        };
       });
     } catch (error) {
       if (!mounted) return;
@@ -172,13 +202,20 @@ class _DashboardHomeState extends State<DashboardHome> {
     if (mounted) await _load();
   }
 
-  Future<void> _openFixture(Fixture fixture) async {
+  Future<void> _openFixture(
+    Fixture fixture, {
+    bool initiallyShowWatch = false,
+    FixturePlayerRatingUpdate? playerRatingUpdate,
+  }) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => FixtureDetailScreen(
           fixture: fixture,
           fixtureRepository: widget.fixtureRepository,
+          clanRepository: widget.clanRepository,
           myClanMembership: _fixtureMembership,
+          initiallyShowWatch: initiallyShowWatch,
+          playerRatingUpdate: playerRatingUpdate,
         ),
       ),
     );
@@ -210,7 +247,11 @@ class _DashboardHomeState extends State<DashboardHome> {
     if (mounted) await _load();
   }
 
-  Future<void> _openSoloMatchDetail(OpenQueueGame game) async {
+  Future<void> _openSoloMatchDetail(
+    OpenQueueGame game, {
+    bool initiallyShowWatch = false,
+    FixturePlayerRatingUpdate? playerRatingUpdate,
+  }) async {
     try {
       final detail = await widget.openQueueRepository.getMatchDetail(game.id);
       if (!mounted) return;
@@ -219,10 +260,12 @@ class _DashboardHomeState extends State<DashboardHome> {
           builder: (_) => FixtureDetailScreen(
             fixture: detail.toFixture(),
             fixtureRepository: widget.fixtureRepository,
+            clanRepository: widget.clanRepository,
             myClanMembership: null,
             sourceLabel: 'SOLO',
             showTeamRatings: false,
-            playerRatingUpdate: detail.viewerRatingUpdate,
+            initiallyShowWatch: initiallyShowWatch,
+            playerRatingUpdate: detail.viewerRatingUpdate ?? playerRatingUpdate,
             refreshFixture: () async {
               final next = await widget.openQueueRepository.getMatchDetail(
                 game.id,
@@ -249,72 +292,108 @@ class _DashboardHomeState extends State<DashboardHome> {
   }
 
   Future<void> _openActivity(_HomeActivityItem item) {
+    final ratingUpdate = item.fixturePlayerRatingUpdate;
     final fixture = item.fixture;
-    if (fixture != null) return _openFixture(fixture);
-    return _openSoloGame(item.soloGame!);
+    if (fixture != null) {
+      return _openFixture(
+        fixture,
+        initiallyShowWatch: item.shouldOpenWatch,
+        playerRatingUpdate: ratingUpdate,
+      );
+    }
+    if (item.canJoinSolo) return _openSoloGame(item.soloGame!);
+    return _openSoloMatchDetail(
+      item.soloGame!,
+      initiallyShowWatch: item.shouldOpenWatch,
+      playerRatingUpdate: ratingUpdate,
+    );
   }
 
-  List<_HomeMatchdayGroup> get _activityMatchdays {
+  _HomeMatchdayFeed get _matchdayFeed {
+    final profile = _profile;
+    final previousById = <String, ProfilePreviousGame>{
+      for (final game
+          in profile?.previousGames ?? const <ProfilePreviousGame>[])
+        game.id: game,
+    };
+    final ratingById = <String, ProfileRatingEvent>{
+      for (final event
+          in profile?.playerRating?.events ?? const <ProfileRatingEvent>[])
+        event.sourceId: event,
+    };
+    final myClanId = _myClan?.id;
     final items = <_HomeActivityItem>[
       for (final fixture in _fixtures)
-        if (!fixture.isCancelled) _HomeActivityItem.clan(fixture),
+        if (!fixture.isCancelled)
+          _HomeActivityItem.clan(
+            fixture,
+            previousGame: previousById[fixture.id],
+            ratingEvent: ratingById[fixture.id],
+            isMyClanMatch:
+                myClanId != null &&
+                (fixture.homeClanId == myClanId ||
+                    fixture.awayClanId == myClanId),
+          ),
       for (final game in _soloFixtureGames)
         if (game.status.toUpperCase() != 'CANCELLED')
-          _HomeActivityItem.solo(game),
+          _HomeActivityItem.solo(
+            game,
+            previousGame: previousById[game.id],
+            ratingEvent: ratingById[game.id],
+            detail: _recentSoloDetails[game.id],
+          ),
     ];
-    final today = _bahrainTodayDate();
-    final past = items
-        .where(
-          (item) =>
-              item.status == FixtureStatus.finalResult &&
-              item.matchDate.isBefore(today),
-        )
-        .toList();
-    final currentOrFuture = items
-        .where((item) => !item.matchDate.isBefore(today))
-        .toList();
 
-    final groups = <_HomeMatchdayGroup>[];
-    if (currentOrFuture.isNotEmpty) {
-      final date = currentOrFuture
-          .map((item) => item.matchDate)
-          .reduce((left, right) => left.isBefore(right) ? left : right);
-      groups.add(
-        _HomeMatchdayGroup(
-          date: date,
-          isUpcoming: true,
-          items: _matchdayItems(currentOrFuture, date),
-        ),
-      );
-    }
-    if (past.isNotEmpty) {
-      final date = past
-          .map((item) => item.matchDate)
-          .reduce((left, right) => left.isAfter(right) ? left : right);
-      groups.add(
-        _HomeMatchdayGroup(
-          date: date,
-          isUpcoming: false,
-          items: _matchdayItems(past, date),
-        ),
-      );
-    }
-    return groups;
+    final bookingGameId = _booking?.gameId;
+    final featuredClanFixtureId = _nextClanFixture?.id;
+    final upNext = items.where((item) {
+      if (item.id == bookingGameId ||
+          (item.fixture != null && item.id == featuredClanFixtureId) ||
+          item.isCompleted ||
+          item.isCancelled) {
+        return false;
+      }
+      if (item.isLive) {
+        return _sameCalendarDate(item.matchDate, _bahrainTodayDate()) &&
+            item.isRelevantLive;
+      }
+      if (item.matchDate.isBefore(_bahrainTodayDate())) return false;
+      return item.isUpcomingForViewer;
+    }).toList()..sort(_compareUpcomingActivity);
+
+    final recent =
+        items
+            .where((item) => item.id != bookingGameId && item.isCompleted)
+            .toList()
+          ..sort(_compareRecentActivity);
+    return _limitMatchdayFeed(
+      upNext: upNext,
+      recent: recent,
+      maxItems: featuredClanFixtureId == null ? 3 : 2,
+    );
   }
 
   Fixture? get _nextClanFixture {
     final clan = _myClan;
     if (clan == null) return null;
+    final today = _bahrainTodayDate();
     final candidates = _fixtures.where((fixture) {
-      return !fixture.isFinal &&
-          !fixture.isCancelled &&
-          (fixture.homeClanId == clan.id || fixture.awayClanId == clan.id);
+      final involvesClan =
+          fixture.homeClanId == clan.id || fixture.awayClanId == clan.id;
+      if (!involvesClan || fixture.isFinal || fixture.isCancelled) return false;
+      if (fixture.isLive) {
+        return _sameCalendarDate(fixture.matchDate, today);
+      }
+      if (fixture.homeScore != null || fixture.awayScore != null) return false;
+      return !_calendarDate(fixture.matchDate).isBefore(today);
     }).toList()..sort((a, b) => a.matchDate.compareTo(b.matchDate));
     return candidates.isEmpty ? null : candidates.first;
   }
 
   @override
   Widget build(BuildContext context) {
+    final myClan = _myClan;
+    final nextClanFixture = _nextClanFixture;
     return FieldHeaderOverlay(
       header: const FieldPageHeader(title: 'Field'),
       child: RefreshIndicator(
@@ -350,26 +429,40 @@ class _DashboardHomeState extends State<DashboardHome> {
                   playerCount: _openQueuePlayerCount,
                 ),
               const SizedBox(height: 22),
-              if (_myClan case final clan?)
+              _ActivitySection(
+                feed: _matchdayFeed,
+                onSeeAll: widget.onOpenFixtures,
+                onMatch: _openActivity,
+                featuredClan: myClan != null && nextClanFixture != null
+                    ? _MyClanSection(
+                        clan: myClan,
+                        nextFixture: nextClanFixture,
+                        regionalRank: _regionalClanRank(myClan),
+                        showSectionLabel: false,
+                        onTap: () => _openFixture(
+                          nextClanFixture,
+                          initiallyShowWatch: nextClanFixture.isLive,
+                        ),
+                      )
+                    : null,
+              ),
+              if (myClan != null && nextClanFixture == null) ...[
+                const SizedBox(height: 23),
                 _MyClanSection(
-                  clan: clan,
-                  nextFixture: _nextClanFixture,
-                  regionalRank: _regionalClanRank(clan),
+                  clan: myClan,
+                  nextFixture: null,
+                  regionalRank: _regionalClanRank(myClan),
                   onTap: _openClan,
-                )
-              else
+                ),
+              ] else if (myClan == null) ...[
+                const SizedBox(height: 23),
                 _FindClanSection(
                   recruitingCount: _clans
                       .where((clan) => clan.memberCount < 20)
                       .length,
                   onTap: widget.onOpenClans,
                 ),
-              const SizedBox(height: 23),
-              _ActivitySection(
-                matchdays: _activityMatchdays,
-                onSeeAll: widget.onOpenFixtures,
-                onMatch: _openActivity,
-              ),
+              ],
               if (_error != null) ...[
                 const SizedBox(height: 14),
                 Text(
@@ -1034,138 +1127,181 @@ class _MyClanSection extends StatelessWidget {
     required this.nextFixture,
     required this.regionalRank,
     required this.onTap,
+    this.showSectionLabel = true,
   });
   final Clan clan;
   final Fixture? nextFixture;
   final int regionalRank;
   final VoidCallback onTap;
+  final bool showSectionLabel;
 
   @override
   Widget build(BuildContext context) {
+    final rankLine = [
+      clan.rank.label,
+      if (regionalRank > 0) '#$regionalRank Bahrain' else 'Bahrain',
+    ].join(' · ');
+    final fixture = nextFixture;
+    final fixtureAccent = fixture?.isLive == true
+        ? const Color(0xFFF87171)
+        : fieldEmerald500;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _HomeSectionLabel('YOUR CLAN'),
-        const SizedBox(height: 10),
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(color: fieldGray100),
+        if (showSectionLabel) ...[
+          const _HomeSectionLabel('YOUR CLAN'),
+          const SizedBox(height: 10),
+        ],
+        Material(
+          key: ValueKey(
+            fixture == null
+                ? 'home-clan-summary-compact'
+                : 'home-clan-summary-expanded',
           ),
-          child: Column(
-            children: [
-              Row(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(fixture == null ? 20 : 24),
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(fixture == null ? 20 : 24),
+            child: Container(
+              key: ValueKey(
+                fixture == null ? 'home-clan-compact' : 'home-clan-expanded',
+              ),
+              padding: EdgeInsets.all(fixture == null ? 14 : 17),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(fixture == null ? 20 : 24),
+                border: Border.all(color: fieldGray100),
+              ),
+              child: Column(
                 children: [
-                  Container(
-                    width: 46,
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: fieldGray100,
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                    child: Center(
-                      child: Text(
-                        clan.emblem,
-                        style: const TextStyle(fontSize: 22),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          clan.name,
-                          style: const TextStyle(
-                            color: fieldGray900,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
+                  Row(
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [clan.theme.from, clan.theme.to],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(15),
+                        ),
+                        child: Center(
+                          child: Text(
+                            clan.emblem,
+                            style: const TextStyle(fontSize: 22),
                           ),
                         ),
-                        Text.rich(
-                          TextSpan(
-                            children: [
-                              const TextSpan(
-                                text: 'CLAN RATING ',
-                                style: TextStyle(
-                                  color: fieldBlue600,
-                                  fontSize: 9,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              clan.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: fieldGray900,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
                               ),
-                              TextSpan(
-                                text:
-                                    '${clan.skillRating} · #$regionalRank Bahrain',
-                                style: const TextStyle(
-                                  color: fieldGray500,
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              rankLine,
+                              style: const TextStyle(
+                                color: fieldGray600,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                      ],
-                    ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right_rounded,
+                        color: fieldGray400,
+                      ),
+                    ],
                   ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: fieldEmerald50,
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                    child: Text(
-                      clan.rank.label,
-                      style: const TextStyle(
-                        color: fieldEmerald700,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
+                  if (fixture != null) ...[
+                    const SizedBox(height: 14),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(13),
+                      decoration: BoxDecoration(
+                        color: fieldGray900,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 38,
+                            height: 38,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(
+                              Icons.sports_soccer_rounded,
+                              color: fixtureAccent,
+                              size: 20,
+                            ),
+                          ),
+                          const SizedBox(width: 11),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  fixture.isLive
+                                      ? 'LIVE CLAN FIXTURE'
+                                      : 'UPCOMING CLAN FIXTURE',
+                                  style: TextStyle(
+                                    color: fixtureAccent,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  fixture.homeClanId == clan.id
+                                      ? 'vs ${fixture.awayClan?.name ?? 'Opponent TBD'}'
+                                      : 'at ${fixture.homeClan.name}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  '${_relativeMatchLabel(fixture.matchDate, _fixtureStart(fixture))} · ${fixture.venue}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: fieldGray300,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
+                  ],
                 ],
               ),
-              const SizedBox(height: 13),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(11),
-                decoration: BoxDecoration(
-                  color: fieldGray100,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  nextFixture == null
-                      ? 'No upcoming fixture'
-                      : 'Next fixture · ${nextFixture!.homeClanId == clan.id ? 'vs ${nextFixture!.awayClan?.tag ?? 'TBD'}' : 'vs ${nextFixture!.homeClan.tag}'} · ${nextFixture!.day} ${_fixtureStart(nextFixture!)}',
-                  style: const TextStyle(
-                    color: fieldGray600,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 11),
-              FilledButton(
-                onPressed: onTap,
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size.fromHeight(45),
-                  backgroundColor: fieldGray900,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                ),
-                child: const Text(
-                  'View Clan',
-                  style: TextStyle(fontWeight: FontWeight.w900),
-                ),
-              ),
-            ],
+            ),
           ),
         ),
       ],
@@ -1244,41 +1380,70 @@ class _FindClanSection extends StatelessWidget {
   }
 }
 
-class _HomeMatchdayGroup {
-  const _HomeMatchdayGroup({
-    required this.date,
-    required this.isUpcoming,
-    required this.items,
-  });
+class _HomeMatchdayFeed {
+  const _HomeMatchdayFeed({required this.upNext, required this.recent});
 
-  final DateTime date;
-  final bool isUpcoming;
-  final List<_HomeActivityItem> items;
+  final List<_HomeActivityItem> upNext;
+  final List<_HomeActivityItem> recent;
+
+  bool get isEmpty => upNext.isEmpty && recent.isEmpty;
 }
 
 class _HomeActivityItem {
-  const _HomeActivityItem._({this.fixture, this.soloGame});
+  const _HomeActivityItem._({
+    this.fixture,
+    this.soloGame,
+    this.previousGame,
+    this.ratingEvent,
+    this.soloDetail,
+    this.isMyClanMatch = false,
+  });
 
-  factory _HomeActivityItem.clan(Fixture fixture) {
-    return _HomeActivityItem._(fixture: fixture);
+  factory _HomeActivityItem.clan(
+    Fixture fixture, {
+    ProfilePreviousGame? previousGame,
+    ProfileRatingEvent? ratingEvent,
+    bool isMyClanMatch = false,
+  }) {
+    return _HomeActivityItem._(
+      fixture: fixture,
+      previousGame: previousGame,
+      ratingEvent: ratingEvent,
+      isMyClanMatch: isMyClanMatch,
+    );
   }
 
-  factory _HomeActivityItem.solo(OpenQueueGame game) {
-    return _HomeActivityItem._(soloGame: game);
+  factory _HomeActivityItem.solo(
+    OpenQueueGame game, {
+    ProfilePreviousGame? previousGame,
+    ProfileRatingEvent? ratingEvent,
+    OpenQueueMatchDetail? detail,
+  }) {
+    return _HomeActivityItem._(
+      soloGame: game,
+      previousGame: previousGame,
+      ratingEvent: ratingEvent,
+      soloDetail: detail,
+    );
   }
 
   final Fixture? fixture;
   final OpenQueueGame? soloGame;
+  final ProfilePreviousGame? previousGame;
+  final ProfileRatingEvent? ratingEvent;
+  final OpenQueueMatchDetail? soloDetail;
+  final bool isMyClanMatch;
 
   bool get isSolo => soloGame != null;
+  bool get isMyMatch => previousGame != null || soloGame?.hasMyBooking == true;
 
   bool get canJoinSolo {
     final game = soloGame;
     if (game == null) return false;
-    return status == FixtureStatus.open &&
+    return game.isUpcomingReservation &&
+        status == FixtureStatus.open &&
         !game.isFull &&
-        !game.hasMyBooking &&
-        game.startsAt.isAfter(DateTime.now());
+        !game.hasMyBooking;
   }
 
   String get id => fixture?.id ?? soloGame!.id;
@@ -1292,11 +1457,18 @@ class _HomeActivityItem {
 
   FixtureStatus get status {
     final clanFixture = fixture;
-    if (clanFixture != null) return clanFixture.status;
+    if (clanFixture != null) {
+      if (clanFixture.isLive) return FixtureStatus.live;
+      if (clanFixture.homeScore != null || clanFixture.awayScore != null) {
+        return FixtureStatus.finalResult;
+      }
+      return clanFixture.status;
+    }
     final game = soloGame!;
+    if (game.status.toUpperCase() == 'LIVE') return FixtureStatus.live;
+    if (game.hasRecordedScore) return FixtureStatus.finalResult;
     return switch (game.status.toUpperCase()) {
       'FULL' => FixtureStatus.scheduled,
-      'LIVE' => FixtureStatus.live,
       'FINAL' => FixtureStatus.finalResult,
       'CANCELLED' => FixtureStatus.cancelled,
       _ when game.isFull => FixtureStatus.scheduled,
@@ -1313,21 +1485,123 @@ class _HomeActivityItem {
     return fixture!.timeSlot.startsWith('8:30') ? 20 * 60 + 30 : 19 * 60;
   }
 
+  DateTime get sortDateTime => matchDate.add(Duration(minutes: sortMinutes));
+
+  bool get isCompleted => status == FixtureStatus.finalResult;
+  bool get isCancelled => status == FixtureStatus.cancelled;
+  bool get isLive => status == FixtureStatus.live;
+  bool get isRelevantLive => isMyMatch || isMyClanMatch || isSolo;
+
+  bool get isUpcomingForViewer {
+    if (isSolo) return soloGame!.hasMyBooking || canJoinSolo;
+    return isMyClanMatch;
+  }
+
+  int get remainingSpots {
+    final game = soloGame;
+    if (game == null) return 0;
+    return (game.capacity - game.confirmedCount)
+        .clamp(0, game.capacity)
+        .toInt();
+  }
+
+  Fixture? get playbackFixture => fixture ?? soloDetail?.toFixture();
+
+  bool get hasFullMatch => playbackFixture?.fullGamePlaybackUrl != null;
+
+  int get highlightCount {
+    final playback = playbackFixture;
+    if (playback == null || playback.fullGamePlaybackUrl == null) return 0;
+    return playback.highlightMoments.length;
+  }
+
+  bool get highlightsReady => highlightCount > 0;
+  bool get shouldOpenWatch => isLive || highlightsReady || hasFullMatch;
+
+  FixturePlayerRatingUpdate? get fixturePlayerRatingUpdate {
+    final event = ratingEvent;
+    if (event != null) {
+      return FixturePlayerRatingUpdate(
+        ratingBefore: event.ratingBefore,
+        ratingChange: event.ratingChange,
+        ratingAfter: event.ratingAfter,
+        result: event.result,
+      );
+    }
+    final soloUpdate = soloDetail?.viewerRatingUpdate;
+    if (soloUpdate != null) return soloUpdate;
+    final clanFixture = fixture;
+    if (clanFixture == null) return null;
+    for (final player in [
+      ...clanFixture.homeLineup,
+      ...clanFixture.awayLineup,
+    ]) {
+      final ratingBefore = player.displayedRating;
+      final ratingChange = player.ratingChange;
+      if (!player.isMe || ratingBefore == null || ratingChange == null) {
+        continue;
+      }
+      return FixturePlayerRatingUpdate(
+        ratingBefore: ratingBefore,
+        ratingChange: ratingChange,
+        ratingAfter: ratingBefore + ratingChange,
+      );
+    }
+    return null;
+  }
+
+  int get upcomingPriority {
+    if (isLive) return 0;
+    if (soloGame?.hasMyBooking == true) return 1;
+    if (canJoinSolo) return 2;
+    if (isMyClanMatch) return 3;
+    return 4;
+  }
+
+  int get recentPriority {
+    if (previousGame != null && highlightsReady) return 0;
+    if (previousGame != null) return 1;
+    if (isMyClanMatch) return 2;
+    if (highlightsReady) return 3;
+    return 4;
+  }
+
   String get matchup {
+    final played = previousGame;
+    if (played != null) {
+      return '${played.homeTag}  ${played.homeScore}–${played.awayScore}  ${played.awayTag}';
+    }
     final clanFixture = fixture;
     if (clanFixture != null) {
       final away = clanFixture.awayClan?.tag ?? 'TBD';
-      if (clanFixture.isFinal || clanFixture.isLive) {
-        return '${clanFixture.homeClan.tag}  ${clanFixture.homeScore}–${clanFixture.awayScore}  $away';
+      if (isCompleted || isLive) {
+        return '${clanFixture.homeClan.tag}  ${clanFixture.homeScore ?? 0}–${clanFixture.awayScore ?? 0}  $away';
       }
       return '${clanFixture.homeClan.tag} vs $away';
     }
     final game = soloGame!;
-    if (status == FixtureStatus.finalResult || status == FixtureStatus.live) {
+    if (isCompleted || isLive) {
       return 'WHITE  ${game.whiteScore ?? 0}–${game.blackScore ?? 0}  BLACK';
     }
-    if (canJoinSolo) return 'Spots open — join this game';
-    return 'Open Queue Game';
+    if (canJoinSolo) {
+      return 'Solo match · $remainingSpots ${remainingSpots == 1 ? 'spot' : 'spots'} left';
+    }
+    if (game.hasMyBooking) {
+      final role = game.myBookingRole?.label;
+      final assignedTeam = game.hasActiveTeamAssignment
+          ? switch (game.myBookingTeam) {
+              openQueueWhiteTeamId => 'White team',
+              openQueueBlackTeamId => 'Black team',
+              _ => null,
+            }
+          : null;
+      final parts = [
+        if (role != null) role,
+        if (assignedTeam != null) assignedTeam,
+      ];
+      return parts.isEmpty ? 'Your solo match' : parts.join(' · ');
+    }
+    return 'Solo match';
   }
 
   String get venue => fixture?.venue ?? soloGame!.venue;
@@ -1339,51 +1613,86 @@ class _HomeActivityItem {
 
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
 
-  String get statusLabel {
-    if (status == FixtureStatus.finalResult) return 'FT';
-    if (status == FixtureStatus.live) return 'LIVE';
-    if (isSolo && status == FixtureStatus.open) {
-      final game = soloGame!;
-      return '${game.confirmedCount}/${game.capacity}';
-    }
-    return switch (status) {
-      FixtureStatus.open => 'OPEN',
-      FixtureStatus.scheduled => 'CONFIRMED',
-      FixtureStatus.cancelled => 'CANCELLED',
+  String get eyebrowLabel {
+    final context = switch (status) {
+      FixtureStatus.live => 'LIVE NOW',
+      FixtureStatus.finalResult when previousGame != null => 'YOUR RESULT',
+      FixtureStatus.finalResult when isMyClanMatch => 'CLAN RESULT',
+      FixtureStatus.finalResult => 'RESULT',
+      _ when soloGame?.hasMyBooking == true => 'YOUR MATCH',
+      _ when canJoinSolo => 'OPEN SOLO MATCH',
+      _ when isMyClanMatch => 'YOUR CLAN',
       _ => 'UPCOMING',
     };
+    return isCompleted ? '$context · ${_compactMatchDate(matchDate)}' : context;
+  }
+
+  String get detailLabel {
+    if (!isCompleted) {
+      final matchAverageSr = soloGame?.matchAverageSr;
+      final parts = [
+        _relativeMatchLabel(matchDate, timeLabel),
+        venue,
+        if (canJoinSolo && matchAverageSr != null)
+          'Players around $matchAverageSr SR',
+      ];
+      return parts.join(' · ');
+    }
+
+    final ratingUpdate = fixturePlayerRatingUpdate;
+    final parts = <String>[
+      if (ratingUpdate != null) _signedSr(ratingUpdate.ratingChange),
+      if (highlightsReady)
+        '$highlightCount ${highlightCount == 1 ? 'highlight' : 'highlights'} ready'
+      else if (hasFullMatch)
+        'Full match ready'
+      else
+        'Full time',
+      venue,
+    ];
+    return parts.join(' · ');
+  }
+
+  String get actionLabel {
+    if (canJoinSolo) return 'JOIN';
+    if (isLive) return 'LIVE';
+    if (shouldOpenWatch) return 'WATCH';
+    return 'VIEW';
   }
 }
 
 class _ActivitySection extends StatelessWidget {
   const _ActivitySection({
-    required this.matchdays,
+    required this.feed,
     required this.onSeeAll,
     required this.onMatch,
+    this.featuredClan,
   });
-  final List<_HomeMatchdayGroup> matchdays;
+  final _HomeMatchdayFeed feed;
   final VoidCallback onSeeAll;
   final ValueChanged<_HomeActivityItem> onMatch;
+  final Widget? featuredClan;
 
   @override
   Widget build(BuildContext context) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            const _HomeSectionLabel('ACTIVITY'),
+            const _HomeSectionLabel('MATCHDAY'),
             const Spacer(),
             TextButton.icon(
               onPressed: onSeeAll,
               icon: const Icon(Icons.chevron_right_rounded, size: 16),
               iconAlignment: IconAlignment.end,
-              label: const Text('See all'),
+              label: const Text('All matches'),
               style: TextButton.styleFrom(foregroundColor: fieldEmerald600),
             ),
           ],
         ),
-        const SizedBox(height: 7),
-        if (matchdays.isEmpty)
+        const SizedBox(height: 5),
+        if (feed.isEmpty && featuredClan == null)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -1397,120 +1706,112 @@ class _ActivitySection extends StatelessWidget {
               style: TextStyle(color: fieldGray500),
             ),
           )
-        else
-          for (var index = 0; index < matchdays.length; index++) ...[
-            _ActivityMatchdayCard(matchday: matchdays[index], onMatch: onMatch),
-            if (index != matchdays.length - 1) const SizedBox(height: 12),
-          ],
+        else ...[
+          if (feed.upNext.isNotEmpty || featuredClan != null)
+            Column(
+              key: const ValueKey('home-matchday-up-next'),
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.only(left: 3, bottom: 7),
+                  child: Text(
+                    'UP NEXT',
+                    style: TextStyle(
+                      color: fieldGray600,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                    ),
+                  ),
+                ),
+                if (featuredClan case final clan?) clan,
+                if (featuredClan != null && feed.upNext.isNotEmpty)
+                  const SizedBox(height: 10),
+                if (feed.upNext.isNotEmpty)
+                  _ActivityGroup(
+                    label: 'UP NEXT',
+                    showLabel: false,
+                    items: feed.upNext,
+                    onMatch: onMatch,
+                  ),
+              ],
+            ),
+          if ((feed.upNext.isNotEmpty || featuredClan != null) &&
+              feed.recent.isNotEmpty)
+            const SizedBox(height: 15),
+          if (feed.recent.isNotEmpty)
+            _ActivityGroup(
+              key: const ValueKey('home-matchday-recent'),
+              label: 'RECENT',
+              items: feed.recent,
+              onMatch: onMatch,
+            ),
+        ],
       ],
     );
   }
 }
 
-class _ActivityMatchdayCard extends StatelessWidget {
-  const _ActivityMatchdayCard({required this.matchday, required this.onMatch});
+class _ActivityGroup extends StatelessWidget {
+  const _ActivityGroup({
+    super.key,
+    required this.label,
+    required this.items,
+    required this.onMatch,
+    this.showLabel = true,
+  });
 
-  final _HomeMatchdayGroup matchday;
+  final String label;
+  final List<_HomeActivityItem> items;
   final ValueChanged<_HomeActivityItem> onMatch;
+  final bool showLabel;
 
   @override
   Widget build(BuildContext context) {
-    final isToday = _sameCalendarDate(matchday.date, _bahrainTodayDate());
-    final heading = matchday.isUpcoming
-        ? isToday
-              ? 'TODAY'
-              : 'NEXT MATCHDAY'
-        : 'LAST MATCHDAY';
-    final accent = matchday.isUpcoming ? fieldEmerald600 : fieldBlue600;
-    final accentBackground = matchday.isUpcoming
-        ? fieldEmerald50
-        : const Color(0xFFEFF6FF);
-
-    return Container(
-      key: ValueKey('home-activity-matchday-${_dateKey(matchday.date)}'),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(23),
-        border: Border.all(color: fieldGray100),
-        boxShadow: [
-          BoxShadow(
-            color: fieldGray900.withValues(alpha: 0.035),
-            blurRadius: 14,
-            offset: const Offset(0, 5),
-          ),
-        ],
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        children: [
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showLabel)
           Padding(
-            padding: const EdgeInsets.fromLTRB(15, 14, 15, 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: accentBackground,
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(
-                    matchday.isUpcoming
-                        ? Icons.event_available_rounded
-                        : Icons.sports_score_rounded,
-                    color: accent,
-                    size: 18,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        heading,
-                        style: TextStyle(
-                          color: accent,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        _matchdayDateLabel(matchday.date),
-                        style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Text(
-                  '${matchday.items.length} GAME${matchday.items.length == 1 ? '' : 'S'}',
-                  style: const TextStyle(
-                    color: fieldGray400,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.6,
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.only(left: 3, bottom: 7),
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: fieldGray600,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.2,
+              ),
             ),
           ),
-          const Divider(height: 1, color: fieldGray100),
-          for (var index = 0; index < matchday.items.length; index++) ...[
-            _ActivityRow(
-              item: matchday.items[index],
-              onTap: () => onMatch(matchday.items[index]),
-            ),
-            if (index != matchday.items.length - 1)
-              const Divider(height: 1, indent: 70, color: fieldGray100),
-          ],
-        ],
-      ),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: fieldGray100),
+            boxShadow: [
+              BoxShadow(
+                color: fieldGray900.withValues(alpha: 0.035),
+                blurRadius: 14,
+                offset: const Offset(0, 5),
+              ),
+            ],
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (var index = 0; index < items.length; index++) ...[
+                _ActivityRow(
+                  item: items[index],
+                  onTap: () => onMatch(items[index]),
+                ),
+                if (index != items.length - 1)
+                  const Divider(height: 1, indent: 71, color: fieldGray100),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1522,28 +1823,32 @@ class _ActivityRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final typeColor = item.isSolo ? fieldBlue600 : fieldEmerald600;
-    final typeBackground = item.isSolo
-        ? const Color(0xFFEFF6FF)
+    final isWatch = item.shouldOpenWatch && !item.canJoinSolo;
+    final accentColor = item.isLive
+        ? const Color(0xFFDC2626)
+        : item.canJoinSolo
+        ? fieldEmerald600
+        : item.isCompleted
+        ? (isWatch ? fieldBlue600 : fieldGray600)
+        : fieldEmerald700;
+    final accentBackground = item.isLive
+        ? const Color(0xFFFEF2F2)
+        : item.canJoinSolo
+        ? fieldEmerald50
+        : item.isCompleted
+        ? (isWatch ? const Color(0xFFEFF6FF) : fieldGray100)
         : fieldEmerald50;
-    final statusColor = switch (item.status) {
-      FixtureStatus.live => const Color(0xFFDC2626),
-      FixtureStatus.finalResult => fieldGray600,
-      FixtureStatus.open => fieldBlue600,
-      _ => fieldEmerald700,
-    };
-    final statusBackground = switch (item.status) {
-      FixtureStatus.live => const Color(0xFFFEF2F2),
-      FixtureStatus.finalResult => fieldGray100,
-      FixtureStatus.open => const Color(0xFFEFF6FF),
-      _ => fieldEmerald50,
-    };
+    final icon = item.isLive || isWatch
+        ? Icons.play_arrow_rounded
+        : item.isCompleted
+        ? Icons.sports_score_rounded
+        : item.isSolo
+        ? Icons.person_rounded
+        : Icons.shield_rounded;
 
     return Semantics(
       button: true,
-      label: item.canJoinSolo
-          ? 'Join open queue match, ${item.statusLabel} players confirmed'
-          : 'Open ${item.typeLabel.toLowerCase()} match ${item.matchup}',
+      label: '${item.eyebrowLabel}. ${item.matchup}. ${item.detailLabel}',
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -1552,172 +1857,110 @@ class _ActivityRow extends StatelessWidget {
           ),
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 14),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 Container(
-                  width: 44,
-                  height: 44,
+                  width: 45,
+                  height: 45,
                   decoration: BoxDecoration(
-                    color: typeBackground,
+                    color: accentBackground,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(
-                    item.isSolo ? Icons.person_rounded : Icons.shield_rounded,
-                    color: typeColor,
-                    size: 21,
-                  ),
+                  child: Icon(icon, color: accentColor, size: 22),
                 ),
-                const SizedBox(width: 11),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: typeBackground,
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              item.typeLabel,
-                              style: TextStyle(
-                                color: typeColor,
-                                fontSize: 8,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.7,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              item.matchup,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: fieldGray900,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 5),
                       Text(
-                        '${item.timeLabel} · ${item.venue}',
+                        item.eyebrowLabel,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: accentColor,
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.65,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        item.matchup,
                         style: const TextStyle(
-                          color: fieldGray400,
-                          fontSize: 10,
+                          color: fieldGray900,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        item.detailLabel,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: fieldGray600,
+                          fontSize: 9.5,
+                          height: 1.25,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 9),
-                if (item.canJoinSolo)
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        '${item.statusLabel} JOINED',
-                        style: const TextStyle(
-                          color: fieldEmerald700,
-                          fontSize: 8,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.35,
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Container(
-                        key: ValueKey('home-activity-join-${item.id}'),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [fieldEmerald500, fieldEmerald700],
-                          ),
-                          borderRadius: BorderRadius.circular(11),
-                          boxShadow: [
+                const SizedBox(width: 8),
+                Container(
+                  key: item.canJoinSolo
+                      ? ValueKey('home-activity-join-${item.id}')
+                      : null,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: item.actionLabel == 'VIEW'
+                        ? fieldGray100
+                        : accentColor,
+                    borderRadius: BorderRadius.circular(11),
+                    boxShadow: item.canJoinSolo
+                        ? [
                             BoxShadow(
-                              color: fieldEmerald500.withValues(alpha: 0.25),
+                              color: fieldEmerald500.withValues(alpha: 0.24),
                               blurRadius: 10,
                               offset: const Offset(0, 4),
                             ),
-                          ],
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.bolt_rounded,
-                              color: Colors.white,
-                              size: 13,
-                            ),
-                            SizedBox(width: 2),
-                            Text(
-                              'JOIN',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 9,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 0.7,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  )
-                else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                          ]
+                        : null,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
+                      if (item.canJoinSolo || item.shouldOpenWatch) ...[
+                        Icon(
+                          item.canJoinSolo
+                              ? Icons.bolt_rounded
+                              : Icons.play_arrow_rounded,
+                          color: Colors.white,
+                          size: 12,
                         ),
-                        decoration: BoxDecoration(
-                          color: statusBackground,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Text(
-                          item.statusLabel,
-                          style: TextStyle(
-                            color: statusColor,
-                            fontSize: 8,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Container(
-                        width: 22,
-                        height: 22,
-                        decoration: BoxDecoration(
-                          color: fieldGray100,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(
-                          Icons.arrow_forward_rounded,
-                          color: fieldGray500,
-                          size: 13,
+                        const SizedBox(width: 2),
+                      ],
+                      Text(
+                        item.actionLabel,
+                        style: TextStyle(
+                          color: item.actionLabel == 'VIEW'
+                              ? fieldGray700
+                              : Colors.white,
+                          fontSize: 8.5,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.55,
                         ),
                       ),
                     ],
                   ),
+                ),
               ],
             ),
           ),
@@ -1770,19 +2013,61 @@ String _fixtureStart(Fixture fixture) {
   return fixture.timeSlot.split(' - ').first;
 }
 
-List<_HomeActivityItem> _matchdayItems(
-  List<_HomeActivityItem> candidates,
-  DateTime date,
-) {
-  final rows =
-      candidates
-          .where((item) => _sameCalendarDate(item.matchDate, date))
-          .toList()
-        ..sort((left, right) {
-          final time = left.sortMinutes.compareTo(right.sortMinutes);
-          return time != 0 ? time : left.id.compareTo(right.id);
-        });
-  return rows.take(2).toList();
+int _compareUpcomingActivity(_HomeActivityItem left, _HomeActivityItem right) {
+  if (left.isLive != right.isLive) return left.isLive ? -1 : 1;
+  final leftIsBooked = left.soloGame?.hasMyBooking == true;
+  final rightIsBooked = right.soloGame?.hasMyBooking == true;
+  if (leftIsBooked != rightIsBooked) return leftIsBooked ? -1 : 1;
+  final time = left.sortDateTime.compareTo(right.sortDateTime);
+  if (time != 0) return time;
+  final priority = left.upcomingPriority.compareTo(right.upcomingPriority);
+  if (priority != 0) return priority;
+  if (left.canJoinSolo && right.canJoinSolo) {
+    final availability = left.remainingSpots.compareTo(right.remainingSpots);
+    if (availability != 0) return availability;
+  }
+  return left.id.compareTo(right.id);
+}
+
+int _compareRecentActivity(_HomeActivityItem left, _HomeActivityItem right) {
+  final today = _bahrainTodayDate();
+  int freshness(_HomeActivityItem item) {
+    final age = today.difference(item.matchDate).inDays.clamp(0, 1 << 20);
+    if (age <= 7) return 0;
+    if (age <= 30) return 1;
+    return 2;
+  }
+
+  final freshnessOrder = freshness(left).compareTo(freshness(right));
+  if (freshnessOrder != 0) return freshnessOrder;
+  final priority = left.recentPriority.compareTo(right.recentPriority);
+  if (priority != 0) return priority;
+  final time = right.sortDateTime.compareTo(left.sortDateTime);
+  return time != 0 ? time : left.id.compareTo(right.id);
+}
+
+_HomeMatchdayFeed _limitMatchdayFeed({
+  required List<_HomeActivityItem> upNext,
+  required List<_HomeActivityItem> recent,
+  int maxItems = 3,
+}) {
+  if (upNext.isEmpty) {
+    return _HomeMatchdayFeed(
+      upNext: const [],
+      recent: recent.take(maxItems).toList(),
+    );
+  }
+  if (recent.isEmpty) {
+    return _HomeMatchdayFeed(
+      upNext: upNext.take(maxItems).toList(),
+      recent: const [],
+    );
+  }
+
+  final upNextLimit = maxItems <= 2 ? 1 : 2;
+  final visibleUpNext = upNext.take(upNextLimit).toList();
+  final visibleRecent = recent.take(maxItems - visibleUpNext.length).toList();
+  return _HomeMatchdayFeed(upNext: visibleUpNext, recent: visibleRecent);
 }
 
 DateTime _bahrainTodayDate() {
@@ -1800,13 +2085,15 @@ bool _sameCalendarDate(DateTime left, DateTime right) {
       left.day == right.day;
 }
 
-String _dateKey(DateTime value) {
-  final month = value.month.toString().padLeft(2, '0');
-  final day = value.day.toString().padLeft(2, '0');
-  return '${value.year}-$month-$day';
+String _relativeMatchLabel(DateTime date, String time) {
+  final today = _bahrainTodayDate();
+  final tomorrow = today.add(const Duration(days: 1));
+  if (_sameCalendarDate(date, today)) return 'TODAY · $time';
+  if (_sameCalendarDate(date, tomorrow)) return 'TOMORROW · $time';
+  return '${_compactMatchDate(date)} · $time';
 }
 
-String _matchdayDateLabel(DateTime value) {
+String _compactMatchDate(DateTime value) {
   const weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
   const months = [
     'JAN',
@@ -1823,4 +2110,10 @@ String _matchdayDateLabel(DateTime value) {
     'DEC',
   ];
   return '${weekdays[value.weekday - 1]}, ${months[value.month - 1]} ${value.day}';
+}
+
+String _signedSr(int value) {
+  if (value > 0) return '+$value SR';
+  if (value < 0) return '−${value.abs()} SR';
+  return '0 SR';
 }

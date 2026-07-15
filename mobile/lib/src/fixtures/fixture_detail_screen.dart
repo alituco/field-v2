@@ -4,6 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import '../clans/clan.dart';
+import '../clans/clan_detail_screen.dart';
+import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../profile/profile_repository.dart';
@@ -22,6 +25,8 @@ class FixtureDetailScreen extends StatefulWidget {
     this.sourceLabel,
     this.showTeamRatings = true,
     this.playerRatingUpdate,
+    this.initiallyShowWatch = false,
+    this.clanRepository,
   });
 
   final Fixture fixture;
@@ -31,6 +36,8 @@ class FixtureDetailScreen extends StatefulWidget {
   final String? sourceLabel;
   final bool showTeamRatings;
   final FixturePlayerRatingUpdate? playerRatingUpdate;
+  final bool initiallyShowWatch;
+  final ClanRepository? clanRepository;
 
   @override
   State<FixtureDetailScreen> createState() => _FixtureDetailScreenState();
@@ -41,17 +48,23 @@ enum _FixtureDetailSection { watch, timeline, lineups }
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
-  _FixtureDetailSection _selectedSection = _FixtureDetailSection.timeline;
+  late final ClanRepository _clanRepository;
+  late _FixtureDetailSection _selectedSection;
   Timer? _refreshTimer;
   bool _isJoining = false;
   bool _isCompleting = false;
   bool _isRefreshing = false;
   bool _didChange = false;
+  String? _openingClanId;
   String? _errorText;
 
   @override
   void initState() {
     super.initState();
+    _clanRepository = widget.clanRepository ?? SupabaseClanRepository();
+    _selectedSection = widget.initiallyShowWatch
+        ? _FixtureDetailSection.watch
+        : _FixtureDetailSection.timeline;
     _configureRefreshTimer();
     unawaited(_refreshFixture(quiet: true));
   }
@@ -211,6 +224,55 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     );
   }
 
+  Future<void> _openClan(FixtureClan fixtureClan) async {
+    if (_openingClanId != null || fixtureClan.id.trim().isEmpty) return;
+    setState(() => _openingClanId = fixtureClan.id);
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _clanRepository.listClans(),
+        _clanRepository.getMyClanMembership(),
+      ]);
+      final clans = results[0] as List<Clan>;
+      Clan? target;
+      for (final clan in clans) {
+        if (clan.id == fixtureClan.id) {
+          target = clan;
+          break;
+        }
+      }
+      if (target == null) {
+        throw StateError('Clan not found.');
+      }
+      if (!mounted) return;
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ClanDetailScreen(
+            clan: target!,
+            clanRepository: _clanRepository,
+            fixtureRepository: widget.fixtureRepository,
+            currentMembership: results[1] as ClanMembership?,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open that clan. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingClanId = null);
+    }
+  }
+
   Future<void> _refreshFixture({bool quiet = false}) async {
     if (_isRefreshing) return;
     if (!quiet) {
@@ -359,6 +421,15 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
                   fixture: _fixture,
                   sourceLabel: widget.sourceLabel,
                   showTeamRatings: widget.showTeamRatings,
+                  onHomeClanTap: widget.sourceLabel?.toUpperCase() == 'SOLO'
+                      ? null
+                      : () => _openClan(_fixture.homeClan),
+                  onAwayClanTap:
+                      widget.sourceLabel?.toUpperCase() == 'SOLO' ||
+                          _fixture.awayClan == null
+                      ? null
+                      : () => _openClan(_fixture.awayClan!),
+                  openingClanId: _openingClanId,
                 ),
               ),
               const SizedBox(height: 14),
@@ -654,11 +725,17 @@ class _Scoreboard extends StatelessWidget {
     required this.fixture,
     required this.sourceLabel,
     required this.showTeamRatings,
+    required this.onHomeClanTap,
+    required this.onAwayClanTap,
+    required this.openingClanId,
   });
 
   final Fixture fixture;
   final String? sourceLabel;
   final bool showTeamRatings;
+  final VoidCallback? onHomeClanTap;
+  final VoidCallback? onAwayClanTap;
+  final String? openingClanId;
 
   @override
   Widget build(BuildContext context) {
@@ -778,6 +855,8 @@ class _Scoreboard extends StatelessWidget {
                       winner: homeWin,
                       showRating: showTeamRatings,
                       averagePlayerRating: fixture.homeAveragePlayerRating,
+                      onTap: onHomeClanTap,
+                      isOpening: openingClanId == fixture.homeClanId,
                     ),
                   ),
                   Padding(
@@ -834,6 +913,8 @@ class _Scoreboard extends StatelessWidget {
                             showRating: showTeamRatings,
                             averagePlayerRating:
                                 fixture.awayAveragePlayerRating,
+                            onTap: onAwayClanTap,
+                            isOpening: openingClanId == fixture.awayClanId,
                           ),
                   ),
                 ],
@@ -859,16 +940,20 @@ class _ScoreboardClan extends StatelessWidget {
     required this.winner,
     required this.showRating,
     required this.averagePlayerRating,
+    required this.onTap,
+    required this.isOpening,
   });
 
   final FixtureClan clan;
   final bool winner;
   final bool showRating;
   final int? averagePlayerRating;
+  final VoidCallback? onTap;
+  final bool isOpening;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final content = Column(
       children: [
         FixtureClanAvatar(clan: clan, size: 64),
         const SizedBox(height: 10),
@@ -884,6 +969,38 @@ class _ScoreboardClan extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
+        if (onTap != null) ...[
+          const SizedBox(height: 5),
+          if (isOpening)
+            const SizedBox.square(
+              dimension: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.7,
+                color: fieldEmerald200,
+              ),
+            )
+          else
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'VIEW CLAN',
+                  style: TextStyle(
+                    color: fieldEmerald200,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                SizedBox(width: 1),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: fieldEmerald200,
+                  size: 12,
+                ),
+              ],
+            ),
+        ],
         if (averagePlayerRating case final rating?) ...[
           const SizedBox(height: 8),
           Text(
@@ -917,6 +1034,25 @@ class _ScoreboardClan extends StatelessWidget {
         ] else
           const SizedBox(height: 10),
       ],
+    );
+
+    if (onTap == null) return content;
+    return Semantics(
+      button: true,
+      label: 'View ${clan.name} clan',
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          key: ValueKey('fixture-clan-link-${clan.id}'),
+          onTap: isOpening ? null : onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+            child: content,
+          ),
+        ),
+      ),
     );
   }
 }

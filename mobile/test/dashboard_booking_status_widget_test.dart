@@ -73,114 +73,173 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('activity shows the last and next clan plus solo matchdays', (
+  testWidgets(
+    'matchday shows up next before recent and caps the feed at three',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final today = _bahrainDateNow();
+      final openedFixtures = ValueNotifier(false);
+      addTearDown(openedFixtures.dispose);
+      final upcomingOne = _fixtureGame(
+        id: 'upcoming-one',
+        date: today.add(const Duration(days: 2)),
+        status: 'OPEN',
+        confirmedCount: 8,
+      );
+      final upcomingTwo = _fixtureGame(
+        id: 'upcoming-two',
+        date: today.add(const Duration(days: 3)),
+        status: 'OPEN',
+        confirmedCount: 8,
+      );
+      final upcomingThree = _fixtureGame(
+        id: 'upcoming-three',
+        date: today.add(const Duration(days: 4)),
+        status: 'OPEN',
+        confirmedCount: 8,
+      );
+      final recentOne = _fixtureGame(
+        id: 'recent-one',
+        date: today.subtract(const Duration(days: 1)),
+        status: 'FINAL',
+      );
+      final recentTwo = _fixtureGame(
+        id: 'recent-two',
+        date: today.subtract(const Duration(days: 2)),
+        status: 'FINAL',
+      );
+
+      await _pumpHome(
+        tester,
+        soloGames: [
+          upcomingThree,
+          recentTwo,
+          upcomingTwo,
+          recentOne,
+          upcomingOne,
+        ],
+        onOpenFixtures: () => openedFixtures.value = true,
+      );
+      await tester.scrollUntilVisible(
+        find.text('MATCHDAY'),
+        300,
+        scrollable: find.byType(Scrollable).first,
+      );
+
+      expect(find.text('MATCHDAY'), findsOneWidget);
+      expect(find.text('All matches'), findsOneWidget);
+      expect(find.text('ACTIVITY'), findsNothing);
+      expect(find.text('NEXT MATCHDAY'), findsNothing);
+      expect(find.text('LAST MATCHDAY'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('home-matchday-up-next')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-matchday-recent')),
+        findsOneWidget,
+      );
+      expect(
+        tester.getTopLeft(find.text('UP NEXT')).dy,
+        lessThan(tester.getTopLeft(find.text('RECENT')).dy),
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-upcoming-one')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-upcoming-two')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-recent-one')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-upcoming-three')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-recent-two')),
+        findsNothing,
+      );
+      expect(_homeActivityRows(), findsNWidgets(3));
+
+      await tester.tap(find.text('All matches'));
+      await tester.pump();
+      expect(openedFixtures.value, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('matchday omits the solo game already shown in booking hero', (
     tester,
   ) async {
     await _setPhoneSize(tester);
     final today = _bahrainDateNow();
-    final last = today.subtract(const Duration(days: 3));
-    final older = last.subtract(const Duration(days: 4));
-    final next = today.add(const Duration(days: 3));
-    final later = next.add(const Duration(days: 4));
-    final lastSolo = _fixtureGame(id: 'solo-last', date: last, status: 'FINAL');
-    final nextSolo = _fixtureGame(
-      id: 'solo-next',
-      date: next,
+    final bookedGame = _fixtureGame(
+      id: 'booked-game',
+      date: today.add(const Duration(days: 2)),
       status: 'OPEN',
       confirmedCount: 8,
     );
-    final detail = OpenQueueMatchDetail(
-      game: lastSolo,
-      scorers: const [],
-      timeline: const [],
-      players: const [],
-      broadcast: const FixtureBroadcast(status: 'REPLAY_READY'),
+    final nextGame = _fixtureGame(
+      id: 'next-available-game',
+      date: today.add(const Duration(days: 3)),
+      status: 'OPEN',
+      confirmedCount: 7,
     );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: DashboardHome(
-            profileRepository: const _FakeProfileRepository(),
-            clanRepository: const _FakeClanRepository(),
-            fixtureRepository: _FakeFixtureRepository([
-              _clanFixture('clan-older', older, FixtureStatus.finalResult),
-              _clanFixture('clan-last', last, FixtureStatus.finalResult),
-              _clanFixture('clan-next', next, FixtureStatus.scheduled),
-              _clanFixture('clan-later', later, FixtureStatus.scheduled),
-            ]),
-            leaderboardRepository: const _FakeLeaderboardRepository(),
-            openQueueRepository: _FakeOpenQueueRepository(
-              null,
-              fixtureGames: [
-                _fixtureGame(id: 'solo-older', date: older, status: 'FINAL'),
-                lastSolo,
-                nextSolo,
-                _fixtureGame(id: 'solo-later', date: later, status: 'OPEN'),
-              ],
-              matchDetails: {'solo-last': detail},
-            ),
-            onOpenClans: () {},
-            onOpenFixtures: () {},
-            onOpenRanks: () {},
-            onOpenProfile: () {},
-            onNavigateTab: (_) {},
-          ),
-        ),
-      ),
+    await _pumpHome(
+      tester,
+      booking: _bookingFor(bookedGame),
+      soloGames: [bookedGame, nextGame],
     );
-    await tester.pumpAndSettle();
     await tester.scrollUntilVisible(
-      find.text('ACTIVITY'),
+      find.text('MATCHDAY'),
       300,
       scrollable: find.byType(Scrollable).first,
     );
 
-    expect(find.text('LAST MATCHDAY'), findsOneWidget);
-    expect(find.text('NEXT MATCHDAY'), findsOneWidget);
+    expect(find.text('MATCH PENDING'), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('NEXT MATCHDAY')).dy,
-      lessThan(tester.getTopLeft(find.text('LAST MATCHDAY')).dy),
-    );
-    expect(find.text('2 GAMES'), findsNWidgets(2));
-    expect(
-      find.byKey(const ValueKey('home-activity-clan-clan-last')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('home-activity-solo-solo-last')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('home-activity-clan-clan-next')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('home-activity-solo-solo-next')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('home-activity-join-solo-next')),
-      findsOneWidget,
-    );
-    expect(find.text('8/12 JOINED'), findsOneWidget);
-    expect(find.text('Spots open — join this game'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('home-activity-clan-clan-older')),
+      find.byKey(const ValueKey('home-activity-solo-booked-game')),
       findsNothing,
     );
     expect(
-      find.byKey(const ValueKey('home-activity-solo-solo-later')),
-      findsNothing,
+      find.byKey(const ValueKey('home-activity-solo-next-available-game')),
+      findsOneWidget,
+    );
+    expect(_homeActivityRows(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('open solo match uses exact spots-left copy and join flow', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final game = _fixtureGame(
+      id: 'joinable-game',
+      date: _bahrainDateNow().add(const Duration(days: 2)),
+      status: 'OPEN',
+      confirmedCount: 8,
     );
 
-    final joinCta = find.byKey(const ValueKey('home-activity-join-solo-next'));
+    await _pumpHome(tester, soloGames: [game]);
+
+    final joinCta = find.byKey(
+      const ValueKey('home-activity-join-joinable-game'),
+    );
     await tester.scrollUntilVisible(
       joinCta,
       120,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -240));
+    expect(find.text('Solo match · 4 spots left'), findsOneWidget);
+    expect(find.text('JOIN'), findsOneWidget);
+    expect(find.textContaining('8/12 JOINED'), findsNothing);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
     await tester.pump();
     await tester.tap(joinCta);
     await tester.pumpAndSettle();
@@ -189,24 +248,297 @@ void main() {
     await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
 
-    final lastSoloRow = find.byKey(
-      const ValueKey('home-activity-solo-solo-last'),
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scored future game is recent and shows the player SR change', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final today = _bahrainDateNow();
+    final scoredFutureGame = _fixtureGame(
+      id: 'scored-future-game',
+      date: today.add(const Duration(days: 10)),
+      status: 'OPEN',
+      confirmedCount: 8,
+      whiteScore: 5,
+      blackScore: 3,
+    );
+    final genuinelyUpcomingGame = _fixtureGame(
+      id: 'genuinely-upcoming-game',
+      date: today.add(const Duration(days: 2)),
+      status: 'OPEN',
+      confirmedCount: 8,
+    );
+    final previousGame = ProfilePreviousGame(
+      id: scoredFutureGame.id,
+      type: ProfileGameType.solo,
+      playedAt: scoredFutureGame.startsAt,
+      venue: scoredFutureGame.venue,
+      homeName: 'White Team',
+      homeTag: 'WHITE',
+      homeEmblem: '⚪',
+      awayName: 'Black Team',
+      awayTag: 'BLACK',
+      awayEmblem: '⚫',
+      homeScore: 5,
+      awayScore: 3,
+      playerSide: 'WHITE',
+      playerRole: 'DEF',
+    );
+    final ratingEvent = ProfileRatingEvent(
+      id: 'rating-event',
+      sourceType: 'OPEN_QUEUE',
+      sourceId: scoredFutureGame.id,
+      playedAt: scoredFutureGame.startsAt,
+      opponentLabel: 'Black Team',
+      side: 'WHITE',
+      result: 'WIN',
+      ratingBefore: 1200,
+      ratingChange: 18,
+      ratingAfter: 1218,
+    );
+    final profile = _profileWithMatch(
+      previousGame: previousGame,
+      ratingEvent: ratingEvent,
+    );
+    final detail = OpenQueueMatchDetail(
+      game: scoredFutureGame,
+      scorers: const [],
+      timeline: const [],
+      players: const [],
+    );
+
+    await _pumpHome(
+      tester,
+      profile: profile,
+      soloGames: [scoredFutureGame, genuinelyUpcomingGame],
+      matchDetails: {scoredFutureGame.id: detail},
     );
     await tester.scrollUntilVisible(
-      lastSoloRow,
-      160,
+      find.byKey(const ValueKey('home-matchday-recent')),
+      200,
       scrollable: find.byType(Scrollable).first,
     );
-    await tester.drag(find.byType(ListView).first, const Offset(0, -220));
-    await tester.pump();
-    await tester.tap(lastSoloRow);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('SOLO MATCH'), findsOneWidget);
+
+    final scoredRow = find.byKey(
+      const ValueKey('home-activity-solo-scored-future-game'),
+    );
     expect(
-      find.byKey(const ValueKey('fixture-section-timeline')),
+      find.descendant(
+        of: find.byKey(const ValueKey('home-matchday-recent')),
+        matching: scoredRow,
+      ),
       findsOneWidget,
     );
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('home-matchday-up-next')),
+        matching: scoredRow,
+      ),
+      findsNothing,
+    );
+    expect(find.textContaining('YOUR RESULT'), findsOneWidget);
+    expect(find.textContaining('+18 SR'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-activity-join-scored-future-game')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('compact empty clan summary sits below Matchday', (tester) async {
+    await _setPhoneSize(tester);
+    final game = _fixtureGame(
+      id: 'matchday-before-clan',
+      date: _bahrainDateNow().add(const Duration(days: 2)),
+      status: 'OPEN',
+      confirmedCount: 8,
+    );
+
+    await _pumpHome(
+      tester,
+      soloGames: [game],
+      clans: const [_testClan],
+      clanMembership: const ClanMembership(clanId: 'home', role: 'member'),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('home-clan-summary-compact')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(
+      find.byKey(const ValueKey('home-clan-summary-compact')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('home-clan-compact')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-clan-summary-expanded')),
+      findsNothing,
+    );
+    expect(find.text(_testClan.name), findsOneWidget);
+    expect(find.text('No upcoming fixture'), findsNothing);
+    expect(find.text('View Clan'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('MATCHDAY')).dy,
+      lessThan(tester.getTopLeft(find.text('YOUR CLAN')).dy),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('replay-ready clan result shows highlights and opens Watch', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final streamStartedAt = DateTime.utc(2026, 7, 10, 16);
+    final fixture = _clanFixture(
+      id: 'clan-highlights',
+      date: _bahrainDateNow().subtract(const Duration(days: 1)),
+      status: FixtureStatus.finalResult,
+      homeScore: 2,
+      awayScore: 1,
+      broadcast: FixtureBroadcast(
+        status: 'REPLAY_READY',
+        replayHlsUrl: 'https://example.com/clan-highlights.m3u8',
+        streamStartedAt: streamStartedAt,
+        streamStoppedAt: streamStartedAt.add(const Duration(hours: 1)),
+      ),
+      timeline: [
+        _goalEvent(
+          id: 'first-goal',
+          minute: 12,
+          occurredAt: streamStartedAt.add(const Duration(minutes: 12)),
+        ),
+        _goalEvent(
+          id: 'second-goal',
+          minute: 38,
+          occurredAt: streamStartedAt.add(const Duration(minutes: 38)),
+        ),
+      ],
+    );
+
+    await _pumpHome(tester, fixtures: [fixture]);
+    final resultRow = find.byKey(
+      const ValueKey('home-activity-clan-clan-highlights'),
+    );
+    await tester.scrollUntilVisible(
+      resultRow,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(find.textContaining('2 highlights ready'), findsOneWidget);
+    expect(find.text('WATCH'), findsOneWidget);
+
+    await tester.drag(find.byType(ListView).first, const Offset(0, -90));
+    await tester.pump();
+    await tester.tap(resultRow);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.byKey(const ValueKey('fixture-section-watch')), findsOneWidget);
+    expect(find.text('WATCH MATCH'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    // Disposes the video retry timer created by the unavailable test URL.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+  });
+
+  testWidgets('only a valid future clan fixture expands the clan summary', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final today = _bahrainDateNow();
+    final pastFixture = _clanFixture(
+      id: 'past-clan-fixture',
+      date: today.subtract(const Duration(days: 1)),
+      status: FixtureStatus.scheduled,
+    );
+    final scoredStaleFixture = _clanFixture(
+      id: 'scored-stale-clan-fixture',
+      date: today.add(const Duration(days: 2)),
+      status: FixtureStatus.scheduled,
+      homeScore: 3,
+      awayScore: 1,
+    );
+    final validFutureFixture = _clanFixture(
+      id: 'valid-future-clan-fixture',
+      date: today.add(const Duration(days: 5)),
+      status: FixtureStatus.scheduled,
+    );
+    final joinableSolo = _fixtureGame(
+      id: 'joinable-below-clan',
+      date: today.add(const Duration(days: 2)),
+      status: 'OPEN',
+      confirmedCount: 8,
+    );
+
+    await _pumpHome(
+      tester,
+      fixtures: [pastFixture, scoredStaleFixture, validFutureFixture],
+      soloGames: [joinableSolo],
+      clans: const [_testClan],
+      clanMembership: const ClanMembership(clanId: 'home', role: 'member'),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('home-clan-summary-expanded')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(
+      find.byKey(const ValueKey('home-clan-summary-expanded')),
+      findsOneWidget,
+    );
+    expect(find.text('UPCOMING CLAN FIXTURE'), findsOneWidget);
+    expect(find.text('vs Away Clan'), findsOneWidget);
+    final upNext = find.byKey(const ValueKey('home-matchday-up-next'));
+    final clanCard = find.byKey(const ValueKey('home-clan-summary-expanded'));
+    final soloRow = find.byKey(
+      const ValueKey('home-activity-solo-joinable-below-clan'),
+    );
+    expect(find.descendant(of: upNext, matching: clanCard), findsOneWidget);
+    expect(find.descendant(of: upNext, matching: soloRow), findsOneWidget);
+    expect(
+      tester.getTopLeft(clanCard).dy,
+      lessThan(tester.getTopLeft(soloRow).dy),
+    );
+    expect(
+      find.byKey(
+        const ValueKey('home-activity-clan-valid-future-clan-fixture'),
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('home-clan-summary-compact')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+    await _pumpHome(
+      tester,
+      fixtures: [pastFixture, scoredStaleFixture],
+      clans: const [_testClan],
+      clanMembership: const ClanMembership(clanId: 'home', role: 'member'),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('home-clan-summary-compact')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(
+      find.byKey(const ValueKey('home-clan-summary-compact')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-clan-summary-expanded')),
+      findsNothing,
+    );
+    expect(find.text('UPCOMING CLAN FIXTURE'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
@@ -234,17 +566,38 @@ Future<void> _pumpDashboard(
     team: team,
     game: game,
   );
+  await _pumpHome(tester, booking: booking);
+}
+
+Future<void> _pumpHome(
+  WidgetTester tester, {
+  PlayerProfile profile = _defaultProfile,
+  OpenQueueBooking? booking,
+  List<OpenQueueGame> soloGames = const [],
+  Map<String, OpenQueueMatchDetail> matchDetails = const {},
+  List<Fixture> fixtures = const [],
+  List<Clan> clans = const [],
+  ClanMembership? clanMembership,
+  VoidCallback? onOpenFixtures,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: DashboardHome(
-          profileRepository: const _FakeProfileRepository(),
-          clanRepository: const _FakeClanRepository(),
-          fixtureRepository: const _FakeFixtureRepository(),
+          profileRepository: _FakeProfileRepository(profile),
+          clanRepository: _FakeClanRepository(
+            clans: clans,
+            membership: clanMembership,
+          ),
+          fixtureRepository: _FakeFixtureRepository(fixtures),
           leaderboardRepository: const _FakeLeaderboardRepository(),
-          openQueueRepository: _FakeOpenQueueRepository(booking),
+          openQueueRepository: _FakeOpenQueueRepository(
+            booking,
+            fixtureGames: soloGames,
+            matchDetails: matchDetails,
+          ),
           onOpenClans: () {},
-          onOpenFixtures: () {},
+          onOpenFixtures: onOpenFixtures ?? () {},
           onOpenRanks: () {},
           onOpenProfile: () {},
           onNavigateTab: (_) {},
@@ -253,6 +606,58 @@ Future<void> _pumpDashboard(
     ),
   );
   await tester.pumpAndSettle();
+}
+
+Finder _homeActivityRows() {
+  return find.byWidgetPredicate((widget) {
+    final key = widget.key;
+    if (key is! ValueKey<String>) return false;
+    return key.value.startsWith('home-activity-solo-') ||
+        key.value.startsWith('home-activity-clan-');
+  });
+}
+
+OpenQueueBooking _bookingFor(OpenQueueGame game) {
+  return OpenQueueBooking(
+    id: 'booking-${game.id}',
+    gameId: game.id,
+    profileId: 'profile',
+    role: OpenQueueRole.defender,
+    status: 'CONFIRMED',
+    amountPaidFils: game.priceFils,
+    bookedAt: DateTime.now(),
+    game: game,
+  );
+}
+
+PlayerProfile _profileWithMatch({
+  required ProfilePreviousGame previousGame,
+  required ProfileRatingEvent ratingEvent,
+}) {
+  return PlayerProfile(
+    id: 'profile',
+    displayName: 'Dana Alawi',
+    username: 'dana',
+    bio: '',
+    followingCount: 0,
+    fansCount: 0,
+    appearances: 1,
+    goals: 0,
+    assists: 0,
+    highlights: const [],
+    career: const [],
+    previousGames: [previousGame],
+    playerRating: ProfilePlayerRating(
+      skillRating: ratingEvent.ratingAfter,
+      matchesPlayed: 1,
+      wins: 1,
+      losses: 0,
+      draws: 0,
+      lastChange: ratingEvent.ratingChange,
+      region: 'bahrain',
+      events: [ratingEvent],
+    ),
+  );
 }
 
 OpenQueueGame _game({
@@ -300,6 +705,12 @@ OpenQueueGame _fixtureGame({
   required DateTime date,
   required String status,
   int confirmedCount = 12,
+  int capacity = 12,
+  int? whiteScore,
+  int? blackScore,
+  String? myBookingId,
+  OpenQueueRole? myBookingRole,
+  String? myBookingTeam,
 }) {
   final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
   return OpenQueueGame(
@@ -311,7 +722,7 @@ OpenQueueGame _fixtureGame({
     timezone: 'Asia/Bahrain',
     priceFils: 3000,
     ageLabel: 'Ages 16-20',
-    capacity: 12,
+    capacity: capacity,
     confirmedCount: confirmedCount,
     spots: status == 'OPEN'
         ? const {
@@ -321,26 +732,56 @@ OpenQueueGame _fixtureGame({
             OpenQueueRole.attacker: 1,
           }
         : const {},
-    whiteScore: status == 'FINAL' ? 4 : null,
-    blackScore: status == 'FINAL' ? 3 : null,
+    whiteScore: whiteScore ?? (status == 'FINAL' ? 4 : null),
+    blackScore: blackScore ?? (status == 'FINAL' ? 3 : null),
+    myBookingId: myBookingId,
+    myBookingRole: myBookingRole,
+    myBookingTeam: myBookingTeam,
   );
 }
 
-Fixture _clanFixture(String id, DateTime date, FixtureStatus status) {
+Fixture _clanFixture({
+  required String id,
+  required DateTime date,
+  required FixtureStatus status,
+  int? homeScore,
+  int? awayScore,
+  FixtureBroadcast? broadcast,
+  List<FixtureTimelineEvent> timeline = const [],
+}) {
   return Fixture(
     id: id,
     status: status,
-    homeClanId: _homeClan.id,
-    awayClanId: _awayClan.id,
+    homeClanId: _homeFixtureClan.id,
+    awayClanId: _awayFixtureClan.id,
     venue: 'TFA, Saar',
     day: _weekday(date.weekday),
     timeSlot: FixtureTimeSlot.early.label,
     matchDate: date,
     createdBy: 'owner',
-    homeClan: _homeClan,
-    awayClan: _awayClan,
-    homeScore: status == FixtureStatus.finalResult ? 2 : null,
-    awayScore: status == FixtureStatus.finalResult ? 1 : null,
+    homeClan: _homeFixtureClan,
+    awayClan: _awayFixtureClan,
+    homeScore: homeScore,
+    awayScore: awayScore,
+    broadcast: broadcast,
+    timeline: timeline,
+  );
+}
+
+FixtureTimelineEvent _goalEvent({
+  required String id,
+  required int minute,
+  required DateTime occurredAt,
+}) {
+  return FixtureTimelineEvent(
+    id: id,
+    fixtureId: 'clan-highlights',
+    eventType: 'GOAL',
+    clanId: _homeFixtureClan.id,
+    minute: minute,
+    second: 0,
+    createdAt: occurredAt,
+    occurredAt: occurredAt,
   );
 }
 
@@ -356,7 +797,7 @@ String _weekday(int weekday) {
   ][weekday - 1];
 }
 
-const _homeClan = FixtureClan(
+const _homeFixtureClan = FixtureClan(
   id: 'home',
   name: 'Home Clan',
   tag: 'HOME',
@@ -366,7 +807,7 @@ const _homeClan = FixtureClan(
   skillRating: 1200,
 );
 
-const _awayClan = FixtureClan(
+const _awayFixtureClan = FixtureClan(
   id: 'away',
   name: 'Away Clan',
   tag: 'AWAY',
@@ -376,23 +817,42 @@ const _awayClan = FixtureClan(
   skillRating: 1200,
 );
 
+const _testClan = Clan(
+  id: 'home',
+  name: 'Home Clan',
+  tag: 'HOME',
+  motto: 'Play together',
+  emblem: '⚡',
+  themeId: 'mint',
+  patternId: 'solid',
+  skillRating: 1200,
+  wins: 2,
+  losses: 1,
+  memberCount: 12,
+  createdBy: 'owner',
+);
+
+const _defaultProfile = PlayerProfile(
+  id: 'profile',
+  displayName: 'Dana Alawi',
+  username: 'dana',
+  bio: '',
+  followingCount: 0,
+  fansCount: 0,
+  appearances: 0,
+  goals: 0,
+  assists: 0,
+  highlights: [],
+  career: [],
+);
+
 class _FakeProfileRepository implements ProfileRepository {
-  const _FakeProfileRepository();
+  const _FakeProfileRepository([this.profile = _defaultProfile]);
+
+  final PlayerProfile profile;
 
   @override
-  Future<PlayerProfile> getCurrentProfile() async => const PlayerProfile(
-    id: 'profile',
-    displayName: 'Dana Alawi',
-    username: 'dana',
-    bio: '',
-    followingCount: 0,
-    fansCount: 0,
-    appearances: 0,
-    goals: 0,
-    assists: 0,
-    highlights: [],
-    career: [],
-  );
+  Future<PlayerProfile> getCurrentProfile() async => profile;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -453,13 +913,16 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
 }
 
 class _FakeClanRepository implements ClanRepository {
-  const _FakeClanRepository();
+  const _FakeClanRepository({this.clans = const [], this.membership});
+
+  final List<Clan> clans;
+  final ClanMembership? membership;
 
   @override
-  Future<List<Clan>> listClans() async => const [];
+  Future<List<Clan>> listClans() async => clans;
 
   @override
-  Future<ClanMembership?> getMyClanMembership() async => null;
+  Future<ClanMembership?> getMyClanMembership() async => membership;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
@@ -472,6 +935,10 @@ class _FakeFixtureRepository implements FixtureRepository {
 
   @override
   Future<MyClanMembership?> getMyClanMembership() async => null;
+
+  @override
+  Future<Fixture> getFixture(String fixtureId) async =>
+      fixtures.firstWhere((fixture) => fixture.id == fixtureId);
 
   @override
   Future<List<Fixture>> listFixtures() async => fixtures;
