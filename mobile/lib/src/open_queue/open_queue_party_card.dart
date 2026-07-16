@@ -820,7 +820,7 @@ class _PartyMutationLockNotice extends StatelessWidget {
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Party changes are closed for this match. Your group stays visible, but no one can be invited, removed, or leave now.',
+              'Party changes close 3 hours before kickoff. Your confirmed group stays together, but no one can be invited, removed, or leave now.',
               style: TextStyle(
                 color: fieldGray600,
                 fontSize: 10,
@@ -980,7 +980,7 @@ class _PartyLockedCard extends StatelessWidget {
                 ),
                 SizedBox(height: 3),
                 Text(
-                  'This match has started or is no longer open for team changes.',
+                  'Parties close 3 hours before kickoff so teams and kits can be finalized.',
                   style: TextStyle(
                     color: fieldGray500,
                     fontSize: 11,
@@ -1089,7 +1089,7 @@ class _RebalanceNote extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            'Full teams can still rebalance until kickoff.',
+            'Parties and teams lock 3 hours before kickoff.',
             style: TextStyle(
               color: dark ? const Color(0xFFA7F3D0) : fieldGray500,
               fontSize: 10,

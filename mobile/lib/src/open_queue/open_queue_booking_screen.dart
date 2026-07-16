@@ -370,6 +370,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     final booking = _booking;
     final game = booking.game;
     final isConfirmed = game.isUpcomingMatchConfirmed;
+    final isTeamAssignmentDue = game.isTeamAssignmentDue;
     final hasTeamAssignment = game.hasActiveTeamAssignment;
     final assignedTeam = booking.assignedTeam;
     final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
@@ -377,6 +378,29 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         _partyContext?.receivedInvites.isNotEmpty ?? false;
     final showPartyBeforeMatchDate =
         widget.newlyBooked || hasPendingPartyInvite;
+    final String teamLabel;
+    final String teamInfoMessage;
+    if (assignedTeam != null) {
+      teamLabel = '$assignedTeam TEAM';
+      teamInfoMessage =
+          'Teams assigned. The two team averages are only ${game.teamSrSpread ?? 0} SR apart.';
+    } else if (isConfirmed && isTeamAssignmentDue) {
+      teamLabel = 'Assignment updating';
+      teamInfoMessage =
+          'Your match is confirmed. Pull to refresh while your team and kit assignment finishes updating.';
+    } else if (isConfirmed) {
+      teamLabel = 'Assigned 3 hours before kickoff';
+      teamInfoMessage =
+          'Your match is on. Teams and kits are finalized 3 hours before kickoff, when party changes close.';
+    } else if (isTeamAssignmentDue) {
+      teamLabel = 'Assigned when the match fills';
+      teamInfoMessage =
+          'Your spot is secured. Teams and kits are assigned as soon as ${game.capacity}/${game.capacity} players confirm.';
+    } else {
+      teamLabel = 'Assigned 3 hours before kickoff';
+      teamInfoMessage =
+          'Your spot is secured. Teams and kits are finalized 3 hours before kickoff once ${game.capacity}/${game.capacity} players confirm.';
+    }
     return Scaffold(
       extendBody: true,
       backgroundColor: fieldBackground,
@@ -452,15 +476,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                       game.venue,
                     ),
                     const Divider(height: 1, color: fieldGray100),
-                    _bookingRow(
-                      Icons.shield_outlined,
-                      'TEAM',
-                      assignedTeam == null
-                          ? isConfirmed
-                                ? 'Assignment updating'
-                                : 'Assigned when the match fills'
-                          : '$assignedTeam TEAM',
-                    ),
+                    _bookingRow(Icons.shield_outlined, 'TEAM', teamLabel),
                     if (hasTeamAssignment && game.matchAverageSr != null) ...[
                       const Divider(height: 1, color: fieldGray100),
                       _bookingRow(
@@ -491,11 +507,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        assignedTeam == null
-                            ? isConfirmed
-                                  ? 'Your match is confirmed. Pull to refresh while your kit assignment finishes updating.'
-                                  : 'Your spot is secured. Teams are assigned automatically when ${game.capacity}/${game.capacity} players confirm.'
-                            : 'Teams assigned. The two team averages are only ${game.teamSrSpread ?? 0} SR apart.',
+                        teamInfoMessage,
                         style: const TextStyle(
                           color: fieldGray600,
                           fontSize: 12,

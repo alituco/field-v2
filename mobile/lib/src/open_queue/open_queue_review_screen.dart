@@ -152,7 +152,7 @@ class OpenQueueReviewScreen extends StatelessWidget {
                   SizedBox(width: 11),
                   Expanded(
                     child: Text(
-                      "You'll be assigned to White or Black when the match fills, to keep both teams balanced.",
+                      'White/Black teams and kits are finalized 3 hours before kickoff once the match is full.',
                       style: TextStyle(
                         color: fieldGray600,
                         fontSize: 13,

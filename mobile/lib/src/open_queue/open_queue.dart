@@ -96,8 +96,19 @@ class OpenQueueGame {
     return status == 'FULL' && confirmedCount >= capacity && !hasRecordedScore;
   }
 
+  static const teamAssignmentLeadTime = Duration(hours: 3);
+
+  DateTime get teamAssignmentAt => startsAt.subtract(teamAssignmentLeadTime);
+
+  bool get isTeamAssignmentDue => isTeamAssignmentDueAt(DateTime.now());
+
+  bool isTeamAssignmentDueAt(DateTime now) {
+    return !now.isBefore(teamAssignmentAt);
+  }
+
   bool get hasActiveTeamAssignment {
     return isUpcomingMatchConfirmed &&
+        isTeamAssignmentDue &&
         teamsAssignedAt != null &&
         whiteAverageSr != null &&
         blackAverageSr != null &&

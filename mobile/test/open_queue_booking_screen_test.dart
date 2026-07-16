@@ -241,6 +241,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('confirmed booking explains the three-hour kit reveal', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: _FakeOpenQueueRepository(),
+          booking: _booking(fullBeforeCutoff: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('MATCH CONFIRMED'), findsOneWidget);
+    expect(find.text('Assigned 3 hours before kickoff'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('kit-assignment-scheduled')),
+      findsOneWidget,
+    );
+    expect(find.text('ASSIGNED 3 HOURS BEFORE KICKOFF'), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Teams and kits are finalized 3 hours before kickoff',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('WEAR WHITE'), findsNothing);
+    expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
+    expect(find.byKey(const ValueKey('kit-assignment-updating')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('pending booking hides stale team and rating snapshots', (
     tester,
   ) async {
@@ -377,7 +414,7 @@ void main() {
     expect(find.textContaining('up to 4 confirmed players'), findsOneWidget);
     expect(find.textContaining('assigned to the same team'), findsOneWidget);
     expect(
-      find.text('Full teams can still rebalance until kickoff.'),
+      find.text('Parties and teams lock 3 hours before kickoff.'),
       findsOneWidget,
     );
 
@@ -389,6 +426,41 @@ void main() {
     expect(repository.createCalls, 1);
     expect(find.text('YOUR PARTY'), findsOneWidget);
     expect(find.text('1/4'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('party creation closes three hours before kickoff', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(
+      _emptyPartyContext(canUseParties: false),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('open-queue-party-locked')),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'Parties close 3 hours before kickoff so teams and kits can be finalized.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('create-open-queue-party')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -675,6 +747,10 @@ void main() {
     expect(lockNotice, findsOneWidget);
     expect(find.text('Party changes closed'), findsOneWidget);
     expect(find.text('Party locked for this match'), findsOneWidget);
+    expect(
+      find.textContaining('Party changes close 3 hours before kickoff.'),
+      findsOneWidget,
+    );
 
     final invite = tester.widget<FilledButton>(
       find.byKey(const ValueKey('invite-open-queue-party-player')),
@@ -711,13 +787,17 @@ Future<void> _bringAboveFloatingNav(WidgetTester tester, Finder target) async {
 OpenQueueBooking _booking({
   bool assigned = false,
   bool staleAssignment = false,
+  bool fullBeforeCutoff = false,
   String assignedTeam = openQueueWhiteTeamId,
 }) {
   final hasAssignmentMetadata = assigned || staleAssignment;
-  final startsAt = DateTime.now().add(const Duration(days: 2));
+  final isFull = assigned || fullBeforeCutoff;
+  final startsAt = DateTime.now().add(
+    assigned ? const Duration(hours: 2) : const Duration(days: 2),
+  );
   final game = OpenQueueGame(
     id: 'game-1',
-    status: assigned ? 'FULL' : 'OPEN',
+    status: isFull ? 'FULL' : 'OPEN',
     venue: 'TFA, Saar',
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),
@@ -725,7 +805,7 @@ OpenQueueBooking _booking({
     priceFils: 3000,
     ageLabel: 'Ages 16-20',
     capacity: 12,
-    confirmedCount: assigned ? 12 : 10,
+    confirmedCount: isFull ? 12 : 10,
     spots: const {
       OpenQueueRole.goalkeeper: 1,
       OpenQueueRole.defender: 1,
@@ -879,14 +959,14 @@ class _PartyOpenQueueRepository extends _FakeOpenQueueRepository
   }
 }
 
-OpenQueuePartyContext _emptyPartyContext() {
-  return const OpenQueuePartyContext(
+OpenQueuePartyContext _emptyPartyContext({bool canUseParties = true}) {
+  return OpenQueuePartyContext(
     gameId: 'game-1',
     gameStatus: 'OPEN',
-    canUseParties: true,
+    canUseParties: canUseParties,
     maxPartySize: 4,
-    receivedInvites: [],
-    eligiblePlayers: [
+    receivedInvites: const [],
+    eligiblePlayers: const [
       OpenQueuePartyPlayer(
         profileId: 'player-layla',
         displayName: 'Layla Abbas',

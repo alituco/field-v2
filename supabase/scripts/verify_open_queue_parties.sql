@@ -24,6 +24,7 @@ declare
   player_one_booking_id uuid;
   impossible_owner_booking_id uuid;
   payload jsonb;
+  party_function_signature text;
   slot integer;
   rejection_seen boolean := false;
   max_size_rejection_seen boolean := false;
@@ -267,8 +268,9 @@ begin
     raise exception 'Valid partial-roster parties failed placeholder validation.';
   end if;
 
-  -- Complete the exact 2 GK / 4 DEF / 4 MID / 2 ATT roster. The final booking
-  -- invokes the normal automatic assignment trigger.
+  -- Complete the exact 2 GK / 4 DEF / 4 MID / 2 ATT roster. This verification
+  -- game is deliberately far in the future, so the final booking makes it FULL
+  -- without revealing teams before the three-hour cutoff.
   for slot in 9..12 loop
     insert into public.open_queue_bookings (
       game_id,
@@ -296,42 +298,27 @@ begin
   if not exists (
     select 1 from public.open_queue_games game
     where game.id = game_id_to_verify and game.status = 'FULL'
-      and game.teams_assigned_at is not null
+      and game.teams_assigned_at is null
   ) then
-    raise exception 'Full party game was not assigned automatically.';
+    raise exception 'A future full party game revealed teams before the cutoff.';
+  end if;
+  if not public.open_queue_party_assignment_is_possible(game_id_to_verify) then
+    raise exception 'Accepted parties no longer fit the exact team roles.';
   end if;
   if exists (
     select 1
-    from public.open_queue_parties party
-    join public.open_queue_party_members member on member.party_id = party.id
-    join public.open_queue_bookings booking
-      on booking.game_id = member.game_id
-      and booking.profile_id = member.profile_id
-      and booking.status = 'CONFIRMED'
-    where party.id in (party_a_id, party_b_id)
-      and member.status = 'ACCEPTED'
-    group by party.id
-    having count(distinct booking.team) <> 1
-  ) then
-    raise exception 'An accepted party was split by automatic team assignment.';
-  end if;
-  if exists (
-    select booking.team, booking.role
     from public.open_queue_bookings booking
     where booking.game_id = game_id_to_verify and booking.status = 'CONFIRMED'
-    group by booking.team, booking.role
-    having count(*) <> case booking.role
-      when 'GK' then 1
-      when 'DEF' then 2
-      when 'MID' then 2
-      when 'ATT' then 1
-    end
+      and (
+        booking.team is not null
+        or booking.rating_at_team_assignment is not null
+      )
   ) then
-    raise exception 'Party-aware assignment violated exact per-team roles.';
+    raise exception 'A player received a team or SR snapshot before cutoff.';
   end if;
 
-  -- A compatible party accepted after FULL must invalidate and rerun the
-  -- existing assignment, while retaining exact roles and keeping the pair.
+  -- Compatible party changes remain available after FULL until T-3h. They are
+  -- captured now and honored later when the finalizer assigns teams.
   perform set_config('request.jwt.claim.sub', player_ids[9]::text, true);
   post_full_party_id := public.create_open_queue_party(game_id_to_verify);
   invitation_a_id := public.invite_open_queue_party_member(
@@ -340,14 +327,18 @@ begin
   perform set_config('request.jwt.claim.sub', player_ids[11]::text, true);
   perform public.respond_open_queue_party_invitation(invitation_a_id, true);
 
-  if (
-    select count(distinct booking.team)
-    from public.open_queue_bookings booking
-    where booking.game_id = game_id_to_verify
-      and booking.profile_id in (player_ids[9], player_ids[11])
-      and booking.status = 'CONFIRMED'
-  ) <> 1 then
-    raise exception 'A compatible party accepted after FULL was split.';
+  if not exists (
+    select 1
+    from public.open_queue_party_members first_member
+    join public.open_queue_party_members second_member
+      on second_member.party_id = first_member.party_id
+    where first_member.party_id = post_full_party_id
+      and first_member.profile_id = player_ids[9]
+      and first_member.status = 'ACCEPTED'
+      and second_member.profile_id = player_ids[11]
+      and second_member.status = 'ACCEPTED'
+  ) then
+    raise exception 'A compatible party could not be accepted after FULL.';
   end if;
 
   perform set_config('request.jwt.claim.sub', player_ids[1]::text, true);
@@ -562,6 +553,43 @@ begin
       and tablename = 'notifications'
   ) then
     raise exception 'Notifications were not added to the Realtime publication.';
+  end if;
+
+  foreach party_function_signature in array array[
+    'public.create_open_queue_party(uuid)',
+    'public.invite_open_queue_party_member(uuid,uuid)',
+    'public.respond_open_queue_party_invitation(uuid,boolean)',
+    'public.cancel_open_queue_party_invitation(uuid)',
+    'public.leave_open_queue_party(uuid)',
+    'public.disband_open_queue_party(uuid)',
+    'public.get_open_queue_party_context(uuid)',
+    'public.list_my_open_queue_party_invite_notifications()'
+  ] loop
+    if position(
+      'interval ''3 hours'''
+      in pg_get_functiondef(to_regprocedure(party_function_signature))
+    ) = 0 then
+      raise exception 'Three-hour cutoff is missing from %.',
+        party_function_signature;
+    end if;
+  end loop;
+
+  if position(
+    'interval ''3 hours'''
+    in pg_get_functiondef(
+      'public.assign_open_queue_teams(uuid)'::regprocedure
+    )
+  ) = 0 then
+    raise exception 'Three-hour team assignment gate is missing.';
+  end if;
+
+  if not exists (
+    select 1
+    from cron.job
+    where jobname =
+      'finalize-open-queue-teams-three-hours-before-kickoff'
+  ) then
+    raise exception 'The three-hour team finalizer cron job is missing.';
   end if;
 end;
 $$;

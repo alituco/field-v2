@@ -110,9 +110,11 @@ deno run --allow-env --allow-net --env-file=.env supabase/scripts/verify_open_qu
 ```
 
 Player SR uses the same `PLAYER_ELO_V1` calculation for confirmed clan and solo
-appearances. Open Queue teams are frozen as soon as all 12 position-specific
-spots fill. If a player cancels and the game reopens, those team snapshots are
-cleared and the next fill is balanced again using current Player SR.
+appearances. Open Queue parties close and White/Black teams are frozen three
+hours before kickoff, provided all 12 position-specific spots are full. A game
+that fills after that cutoff is assigned immediately. If a player cancels and
+the game reopens, those team snapshots are cleared and the next fill is balanced
+again using current Player SR.
 
 Seeded fake users:
 

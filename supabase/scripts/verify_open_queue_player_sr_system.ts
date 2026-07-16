@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 type GameRow = {
   id: string;
   status: string;
+  starts_at: string;
   white_average_sr: number | string | null;
   black_average_sr: number | string | null;
   match_average_sr: number | string | null;
@@ -87,6 +88,11 @@ async function verifySystem() {
   });
   if (signInError) throw signInError;
 
+  const { error: finalizerError } = await admin.rpc(
+    "finalize_due_open_queue_teams",
+  );
+  if (finalizerError) throw finalizerError;
+
   const [
     gamesResult,
     bookingsResult,
@@ -96,7 +102,7 @@ async function verifySystem() {
   ] = await Promise
     .all([
       admin.from("open_queue_games").select(
-        "id,status,white_average_sr,black_average_sr,match_average_sr,team_sr_spread,teams_assigned_at,white_score,black_score",
+        "id,status,starts_at,white_average_sr,black_average_sr,match_average_sr,team_sr_spread,teams_assigned_at,white_score,black_score",
       ).in("status", ["FULL", "LIVE", "FINAL"]).order("starts_at"),
       admin.from("open_queue_bookings").select(
         "id,game_id,profile_id,role,status,team,played,rating_at_team_assignment,rating_at_match_start,rating_change",
@@ -130,11 +136,28 @@ async function verifySystem() {
   const events = (eventsResult.data ?? []) as RatingEventRow[];
   assert(games.length > 0, "No assigned Open Queue games were found.");
 
-  const fullGames = games.filter((game) => game.status === "FULL");
-  assert(
-    fullGames.length > 0,
-    "At least one FULL Open Queue game is required to verify exact balancing.",
+  const fullGames = games.filter((game) =>
+    game.status === "FULL" && game.teams_assigned_at !== null
   );
+  const awaitingCutoffGames = games.filter((game) =>
+    game.status === "FULL" && game.teams_assigned_at === null
+  );
+
+  for (const game of awaitingCutoffGames) {
+    assert(
+      Date.parse(game.starts_at) - 3 * 60 * 60 * 1000 > Date.now(),
+      `${game.id} is inside its three-hour cutoff without assigned teams.`,
+    );
+    const gameBookings = bookings.filter((booking) =>
+      booking.game_id === game.id
+    );
+    assert(
+      gameBookings.every((booking) =>
+        booking.team === null && booking.rating_at_team_assignment === null
+      ),
+      `${game.id} leaked a team or assignment SR before its cutoff.`,
+    );
+  }
 
   for (const game of fullGames) {
     const gameBookings = bookings.filter((booking) =>
@@ -144,35 +167,37 @@ async function verifySystem() {
   }
 
   const immutableGame = fullGames[0];
-  const before = snapshotAssignment(
-    immutableGame,
-    bookings.filter((booking) => booking.game_id === immutableGame.id),
-  );
-  const { error: repeatError } = await admin.rpc("assign_open_queue_teams", {
-    game_id_to_assign: immutableGame.id,
-  });
-  if (repeatError) throw repeatError;
-  const [{ data: repeatedGame, error: repeatedGameError }, {
-    data: repeatedBookings,
-    error: repeatedBookingsError,
-  }] = await Promise.all([
-    admin.from("open_queue_games").select(
-      "id,status,white_average_sr,black_average_sr,match_average_sr,team_sr_spread,teams_assigned_at,white_score,black_score",
-    ).eq("id", immutableGame.id).single(),
-    admin.from("open_queue_bookings").select(
-      "id,game_id,profile_id,role,status,team,played,rating_at_team_assignment,rating_at_match_start,rating_change",
-    ).eq("game_id", immutableGame.id).eq("status", "CONFIRMED"),
-  ]);
-  if (repeatedGameError) throw repeatedGameError;
-  if (repeatedBookingsError) throw repeatedBookingsError;
-  const after = snapshotAssignment(
-    repeatedGame as GameRow,
-    (repeatedBookings ?? []) as BookingRow[],
-  );
-  assert(
-    before === after,
-    "Re-running assignment changed a frozen team snapshot.",
-  );
+  if (immutableGame) {
+    const before = snapshotAssignment(
+      immutableGame,
+      bookings.filter((booking) => booking.game_id === immutableGame.id),
+    );
+    const { error: repeatError } = await admin.rpc("assign_open_queue_teams", {
+      game_id_to_assign: immutableGame.id,
+    });
+    if (repeatError) throw repeatError;
+    const [{ data: repeatedGame, error: repeatedGameError }, {
+      data: repeatedBookings,
+      error: repeatedBookingsError,
+    }] = await Promise.all([
+      admin.from("open_queue_games").select(
+        "id,status,starts_at,white_average_sr,black_average_sr,match_average_sr,team_sr_spread,teams_assigned_at,white_score,black_score",
+      ).eq("id", immutableGame.id).single(),
+      admin.from("open_queue_bookings").select(
+        "id,game_id,profile_id,role,status,team,played,rating_at_team_assignment,rating_at_match_start,rating_change",
+      ).eq("game_id", immutableGame.id).eq("status", "CONFIRMED"),
+    ]);
+    if (repeatedGameError) throw repeatedGameError;
+    if (repeatedBookingsError) throw repeatedBookingsError;
+    const after = snapshotAssignment(
+      repeatedGame as GameRow,
+      (repeatedBookings ?? []) as BookingRow[],
+    );
+    assert(
+      before === after,
+      "Re-running assignment changed a frozen team snapshot.",
+    );
+  }
 
   verifyLedger(events, ratingsResult.data ?? []);
   verifyFinalSoloRatings(games, bookings, events);

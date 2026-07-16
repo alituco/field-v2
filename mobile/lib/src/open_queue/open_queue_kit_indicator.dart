@@ -20,6 +20,9 @@ class OpenQueueKitIndicator extends StatelessWidget {
     if (!booking.game.isUpcomingMatchConfirmed) {
       return const SizedBox.shrink();
     }
+    if (!booking.game.isTeamAssignmentDue) {
+      return _ScheduledOpenQueueKitIndicator(compact: compact, inline: inline);
+    }
 
     final team = booking.assignedTeam;
     final instruction = booking.kitInstruction;
@@ -120,8 +123,7 @@ class OpenQueueKitIndicator extends StatelessWidget {
                   color: isBlack ? Colors.white : fieldGray900,
                   borderRadius: BorderRadius.circular(compact ? 10 : 12),
                 ),
-                child: Icon(
-                  Icons.checkroom_rounded,
+                child: OpenQueueJerseyIcon(
                   color: isBlack ? fieldGray900 : Colors.white,
                   size: compact ? 20 : 24,
                 ),
@@ -132,7 +134,7 @@ class OpenQueueKitIndicator extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'YOUR MATCH KIT',
+                      'YOUR KIT',
                       style: TextStyle(
                         color: foreground.withValues(alpha: 0.68),
                         fontSize: compact ? 8 : 9,
@@ -155,13 +157,89 @@ class OpenQueueKitIndicator extends StatelessWidget {
                   ],
                 ),
               ),
-              Icon(
-                Icons.check_circle_rounded,
-                color: foreground.withValues(alpha: 0.76),
-                size: compact ? 18 : 21,
-              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ScheduledOpenQueueKitIndicator extends StatelessWidget {
+  const _ScheduledOpenQueueKitIndicator({
+    required this.compact,
+    required this.inline,
+  });
+
+  final bool compact;
+  final bool inline;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      label: 'Match kit assigned three hours before kickoff',
+      child: Container(
+        key: const ValueKey('kit-assignment-scheduled'),
+        width: double.infinity,
+        constraints: inline ? const BoxConstraints(minHeight: 40) : null,
+        padding: inline
+            ? EdgeInsets.zero
+            : EdgeInsets.symmetric(
+                horizontal: compact ? 11 : 14,
+                vertical: compact ? 9 : 12,
+              ),
+        decoration: inline
+            ? null
+            : BoxDecoration(
+                color: const Color(0xFFF9FAFB),
+                border: Border.all(color: fieldGray200, width: 1.4),
+                borderRadius: BorderRadius.circular(compact ? 13 : 16),
+              ),
+        child: Row(
+          children: [
+            Container(
+              width: compact || inline ? 32 : 39,
+              height: compact || inline ? 32 : 39,
+              decoration: BoxDecoration(
+                color: fieldGray100,
+                borderRadius: BorderRadius.circular(compact ? 10 : 12),
+              ),
+              child: OpenQueueJerseyIcon(
+                color: fieldGray500,
+                size: compact || inline ? 20 : 24,
+              ),
+            ),
+            SizedBox(width: compact || inline ? 9 : 11),
+            const Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'YOUR KIT',
+                    style: TextStyle(
+                      color: fieldGray500,
+                      fontSize: 8,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    'ASSIGNED 3 HOURS BEFORE KICKOFF',
+                    maxLines: 2,
+                    style: TextStyle(
+                      color: fieldGray700,
+                      fontSize: 11,
+                      height: 1.1,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -243,8 +321,7 @@ class _InlineOpenQueueKitIndicator extends StatelessWidget {
                   ),
                   borderRadius: BorderRadius.circular(11),
                 ),
-                child: Icon(
-                  Icons.checkroom_rounded,
+                child: OpenQueueJerseyIcon(
                   color: isBlack ? Colors.white : fieldGray900,
                   size: 21,
                 ),
@@ -284,5 +361,63 @@ class _InlineOpenQueueKitIndicator extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class OpenQueueJerseyIcon extends StatelessWidget {
+  const OpenQueueJerseyIcon({super.key, required this.color, this.size = 24});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: SizedBox.square(
+        dimension: size,
+        child: CustomPaint(painter: _OpenQueueJerseyPainter(color)),
+      ),
+    );
+  }
+}
+
+class _OpenQueueJerseyPainter extends CustomPainter {
+  const _OpenQueueJerseyPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = size.shortestSide * .085
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final path = Path()
+      ..moveTo(size.width * .34, size.height * .14)
+      ..quadraticBezierTo(
+        size.width * .50,
+        size.height * .28,
+        size.width * .66,
+        size.height * .14,
+      )
+      ..lineTo(size.width * .82, size.height * .22)
+      ..lineTo(size.width * .94, size.height * .43)
+      ..lineTo(size.width * .78, size.height * .53)
+      ..lineTo(size.width * .69, size.height * .42)
+      ..lineTo(size.width * .69, size.height * .88)
+      ..lineTo(size.width * .31, size.height * .88)
+      ..lineTo(size.width * .31, size.height * .42)
+      ..lineTo(size.width * .22, size.height * .53)
+      ..lineTo(size.width * .06, size.height * .43)
+      ..lineTo(size.width * .18, size.height * .22)
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _OpenQueueJerseyPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }

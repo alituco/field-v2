@@ -31,8 +31,8 @@ Open `http://localhost:3001` on the referee phone or simulator browser.
 - Admin referees can create referee profiles and assign referees to clan or
   Open Queue games.
 - Assigned referees see only their own upcoming games.
-- A full Open Queue game appears as White Team vs Black Team using its confirmed
-  bookings and automatically assigned teams.
+- Three hours before kickoff, a full Open Queue game appears as White Team vs
+  Black Team using its confirmed bookings and automatically balanced teams.
 - Start the match timer.
 - Record goals with scorer and optional assist.
 - Record blue cards. Active cards count down from 2 minutes and alert when the player can return.

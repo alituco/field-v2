@@ -23,23 +23,35 @@ void main() {
       daysFromToday: 0,
       confirmedCount: 8,
       staleAssignment: true,
+      venue: '[SCHEDULE SEED] Solo Future 5',
     );
 
     await _pumpDashboard(tester, game, team: openQueueWhiteTeamId);
 
-    expect(find.text('MATCH PENDING'), findsOneWidget);
-    expect(find.text('8 / 12 PLAYERS'), findsOneWidget);
-    expect(find.text('MATCH CONFIRMED'), findsNothing);
-    expect(find.text('Midfielder · 8:30 PM'), findsOneWidget);
-    expect(find.textContaining('TODAY ·'), findsOneWidget);
+    expect(find.text('WAITING FOR 4 PLAYERS'), findsOneWidget);
+    expect(find.text('8/12'), findsOneWidget);
+    expect(find.text('MATCH IS ON'), findsNothing);
+    expect(find.text('Your booking is reserved'), findsOneWidget);
+    expect(find.text('YOUR SPOT IS RESERVED'), findsNothing);
+    expect(find.text('MIDFIELDER'), findsOneWidget);
+    expect(find.text('TODAY · 8:30 PM'), findsOneWidget);
     expect(find.text('TFA, Saar'), findsOneWidget);
+    expect(find.textContaining('SCHEDULE SEED'), findsNothing);
+    expect(find.textContaining('Solo Future'), findsNothing);
+    expect(find.textContaining('AVG RATING'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('pending-kit-info-panel')),
+      findsOneWidget,
+    );
+    expect(find.text('KIT'), findsOneWidget);
+    expect(find.text('Assigned 3 hours before kickoff'), findsOneWidget);
     expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
     expect(find.byKey(const ValueKey('kit-assignment-updating')), findsNothing);
     expect(find.textContaining('WHITE ·'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('full home booking card shows confirmed count and TOMORROW', (
+  testWidgets('full home booking schedules its kit reveal before the cutoff', (
     tester,
   ) async {
     await _setPhoneSize(tester);
@@ -47,30 +59,71 @@ void main() {
 
     await _pumpDashboard(tester, game, team: openQueueBlackTeamId);
 
-    expect(find.text('MATCH CONFIRMED'), findsOneWidget);
-    expect(find.text('12 / 12 PLAYERS'), findsOneWidget);
-    expect(find.text('MATCH PENDING'), findsNothing);
+    expect(find.text('MATCH IS ON'), findsOneWidget);
+    expect(find.text('12/12'), findsOneWidget);
+    expect(find.textContaining('WAITING FOR'), findsNothing);
     expect(find.textContaining('TOMORROW ·'), findsOneWidget);
-    expect(find.text('WEAR BLACK'), findsOneWidget);
-    expect(find.byKey(const ValueKey('kit-instruction')), findsOneWidget);
+    expect(find.text('Assigned 3 hours before kickoff'), findsOneWidget);
+    expect(find.text('WEAR BLACK'), findsNothing);
+    expect(find.textContaining('AVG RATING'), findsNothing);
+    expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
     final card = tester.getRect(
       find.byKey(const ValueKey('home-solo-booking-booking')),
     );
-    final action = tester.getRect(find.text('View booking  ›'));
+    final action = tester.getRect(find.text('Match details  ›'));
     expect(card.bottom - action.bottom, lessThanOrEqualTo(34));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('due confirmed home booking reveals its assigned kit', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final game = _game(
+      daysFromToday: 0,
+      confirmedCount: 12,
+      startsIn: const Duration(hours: 2),
+    );
+
+    await _pumpDashboard(tester, game, team: openQueueBlackTeamId);
+
+    expect(find.text('MATCH IS ON'), findsOneWidget);
+    expect(find.text('WEAR BLACK'), findsOneWidget);
+    expect(find.text('AVG RATING 1200'), findsOneWidget);
+    expect(find.byKey(const ValueKey('kit-instruction')), findsOneWidget);
+    expect(find.text('Assigned 3 hours before kickoff'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'an active booking never presents an impossible zero-player count',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final game = _game(daysFromToday: 2, confirmedCount: 0);
+
+      await _pumpDashboard(tester, game);
+
+      expect(find.text('WAITING FOR 11 PLAYERS'), findsOneWidget);
+      expect(find.text('1/12'), findsOneWidget);
+      expect(find.text('Your booking is reserved'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('confirmed home booking never guesses a missing kit color', (
     tester,
   ) async {
     await _setPhoneSize(tester);
-    final game = _game(daysFromToday: 2, confirmedCount: 12);
+    final game = _game(
+      daysFromToday: 0,
+      confirmedCount: 12,
+      startsIn: const Duration(hours: 2),
+    );
 
     await _pumpDashboard(tester, game);
 
-    expect(find.text('MATCH CONFIRMED'), findsOneWidget);
-    expect(find.text('UPDATING'), findsOneWidget);
+    expect(find.text('MATCH IS ON'), findsOneWidget);
+    expect(find.text('KIT ASSIGNMENT UPDATING'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('kit-assignment-updating')),
       findsOneWidget,
@@ -93,10 +146,11 @@ void main() {
       find.byKey(const ValueKey('home-solo-carousel-page-1')),
       findsOneWidget,
     );
-    expect(find.text('MATCH PENDING').hitTestable(), findsOneWidget);
+    expect(find.text('WAITING FOR 4 PLAYERS').hitTestable(), findsOneWidget);
     final initialCarouselSize = tester.getSize(
       find.byKey(const ValueKey('home-solo-bookings-carousel')),
     );
+    expect(initialCarouselSize.height, 272);
     final initialMatchdayTop = tester.getTopLeft(find.text('MATCHDAY')).dy;
 
     await tester.drag(
@@ -131,7 +185,7 @@ void main() {
       find.byKey(const ValueKey('home-solo-carousel-page-1')),
       findsOneWidget,
     );
-    expect(find.text('MATCH PENDING').hitTestable(), findsOneWidget);
+    expect(find.text('WAITING FOR 4 PLAYERS').hitTestable(), findsOneWidget);
 
     await tester.drag(
       find.byKey(const ValueKey('home-solo-bookings-carousel')),
@@ -254,7 +308,7 @@ void main() {
       expect(find.text('REVIEW'), findsOneWidget);
       expect(
         tester.getTopLeft(alert).dy,
-        lessThan(tester.getTopLeft(find.text('MATCH PENDING')).dy),
+        lessThan(tester.getTopLeft(find.text('WAITING FOR 4 PLAYERS')).dy),
       );
 
       await tester.tap(alert);
@@ -477,7 +531,7 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
 
-    expect(find.text('MATCH PENDING'), findsOneWidget);
+    expect(find.text('WAITING FOR 4 PLAYERS'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('home-activity-solo-booked-game')),
       findsNothing,
@@ -993,6 +1047,8 @@ OpenQueueGame _game({
   required int daysFromToday,
   required int confirmedCount,
   bool staleAssignment = false,
+  String venue = 'TFA, Saar',
+  Duration? startsIn,
 }) {
   final nowInBahrain = DateTime.now().toUtc().add(const Duration(hours: 3));
   final bahrainStart = DateTime.utc(
@@ -1002,12 +1058,14 @@ OpenQueueGame _game({
     20,
     30,
   );
-  final startsAt = bahrainStart.subtract(const Duration(hours: 3));
+  final startsAt = startsIn == null
+      ? bahrainStart.subtract(const Duration(hours: 3))
+      : DateTime.now().add(startsIn);
   final hasAssignmentMetadata = confirmedCount == 12 || staleAssignment;
   return OpenQueueGame(
     id: 'game-$daysFromToday-$confirmedCount',
     status: confirmedCount == 12 ? 'FULL' : 'OPEN',
-    venue: 'TFA, Saar',
+    venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),
     timezone: 'Asia/Bahrain',

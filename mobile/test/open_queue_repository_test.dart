@@ -108,6 +108,30 @@ void main() {
       true,
     );
   });
+
+  test('team assignment becomes due exactly three hours before kickoff', () {
+    final kickoff = DateTime.utc(2026, 7, 21, 17, 30);
+    final game = _game(
+      id: 'team-cutoff',
+      startsAt: kickoff,
+      status: 'FULL',
+      confirmedCount: 12,
+    );
+    final cutoff = kickoff.subtract(const Duration(hours: 3));
+
+    expect(
+      game.isTeamAssignmentDueAt(
+        cutoff.subtract(const Duration(milliseconds: 1)),
+      ),
+      false,
+    );
+    expect(game.teamAssignmentAt, cutoff);
+    expect(game.isTeamAssignmentDueAt(cutoff), true);
+    expect(
+      game.isTeamAssignmentDueAt(cutoff.add(const Duration(minutes: 1))),
+      true,
+    );
+  });
 }
 
 OpenQueueGame _game({
