@@ -4,6 +4,7 @@ import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
 import 'open_queue.dart';
+import 'open_queue_booking_screen.dart';
 import 'open_queue_games_screen.dart';
 import 'open_queue_repository.dart';
 
@@ -36,6 +37,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   OpenQueueRole? _mainRole;
   late Set<OpenQueueRole> _backupRoles;
   List<OpenQueueGame> _games = const [];
+  List<OpenQueueBooking> _upcomingBookings = const [];
   bool _loading = true;
   String? _error;
 
@@ -53,9 +55,15 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       _error = null;
     });
     try {
-      final games = await widget.repository.listGames();
+      final results = await Future.wait<dynamic>([
+        widget.repository.listGames(),
+        widget.repository.getMyUpcomingBookings(),
+      ]);
       if (!mounted) return;
-      setState(() => _games = games);
+      setState(() {
+        _games = results[0] as List<OpenQueueGame>;
+        _upcomingBookings = results[1] as List<OpenQueueBooking>;
+      });
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -107,18 +115,41 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   }
 
   int _gameCount(OpenQueueRole role) {
-    return _games.where((game) => game.canBook(role)).length;
+    final bookedGameIds = _upcomingBookings
+        .map((booking) => booking.gameId)
+        .toSet();
+    return _games
+        .where(
+          (game) =>
+              !game.hasMyBooking &&
+              !bookedGameIds.contains(game.id) &&
+              game.canBook(role),
+        )
+        .length;
   }
 
   Future<void> _continue() async {
     final role = _mainRole;
-    if (role == null) return;
+    if (role == null || _upcomingBookings.length >= 2) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => OpenQueueGamesScreen(
           repository: widget.repository,
           mainRole: role,
           backupRoles: _backupRoles,
+          onNavigateTab: widget.onNavigateTab,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _openBooking(OpenQueueBooking booking) async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => OpenQueueBookingScreen(
+          repository: widget.repository,
+          booking: booking,
           onNavigateTab: widget.onNavigateTab,
         ),
       ),
@@ -133,6 +164,9 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_loading && _upcomingBookings.length >= 2) {
+      return _buildBookingLimitScreen();
+    }
     return Scaffold(
       extendBody: true,
       backgroundColor: fieldBackground,
@@ -149,6 +183,10 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
               bottom: _mainRole == null ? 116 : 218,
             ),
             children: [
+              if (_upcomingBookings case [final booking]) ...[
+                _QueueBookingAllowanceCard(onTap: () => _openBooking(booking)),
+                const SizedBox(height: 18),
+              ],
               const Text(
                 'WHERE DO YOU PLAY?',
                 style: TextStyle(
@@ -329,6 +367,246 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
             ),
           FieldBottomNav(selectedIndex: null, onSelected: _navigateTab),
         ],
+      ),
+    );
+  }
+
+  Widget _buildBookingLimitScreen() {
+    return Scaffold(
+      extendBody: true,
+      backgroundColor: fieldBackground,
+      body: FieldHeaderOverlay(
+        header: const FieldPageHeader(title: 'Open Queue', showBack: true),
+        child: RefreshIndicator(
+          color: fieldEmerald600,
+          onRefresh: _load,
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: fieldHeaderAwarePadding(context, top: 22, bottom: 116),
+            children: [
+              _QueueBookingLimitCard(
+                bookings: _upcomingBookings.take(2).toList(growable: false),
+                onBooking: _openBooking,
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: FieldBottomNav(
+        selectedIndex: null,
+        onSelected: _navigateTab,
+      ),
+    );
+  }
+}
+
+class _QueueBookingAllowanceCard extends StatelessWidget {
+  const _QueueBookingAllowanceCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: const ValueKey('open-queue-one-of-two-booked'),
+      color: fieldEmerald50,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+          decoration: BoxDecoration(
+            border: Border.all(color: fieldEmerald100),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.event_available_rounded, color: fieldEmerald700),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Text(
+                  '1 OF 2 GAMES BOOKED',
+                  style: TextStyle(
+                    color: fieldEmerald700,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .7,
+                  ),
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: fieldEmerald700),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _QueueBookingLimitCard extends StatelessWidget {
+  const _QueueBookingLimitCard({
+    required this.bookings,
+    required this.onBooking,
+  });
+
+  final List<OpenQueueBooking> bookings;
+  final ValueChanged<OpenQueueBooking> onBooking;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('open-queue-two-game-limit'),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(25),
+        border: Border.all(color: fieldGray100),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x10111827),
+            blurRadius: 20,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: fieldEmerald50,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.event_available_rounded,
+                  color: fieldEmerald700,
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '2 / 2 SOLO GAME LIMIT',
+                      style: TextStyle(
+                        color: fieldEmerald700,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: .8,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'You’re already booked for two games',
+                      style: TextStyle(
+                        color: fieldGray900,
+                        fontSize: 19,
+                        height: 1.1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 17),
+          for (var index = 0; index < bookings.length; index++) ...[
+            _QueueBookedGameRow(
+              booking: bookings[index],
+              onTap: () => onBooking(bookings[index]),
+            ),
+            if (index != bookings.length - 1) const SizedBox(height: 9),
+          ],
+          const SizedBox(height: 15),
+          const Text(
+            'To join a different solo game, cancel one of these bookings first.',
+            style: TextStyle(
+              color: fieldGray500,
+              fontSize: 12,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QueueBookedGameRow extends StatelessWidget {
+  const _QueueBookedGameRow({required this.booking, required this.onTap});
+
+  final OpenQueueBooking booking;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final game = booking.game;
+    return Material(
+      key: ValueKey('open-queue-limit-booking-${booking.id}'),
+      color: fieldBackground,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(16),
+        child: Padding(
+          padding: const EdgeInsets.all(13),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  booking.role.code,
+                  style: const TextStyle(
+                    color: fieldGray900,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${game.prominentDateLabel} · ${game.startTimeLabel}',
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${booking.role.label} · ${game.venue}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: fieldGray400),
+            ],
+          ),
+        ),
       ),
     );
   }

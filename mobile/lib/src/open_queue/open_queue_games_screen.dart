@@ -27,6 +27,7 @@ class OpenQueueGamesScreen extends StatefulWidget {
 
 class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
   List<OpenQueueGame> _games = const [];
+  List<OpenQueueBooking> _upcomingBookings = const [];
   bool _loading = true;
   String? _error;
 
@@ -42,9 +43,18 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
       _error = null;
     });
     try {
-      final games = [...await widget.repository.listGames()]
+      final results = await Future.wait<dynamic>([
+        widget.repository.listGames(),
+        widget.repository.getMyUpcomingBookings(),
+      ]);
+      final games = [...results[0] as List<OpenQueueGame>]
         ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
-      if (mounted) setState(() => _games = games);
+      if (mounted) {
+        setState(() {
+          _games = games;
+          _upcomingBookings = results[1] as List<OpenQueueBooking>;
+        });
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -59,6 +69,16 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
   }
 
   Future<void> _openReview(OpenQueueGame game, OpenQueueRole role) async {
+    if (_upcomingBookings.length >= 2) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'You already have 2 upcoming solo games. Cancel one before booking another.',
+          ),
+        ),
+      );
+      return;
+    }
     final booked = await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => OpenQueueReviewScreen(
@@ -83,8 +103,15 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bookedGameIds = _upcomingBookings
+        .map((booking) => booking.gameId)
+        .toSet();
     final matches = _matchGames(
-      games: _games,
+      games: _games
+          .where(
+            (game) => !game.hasMyBooking && !bookedGameIds.contains(game.id),
+          )
+          .toList(growable: false),
       mainRole: widget.mainRole,
       backupRoles: widget.backupRoles,
     );
@@ -129,6 +156,12 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
                   message: _error!,
                   action: 'Try again',
                   onAction: _load,
+                )
+              else if (_upcomingBookings.length >= 2)
+                const _QueueGamesEmpty(
+                  icon: Icons.event_busy_rounded,
+                  message:
+                      'You are already booked for 2 of 2 solo games. Cancel one before choosing another match.',
                 )
               else ...[
                 if (showFastestBackup) ...[

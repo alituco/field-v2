@@ -544,5 +544,8 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   }
 
   @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => const [];
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

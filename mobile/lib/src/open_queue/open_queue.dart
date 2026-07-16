@@ -84,10 +84,12 @@ class OpenQueueGame {
 
   bool get hasRecordedScore => whiteScore != null || blackScore != null;
 
-  bool get isUpcomingReservation {
+  bool get isUpcomingReservation => isUpcomingReservationAt(DateTime.now());
+
+  bool isUpcomingReservationAt(DateTime now) {
     return (status == 'OPEN' || status == 'FULL') &&
         !hasRecordedScore &&
-        startsAt.isAfter(DateTime.now());
+        startsAt.isAfter(now);
   }
 
   bool get isUpcomingMatchConfirmed {

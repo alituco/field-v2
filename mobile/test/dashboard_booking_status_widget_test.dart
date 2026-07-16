@@ -53,6 +53,11 @@ void main() {
     expect(find.textContaining('TOMORROW ·'), findsOneWidget);
     expect(find.text('WEAR BLACK'), findsOneWidget);
     expect(find.byKey(const ValueKey('kit-instruction')), findsOneWidget);
+    final card = tester.getRect(
+      find.byKey(const ValueKey('home-solo-booking-booking')),
+    );
+    final action = tester.getRect(find.text('View booking  ›'));
+    expect(card.bottom - action.bottom, lessThanOrEqualTo(34));
     expect(tester.takeException(), isNull);
   });
 
@@ -72,6 +77,136 @@ void main() {
     );
     expect(find.text('WEAR WHITE'), findsNothing);
     expect(find.text('WEAR BLACK'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('one solo booking offers a second-game carousel page', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final game = _game(daysFromToday: 2, confirmedCount: 8);
+
+    await _pumpHome(tester, booking: _bookingFor(game));
+
+    expect(find.text('YOUR SOLO GAMES'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-solo-carousel-page-1')),
+      findsOneWidget,
+    );
+    expect(find.text('MATCH PENDING').hitTestable(), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const ValueKey('home-solo-bookings-carousel')),
+      const Offset(-320, 0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('home-solo-carousel-page-2')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-book-another-solo-game')),
+      findsOneWidget,
+    );
+    expect(find.text('REGISTER FOR A SECOND GAME'), findsOneWidget);
+    expect(find.text('FIND A GAME'), findsOneWidget);
+
+    await tester.tap(find.text('REGISTER FOR A SECOND GAME'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('OPEN QUEUE'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('no solo bookings preserves the Find Game hero', (tester) async {
+    await _setPhoneSize(tester);
+
+    await _pumpHome(tester);
+
+    expect(find.text('READY FOR A MATCH?'), findsOneWidget);
+    expect(find.text('FIND A GAME'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-solo-bookings-section')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('two solo bookings are kickoff ordered and individually open', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final today = _bahrainDateNow();
+    final earlierGame = _fixtureGame(
+      id: 'booked-earlier',
+      date: today.add(const Duration(days: 2)),
+      status: 'OPEN',
+      confirmedCount: 8,
+      myBookingId: 'booking-earlier',
+      myBookingRole: OpenQueueRole.defender,
+    );
+    final laterGame = _fixtureGame(
+      id: 'booked-later',
+      date: today.add(const Duration(days: 5)),
+      status: 'OPEN',
+      confirmedCount: 9,
+      myBookingId: 'booking-later',
+      myBookingRole: OpenQueueRole.attacker,
+    );
+    final earlierBooking = _bookingFor(earlierGame);
+    final laterBooking = _bookingFor(laterGame, role: OpenQueueRole.attacker);
+
+    await _pumpHome(
+      tester,
+      booking: laterBooking,
+      additionalBookings: [earlierBooking],
+    );
+
+    final earlierCard = find.byKey(
+      ValueKey('home-solo-booking-${earlierBooking.id}'),
+    );
+    final laterCard = find.byKey(
+      ValueKey('home-solo-booking-${laterBooking.id}'),
+    );
+    expect(find.text('YOUR SOLO GAMES'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-solo-carousel-page-1')),
+      findsOneWidget,
+    );
+    expect(earlierCard, findsOneWidget);
+    expect(earlierCard.hitTestable(), findsOneWidget);
+    expect(laterCard.hitTestable(), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-book-another-solo-game')),
+      findsNothing,
+    );
+
+    await tester.tap(earlierCard);
+    await tester.pumpAndSettle();
+    expect(find.text('BOOKING DETAILS'), findsOneWidget);
+    expect(find.text(earlierGame.prominentDateLabel), findsOneWidget);
+
+    Navigator.of(tester.element(find.text('BOOKING DETAILS'))).pop();
+    await tester.pumpAndSettle();
+
+    await tester.drag(
+      find.byKey(const ValueKey('home-solo-bookings-carousel')),
+      const Offset(-320, 0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('home-solo-carousel-page-2')),
+      findsOneWidget,
+    );
+    expect(earlierCard.hitTestable(), findsNothing);
+    expect(laterCard.hitTestable(), findsOneWidget);
+
+    await tester.tap(laterCard.hitTestable());
+    await tester.pumpAndSettle();
+    expect(find.text('BOOKING DETAILS'), findsOneWidget);
+    expect(find.text(laterGame.prominentDateLabel), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -708,6 +843,7 @@ Future<void> _pumpHome(
   VoidCallback? onOpenFixtures,
   OpenQueuePartyContext? partyContext,
   OpenQueueRepository? openQueueRepository,
+  List<OpenQueueBooking> additionalBookings = const [],
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -727,6 +863,7 @@ Future<void> _pumpHome(
                 fixtureGames: soloGames,
                 matchDetails: matchDetails,
                 partyContext: partyContext,
+                additionalBookings: additionalBookings,
               ),
           onOpenClans: () {},
           onOpenFixtures: onOpenFixtures ?? () {},
@@ -749,12 +886,15 @@ Finder _homeActivityRows() {
   });
 }
 
-OpenQueueBooking _bookingFor(OpenQueueGame game) {
+OpenQueueBooking _bookingFor(
+  OpenQueueGame game, {
+  OpenQueueRole role = OpenQueueRole.defender,
+}) {
   return OpenQueueBooking(
     id: 'booking-${game.id}',
     gameId: game.id,
     profileId: 'profile',
-    role: OpenQueueRole.defender,
+    role: role,
     status: 'CONFIRMED',
     amountPaidFils: game.priceFils,
     bookedAt: DateTime.now(),
@@ -1046,25 +1186,40 @@ class _FakeLeaderboardRepository implements LeaderboardRepository {
 }
 
 class _FakeOpenQueueRepository
-    implements OpenQueueRepository, OpenQueuePartyRepository {
+    implements
+        OpenQueueRepository,
+        OpenQueuePartyRepository,
+        OpenQueueBookingLookupRepository {
   const _FakeOpenQueueRepository(
     this.booking, {
     this.fixtureGames = const [],
     this.matchDetails = const {},
     this.partyContext,
+    this.additionalBookings = const [],
   });
 
   final OpenQueueBooking? booking;
   final List<OpenQueueGame> fixtureGames;
   final Map<String, OpenQueueMatchDetail> matchDetails;
   final OpenQueuePartyContext? partyContext;
+  final List<OpenQueueBooking> additionalBookings;
 
   @override
   Future<OpenQueueBooking?> getMyUpcomingBooking() async => booking;
 
   @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
+    final bookings = [
+      if (booking case final value?) value,
+      ...additionalBookings,
+    ]..sort((left, right) => left.game.startsAt.compareTo(right.game.startsAt));
+    return bookings;
+  }
+
+  @override
   Future<List<OpenQueueGame>> listGames() async => [
     if (booking case final value?) value.game,
+    for (final value in additionalBookings) value.game,
   ];
 
   @override
@@ -1085,6 +1240,17 @@ class _FakeOpenQueueRepository
           receivedInvites: const [],
           eligiblePlayers: const [],
         );
+  }
+
+  @override
+  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async {
+    for (final candidate in [
+      if (booking case final value?) value,
+      ...additionalBookings,
+    ]) {
+      if (candidate.gameId == gameId) return candidate;
+    }
+    return null;
   }
 
   @override

@@ -333,6 +333,9 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   Future<OpenQueueBooking?> getMyUpcomingBooking() async => null;
 
   @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => const [];
+
+  @override
   Future<OpenQueueBooking> bookGame({
     required OpenQueueGame game,
     required OpenQueueRole role,

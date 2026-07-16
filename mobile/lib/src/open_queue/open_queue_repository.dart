@@ -12,6 +12,8 @@ abstract class OpenQueueRepository {
 
   Future<OpenQueueBooking?> getMyUpcomingBooking();
 
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings();
+
   Future<OpenQueueBooking> bookGame({
     required OpenQueueGame game,
     required OpenQueueRole role,
@@ -102,9 +104,9 @@ class SupabaseOpenQueueRepository
   }
 
   @override
-  Future<OpenQueueBooking?> getMyUpcomingBooking() async {
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
     final userId = _client.auth.currentUser?.id;
-    if (userId == null) return null;
+    if (userId == null) return const [];
 
     final response = await _client
         .from('open_queue_bookings')
@@ -116,18 +118,18 @@ class SupabaseOpenQueueRepository
     final bookings = [
       for (final row in rows)
         OpenQueueBooking.fromJson(Map<String, dynamic>.from(row as Map)),
-    ]..removeWhere((booking) => !booking.game.isUpcomingReservation);
-    bookings.sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
-    if (bookings.isEmpty) return null;
+    ];
 
-    final activeGames = {for (final game in await listGames()) game.id: game};
-    for (final booking in bookings) {
-      final game = activeGames[booking.gameId];
-      if (game != null && game.isUpcomingReservation) {
-        return booking.copyWith(game: game);
-      }
-    }
-    return null;
+    return hydrateUpcomingOpenQueueBookings(
+      bookings: bookings,
+      games: await listGames(),
+    );
+  }
+
+  @override
+  Future<OpenQueueBooking?> getMyUpcomingBooking() async {
+    final bookings = await getMyUpcomingBookings();
+    return bookings.isEmpty ? null : bookings.first;
   }
 
   @override
@@ -215,4 +217,32 @@ class SupabaseOpenQueueRepository
     }
     return booking;
   }
+}
+
+List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
+  required Iterable<OpenQueueBooking> bookings,
+  required Iterable<OpenQueueGame> games,
+  DateTime? now,
+}) {
+  final cutoff = now ?? DateTime.now();
+  final activeGames = <String, OpenQueueGame>{
+    for (final game in games)
+      if (game.isUpcomingReservationAt(cutoff)) game.id: game,
+  };
+  final seenBookingIds = <String>{};
+  final hydrated = <OpenQueueBooking>[];
+  for (final booking in bookings) {
+    if (booking.status.toUpperCase() != 'CONFIRMED' ||
+        !seenBookingIds.add(booking.id)) {
+      continue;
+    }
+    final game = activeGames[booking.gameId];
+    if (game == null) continue;
+    hydrated.add(booking.copyWith(game: game));
+  }
+  hydrated.sort((left, right) {
+    final kickoff = left.game.startsAt.compareTo(right.game.startsAt);
+    return kickoff != 0 ? kickoff : left.id.compareTo(right.id);
+  });
+  return hydrated;
 }

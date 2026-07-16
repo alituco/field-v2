@@ -78,6 +78,102 @@ void main() {
     expect(find.text('Join as Defender'), findsWidgets);
     expect(find.textContaining('waitlist', findRichText: true), findsNothing);
   });
+
+  testWidgets('one existing booking leaves a clear second-game slot', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final games = _games();
+    final booking = _bookingFor(games.first, id: 'booking-one');
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueScreen(
+          repository: _FakeOpenQueueRepository(games, bookings: [booking]),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('open-queue-one-of-two-booked')),
+      findsOneWidget,
+    );
+    expect(find.text('1 OF 2 GAMES BOOKED'), findsOneWidget);
+    expect(find.textContaining('One slot left'), findsNothing);
+    expect(find.textContaining(booking.game.prominentDateLabel), findsNothing);
+    expect(find.text('WHERE DO YOU PLAY?'), findsOneWidget);
+  });
+
+  testWidgets('two existing bookings replace the wizard with both games', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final games = _games();
+    final first = _bookingFor(games.first, id: 'booking-one');
+    final second = _bookingFor(
+      games[2],
+      id: 'booking-two',
+      role: OpenQueueRole.attacker,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueScreen(
+          repository: _FakeOpenQueueRepository(
+            games,
+            bookings: [second, first],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('open-queue-two-game-limit')),
+      findsOneWidget,
+    );
+    expect(find.text('2 / 2 SOLO GAME LIMIT'), findsOneWidget);
+    expect(find.text('You’re already booked for two games'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('open-queue-limit-booking-booking-one')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('open-queue-limit-booking-booking-two')),
+      findsOneWidget,
+    );
+    expect(find.text('WHERE DO YOU PLAY?'), findsNothing);
+    expect(find.text('See matching games'), findsNothing);
+  });
+
+  testWidgets('matching games hide the game already booked', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final games = _delayedMainGames();
+    final booked = _bookingFor(
+      games.last,
+      id: 'booking-delayed-main',
+      role: OpenQueueRole.attacker,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueGamesScreen(
+          repository: _FakeOpenQueueRepository(games, bookings: [booked]),
+          mainRole: OpenQueueRole.attacker,
+          backupRoles: const {OpenQueueRole.defender},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Next Week Arena'), findsNothing);
+    expect(find.text('Sooner Midfield'), findsWidgets);
+    expect(find.textContaining('Your next attacker option'), findsNothing);
+  });
 }
 
 List<OpenQueueGame> _delayedMainGames() {
@@ -149,9 +245,10 @@ List<OpenQueueGame> _delayedMainGames() {
 }
 
 class _FakeOpenQueueRepository implements OpenQueueRepository {
-  _FakeOpenQueueRepository(this.games);
+  _FakeOpenQueueRepository(this.games, {this.bookings = const []});
 
   final List<OpenQueueGame> games;
+  final List<OpenQueueBooking> bookings;
 
   @override
   Future<List<OpenQueueGame>> listGames() async => games;
@@ -164,7 +261,17 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
       throw UnimplementedError();
 
   @override
-  Future<OpenQueueBooking?> getMyUpcomingBooking() async => null;
+  Future<OpenQueueBooking?> getMyUpcomingBooking() async {
+    final upcoming = await getMyUpcomingBookings();
+    return upcoming.isEmpty ? null : upcoming.first;
+  }
+
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
+    return [
+      ...bookings,
+    ]..sort((left, right) => left.game.startsAt.compareTo(right.game.startsAt));
+  }
 
   @override
   Future<OpenQueueBooking> bookGame({
@@ -180,6 +287,23 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   @override
   Future<OpenQueueCancellationPreview> previewCancellation(String bookingId) =>
       throw UnimplementedError();
+}
+
+OpenQueueBooking _bookingFor(
+  OpenQueueGame game, {
+  required String id,
+  OpenQueueRole role = OpenQueueRole.defender,
+}) {
+  return OpenQueueBooking(
+    id: id,
+    gameId: game.id,
+    profileId: 'profile-1',
+    role: role,
+    status: 'CONFIRMED',
+    amountPaidFils: game.priceFils,
+    bookedAt: DateTime.now(),
+    game: game,
+  );
 }
 
 List<OpenQueueGame> _games() {

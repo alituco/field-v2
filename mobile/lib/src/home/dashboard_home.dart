@@ -57,7 +57,7 @@ class _DashboardHomeState extends State<DashboardHome> {
   PlayerProfile? _profile;
   PlayerRatingLeaderboardEntry? _rating;
   LeaderboardSeason _ratingSeason = activeLeaderboardSeason;
-  OpenQueueBooking? _booking;
+  List<OpenQueueBooking> _bookings = const [];
   OpenQueueBooking? _partyInviteBooking;
   _HomePartyInviteNotice? _partyInviteNotice;
   int _openQueuePlayerCount = 0;
@@ -72,6 +72,8 @@ class _DashboardHomeState extends State<DashboardHome> {
   String? _error;
   StreamSubscription<void>? _partyNotificationSubscription;
   Timer? _partyNotificationReloadDebounce;
+
+  OpenQueueBooking? get _booking => _bookings.isEmpty ? null : _bookings.first;
 
   @override
   void initState() {
@@ -121,7 +123,7 @@ class _DashboardHomeState extends State<DashboardHome> {
       final results = await Future.wait<dynamic>([
         widget.profileRepository.getCurrentProfile(),
         widget.leaderboardRepository.loadCurrentPlayerRating(ratingSeason),
-        widget.openQueueRepository.getMyUpcomingBooking(),
+        widget.openQueueRepository.getMyUpcomingBookings(),
         widget.openQueueRepository.listGames(),
         widget.clanRepository.listClans(),
         widget.clanRepository.getMyClanMembership(),
@@ -132,7 +134,11 @@ class _DashboardHomeState extends State<DashboardHome> {
       if (!mounted) return;
       final profile = results[0] as PlayerProfile;
       final rating = results[1] as PlayerRatingLeaderboardEntry;
-      final booking = results[2] as OpenQueueBooking?;
+      final bookings =
+          (results[2] as List<OpenQueueBooking>).toList(growable: false)..sort(
+            (left, right) => left.game.startsAt.compareTo(right.game.startsAt),
+          );
+      final booking = bookings.isEmpty ? null : bookings.first;
       final games = results[3] as List<OpenQueueGame>;
       final clans = results[4] as List<Clan>;
       final membership = results[5] as ClanMembership?;
@@ -167,7 +173,7 @@ class _DashboardHomeState extends State<DashboardHome> {
         _profile = profile;
         _rating = rating;
         _ratingSeason = ratingSeason;
-        _booking = booking;
+        _bookings = bookings;
         _partyInviteBooking = partyInvite.booking;
         _partyInviteNotice = partyInvite.notice;
         _openQueuePlayerCount = games.fold<int>(
@@ -285,9 +291,7 @@ class _DashboardHomeState extends State<DashboardHome> {
     if (mounted) await _load();
   }
 
-  Future<void> _openBooking() async {
-    final booking = _booking;
-    if (booking == null) return;
+  Future<void> _openBooking(OpenQueueBooking booking) async {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => OpenQueueBookingScreen(
@@ -490,10 +494,10 @@ class _DashboardHomeState extends State<DashboardHome> {
           ),
     ];
 
-    final bookingGameId = _booking?.gameId;
+    final bookingGameIds = _bookings.map((booking) => booking.gameId).toSet();
     final featuredClanFixtureId = _nextClanFixture?.id;
     final upNext = items.where((item) {
-      if (item.id == bookingGameId ||
+      if (bookingGameIds.contains(item.id) ||
           (item.fixture != null && item.id == featuredClanFixtureId) ||
           item.isCompleted ||
           item.isCancelled) {
@@ -509,7 +513,9 @@ class _DashboardHomeState extends State<DashboardHome> {
 
     final recent =
         items
-            .where((item) => item.id != bookingGameId && item.isCompleted)
+            .where(
+              (item) => !bookingGameIds.contains(item.id) && item.isCompleted,
+            )
             .toList()
           ..sort(_compareRecentActivity);
     return _limitMatchdayFeed(
@@ -571,9 +577,13 @@ class _DashboardHomeState extends State<DashboardHome> {
                 _HomePartyInviteAlert(notice: notice, onTap: _openPartyInvite),
                 const SizedBox(height: 10),
               ],
-              if (_booking case final booking?) ...[
-                _ConfirmedQueueHero(booking: booking, onTap: _openBooking),
-              ] else
+              if (_bookings.isNotEmpty)
+                _SoloBookingsSection(
+                  bookings: _bookings,
+                  onBooking: _openBooking,
+                  onBookAnother: _openQueue,
+                )
+              else
                 _FindGameHero(
                   onTap: _openQueue,
                   playerCount: _openQueuePlayerCount,
@@ -1182,6 +1192,225 @@ class _HomePartyInviteAlert extends StatelessWidget {
   }
 }
 
+class _SoloBookingsSection extends StatefulWidget {
+  const _SoloBookingsSection({
+    required this.bookings,
+    required this.onBooking,
+    required this.onBookAnother,
+  });
+
+  final List<OpenQueueBooking> bookings;
+  final ValueChanged<OpenQueueBooking> onBooking;
+  final VoidCallback onBookAnother;
+
+  @override
+  State<_SoloBookingsSection> createState() => _SoloBookingsSectionState();
+}
+
+class _SoloBookingsSectionState extends State<_SoloBookingsSection> {
+  static const maxBookings = 2;
+
+  late final PageController _pageController;
+  int _currentPage = 0;
+
+  List<OpenQueueBooking> get _orderedBookings {
+    final ordered = [...widget.bookings]
+      ..sort((left, right) {
+        final kickoff = left.game.startsAt.compareTo(right.game.startsAt);
+        return kickoff != 0 ? kickoff : left.id.compareTo(right.id);
+      });
+    return ordered.take(maxBookings).toList(growable: false);
+  }
+
+  String _bookingSignature(List<OpenQueueBooking> bookings) {
+    final ordered = [...bookings]
+      ..sort((left, right) {
+        final kickoff = left.game.startsAt.compareTo(right.game.startsAt);
+        return kickoff != 0 ? kickoff : left.id.compareTo(right.id);
+      });
+    return ordered.map((booking) => booking.id).join('|');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _pageController = PageController();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SoloBookingsSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_bookingSignature(oldWidget.bookings) ==
+        _bookingSignature(widget.bookings)) {
+      return;
+    }
+    _currentPage = 0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _pageController.hasClients) {
+        _pageController.jumpToPage(0);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bookings = _orderedBookings;
+    final carouselHeight =
+        bookings.any((booking) => booking.game.isUpcomingMatchConfirmed)
+        ? 400.0
+        : 310.0;
+    return Column(
+      key: const ValueKey('home-solo-bookings-section'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'YOUR SOLO GAMES',
+          style: TextStyle(
+            color: fieldGray600,
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1.2,
+          ),
+        ),
+        const SizedBox(height: 10),
+        SizedBox(
+          height: carouselHeight,
+          child: PageView.builder(
+            key: const ValueKey('home-solo-bookings-carousel'),
+            controller: _pageController,
+            itemCount: maxBookings,
+            clipBehavior: Clip.none,
+            onPageChanged: (page) => setState(() => _currentPage = page),
+            itemBuilder: (context, index) {
+              if (index < bookings.length) {
+                final booking = bookings[index];
+                return _ConfirmedQueueHero(
+                  booking: booking,
+                  onTap: () => widget.onBooking(booking),
+                );
+              }
+              return _BookSecondSoloGameCard(onTap: widget.onBookAnother);
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+        Semantics(
+          key: ValueKey('home-solo-carousel-page-${_currentPage + 1}'),
+          label: 'Solo games page ${_currentPage + 1} of $maxBookings',
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (var index = 0; index < maxBookings; index++) ...[
+                AnimatedContainer(
+                  key: ValueKey('home-solo-carousel-dot-$index'),
+                  duration: const Duration(milliseconds: 180),
+                  width: index == _currentPage ? 18 : 7,
+                  height: 7,
+                  decoration: BoxDecoration(
+                    color: index == _currentPage
+                        ? fieldEmerald600
+                        : fieldGray200,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                if (index < maxBookings - 1) const SizedBox(width: 6),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _BookSecondSoloGameCard extends StatelessWidget {
+  const _BookSecondSoloGameCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Register for a second solo game',
+      child: Material(
+        key: const ValueKey('home-book-another-solo-game'),
+        color: fieldEmerald50,
+        borderRadius: BorderRadius.circular(28),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(28),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(28),
+            decoration: BoxDecoration(
+              border: Border.all(color: fieldEmerald200, width: 1.5),
+              borderRadius: BorderRadius.circular(28),
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 54,
+                  height: 54,
+                  decoration: const BoxDecoration(
+                    color: fieldEmerald600,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(
+                    Icons.add_rounded,
+                    color: Colors.white,
+                    size: 30,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'REGISTER FOR A SECOND GAME',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontSize: 18,
+                    height: 1.15,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -0.2,
+                  ),
+                ),
+                const SizedBox(height: 9),
+                const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'FIND A GAME',
+                      style: TextStyle(
+                        color: fieldEmerald700,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: .7,
+                      ),
+                    ),
+                    SizedBox(width: 5),
+                    Icon(
+                      Icons.arrow_forward_rounded,
+                      color: fieldEmerald700,
+                      size: 17,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ConfirmedQueueHero extends StatelessWidget {
   const _ConfirmedQueueHero({required this.booking, required this.onTap});
   final OpenQueueBooking booking;
@@ -1199,6 +1428,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
         : const Color(0xFF78350F);
 
     return Material(
+      key: ValueKey('home-solo-booking-${booking.id}'),
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(28),
       child: InkWell(

@@ -477,5 +477,8 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async => detail;
 
   @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => const [];
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

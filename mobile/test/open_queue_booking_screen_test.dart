@@ -772,6 +772,11 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
   Future<OpenQueueBooking?> getMyUpcomingBooking() async => upcomingBooking;
 
   @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => [
+    if (upcomingBooking case final booking?) booking,
+  ];
+
+  @override
   Future<OpenQueueBooking> bookGame({
     required OpenQueueGame game,
     required OpenQueueRole role,
@@ -812,6 +817,12 @@ class _PartyOpenQueueRepository extends _FakeOpenQueueRepository
   @override
   Future<OpenQueueBooking?> getMyUpcomingBooking() async {
     return _mutationCompleted ? bookingAfterMutation : null;
+  }
+
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
+    final booking = bookingAfterMutation;
+    return _mutationCompleted && booking != null ? [booking] : const [];
   }
 
   @override
