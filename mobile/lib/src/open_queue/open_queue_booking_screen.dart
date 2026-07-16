@@ -8,6 +8,9 @@ import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
 import 'open_queue.dart';
 import 'open_queue_kit_indicator.dart';
+import 'open_queue_party.dart';
+import 'open_queue_party_card.dart';
+import 'open_queue_party_repository.dart';
 import 'open_queue_repository.dart';
 
 class OpenQueueBookingScreen extends StatefulWidget {
@@ -32,18 +35,65 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
   late OpenQueueBooking _booking = widget.booking;
   bool _cancelling = false;
   bool _refreshing = false;
+  Future<void>? _bookingRefresh;
+  OpenQueuePartyContext? _partyContext;
+  bool _partyLoading = false;
+  String? _partyError;
+  String? _partyAction;
+
+  OpenQueuePartyRepository? get _partyRepository {
+    final repository = widget.repository;
+    return repository is OpenQueuePartyRepository
+        ? repository as OpenQueuePartyRepository
+        : null;
+  }
 
   @override
   void initState() {
     super.initState();
     unawaited(_refreshBooking(quiet: true));
+    if (_partyRepository != null) {
+      _partyLoading = true;
+      unawaited(_loadParty());
+    }
   }
 
-  Future<void> _refreshBooking({bool quiet = false}) async {
-    if (_refreshing) return;
+  Future<void> _refreshAll() async {
+    await Future.wait([
+      _refreshBooking(),
+      if (_partyRepository != null) _loadParty(),
+    ]);
+  }
+
+  Future<void> _refreshBooking({
+    bool quiet = false,
+    bool requireFresh = false,
+  }) async {
+    final activeRefresh = _bookingRefresh;
+    if (activeRefresh != null) {
+      await activeRefresh;
+      if (!requireFresh) return;
+    }
+    final refresh = _performBookingRefresh(quiet: quiet);
+    _bookingRefresh = refresh;
+    try {
+      await refresh;
+    } finally {
+      if (identical(_bookingRefresh, refresh)) _bookingRefresh = null;
+    }
+  }
+
+  Future<void> _performBookingRefresh({required bool quiet}) async {
+    if (!mounted) return;
     setState(() => _refreshing = true);
     try {
-      final latest = await widget.repository.getMyUpcomingBooking();
+      final repository = widget.repository;
+      final bookingLookup = repository is OpenQueueBookingLookupRepository
+          ? repository as OpenQueueBookingLookupRepository
+          : null;
+      final latest = bookingLookup == null
+          ? await repository.getMyUpcomingBooking()
+          : await bookingLookup.getMyUpcomingBookingForGame(_booking.gameId);
       if (!mounted || latest == null || latest.id != _booking.id) return;
       setState(() => _booking = latest);
     } catch (error) {
@@ -61,6 +111,189 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     } finally {
       if (mounted) setState(() => _refreshing = false);
     }
+  }
+
+  Future<void> _loadParty() async {
+    final repository = _partyRepository;
+    if (repository == null) return;
+    if (mounted) {
+      setState(() {
+        _partyLoading = true;
+        _partyError = null;
+      });
+    }
+    try {
+      final party = await repository.getPartyContext(_booking.gameId);
+      if (!mounted) return;
+      setState(() => _partyContext = party);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _partyError = userFacingError(
+          error,
+          fallback: 'Party details could not be loaded. Your booking is safe.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _partyLoading = false);
+    }
+  }
+
+  Future<bool> _runPartyAction({
+    required String key,
+    required Future<void> Function(OpenQueuePartyRepository repository) action,
+    required String successMessage,
+    required String fallbackError,
+  }) async {
+    final repository = _partyRepository;
+    if (repository == null || _partyAction != null) return false;
+    setState(() {
+      _partyAction = key;
+      _partyError = null;
+    });
+    try {
+      await action(repository);
+      await Future.wait([
+        _loadParty(),
+        _refreshBooking(quiet: true, requireFresh: true),
+      ]);
+      if (!mounted) return true;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      final message = userFacingError(error, fallback: fallbackError);
+      setState(() => _partyError = message);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
+      return false;
+    } finally {
+      if (mounted) setState(() => _partyAction = null);
+    }
+  }
+
+  Future<void> _createParty() async {
+    await _runPartyAction(
+      key: 'create',
+      action: (repository) async {
+        await repository.createParty(_booking.gameId);
+      },
+      successMessage: 'Party created. Invite confirmed players from this game.',
+      fallbackError: 'Could not create your party.',
+    );
+  }
+
+  Future<void> _acceptPartyInvite(OpenQueuePartyInvite invite) async {
+    await _runPartyAction(
+      key: 'accept-${invite.membershipId}',
+      action: (repository) => repository.respondToPartyInvite(
+        membershipId: invite.membershipId,
+        accept: true,
+      ),
+      successMessage: 'Party joined. You will be assigned together.',
+      fallbackError: 'Could not join this party.',
+    );
+  }
+
+  Future<void> _declinePartyInvite(OpenQueuePartyInvite invite) async {
+    final confirmed = await showFieldConfirmDialog(
+      context: context,
+      icon: Icons.group_off_rounded,
+      eyebrow: 'Party invitation',
+      title: 'Decline this invite?',
+      message:
+          '${invite.owner.displayName} invited you to be assigned together for this game.',
+      detail: 'Your match booking will not be affected.',
+      cancelLabel: 'Keep invite',
+      confirmLabel: 'Decline invite',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    await _runPartyAction(
+      key: 'decline-${invite.membershipId}',
+      action: (repository) => repository.respondToPartyInvite(
+        membershipId: invite.membershipId,
+        accept: false,
+      ),
+      successMessage: 'Party invitation declined.',
+      fallbackError: 'Could not decline this invitation.',
+    );
+  }
+
+  Future<void> _cancelPartyInvite(OpenQueuePartyMember member) async {
+    final confirmed = await showFieldConfirmDialog(
+      context: context,
+      icon: Icons.person_remove_alt_1_rounded,
+      eyebrow: 'Pending invitation',
+      title: 'Cancel ${member.displayName}’s invite?',
+      message: 'They will no longer be able to accept this party invitation.',
+      detail: 'You can invite them again later if a party spot is available.',
+      cancelLabel: 'Keep invite',
+      confirmLabel: 'Cancel invite',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    await _runPartyAction(
+      key: 'cancel-${member.membershipId}',
+      action: (repository) => repository.cancelPartyInvite(member.membershipId),
+      successMessage: 'Pending invitation cancelled.',
+      fallbackError: 'Could not cancel this invitation.',
+    );
+  }
+
+  Future<void> _leaveOrDisbandParty() async {
+    final party = _partyContext?.myParty;
+    if (party == null) return;
+    final isOwner = party.isOwner;
+    final confirmed = await showFieldConfirmDialog(
+      context: context,
+      icon: isOwner ? Icons.group_off_rounded : Icons.logout_rounded,
+      eyebrow: 'Your party',
+      title: isOwner ? 'Cancel this party?' : 'Leave this party?',
+      message: isOwner
+          ? 'The party will be closed for every member and pending invitation.'
+          : 'You will no longer be guaranteed assignment with this party.',
+      detail: 'Everyone keeps their individual match booking.',
+      cancelLabel: 'Keep party',
+      confirmLabel: isOwner ? 'Cancel party' : 'Leave party',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    await _runPartyAction(
+      key: '${isOwner ? 'disband' : 'leave'}-${party.id}',
+      action: (repository) => isOwner
+          ? repository.disbandParty(party.id)
+          : repository.leaveParty(party.id),
+      successMessage: isOwner ? 'Party cancelled.' : 'You left the party.',
+      fallbackError: isOwner
+          ? 'Could not cancel this party.'
+          : 'Could not leave this party.',
+    );
+  }
+
+  Future<void> _showInvitePlayers() async {
+    final data = _partyContext;
+    final party = data?.myParty;
+    if (data == null || party == null || !party.isOwner) return;
+    await showOpenQueuePartyInviteSheet(
+      context: context,
+      partyContext: data,
+      onInvite: (player) async {
+        final succeeded = await _runPartyAction(
+          key: 'invite-${player.profileId}',
+          action: (repository) => repository.invitePartyMember(
+            partyId: party.id,
+            profileId: player.profileId,
+          ),
+          successMessage: 'Invite sent to ${player.displayName}.',
+          fallbackError: 'Could not invite ${player.displayName}.',
+        );
+        return succeeded ? null : _partyError ?? 'Could not send the invite.';
+      },
+    );
   }
 
   void _goHome() {
@@ -140,6 +373,10 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     final hasTeamAssignment = game.hasActiveTeamAssignment;
     final assignedTeam = booking.assignedTeam;
     final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
+    final hasPendingPartyInvite =
+        _partyContext?.receivedInvites.isNotEmpty ?? false;
+    final showPartyBeforeMatchDate =
+        widget.newlyBooked || hasPendingPartyInvite;
     return Scaffold(
       extendBody: true,
       backgroundColor: fieldBackground,
@@ -148,7 +385,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         child: RefreshIndicator(
           color: fieldEmerald600,
           edgeOffset: fieldPageHeaderExtent(context),
-          onRefresh: _refreshBooking,
+          onRefresh: _refreshAll,
           child: ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: fieldHeaderAwarePadding(context, top: 20, bottom: 116),
@@ -161,10 +398,18 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                     : null,
                 isConfirmed: isConfirmed,
                 isRefreshing: _refreshing,
-                onRefresh: _refreshBooking,
+                onRefresh: _refreshAll,
               ),
+              if (showPartyBeforeMatchDate && _partyRepository != null) ...[
+                const SizedBox(height: 12),
+                _partyCard(),
+              ],
               const SizedBox(height: 12),
               _BookingMatchDayCard(booking: booking),
+              if (!showPartyBeforeMatchDate && _partyRepository != null) ...[
+                const SizedBox(height: 12),
+                _partyCard(),
+              ],
               const SizedBox(height: 20),
               const Text(
                 'YOUR BOOKING',
@@ -308,6 +553,23 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         selectedIndex: null,
         onSelected: _navigateTab,
       ),
+    );
+  }
+
+  Widget _partyCard() {
+    return OpenQueuePartyCard(
+      contextData: _partyContext,
+      loading: _partyLoading,
+      newlyBooked: widget.newlyBooked,
+      actionKey: _partyAction,
+      error: _partyError,
+      onRetry: _loadParty,
+      onCreate: _createParty,
+      onAcceptInvite: _acceptPartyInvite,
+      onDeclineInvite: _declinePartyInvite,
+      onInvitePlayers: _showInvitePlayers,
+      onCancelInvite: _cancelPartyInvite,
+      onLeaveOrDisband: _leaveOrDisbandParty,
     );
   }
 

@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'open_queue.dart';
+import 'open_queue_party_repository.dart';
 
 abstract class OpenQueueRepository {
   Future<List<OpenQueueGame>> listGames();
@@ -22,8 +23,17 @@ abstract class OpenQueueRepository {
   Future<OpenQueueBooking> cancelBooking(String bookingId);
 }
 
-class SupabaseOpenQueueRepository implements OpenQueueRepository {
+abstract interface class OpenQueueBookingLookupRepository {
+  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId);
+}
+
+class SupabaseOpenQueueRepository
+    with SupabaseOpenQueuePartyRepository
+    implements OpenQueueRepository, OpenQueueBookingLookupRepository {
   SupabaseClient get _client => Supabase.instance.client;
+
+  @override
+  SupabaseClient get partyClient => _client;
 
   static const _bookingSelect = '''
     id,
@@ -118,6 +128,27 @@ class SupabaseOpenQueueRepository implements OpenQueueRepository {
       }
     }
     return null;
+  }
+
+  @override
+  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null || gameId.trim().isEmpty) return null;
+
+    final response = await _client
+        .from('open_queue_bookings')
+        .select(_bookingSelect)
+        .eq('profile_id', userId)
+        .eq('game_id', gameId)
+        .eq('status', 'CONFIRMED')
+        .maybeSingle();
+    if (response == null) return null;
+
+    final booking = OpenQueueBooking.fromJson(
+      Map<String, dynamic>.from(response),
+    );
+    if (!booking.game.isUpcomingReservation) return null;
+    return _hydrateBookingGame(booking);
   }
 
   @override

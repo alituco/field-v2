@@ -54,7 +54,11 @@ void main() {
           'team_average_rating': '1231.50',
           'opponent_average_rating': '1234.25',
           'expected_score': '0.492804',
-          'calculation_version': 'PLAYER_ELO_V1',
+          'calculation_version': 'PLAYER_ELO_V2_MARGIN',
+          'score_margin': '3',
+          'margin_multiplier': '1.10',
+          'base_rating_change': '11',
+          'margin_bonus_applied': '1',
         },
       ],
     });
@@ -63,6 +67,10 @@ void main() {
     expect(rating.events.single.teamAverageRating, 1231.5);
     expect(rating.events.single.opponentAverageRating, 1234.25);
     expect(rating.events.single.expectedScore, 0.492804);
+    expect(rating.events.single.scoreMargin, 3);
+    expect(rating.events.single.marginMultiplier, 1.1);
+    expect(rating.events.single.baseRatingChange, 11);
+    expect(rating.events.single.marginBonusApplied, 1);
   });
 
   test('match outcome is calculated from the player historical side', () {
@@ -190,7 +198,11 @@ void main() {
             teamAverageRating: 1232,
             opponentAverageRating: 1234,
             expectedScore: 0.49,
-            calculationVersion: 'v1',
+            calculationVersion: 'PLAYER_ELO_V2_MARGIN',
+            scoreMargin: 3,
+            marginMultiplier: 1.1,
+            baseRatingChange: 11,
+            marginBonusApplied: 1,
           ),
         ],
       ),
@@ -355,6 +367,11 @@ void main() {
     expect(find.text('1230'), findsOneWidget);
     expect(find.text('1242'), findsOneWidget);
     expect(find.text('+12 SR'), findsOneWidget);
+    expect(find.text('3-GOAL WIN BONUS'), findsOneWidget);
+    expect(
+      find.text('+1 SR included in this update · standard result +11 SR'),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const ValueKey('fixture-section-watch')));
     await tester.pumpAndSettle();
     expect(find.text('WATCH MATCH'), findsOneWidget);

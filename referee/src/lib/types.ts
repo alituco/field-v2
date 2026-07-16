@@ -14,11 +14,15 @@ export type FixtureEventType =
   | "MATCH_STARTED"
   | "MATCH_PAUSED"
   | "MATCH_RESUMED"
+  | "MATCH_STOPPED"
   | "MATCH_ENDED"
   | "GOAL"
   | "BLUE_CARD"
   | "BLUE_CARD_EXPIRED"
-  | "CORRECTION";
+  | "CORRECTION"
+  | "FORFEIT_PROVISIONAL"
+  | "FORFEIT_CONFIRMED"
+  | "FORFEIT_OVERTURNED";
 
 export type BlueCardStatus = "ACTIVE" | "EXPIRED" | "CLEARED";
 
@@ -81,6 +85,39 @@ export type Player = {
   username: string | null;
   avatarUrl: string | null;
   ratingAtTeamAssignment: number | null;
+};
+
+export type ModerationSubjectType = "PLAYER" | "CLAN";
+
+export type ModerationRiskLevel = "AWARE" | "ELEVATED" | "HIGH";
+
+export type ModerationRiskSignal = {
+  subjectType: ModerationSubjectType;
+  subjectId: string;
+  level: ModerationRiskLevel;
+  /** Short, evidence-neutral labels. No allegations or reporter identities. */
+  labels: string[];
+  /** Excludes reports dismissed by an admin and reports marked duplicate. */
+  priorReports: number;
+  recentReports: number;
+  distinctRecentReporters: number;
+  openReports: number;
+  actionedReports: number;
+  priorRefereeReports: number;
+  priorWarnings: number;
+  activeRestriction: {
+    actionType: "SUSPENSION" | "BAN";
+    scope: "NONE" | "PLAY" | "ACCOUNT" | "SCHEDULING";
+    endsAt: string | null;
+  } | null;
+  lastReportedAt: string | null;
+};
+
+export type RefereeRiskContext = {
+  teams: ModerationRiskSignal[];
+  players: ModerationRiskSignal[];
+  /** Reminds the referee that reports are context, not a verdict. */
+  guidance: string;
 };
 
 export type FixtureClock = {
@@ -153,6 +190,7 @@ export type RefereeFixture = {
   goals: Goal[];
   events: FixtureEvent[];
   blueCards: BlueCard[];
+  riskContext: RefereeRiskContext;
 };
 
 export type RefereeFixturesResponse = {

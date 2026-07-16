@@ -6,6 +6,8 @@ import 'package:field/src/home/dashboard_home.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/open_queue_party.dart';
+import 'package:field/src/open_queue/open_queue_party_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
@@ -72,6 +74,118 @@ void main() {
     expect(find.text('WEAR BLACK'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'pending party invite is prominent and opens its booking details',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final game = _game(daysFromToday: 2, confirmedCount: 8);
+      final booking = _bookingFor(game);
+      final partyContext = _partyContextWithInvite(game);
+
+      await _pumpHome(tester, booking: booking, partyContext: partyContext);
+
+      final alert = find.byKey(ValueKey('home-party-invite-${game.id}'));
+      expect(alert, findsOneWidget);
+      expect(find.text('PARTY INVITE WAITING'), findsOneWidget);
+      expect(find.text('Sami Nasser wants to team up'), findsOneWidget);
+      expect(find.text('REVIEW'), findsOneWidget);
+      expect(
+        tester.getTopLeft(alert).dy,
+        lessThan(tester.getTopLeft(find.text('MATCH PENDING')).dy),
+      );
+
+      await tester.tap(alert);
+      await tester.pumpAndSettle();
+
+      expect(find.text('BOOKING DETAILS'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('open-queue-party-invite')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('party invite alert remains visible while already grouped', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final game = _game(daysFromToday: 3, confirmedCount: 8);
+    final partyContext = _partyContextWithInvite(
+      game,
+      myParty: const OpenQueueParty(
+        id: 'my-current-party',
+        ownerProfileId: 'profile',
+        isOwner: true,
+        acceptedCount: 1,
+        members: [],
+      ),
+    );
+
+    await _pumpHome(
+      tester,
+      booking: _bookingFor(game),
+      partyContext: partyContext,
+    );
+
+    final alert = find.byKey(ValueKey('home-party-invite-${game.id}'));
+    expect(alert, findsOneWidget);
+
+    await tester.tap(alert);
+    await tester.pumpAndSettle();
+
+    expect(find.text('BOOKING DETAILS'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'notification opens the invited game when another booking is first',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final firstGame = _game(daysFromToday: 1, confirmedCount: 8);
+      final invitedGame = _game(daysFromToday: 4, confirmedCount: 8);
+      final invitedBooking = _bookingFor(invitedGame);
+      final repository = _NotificationOpenQueueRepository(
+        _bookingFor(firstGame),
+        inviteBooking: invitedBooking,
+        notification: OpenQueuePartyInviteNotification(
+          id: 'notification-one',
+          gameId: invitedGame.id,
+          partyId: 'party-one',
+          membershipId: 'invite-one',
+          createdAt: DateTime.now(),
+          isRead: false,
+          inviter: const OpenQueuePartyNotificationInviter(
+            profileId: 'sami',
+            displayName: 'Sami Nasser',
+            username: 'sami',
+          ),
+          gameStartsAt: invitedGame.startsAt,
+          venue: invitedGame.venue,
+          gameStatus: invitedGame.status,
+        ),
+        partyContext: _partyContextWithInvite(invitedGame),
+      );
+
+      await _pumpHome(tester, openQueueRepository: repository);
+
+      final alert = find.byKey(ValueKey('home-party-invite-${invitedGame.id}'));
+      expect(alert, findsOneWidget);
+
+      await tester.tap(alert);
+      await tester.pumpAndSettle();
+
+      expect(repository.markedNotificationIds, ['notification-one']);
+      expect(find.text('BOOKING DETAILS'), findsOneWidget);
+      expect(find.text(invitedGame.prominentDateLabel), findsWidgets);
+      expect(
+        find.byKey(const ValueKey('open-queue-party-invite')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'matchday shows up next before recent and caps the feed at three',
@@ -592,6 +706,8 @@ Future<void> _pumpHome(
   List<Clan> clans = const [],
   ClanMembership? clanMembership,
   VoidCallback? onOpenFixtures,
+  OpenQueuePartyContext? partyContext,
+  OpenQueueRepository? openQueueRepository,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
@@ -604,11 +720,14 @@ Future<void> _pumpHome(
           ),
           fixtureRepository: _FakeFixtureRepository(fixtures),
           leaderboardRepository: const _FakeLeaderboardRepository(),
-          openQueueRepository: _FakeOpenQueueRepository(
-            booking,
-            fixtureGames: soloGames,
-            matchDetails: matchDetails,
-          ),
+          openQueueRepository:
+              openQueueRepository ??
+              _FakeOpenQueueRepository(
+                booking,
+                fixtureGames: soloGames,
+                matchDetails: matchDetails,
+                partyContext: partyContext,
+              ),
           onOpenClans: () {},
           onOpenFixtures: onOpenFixtures ?? () {},
           onOpenRanks: () {},
@@ -640,6 +759,36 @@ OpenQueueBooking _bookingFor(OpenQueueGame game) {
     amountPaidFils: game.priceFils,
     bookedAt: DateTime.now(),
     game: game,
+  );
+}
+
+OpenQueuePartyContext _partyContextWithInvite(
+  OpenQueueGame game, {
+  OpenQueueParty? myParty,
+}) {
+  const owner = OpenQueuePartyPlayer(
+    profileId: 'sami',
+    displayName: 'Sami Nasser',
+    username: 'sami',
+    role: OpenQueueRole.defender,
+  );
+  return OpenQueuePartyContext(
+    gameId: game.id,
+    gameStatus: game.status,
+    canUseParties: true,
+    maxPartySize: 4,
+    receivedInvites: const [
+      OpenQueuePartyInvite(
+        membershipId: 'invite-one',
+        partyId: 'party-one',
+        invitedAt: null,
+        owner: owner,
+        acceptedCount: 1,
+        members: [],
+      ),
+    ],
+    eligiblePlayers: const [],
+    myParty: myParty,
   );
 }
 
@@ -896,16 +1045,19 @@ class _FakeLeaderboardRepository implements LeaderboardRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class _FakeOpenQueueRepository implements OpenQueueRepository {
+class _FakeOpenQueueRepository
+    implements OpenQueueRepository, OpenQueuePartyRepository {
   const _FakeOpenQueueRepository(
     this.booking, {
     this.fixtureGames = const [],
     this.matchDetails = const {},
+    this.partyContext,
   });
 
   final OpenQueueBooking? booking;
   final List<OpenQueueGame> fixtureGames;
   final Map<String, OpenQueueMatchDetail> matchDetails;
+  final OpenQueuePartyContext? partyContext;
 
   @override
   Future<OpenQueueBooking?> getMyUpcomingBooking() async => booking;
@@ -923,7 +1075,53 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
       matchDetails[gameId]!;
 
   @override
+  Future<OpenQueuePartyContext> getPartyContext(String gameId) async {
+    return partyContext ??
+        OpenQueuePartyContext(
+          gameId: gameId,
+          gameStatus: booking?.game.status ?? 'OPEN',
+          canUseParties: true,
+          maxPartySize: 4,
+          receivedInvites: const [],
+          eligiblePlayers: const [],
+        );
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _NotificationOpenQueueRepository extends _FakeOpenQueueRepository
+    implements
+        OpenQueuePartyNotificationRepository,
+        OpenQueueBookingLookupRepository {
+  _NotificationOpenQueueRepository(
+    super.booking, {
+    required this.inviteBooking,
+    required this.notification,
+    required super.partyContext,
+  });
+
+  final OpenQueueBooking inviteBooking;
+  final OpenQueuePartyInviteNotification notification;
+  final List<String> markedNotificationIds = [];
+
+  @override
+  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async {
+    return gameId == inviteBooking.gameId ? inviteBooking : null;
+  }
+
+  @override
+  Future<List<OpenQueuePartyInviteNotification>>
+  listPartyInviteNotifications() async => [notification];
+
+  @override
+  Future<void> markPartyInviteNotificationRead(String notificationId) async {
+    markedNotificationIds.add(notificationId);
+  }
+
+  @override
+  Stream<void> watchPartyInviteNotifications() => const Stream<void>.empty();
 }
 
 class _FakeClanRepository implements ClanRepository {

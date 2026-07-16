@@ -9,6 +9,10 @@ import type {
   Player,
   RefereeFixture,
 } from "./types";
+import {
+  loadRefereeRiskSignals,
+  riskContextFor,
+} from "./referee-risk-context";
 
 const fixtureSelect = `
   id,
@@ -124,19 +128,38 @@ async function hydrateFixtureRows(
       loadBlueCards(db, fixtureIds),
     ]);
 
-  return fixtureRows.map((fixture) => ({
-    ...fixture,
-    players: players.filter(
+  const riskSignals = await loadRefereeRiskSignals(
+    db,
+    players.map((player) => player.id),
+    clanIds,
+  );
+
+  return fixtureRows.map((fixture) => {
+    const fixturePlayers = players.filter(
       (player) =>
         player.clanId === fixture.homeClan.id ||
         player.clanId === fixture.awayClan.id,
-    ),
-    participantIds: participantIds.get(fixture.id) ?? [],
-    clock: clocks.get(fixture.id) ?? null,
-    goals: goals.filter((goal) => goal.fixtureId === fixture.id),
-    events: events.filter((event) => event.fixtureId === fixture.id),
-    blueCards: blueCards.filter((card) => card.fixtureId === fixture.id),
-  }));
+    );
+    const fixtureParticipantIds = participantIds.get(fixture.id) ?? [];
+    const relevantPlayerIds = fixtureParticipantIds.length > 0
+      ? fixtureParticipantIds
+      : fixturePlayers.map((player) => player.id);
+
+    return {
+      ...fixture,
+      players: fixturePlayers,
+      participantIds: fixtureParticipantIds,
+      clock: clocks.get(fixture.id) ?? null,
+      goals: goals.filter((goal) => goal.fixtureId === fixture.id),
+      events: events.filter((event) => event.fixtureId === fixture.id),
+      blueCards: blueCards.filter((card) => card.fixtureId === fixture.id),
+      riskContext: riskContextFor(
+        riskSignals,
+        [fixture.homeClan.id, fixture.awayClan.id],
+        relevantPlayerIds,
+      ),
+    };
+  });
 }
 
 async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
@@ -330,6 +353,7 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     goals: [],
     events: [],
     blueCards: [],
+    riskContext: riskContextFor(new Map(), [], []),
   } satisfies RefereeFixture;
 }
 

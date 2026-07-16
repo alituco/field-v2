@@ -10,6 +10,9 @@ import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../leaderboard/leaderboard.dart';
+import '../moderation/moderation.dart';
+import '../moderation/moderation_repository.dart';
+import '../moderation/report_issue_sheet.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_repository.dart';
 import 'dev_user_switcher_sheet.dart';
@@ -26,6 +29,7 @@ class ProfileScreen extends StatefulWidget {
     this.clanRepository,
     this.fixtureRepository,
     this.openQueueRepository,
+    this.moderationRepository,
     this.profileId,
     this.devModeEnabled = false,
     this.onSwitchUser,
@@ -37,6 +41,7 @@ class ProfileScreen extends StatefulWidget {
   final ClanRepository? clanRepository;
   final FixtureRepository? fixtureRepository;
   final OpenQueueRepository? openQueueRepository;
+  final ModerationRepository? moderationRepository;
   final String? profileId;
   final bool devModeEnabled;
   final Future<void> Function(String profileId)? onSwitchUser;
@@ -52,6 +57,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final ClanRepository _clanRepository;
   late final FixtureRepository _fixtureRepository;
   late final OpenQueueRepository _openQueueRepository;
+  late final ModerationRepository _moderationRepository;
   PlayerProfile? _latestProfile;
   String? _openingGameId;
   bool _isOpeningClan = false;
@@ -61,6 +67,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _isCurrentProfile ||
       widget.profileId == widget.profileRepository.currentUserId;
 
+  bool get _canReportProfile {
+    final profileId = widget.profileId?.trim();
+    final currentUserId = widget.profileRepository.currentUserId?.trim();
+    return profileId != null &&
+        profileId.isNotEmpty &&
+        currentUserId != null &&
+        currentUserId.isNotEmpty &&
+        profileId != currentUserId;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -69,6 +85,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         widget.fixtureRepository ?? SupabaseFixtureRepository();
     _openQueueRepository =
         widget.openQueueRepository ?? SupabaseOpenQueueRepository();
+    _moderationRepository =
+        widget.moderationRepository ?? SupabaseModerationRepository();
     _profileFuture = _loadProfile();
   }
 
@@ -200,6 +218,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ratingChange: event.ratingChange,
         ratingAfter: event.ratingAfter,
         result: event.result.isEmpty ? game.outcome?.label : event.result,
+        scoreMargin: event.scoreMargin,
+        marginMultiplier: event.marginMultiplier,
+        baseRatingChange: event.baseRatingChange,
+        marginBonusApplied: event.marginBonusApplied,
       );
     }
 
@@ -234,6 +256,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             clanName: clanName,
             clanRepository: _clanRepository,
             fixtureRepository: _fixtureRepository,
+            moderationRepository: _moderationRepository,
           ),
         ),
       );
@@ -305,6 +328,39 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _reportProfile() async {
+    final profileId = widget.profileId?.trim();
+    if (!_canReportProfile || profileId == null) return;
+
+    final profileName = _latestProfile?.displayName.trim();
+    final receipt = await showReportIssueSheet(
+      context: context,
+      repository: _moderationRepository,
+      subjectType: ModerationSubjectType.player,
+      subjectId: profileId,
+      subjectName: profileName == null || profileName.isEmpty
+          ? 'this player'
+          : profileName,
+    );
+    if (!mounted || receipt == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Report sent privately · reference ${receipt.shortReference}',
+        ),
+      ),
+    );
+  }
+
+  void _handleViewedProfileAction(_ViewedProfileAction action) {
+    switch (action) {
+      case _ViewedProfileAction.share:
+        _copyProfileHandle();
+      case _ViewedProfileAction.report:
+        _reportProfile();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return FieldHeaderOverlay(
@@ -338,7 +394,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   onPressed: widget.isSigningOut ? null : widget.onSignOut,
                 ),
               ],
-            ] else
+            ] else if (_canReportProfile)
+              _ViewedProfileMenu(onSelected: _handleViewedProfileAction)
+            else
               _HeaderIconButton(
                 icon: Icons.ios_share_rounded,
                 tooltip: 'Share profile',
@@ -1778,18 +1836,103 @@ class _HeaderIconButton extends StatelessWidget {
   }
 }
 
+enum _ViewedProfileAction { share, report }
+
+class _ViewedProfileMenu extends StatelessWidget {
+  const _ViewedProfileMenu({required this.onSelected});
+
+  final ValueChanged<_ViewedProfileAction> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(999),
+      child: PopupMenuButton<_ViewedProfileAction>(
+        key: const ValueKey('profile-options-menu'),
+        tooltip: 'Profile options',
+        onSelected: onSelected,
+        color: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        icon: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            border: Border.all(color: fieldGray200),
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: const Icon(
+            Icons.more_horiz_rounded,
+            color: fieldGray600,
+            size: 19,
+          ),
+        ),
+        itemBuilder: (context) => const [
+          PopupMenuItem<_ViewedProfileAction>(
+            key: ValueKey('profile-share-action'),
+            value: _ViewedProfileAction.share,
+            child: Row(
+              children: [
+                Icon(Icons.ios_share_rounded, color: fieldGray700, size: 19),
+                SizedBox(width: 10),
+                Text(
+                  'Share profile',
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          PopupMenuItem<_ViewedProfileAction>(
+            key: ValueKey('profile-report-action'),
+            value: _ViewedProfileAction.report,
+            child: Row(
+              children: [
+                Icon(
+                  Icons.outlined_flag_rounded,
+                  color: Color(0xFFDC2626),
+                  size: 19,
+                ),
+                SizedBox(width: 10),
+                Text(
+                  'Report player',
+                  style: TextStyle(
+                    color: Color(0xFFDC2626),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ProfileClanRoute extends StatefulWidget {
   const _ProfileClanRoute({
     required this.clanId,
     required this.clanName,
     required this.clanRepository,
     required this.fixtureRepository,
+    required this.moderationRepository,
   });
 
   final String clanId;
   final String clanName;
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
+  final ModerationRepository moderationRepository;
 
   @override
   State<_ProfileClanRoute> createState() => _ProfileClanRouteState();
@@ -1832,6 +1975,7 @@ class _ProfileClanRouteState extends State<_ProfileClanRoute> {
             clanRepository: widget.clanRepository,
             fixtureRepository: widget.fixtureRepository,
             currentMembership: data.membership,
+            moderationRepository: widget.moderationRepository,
           );
         }
         if (snapshot.hasError) {

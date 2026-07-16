@@ -1,5 +1,7 @@
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_booking_screen.dart';
+import 'package:field/src/open_queue/open_queue_party.dart';
+import 'package:field/src/open_queue/open_queue_party_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:flutter/material.dart';
@@ -349,6 +351,345 @@ void main() {
     expect(find.text('BOOKING DETAILS'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('new reservation makes the create-party promise prominent', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(_emptyPartyContext());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+          newlyBooked: true,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('SPOT SECURED · NEXT'), findsOneWidget);
+    expect(find.text('Bring your people.'), findsOneWidget);
+    expect(find.textContaining('up to 4 confirmed players'), findsOneWidget);
+    expect(find.textContaining('assigned to the same team'), findsOneWidget);
+    expect(
+      find.text('Full teams can still rebalance until kickoff.'),
+      findsOneWidget,
+    );
+
+    final create = find.byKey(const ValueKey('create-open-queue-party'));
+    await _bringAboveFloatingNav(tester, create);
+    await tester.tap(create);
+    await tester.pumpAndSettle();
+
+    expect(repository.createCalls, 1);
+    expect(find.text('YOUR PARTY'), findsOneWidget);
+    expect(find.text('1/4'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('pending party invite is prominent and opens its response flow', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(_invitedPartyContext());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('open-queue-party-invite')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Noor Saleh invited you to play together'),
+      findsOneWidget,
+    );
+    expect(find.text('PARTY INVITE · ACTION NEEDED'), findsOneWidget);
+    expect(find.byKey(const ValueKey('create-open-queue-party')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('open-queue-party-invite-response-flow')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .getTopLeft(find.byKey(const ValueKey('open-queue-party-invite')))
+          .dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey('match-day-kit-panel'))).dy,
+      ),
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey('open-queue-party-invite-indicator')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('open-queue-party-invite-response-flow')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('decline-open-queue-party-invite')),
+      findsOneWidget,
+    );
+
+    final accept = find.byKey(const ValueKey('accept-open-queue-party-invite'));
+    await _bringAboveFloatingNav(tester, accept);
+    await tester.tap(accept);
+    await tester.pumpAndSettle();
+
+    expect(repository.acceptedInvites, 1);
+    expect(find.text('YOUR PARTY'), findsOneWidget);
+    expect(find.text('2/4'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('accepting a party refreshes a rebalanced team and kit', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(
+      _invitedPartyContext(),
+      bookingAfterMutation: _booking(
+        assigned: true,
+        assignedTeam: openQueueBlackTeamId,
+      ),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('WEAR BLACK'), findsNothing);
+    await tester.tap(
+      find.byKey(const ValueKey('open-queue-party-invite-indicator')),
+    );
+    await tester.pumpAndSettle();
+    final accept = find.byKey(const ValueKey('accept-open-queue-party-invite'));
+    await _bringAboveFloatingNav(tester, accept);
+    await tester.tap(accept);
+    await tester.pumpAndSettle();
+
+    final kit = find.text('WEAR BLACK');
+    await _bringAboveFloatingNav(tester, kit);
+    expect(kit, findsOneWidget);
+    final team = find.text('BLACK TEAM');
+    await _bringAboveFloatingNav(tester, team);
+    expect(team, findsOneWidget);
+    expect(find.text('WEAR WHITE'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'an invite stays prominent while in another party and can switch',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final repository = _PartyOpenQueueRepository(_partySwitchInviteContext());
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpenQueueBookingScreen(
+            repository: repository,
+            booking: _booking(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('open-queue-party-invite-indicator')),
+        findsOneWidget,
+      );
+      expect(find.text('YOUR PARTY'), findsNothing);
+
+      await tester.tap(
+        find.byKey(const ValueKey('open-queue-party-invite-indicator')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('open-queue-party-switch-warning')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('move you out of your current party'),
+        findsOneWidget,
+      );
+      expect(find.text('Switch & join'), findsOneWidget);
+
+      final accept = find.byKey(
+        const ValueKey('accept-open-queue-party-invite'),
+      );
+      await _bringAboveFloatingNav(tester, accept);
+      await tester.tap(accept);
+      await tester.pumpAndSettle();
+
+      expect(repository.acceptedInvites, 1);
+      expect(find.text('YOUR PARTY'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('open-queue-party-invite')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('party owner sees roles and pending invitation controls', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(_ownedPartyContext());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('YOUR PARTY'), findsOneWidget);
+    expect(find.text('INVITED'), findsOneWidget);
+    expect(find.textContaining('Defender'), findsWidgets);
+    expect(
+      find.byKey(const ValueKey('cancel-party-invite-membership-pending')),
+      findsOneWidget,
+    );
+
+    final invite = find.byKey(const ValueKey('invite-open-queue-party-player'));
+    await _bringAboveFloatingNav(tester, invite);
+    await tester.tap(invite);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Invite confirmed players'), findsOneWidget);
+    expect(find.text('Layla Abbas'), findsOneWidget);
+    expect(find.textContaining('Midfielder'), findsOneWidget);
+    expect(find.textContaining('IN A PARTY · 2/4'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('invite-party-player-player-layla')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(repository.sentInvites, 1);
+    expect(find.text('Sent'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelling a party uses the themed confirmation', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(_ownedPartyContext());
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final disband = find.byKey(const ValueKey('disband-open-queue-party'));
+    await _bringAboveFloatingNav(tester, disband);
+    await tester.tap(disband);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('field-confirmation-dialog')),
+      findsOneWidget,
+    );
+    expect(find.text('Cancel this party?'), findsOneWidget);
+    expect(
+      find.text('Everyone keeps their individual match booking.'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('field-confirmation-confirm')));
+    await tester.pumpAndSettle();
+    expect(repository.disbandCalls, 1);
+    expect(find.text('PLAY TOGETHER'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('existing party locks every mutation after the party cutoff', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _PartyOpenQueueRepository(
+      _ownedPartyContext(canUseParties: false),
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: repository,
+          booking: _booking(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final lockNotice = find.byKey(
+      const ValueKey('open-queue-party-mutations-locked'),
+    );
+    await _bringAboveFloatingNav(tester, lockNotice);
+    expect(lockNotice, findsOneWidget);
+    expect(find.text('Party changes closed'), findsOneWidget);
+    expect(find.text('Party locked for this match'), findsOneWidget);
+
+    final invite = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('invite-open-queue-party-player')),
+    );
+    final disband = tester.widget<TextButton>(
+      find.byKey(const ValueKey('disband-open-queue-party')),
+    );
+    expect(invite.onPressed, isNull);
+    expect(disband.onPressed, isNull);
+    expect(
+      find.byKey(const ValueKey('cancel-party-invite-membership-pending')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _bringAboveFloatingNav(WidgetTester tester, Finder target) async {
@@ -454,4 +795,253 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
         refundAmountFils: 0,
         refundCutoffAt: DateTime.now(),
       );
+}
+
+class _PartyOpenQueueRepository extends _FakeOpenQueueRepository
+    implements OpenQueuePartyRepository, OpenQueueBookingLookupRepository {
+  _PartyOpenQueueRepository(this.contextData, {this.bookingAfterMutation});
+
+  OpenQueuePartyContext contextData;
+  final OpenQueueBooking? bookingAfterMutation;
+  bool _mutationCompleted = false;
+  int createCalls = 0;
+  int acceptedInvites = 0;
+  int sentInvites = 0;
+  int disbandCalls = 0;
+
+  @override
+  Future<OpenQueueBooking?> getMyUpcomingBooking() async {
+    return _mutationCompleted ? bookingAfterMutation : null;
+  }
+
+  @override
+  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async {
+    return _mutationCompleted ? bookingAfterMutation : null;
+  }
+
+  @override
+  Future<OpenQueuePartyContext> getPartyContext(String gameId) async =>
+      contextData;
+
+  @override
+  Future<String> createParty(String gameId) async {
+    createCalls += 1;
+    contextData = _ownedPartyContext(includePending: false);
+    return 'party-1';
+  }
+
+  @override
+  Future<String> invitePartyMember({
+    required String partyId,
+    required String profileId,
+  }) async {
+    sentInvites += 1;
+    return 'membership-new';
+  }
+
+  @override
+  Future<void> respondToPartyInvite({
+    required String membershipId,
+    required bool accept,
+  }) async {
+    if (accept) {
+      acceptedInvites += 1;
+      _mutationCompleted = true;
+      contextData = _joinedPartyContext();
+    } else {
+      contextData = _emptyPartyContext();
+    }
+  }
+
+  @override
+  Future<void> cancelPartyInvite(String membershipId) async {}
+
+  @override
+  Future<void> leaveParty(String partyId) async {
+    contextData = _emptyPartyContext();
+  }
+
+  @override
+  Future<void> disbandParty(String partyId) async {
+    disbandCalls += 1;
+    contextData = _emptyPartyContext();
+  }
+}
+
+OpenQueuePartyContext _emptyPartyContext() {
+  return const OpenQueuePartyContext(
+    gameId: 'game-1',
+    gameStatus: 'OPEN',
+    canUseParties: true,
+    maxPartySize: 4,
+    receivedInvites: [],
+    eligiblePlayers: [
+      OpenQueuePartyPlayer(
+        profileId: 'player-layla',
+        displayName: 'Layla Abbas',
+        role: OpenQueueRole.midfielder,
+        isInParty: true,
+        currentPartyId: 'layla-party',
+        currentPartySize: 2,
+      ),
+    ],
+  );
+}
+
+OpenQueuePartyContext _invitedPartyContext() {
+  return OpenQueuePartyContext(
+    gameId: 'game-1',
+    gameStatus: 'OPEN',
+    canUseParties: true,
+    maxPartySize: 4,
+    receivedInvites: [
+      OpenQueuePartyInvite(
+        membershipId: 'membership-incoming',
+        partyId: 'party-noor',
+        invitedAt: DateTime.now(),
+        owner: const OpenQueuePartyPlayer(
+          profileId: 'player-noor',
+          displayName: 'Noor Saleh',
+          role: OpenQueueRole.attacker,
+        ),
+        acceptedCount: 1,
+        members: [
+          OpenQueuePartyMember(
+            membershipId: 'membership-noor',
+            profileId: 'player-noor',
+            displayName: 'Noor Saleh',
+            role: OpenQueueRole.attacker,
+            status: OpenQueuePartyMemberStatus.accepted,
+            isOwner: true,
+            invitedAt: DateTime.now(),
+          ),
+        ],
+      ),
+    ],
+    eligiblePlayers: const [],
+  );
+}
+
+OpenQueuePartyContext _ownedPartyContext({
+  bool includePending = true,
+  bool canUseParties = true,
+}) {
+  return OpenQueuePartyContext(
+    gameId: 'game-1',
+    gameStatus: 'OPEN',
+    canUseParties: canUseParties,
+    maxPartySize: 4,
+    myParty: OpenQueueParty(
+      id: 'party-1',
+      ownerProfileId: 'profile-1',
+      isOwner: true,
+      acceptedCount: 1,
+      members: [
+        OpenQueuePartyMember(
+          membershipId: 'membership-owner',
+          profileId: 'profile-1',
+          displayName: 'Ali Altaraif',
+          role: OpenQueueRole.defender,
+          status: OpenQueuePartyMemberStatus.accepted,
+          isOwner: true,
+          invitedAt: DateTime.now(),
+        ),
+        if (includePending)
+          OpenQueuePartyMember(
+            membershipId: 'membership-pending',
+            profileId: 'player-sami',
+            displayName: 'Sami Nasser',
+            role: OpenQueueRole.defender,
+            status: OpenQueuePartyMemberStatus.invited,
+            isOwner: false,
+            invitedAt: DateTime.now(),
+          ),
+      ],
+    ),
+    receivedInvites: const [],
+    eligiblePlayers: const [
+      OpenQueuePartyPlayer(
+        profileId: 'player-layla',
+        displayName: 'Layla Abbas',
+        role: OpenQueueRole.midfielder,
+        isInParty: true,
+        currentPartyId: 'layla-party',
+        currentPartySize: 2,
+      ),
+    ],
+  );
+}
+
+OpenQueuePartyContext _partySwitchInviteContext() {
+  return OpenQueuePartyContext(
+    gameId: 'game-1',
+    gameStatus: 'OPEN',
+    canUseParties: true,
+    maxPartySize: 4,
+    myParty: OpenQueueParty(
+      id: 'party-current',
+      ownerProfileId: 'player-dana',
+      isOwner: false,
+      acceptedCount: 2,
+      members: [
+        OpenQueuePartyMember(
+          membershipId: 'membership-dana',
+          profileId: 'player-dana',
+          displayName: 'Dana Alawi',
+          role: OpenQueueRole.midfielder,
+          status: OpenQueuePartyMemberStatus.accepted,
+          isOwner: true,
+          invitedAt: DateTime.now(),
+        ),
+        OpenQueuePartyMember(
+          membershipId: 'membership-me-current',
+          profileId: 'profile-1',
+          displayName: 'Ali Altaraif',
+          role: OpenQueueRole.defender,
+          status: OpenQueuePartyMemberStatus.accepted,
+          isOwner: false,
+          invitedAt: DateTime.now(),
+        ),
+      ],
+    ),
+    receivedInvites: _invitedPartyContext().receivedInvites,
+    eligiblePlayers: const [],
+  );
+}
+
+OpenQueuePartyContext _joinedPartyContext() {
+  return OpenQueuePartyContext(
+    gameId: 'game-1',
+    gameStatus: 'OPEN',
+    canUseParties: true,
+    maxPartySize: 4,
+    myParty: OpenQueueParty(
+      id: 'party-noor',
+      ownerProfileId: 'player-noor',
+      isOwner: false,
+      acceptedCount: 2,
+      members: [
+        OpenQueuePartyMember(
+          membershipId: 'membership-noor',
+          profileId: 'player-noor',
+          displayName: 'Noor Saleh',
+          role: OpenQueueRole.attacker,
+          status: OpenQueuePartyMemberStatus.accepted,
+          isOwner: true,
+          invitedAt: DateTime.now(),
+        ),
+        OpenQueuePartyMember(
+          membershipId: 'membership-me',
+          profileId: 'profile-1',
+          displayName: 'Ali Altaraif',
+          role: OpenQueueRole.defender,
+          status: OpenQueuePartyMemberStatus.accepted,
+          isOwner: false,
+          invitedAt: DateTime.now(),
+        ),
+      ],
+    ),
+    receivedInvites: const [],
+    eligiblePlayers: const [],
+  );
 }

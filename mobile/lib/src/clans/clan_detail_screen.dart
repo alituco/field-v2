@@ -7,6 +7,9 @@ import '../fixtures/create_fixture_screen.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
+import '../moderation/moderation.dart';
+import '../moderation/moderation_repository.dart';
+import '../moderation/report_issue_sheet.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import 'clan.dart';
@@ -16,7 +19,7 @@ import 'customize_clan_screen.dart';
 
 enum _MemberAction { makeLeader, removeLeader, transferOwnership, remove }
 
-enum _ClanHeaderAction { edit, archive }
+enum _ClanHeaderAction { edit, archive, report }
 
 class ClanDetailScreen extends StatefulWidget {
   const ClanDetailScreen({
@@ -25,12 +28,14 @@ class ClanDetailScreen extends StatefulWidget {
     required this.clanRepository,
     required this.fixtureRepository,
     this.currentMembership,
+    this.moderationRepository,
   });
 
   final Clan clan;
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
   final ClanMembership? currentMembership;
+  final ModerationRepository? moderationRepository;
 
   @override
   State<ClanDetailScreen> createState() => _ClanDetailScreenState();
@@ -38,6 +43,7 @@ class ClanDetailScreen extends StatefulWidget {
 
 class _ClanDetailScreenState extends State<ClanDetailScreen> {
   final ProfileRepository _profileRepository = SupabaseProfileRepository();
+  late final ModerationRepository _moderationRepository;
   int _tabIndex = 0;
   late Clan _clan;
   List<ClanMember> _members = const [];
@@ -71,6 +77,8 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     super.initState();
     _clan = widget.clan;
     _currentMembership = widget.currentMembership;
+    _moderationRepository =
+        widget.moderationRepository ?? SupabaseModerationRepository();
     _loadClanData();
   }
 
@@ -101,6 +109,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
             profileRepository: _profileRepository,
             clanRepository: widget.clanRepository,
             fixtureRepository: widget.fixtureRepository,
+            moderationRepository: _moderationRepository,
             profileId: member.profileId,
           ),
         ),
@@ -201,6 +210,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
             clanRepository: widget.clanRepository,
             fixtureRepository: widget.fixtureRepository,
             currentMembership: _currentMembership,
+            moderationRepository: _moderationRepository,
           ),
         ),
       );
@@ -569,6 +579,24 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     );
   }
 
+  Future<void> _reportClan() async {
+    final receipt = await showReportIssueSheet(
+      context: context,
+      repository: _moderationRepository,
+      subjectType: ModerationSubjectType.clan,
+      subjectId: clan.id,
+      subjectName: clan.name,
+    );
+    if (!mounted || receipt == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Report sent privately · reference ${receipt.shortReference}',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final detail = _ClanDetailData.fromClan(
@@ -583,25 +611,21 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
         header: FieldPageHeader(
           title: clan.name,
           showBack: true,
-          rightAction: _isOwner
-              ? _ClanHeaderMenu(
-                  enabled: !_isArchiving,
-                  onSelected: (action) {
-                    switch (action) {
-                      case _ClanHeaderAction.edit:
-                        _openCustomize();
-                      case _ClanHeaderAction.archive:
-                        _archiveClan();
-                    }
-                  },
-                )
-              : _canManageClan
-              ? HeaderActionButton(
-                  icon: Icons.tune_rounded,
-                  label: 'Edit',
-                  onPressed: _openCustomize,
-                )
-              : null,
+          rightAction: _ClanHeaderMenu(
+            enabled: !_isArchiving,
+            canEdit: _canManageClan,
+            canArchive: _isOwner,
+            onSelected: (action) {
+              switch (action) {
+                case _ClanHeaderAction.edit:
+                  _openCustomize();
+                case _ClanHeaderAction.archive:
+                  _archiveClan();
+                case _ClanHeaderAction.report:
+                  _reportClan();
+              }
+            },
+          ),
         ),
         child: ListView(
           padding: fieldHeaderAwarePadding(context, bottom: 116),
@@ -880,9 +904,16 @@ class _ClanHero extends StatelessWidget {
 }
 
 class _ClanHeaderMenu extends StatelessWidget {
-  const _ClanHeaderMenu({required this.enabled, required this.onSelected});
+  const _ClanHeaderMenu({
+    required this.enabled,
+    required this.canEdit,
+    required this.canArchive,
+    required this.onSelected,
+  });
 
   final bool enabled;
+  final bool canEdit;
+  final bool canArchive;
   final ValueChanged<_ClanHeaderAction> onSelected;
 
   @override
@@ -891,39 +922,66 @@ class _ClanHeaderMenu extends StatelessWidget {
       color: Colors.white.withValues(alpha: 0.72),
       borderRadius: BorderRadius.circular(12),
       child: PopupMenuButton<_ClanHeaderAction>(
+        key: const ValueKey('clan-options-menu'),
         enabled: enabled,
         tooltip: 'Clan options',
         onSelected: onSelected,
         icon: const Icon(Icons.more_horiz_rounded, color: fieldGray900),
-        itemBuilder: (context) => const [
-          PopupMenuItem<_ClanHeaderAction>(
-            value: _ClanHeaderAction.edit,
-            child: Row(
-              children: [
-                Icon(Icons.tune_rounded, size: 19, color: fieldGray700),
-                SizedBox(width: 10),
-                Text(
-                  'Edit clan',
-                  style: TextStyle(
-                    color: fieldGray900,
-                    fontWeight: FontWeight.w700,
+        itemBuilder: (context) => [
+          if (canEdit)
+            const PopupMenuItem<_ClanHeaderAction>(
+              key: ValueKey('clan-edit-action'),
+              value: _ClanHeaderAction.edit,
+              child: Row(
+                children: [
+                  Icon(Icons.tune_rounded, size: 19, color: fieldGray700),
+                  SizedBox(width: 10),
+                  Text(
+                    'Edit clan',
+                    style: TextStyle(
+                      color: fieldGray900,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          PopupMenuItem<_ClanHeaderAction>(
-            value: _ClanHeaderAction.archive,
+          if (canArchive)
+            const PopupMenuItem<_ClanHeaderAction>(
+              key: ValueKey('clan-archive-action'),
+              value: _ClanHeaderAction.archive,
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.delete_outline_rounded,
+                    size: 19,
+                    color: Color(0xFFDC2626),
+                  ),
+                  SizedBox(width: 10),
+                  Text(
+                    'Delete clan',
+                    style: TextStyle(
+                      color: Color(0xFFDC2626),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (canEdit || canArchive) const PopupMenuDivider(),
+          const PopupMenuItem<_ClanHeaderAction>(
+            key: ValueKey('clan-report-action'),
+            value: _ClanHeaderAction.report,
             child: Row(
               children: [
                 Icon(
-                  Icons.delete_outline_rounded,
+                  Icons.outlined_flag_rounded,
                   size: 19,
                   color: Color(0xFFDC2626),
                 ),
                 SizedBox(width: 10),
                 Text(
-                  'Delete clan',
+                  'Report clan',
                   style: TextStyle(
                     color: Color(0xFFDC2626),
                     fontWeight: FontWeight.w700,

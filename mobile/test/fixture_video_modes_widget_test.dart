@@ -61,6 +61,10 @@ void main() {
     expect(find.text('Field'), findsOneWidget);
     expect(find.text('PLAYER RATING UPDATE'), findsOneWidget);
     expect(find.text('+14 SR'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixture-player-rating-margin-adjustment')),
+      findsNothing,
+    );
     expect(find.text('WATCH MATCH'), findsNothing);
 
     await tester.tap(find.byKey(const ValueKey('fixture-section-watch')));
@@ -68,6 +72,62 @@ void main() {
     expect(find.text('WATCH MATCH'), findsOneWidget);
     expect(find.text('PLAYER RATING UPDATE'), findsNothing);
     expect(find.text('Field'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('decisive solo win explains the extra SR in the rating card', (
+    tester,
+  ) async {
+    await _pumpDetail(
+      tester,
+      _fixture(status: FixtureStatus.finalResult),
+      playerRatingUpdate: const FixturePlayerRatingUpdate(
+        ratingBefore: 1200,
+        ratingChange: 13,
+        ratingAfter: 1213,
+        result: 'WIN',
+        scoreMargin: 3,
+        marginMultiplier: 1.1,
+        baseRatingChange: 12,
+        marginBonusApplied: 1,
+      ),
+    );
+
+    expect(
+      find.byKey(const ValueKey('fixture-player-rating-margin-adjustment')),
+      findsOneWidget,
+    );
+    expect(find.text('3-GOAL WIN BONUS'), findsOneWidget);
+    expect(
+      find.text('+1 SR included in this update · standard result +12 SR'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('decisive solo loss explains the margin adjustment', (
+    tester,
+  ) async {
+    await _pumpDetail(
+      tester,
+      _fixture(status: FixtureStatus.finalResult),
+      playerRatingUpdate: const FixturePlayerRatingUpdate(
+        ratingBefore: 1200,
+        ratingChange: -14,
+        ratingAfter: 1186,
+        result: 'LOSS',
+        scoreMargin: 4,
+        marginMultiplier: 1.15,
+        baseRatingChange: -12,
+        marginBonusApplied: -2,
+      ),
+    );
+
+    expect(find.text('4-GOAL MARGIN ADJUSTMENT'), findsOneWidget);
+    expect(
+      find.text('-2 SR included in this update · standard result -12 SR'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

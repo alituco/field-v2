@@ -1,5 +1,6 @@
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/open_queue_party.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -154,6 +155,67 @@ void main() {
     expect(game(status: 'FULL').isUpcomingReservation, isTrue);
     expect(game(status: 'FINAL', whiteScore: 2).isUpcomingReservation, isFalse);
     expect(game(status: 'OPEN', whiteScore: 2).isUpcomingReservation, isFalse);
+  });
+
+  test('party invite notifications parse their navigation context', () {
+    final notification = OpenQueuePartyInviteNotification.fromJson({
+      'notification_id': 'notification-one',
+      'type': 'OPEN_QUEUE_PARTY_INVITE',
+      'game_id': 'game-one',
+      'party_id': 'party-one',
+      'membership_id': 'membership-one',
+      'created_at': '2026-07-15T12:00:00Z',
+      'read_at': null,
+      'is_read': false,
+      'inviter': {
+        'profile_id': 'sami',
+        'display_name': 'Sami Nasser',
+        'username': 'sami',
+        'avatar_url': null,
+      },
+      'game': {
+        'starts_at': '2026-07-17T17:30:00Z',
+        'venue': 'TFA, Saar',
+        'status': 'OPEN',
+      },
+    });
+
+    expect(notification.id, 'notification-one');
+    expect(notification.gameId, 'game-one');
+    expect(notification.membershipId, 'membership-one');
+    expect(notification.inviter.displayName, 'Sami Nasser');
+    expect(notification.venue, 'TFA, Saar');
+    expect(notification.gameStatus, 'OPEN');
+    expect(notification.gameStartsAt, isNotNull);
+    expect(notification.isRead, isFalse);
+  });
+
+  test('party candidates expose their current party without hiding them', () {
+    final context = OpenQueuePartyContext.fromJson({
+      'game_id': 'game-one',
+      'game_status': 'OPEN',
+      'can_use_parties': true,
+      'max_party_size': 4,
+      'received_invites': const [],
+      'eligible_players': [
+        {
+          'profile_id': 'layla',
+          'display_name': 'Layla Abbas',
+          'role': 'MID',
+          'is_in_party': true,
+          'current_party_id': 'party-two',
+          'is_current_party_owner': true,
+          'current_party_size': 3,
+        },
+      ],
+    });
+
+    expect(context.eligiblePlayers, hasLength(1));
+    final player = context.eligiblePlayers.single;
+    expect(player.isInParty, isTrue);
+    expect(player.currentPartyId, 'party-two');
+    expect(player.isCurrentPartyOwner, isTrue);
+    expect(player.currentPartySize, 3);
   });
 
   test('solo match detail maps teams, clock, goals, and replay data', () {

@@ -2354,11 +2354,89 @@ class _PlayerRatingUpdateCard extends StatelessWidget {
               ),
             ],
           ),
+          if (update.hasMarginAdjustment) ...[
+            const SizedBox(height: 14),
+            _PlayerRatingMarginAdjustment(update: update),
+          ],
         ],
       ),
     );
   }
 }
+
+class _PlayerRatingMarginAdjustment extends StatelessWidget {
+  const _PlayerRatingMarginAdjustment({required this.update});
+
+  final FixturePlayerRatingUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    final adjustment = update.marginBonusApplied!;
+    final isWinBonus = adjustment > 0;
+    final margin = update.scoreMargin;
+    final marginLabel = margin == null ? '' : '$margin-GOAL ';
+    final baseChange = update.baseRatingChange;
+    final detail = [
+      '${_signedRating(adjustment)} SR included in this update',
+      if (baseChange != null) 'standard result ${_signedRating(baseChange)} SR',
+    ].join(' · ');
+    final foreground = isWinBonus ? fieldEmerald700 : const Color(0xFFC2410C);
+    final background = isWinBonus ? fieldEmerald50 : const Color(0xFFFFF7ED);
+
+    return Container(
+      key: const ValueKey('fixture-player-rating-margin-adjustment'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            isWinBonus
+                ? Icons.auto_awesome_rounded
+                : Icons.stacked_line_chart_rounded,
+            color: foreground,
+            size: 17,
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isWinBonus
+                      ? '${marginLabel}WIN BONUS'
+                      : '${marginLabel}MARGIN ADJUSTMENT',
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 11,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _signedRating(int value) => '${value > 0 ? '+' : ''}$value';
 
 class _PlayerRatingValue extends StatelessWidget {
   const _PlayerRatingValue({required this.label, required this.value});

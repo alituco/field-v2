@@ -9,6 +9,10 @@ import type {
   RefereeFixture,
 } from "./types";
 import { nullableSr, persistedOpenQueueTeam } from "./open-queue-ratings";
+import {
+  loadRefereeRiskSignals,
+  riskContextFor,
+} from "./referee-risk-context";
 
 const WHITE = {
   id: "WHITE",
@@ -38,7 +42,11 @@ const gameSelect = `
   white_average_sr,
   black_average_sr,
   match_average_sr,
-  team_sr_spread
+  team_sr_spread,
+  cancellation_code,
+  cancellation_reason,
+  cancelled_at,
+  cancelled_by
 `;
 
 export async function loadRefereeOpenQueueGames(
@@ -97,6 +105,11 @@ async function hydrateOpenQueueRows(
     loadEvents(db, gameIds),
     loadBlueCards(db, gameIds),
   ]);
+  const riskSignals = await loadRefereeRiskSignals(
+    db,
+    players.map((player) => player.id),
+    [],
+  );
 
   return rows.map((row) => {
     const id = String(row.id);
@@ -104,6 +117,12 @@ async function hydrateOpenQueueRows(
     const endsAt = String(row.ends_at);
     const timezone = String(row.timezone || "Asia/Bahrain");
     const gamePlayers = players.filter((player) => player.gameId === id);
+    const playedPlayerIds = gamePlayers
+      .filter((player) => player.played)
+      .map((player) => player.id);
+    const relevantPlayerIds = playedPlayerIds.length > 0
+      ? playedPlayerIds
+      : gamePlayers.map((player) => player.id);
 
     return {
       matchKind: "SOLO",
@@ -113,10 +132,10 @@ async function hydrateOpenQueueRows(
       day: zonedPart(startsAt, timezone, "weekday").toUpperCase(),
       timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,
       matchDate: zonedDate(startsAt, timezone),
-      cancellationCode: null,
-      cancellationReason: null,
-      cancelledAt: null,
-      cancelledBy: null,
+      cancellationCode: nullableString(row.cancellation_code),
+      cancellationReason: nullableString(row.cancellation_reason),
+      cancelledAt: nullableString(row.cancelled_at),
+      cancelledBy: nullableString(row.cancelled_by),
       homeScore: nullableNumber(row.white_score),
       awayScore: nullableNumber(row.black_score),
       whiteAverageSr: nullableSr(row.white_average_sr),
@@ -135,6 +154,7 @@ async function hydrateOpenQueueRows(
       goals: goals.filter((goal) => goal.fixtureId === id),
       events: events.filter((event) => event.fixtureId === id),
       blueCards: blueCards.filter((card) => card.fixtureId === id),
+      riskContext: riskContextFor(riskSignals, [], relevantPlayerIds),
     } satisfies RefereeFixture;
   });
 }

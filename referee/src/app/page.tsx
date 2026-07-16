@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { normalizePhoneNumber } from "@/lib/phone";
 import { formatPlayerSr } from "@/lib/open-queue-ratings";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -11,6 +12,7 @@ import type {
   BroadcastControlResponse,
   FixtureClock,
   FixtureEvent,
+  ModerationRiskSignal,
   Player,
   RefereeAssignmentsResponse,
   RefereeFixture,
@@ -266,6 +268,16 @@ export default function RefereePage() {
     );
   }
 
+  async function runSafetyAction(body: FixtureActionBody) {
+    if (!activeFixture) return false;
+    return runFixtureAction(
+      activeFixture.id,
+      activeFixture.matchKind,
+      body,
+      false,
+    );
+  }
+
   async function runAdminAction(
     fixtureId: string,
     body: FixtureActionBody,
@@ -302,10 +314,12 @@ export default function RefereePage() {
         loadGames(),
         refreshAdmin ? loadAdminFixtures() : Promise.resolve(),
       ]);
+      return true;
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : "Action failed.",
       );
+      return false;
     } finally {
       setSubmitting(null);
     }
@@ -465,9 +479,16 @@ export default function RefereePage() {
             title="REFEREE"
             subtitle={me ? `${me.displayName} · ${me.role}` : "LOADING"}
           />
-          <button className="ghost-button" onClick={() => void signOut()} type="button">
-            Logout
-          </button>
+          <div className="topbar-actions">
+            {me?.role === "admin" ? (
+              <a className="ghost-button admin-panel-link" href="/admin">
+                Admin Panel
+              </a>
+            ) : null}
+            <button className="ghost-button" onClick={() => void signOut()} type="button">
+              Logout
+            </button>
+          </div>
         </header>
 
         {me?.role === "admin" ? (
@@ -540,6 +561,7 @@ export default function RefereePage() {
             onCardClan={setCardClanId}
             onCardPlayer={setCardPlayerId}
             onRunAction={runAction}
+            onSafetyAction={runSafetyAction}
             onRefresh={() => void loadGames()}
           />
         )}
@@ -1069,6 +1091,7 @@ function GamesView({
   onCardClan,
   onCardPlayer,
   onRunAction,
+  onSafetyAction,
   onRefresh,
 }: {
   accessToken: string;
@@ -1092,8 +1115,17 @@ function GamesView({
   onRunAction: (
     body: FixtureActionBody,
   ) => Promise<void>;
+  onSafetyAction: (body: FixtureActionBody) => Promise<boolean>;
   onRefresh: () => void;
 }) {
+  const [eventDialog, setEventDialog] = useState<"goal" | "blue-card" | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setEventDialog(null);
+  }, [activeFixture?.id]);
+
   if (fixtures.length === 0) {
     return (
       <section className="panel">
@@ -1117,8 +1149,13 @@ function GamesView({
 
   if (!activeFixture) return null;
 
+  const canRecordEvent = activeFixture.status === "LIVE";
+  const activeBlueCards = activeFixture.blueCards.filter(
+    (card) => card.status === "ACTIVE",
+  );
+
   return (
-    <>
+    <div className="referee-match-console">
       <div className="fixture-strip">
         {fixtures.map((fixture) => (
           <button
@@ -1131,115 +1168,277 @@ function GamesView({
           >
             <div className="fixture-meta">
               <span>
-                {fixture.matchDate} · {fixture.matchKind === "SOLO" ? "SOLO" : "CLAN"}
+                {formatMatchDate(fixture.matchDate)} · {fixture.timeSlot}
               </span>
-              <span>{fixture.status}</span>
+              <span className={`fixture-status ${fixture.status.toLowerCase()}`}>
+                {fixture.status}
+              </span>
             </div>
             <div className="versus">
               <TeamPill clan={fixture.homeClan} />
               <div className="vs-mark">VS</div>
               <TeamPill clan={fixture.awayClan} alignEnd />
             </div>
+            <div className="fixture-card-footer">
+              <span>{fixture.matchKind === "SOLO" ? "Solo match" : "Clan match"}</span>
+              <span>{fixture.venue}</span>
+            </div>
           </button>
         ))}
       </div>
 
-      <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
+      <MatchContextDisclosure key={activeFixture.id} fixture={activeFixture} />
 
       <TimerPanel
+        compact
         key={activeFixture.id}
         fixture={activeFixture}
         submitting={submitting}
         onRunAction={onRunAction}
       />
 
-      {activeFixture.status === "FINAL" ? (
-        <RatedResultLockedPanel />
-      ) : (
-        <ActionPanel
-          title="Goal"
-          fixture={activeFixture}
-          selectedClanId={goalClanId || activeFixture.homeClan.id}
-          selectedPlayerId={goalPlayerId}
-          players={goalPlayers}
-          submitting={submitting}
-          onTeam={(clanId) => {
-            onGoalClan(clanId);
-            onGoalPlayer(playersForClan(activeFixture, clanId)[0]?.id ?? "");
-            onAssistPlayer("");
-          }}
-          onPlayer={onGoalPlayer}
-          extra={
-            <PlayerSelect
-              label="Assist"
-              optional
-              value={assistPlayerId}
-              players={goalPlayers.filter((player) => player.id !== goalPlayerId)}
-              onChange={onAssistPlayer}
-            />
-          }
-          buttonLabel="Goal"
-          onSubmit={() =>
-            onRunAction({
-              action: "goal",
-              clanId: goalClanId || activeFixture.homeClan.id,
-              profileId: goalPlayerId,
-              assistProfileId: assistPlayerId || null,
-            })
-          }
-        />
-      )}
+      <section className="panel match-action-hub">
+        <div className="match-action-heading">
+          <div>
+            <span className="match-action-kicker">Match controls</span>
+            <h2 className="panel-title">
+              {canRecordEvent ? "Record what happens" : "Ready when play starts"}
+            </h2>
+          </div>
+          <span className={`match-action-live ${canRecordEvent ? "active" : ""}`}>
+            {canRecordEvent ? "Live" : activeFixture.status}
+          </span>
+        </div>
 
-      <ActionPanel
-        title="Blue Card"
+        <div className="match-event-actions">
+          <button
+            className="match-event-action goal"
+            disabled={!canRecordEvent || submitting !== null}
+            onClick={() => setEventDialog("goal")}
+            type="button"
+          >
+            <span className="match-event-action-icon" aria-hidden="true">+1</span>
+            <span>
+              <strong>Goal</strong>
+              <small>Scorer and assist</small>
+            </span>
+          </button>
+          <button
+            className="match-event-action blue-card"
+            disabled={!canRecordEvent || submitting !== null}
+            onClick={() => setEventDialog("blue-card")}
+            type="button"
+          >
+            <span className="match-event-action-icon" aria-hidden="true" />
+            <span>
+              <strong>Blue card</strong>
+              <small>Start two minutes</small>
+            </span>
+          </button>
+        </div>
+
+        <RefereeSafetyPanel
+          compact
+          fixture={activeFixture}
+          submitting={submitting}
+          onAction={onSafetyAction}
+        />
+      </section>
+
+      {activeBlueCards.length > 0 ? (
+        <section className="panel active-card-panel">
+          <div className="panel-heading">
+            <div>
+              <span className="match-action-kicker">Player return timer</span>
+              <h2 className="panel-title">Active blue cards</h2>
+            </div>
+            <span className="active-card-count">{activeBlueCards.length}</span>
+          </div>
+          <ActiveBlueCards
+            fixture={activeFixture}
+            cards={activeBlueCards}
+            submitting={submitting}
+            onReturn={(cardId) =>
+              onRunAction({
+                action: "expire_blue_card",
+                blueCardId: cardId,
+              })
+            }
+          />
+        </section>
+      ) : null}
+
+      <details className="panel referee-disclosure">
+        <summary>
+          <span className="disclosure-icon broadcast" aria-hidden="true">●</span>
+          <span>
+            <strong>Camera and broadcast</strong>
+            <small>Connect or manage the match recording</small>
+          </span>
+          <DisclosureChevron />
+        </summary>
+        <div className="referee-disclosure-body">
+          <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
+        </div>
+      </details>
+
+      <details className="panel referee-disclosure">
+        <summary>
+          <span className="disclosure-icon timeline" aria-hidden="true">≡</span>
+          <span>
+            <strong>Match timeline</strong>
+            <small>
+              {activeFixture.events.length === 0
+                ? "No events recorded"
+                : `${activeFixture.events.length} recorded ${activeFixture.events.length === 1 ? "event" : "events"}`}
+            </small>
+          </span>
+          <DisclosureChevron />
+        </summary>
+        <div className="referee-disclosure-body timeline-body">
+          <div className="disclosure-toolbar">
+            <span>Newest first</span>
+            <button className="ghost-button compact-button" onClick={onRefresh} type="button">
+              Refresh
+            </button>
+          </div>
+          <EventList fixture={activeFixture} />
+        </div>
+      </details>
+
+      {activeFixture.status === "FINAL" ? (
+        <div className="result-locked-note">
+          <span aria-hidden="true">✓</span>
+          Final result saved. Admin corrections remain fully audited.
+        </div>
+      ) : null}
+
+      <MatchEventDialog
+        kind={eventDialog}
         fixture={activeFixture}
-        selectedClanId={cardClanId || activeFixture.homeClan.id}
-        selectedPlayerId={cardPlayerId}
-        players={cardPlayers}
         submitting={submitting}
-        onTeam={(clanId) => {
+        goalClanId={goalClanId || activeFixture.homeClan.id}
+        goalPlayerId={goalPlayerId}
+        assistPlayerId={assistPlayerId}
+        cardClanId={cardClanId || activeFixture.homeClan.id}
+        cardPlayerId={cardPlayerId}
+        goalPlayers={goalPlayers}
+        cardPlayers={cardPlayers}
+        onClose={() => setEventDialog(null)}
+        onGoalClan={(clanId) => {
+          onGoalClan(clanId);
+          onGoalPlayer(playersForClan(activeFixture, clanId)[0]?.id ?? "");
+          onAssistPlayer("");
+        }}
+        onGoalPlayer={onGoalPlayer}
+        onAssistPlayer={onAssistPlayer}
+        onCardClan={(clanId) => {
           onCardClan(clanId);
           onCardPlayer(playersForClan(activeFixture, clanId)[0]?.id ?? "");
         }}
-        onPlayer={onCardPlayer}
-        buttonLabel="Start 2:00"
-        dark
-        onSubmit={() =>
-          onRunAction({
-            action: "blue_card",
-            clanId: cardClanId || activeFixture.homeClan.id,
-            profileId: cardPlayerId,
-          })
-        }
+        onCardPlayer={onCardPlayer}
+        onSubmit={async (body) => {
+          await onRunAction(body);
+          setEventDialog(null);
+        }}
       />
+    </div>
+  );
+}
 
-      <section className="panel">
-        <div className="panel-heading">
-          <h2 className="panel-title">Active Blue Cards</h2>
-        </div>
-        <ActiveBlueCards
-          fixture={activeFixture}
-          cards={activeFixture.blueCards}
-          submitting={submitting}
-          onReturn={(cardId) =>
-            onRunAction({
-              action: "expire_blue_card",
-              blueCardId: cardId,
-            })
-          }
-        />
-      </section>
+function MatchContextDisclosure({ fixture }: { fixture: RefereeFixture }) {
+  const context = fixture.riskContext;
+  const signals = [...(context?.teams ?? []), ...(context?.players ?? [])];
+  const highCount = signals.filter((signal) => signal.level === "HIGH").length;
+  const recentCount = signals.reduce(
+    (total, signal) => total + signal.recentReports,
+    0,
+  );
 
-      <section className="panel">
-        <div className="panel-heading">
-          <h2 className="panel-title">Log</h2>
-          <button className="ghost-button" onClick={onRefresh} type="button">
-            Refresh
-          </button>
+  if (signals.length === 0) return null;
+
+  return (
+    <details className="panel referee-disclosure match-context-disclosure">
+      <summary>
+        <span className="disclosure-icon context" aria-hidden="true">!</span>
+        <span>
+          <strong>Before kickoff · match context</strong>
+          <small>
+            {signals.length} {signals.length === 1 ? "person or team" : "people or teams"}
+            {recentCount > 0 ? ` · ${recentCount} recent ${recentCount === 1 ? "report" : "reports"}` : " with prior history"}
+          </small>
+        </span>
+        <span className={`context-summary-level ${highCount > 0 ? "high" : ""}`}>
+          {highCount > 0 ? "Review" : "Aware"}
+        </span>
+        <DisclosureChevron />
+      </summary>
+      <div className="referee-disclosure-body match-context-body">
+        <p className="match-context-guidance">
+          {context.guidance || "Prior reports are context, not a verdict. Referee the match in front of you."}
+        </p>
+        <div className="match-context-list">
+          {signals.map((signal) => (
+            <MatchContextSignal
+              fixture={fixture}
+              key={`${signal.subjectType}-${signal.subjectId}`}
+              signal={signal}
+            />
+          ))}
         </div>
-        <EventList fixture={activeFixture} />
-      </section>
-    </>
+      </div>
+    </details>
+  );
+}
+
+function MatchContextSignal({
+  fixture,
+  signal,
+}: {
+  fixture: RefereeFixture;
+  signal: ModerationRiskSignal;
+}) {
+  const subjectName = signal.subjectType === "CLAN"
+    ? [fixture.homeClan, fixture.awayClan].find(
+        (clan) => clan.id === signal.subjectId,
+      )?.name ?? "Team"
+    : fixture.players.find((player) => player.id === signal.subjectId)
+        ?.displayName ?? "Player";
+  const details = [
+    signal.priorRefereeReports > 0
+      ? `${signal.priorRefereeReports} referee ${signal.priorRefereeReports === 1 ? "report" : "reports"}`
+      : null,
+    signal.priorWarnings > 0
+      ? `${signal.priorWarnings} prior ${signal.priorWarnings === 1 ? "warning" : "warnings"}`
+      : null,
+    signal.openReports > 0
+      ? `${signal.openReports} under review`
+      : null,
+    signal.activeRestriction
+      ? `Active ${signal.activeRestriction.scope.toLowerCase()} restriction`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <article className={`match-context-signal ${signal.level.toLowerCase()}`}>
+      <div className="match-context-signal-heading">
+        <span className="match-context-subject-type">{signal.subjectType}</span>
+        <strong>{subjectName}</strong>
+        <span className={`match-context-level ${signal.level.toLowerCase()}`}>
+          {signal.level}
+        </span>
+      </div>
+      {signal.labels.length > 0 ? (
+        <div className="match-context-labels">
+          {signal.labels.slice(0, 3).map((label) => <span key={label}>{label}</span>)}
+        </div>
+      ) : null}
+      <p>
+        {details.length > 0
+          ? details.join(" · ")
+          : `${signal.priorReports} prior ${signal.priorReports === 1 ? "report" : "reports"}`}
+      </p>
+    </article>
   );
 }
 
@@ -1428,12 +1627,14 @@ function TimerPanel({
   fixture,
   submitting,
   onRunAction,
+  compact = false,
 }: {
   fixture: RefereeFixture;
   submitting: string | null;
   onRunAction: (
     body: FixtureActionBody,
   ) => Promise<void>;
+  compact?: boolean;
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
   const now = useNowMs(status === "RUNNING");
@@ -1521,7 +1722,7 @@ function TimerPanel({
   }
 
   return (
-    <section className="timer-card">
+    <section className={`timer-card ${compact ? "compact" : ""}`}>
       <div className="score-row">
         <ScoreTeam fixture={fixture} clanId={fixture.homeClan.id} />
         <div className="score-value">
@@ -1550,15 +1751,40 @@ function TimerPanel({
       <div className="progress">
         <span style={{ width: `${progress * 100}%` }} />
       </div>
-      <LineupPanel
-        fixture={fixture}
-        participantIds={
-          isBeforeStart ? selectedParticipantIds : fixture.participantIds
-        }
-        editable={isBeforeStart}
-        onPlayerSelected={setPlayerSelected}
-        onClanSelected={setClanSelected}
-      />
+      {compact ? (
+        <details className="timer-lineup-disclosure">
+          <summary>
+            <span>
+              <strong>{isBeforeStart ? "Confirm who is playing" : "Match lineup"}</strong>
+              <small>
+                {isBeforeStart
+                  ? `${selectedHomeCount} ${fixture.homeClan.tag} · ${selectedAwayCount} ${fixture.awayClan.tag}`
+                  : `${fixture.participantIds.length} players recorded`}
+              </small>
+            </span>
+            <DisclosureChevron />
+          </summary>
+          <LineupPanel
+            fixture={fixture}
+            participantIds={
+              isBeforeStart ? selectedParticipantIds : fixture.participantIds
+            }
+            editable={isBeforeStart}
+            onPlayerSelected={setPlayerSelected}
+            onClanSelected={setClanSelected}
+          />
+        </details>
+      ) : (
+        <LineupPanel
+          fixture={fixture}
+          participantIds={
+            isBeforeStart ? selectedParticipantIds : fixture.participantIds
+          }
+          editable={isBeforeStart}
+          onPlayerSelected={setPlayerSelected}
+          onClanSelected={setClanSelected}
+        />
+      )}
       <div className={status === "RUNNING" ? "control-grid" : "control-grid single"}>
         {isClosed ? (
           <button className="ghost-button" disabled type="button">
@@ -1613,53 +1839,109 @@ function TimerPanel({
           </button>
         ) : null}
       </div>
-      {isClosed ? (
+      {isClosed && compact ? (
+        <details className="clock-editor clock-editor-disclosure">
+          <summary>
+            <span>
+              <strong>Correct match time</strong>
+              <small>Only use this if the final clock is wrong</small>
+            </span>
+            <DisclosureChevron />
+          </summary>
+          <ClockEditor
+            correctedMinutes={correctedMinutes}
+            correctedSeconds={correctedSeconds}
+            hasValidCorrection={hasValidCorrection}
+            submitting={submitting}
+            onMinutes={setCorrectedMinutes}
+            onSeconds={setCorrectedSeconds}
+            onSave={() =>
+              onRunAction({
+                action: "set_time",
+                elapsedSeconds: correctedElapsedSeconds,
+              })
+            }
+          />
+        </details>
+      ) : isClosed ? (
         <div className="clock-editor">
           <div className="clock-editor-title">Correct match time</div>
-          <div className="clock-editor-controls">
-            <label>
-              <span className="clock-editor-label">Minutes</span>
-              <input
-                className="clock-input"
-                inputMode="numeric"
-                min="0"
-                max="180"
-                onChange={(event) => setCorrectedMinutes(event.target.value)}
-                type="number"
-                value={correctedMinutes}
-              />
-            </label>
-            <span className="clock-editor-separator">:</span>
-            <label>
-              <span className="clock-editor-label">Seconds</span>
-              <input
-                className="clock-input"
-                inputMode="numeric"
-                min="0"
-                max="59"
-                onChange={(event) => setCorrectedSeconds(event.target.value)}
-                type="number"
-                value={correctedSeconds}
-              />
-            </label>
-            <button
-              className="primary-button clock-save-button"
-              disabled={submitting !== null || !hasValidCorrection}
-              onClick={() =>
-                void onRunAction({
-                  action: "set_time",
-                  elapsedSeconds: correctedElapsedSeconds,
-                })
-              }
-              type="button"
-            >
-              Save time
-            </button>
-          </div>
-          <div className="clock-editor-hint">Maximum 180:00</div>
+          <ClockEditor
+            correctedMinutes={correctedMinutes}
+            correctedSeconds={correctedSeconds}
+            hasValidCorrection={hasValidCorrection}
+            submitting={submitting}
+            onMinutes={setCorrectedMinutes}
+            onSeconds={setCorrectedSeconds}
+            onSave={() =>
+              onRunAction({
+                action: "set_time",
+                elapsedSeconds: correctedElapsedSeconds,
+              })
+            }
+          />
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ClockEditor({
+  correctedMinutes,
+  correctedSeconds,
+  hasValidCorrection,
+  submitting,
+  onMinutes,
+  onSeconds,
+  onSave,
+}: {
+  correctedMinutes: string;
+  correctedSeconds: string;
+  hasValidCorrection: boolean;
+  submitting: string | null;
+  onMinutes: (value: string) => void;
+  onSeconds: (value: string) => void;
+  onSave: () => Promise<void>;
+}) {
+  return (
+    <div className="clock-editor-body">
+      <div className="clock-editor-controls">
+        <label>
+          <span className="clock-editor-label">Minutes</span>
+          <input
+            className="clock-input"
+            inputMode="numeric"
+            min="0"
+            max="180"
+            onChange={(event) => onMinutes(event.target.value)}
+            type="number"
+            value={correctedMinutes}
+          />
+        </label>
+        <span className="clock-editor-separator">:</span>
+        <label>
+          <span className="clock-editor-label">Seconds</span>
+          <input
+            className="clock-input"
+            inputMode="numeric"
+            min="0"
+            max="59"
+            onChange={(event) => onSeconds(event.target.value)}
+            type="number"
+            value={correctedSeconds}
+          />
+        </label>
+        <button
+          className="primary-button clock-save-button"
+          disabled={submitting !== null || !hasValidCorrection}
+          onClick={() => void onSave()}
+          type="button"
+        >
+          Save time
+        </button>
+      </div>
+      <div className="clock-editor-hint">Maximum 180:00</div>
+    </div>
   );
 }
 
@@ -1780,6 +2062,174 @@ function LineupPanel({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function MatchEventDialog({
+  kind,
+  fixture,
+  submitting,
+  goalClanId,
+  goalPlayerId,
+  assistPlayerId,
+  cardClanId,
+  cardPlayerId,
+  goalPlayers,
+  cardPlayers,
+  onClose,
+  onGoalClan,
+  onGoalPlayer,
+  onAssistPlayer,
+  onCardClan,
+  onCardPlayer,
+  onSubmit,
+}: {
+  kind: "goal" | "blue-card" | null;
+  fixture: RefereeFixture;
+  submitting: string | null;
+  goalClanId: string;
+  goalPlayerId: string;
+  assistPlayerId: string;
+  cardClanId: string;
+  cardPlayerId: string;
+  goalPlayers: Player[];
+  cardPlayers: Player[];
+  onClose: () => void;
+  onGoalClan: (clanId: string) => void;
+  onGoalPlayer: (playerId: string) => void;
+  onAssistPlayer: (playerId: string) => void;
+  onCardClan: (clanId: string) => void;
+  onCardPlayer: (playerId: string) => void;
+  onSubmit: (body: FixtureActionBody) => Promise<void>;
+}) {
+  useEffect(() => {
+    if (!kind) return;
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && submitting === null) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [kind, onClose, submitting]);
+
+  if (!kind) return null;
+
+  const isGoal = kind === "goal";
+  const selectedClanId = isGoal ? goalClanId : cardClanId;
+  const selectedPlayerId = isGoal ? goalPlayerId : cardPlayerId;
+  const players = isGoal ? goalPlayers : cardPlayers;
+
+  async function submitEvent(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedPlayerId) return;
+
+    await onSubmit(
+      isGoal
+        ? {
+            action: "goal",
+            clanId: goalClanId,
+            profileId: goalPlayerId,
+            assistProfileId: assistPlayerId || null,
+          }
+        : {
+            action: "blue_card",
+            clanId: cardClanId,
+            profileId: cardPlayerId,
+          },
+    );
+  }
+
+  return (
+    <div
+      className="safety-modal-backdrop match-event-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && submitting === null) onClose();
+      }}
+    >
+      <section
+        aria-labelledby="match-event-dialog-title"
+        aria-modal="true"
+        className="safety-modal match-event-modal"
+        role="dialog"
+      >
+        <button
+          aria-label="Close"
+          className="safety-modal-close"
+          disabled={submitting !== null}
+          onClick={onClose}
+          type="button"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <form onSubmit={submitEvent}>
+          <div className={`match-event-modal-icon ${isGoal ? "goal" : "blue-card"}`}>
+            {isGoal ? "+1" : null}
+          </div>
+          <span className="safety-modal-eyebrow">Live match · {formatClock(currentReplayOffset(fixture))}</span>
+          <h2 id="match-event-dialog-title">
+            {isGoal ? "Record a goal" : "Give a blue card"}
+          </h2>
+          <p className="safety-modal-intro">
+            {isGoal
+              ? "Choose the scoring team and player. Add the assist if there was one."
+              : "Choose the player. Their two-minute return timer starts immediately."}
+          </p>
+
+          <TeamSegment
+            fixture={fixture}
+            selectedClanId={selectedClanId}
+            onSelect={isGoal ? onGoalClan : onCardClan}
+          />
+          <PlayerSelect
+            label={isGoal ? "Scorer" : "Player"}
+            value={selectedPlayerId}
+            players={players}
+            onChange={isGoal ? onGoalPlayer : onCardPlayer}
+          />
+          {isGoal ? (
+            <PlayerSelect
+              label="Assist"
+              optional
+              value={assistPlayerId}
+              players={players.filter((player) => player.id !== goalPlayerId)}
+              onChange={onAssistPlayer}
+            />
+          ) : null}
+
+          <div className="event-confirmation-summary">
+            <span>{teamName(fixture, selectedClanId)}</span>
+            <strong>{playerName(fixture, selectedPlayerId)}</strong>
+          </div>
+          <div className="safety-modal-actions">
+            <button
+              className="ghost-button"
+              disabled={submitting !== null}
+              onClick={onClose}
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              className={isGoal ? "primary-button" : "dark-button"}
+              disabled={!selectedPlayerId || submitting !== null}
+              type="submit"
+            >
+              {submitting === (isGoal ? "goal" : "blue_card")
+                ? "Saving…"
+                : isGoal
+                  ? "Confirm goal"
+                  : "Start 2:00 timer"}
+            </button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
@@ -2108,6 +2558,12 @@ function clanTag(fixture: RefereeFixture, clanId: string) {
   return "TEAM";
 }
 
+function teamName(fixture: RefereeFixture, clanId: string) {
+  if (fixture.homeClan.id === clanId) return fixture.homeClan.name;
+  if (fixture.awayClan.id === clanId) return fixture.awayClan.name;
+  return "Team";
+}
+
 function assignedRefereeFor(
   assignments: RefereeAssignmentsResponse,
   fixtureId: string,
@@ -2127,6 +2583,47 @@ function assignedRefereeName(
   return (
     assignments.referees.find((referee) => referee.profileId === refereeId)
       ?.displayName ?? "Assigned"
+  );
+}
+
+function DisclosureChevron() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="disclosure-chevron"
+      viewBox="0 0 20 20"
+    >
+      <path d="m6.5 8 3.5 3.5L13.5 8" />
+    </svg>
+  );
+}
+
+function formatMatchDate(value: string) {
+  const date = new Date(`${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  const today = new Date();
+  const tomorrow = new Date(today);
+  tomorrow.setDate(today.getDate() + 1);
+  if (value === localDateKey(today)) return "Today";
+  if (value === localDateKey(tomorrow)) return "Tomorrow";
+  return new Intl.DateTimeFormat("en", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function localDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function currentReplayOffset(fixture: RefereeFixture) {
+  return Math.min(
+    MAX_MATCH_SECONDS,
+    Math.max(0, elapsedFromClock(fixture.clock, Date.now())),
   );
 }
 

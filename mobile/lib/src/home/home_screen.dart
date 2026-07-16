@@ -8,6 +8,8 @@ import '../fixtures/fixture_repository.dart';
 import '../fixtures/fixtures_screen.dart';
 import '../leaderboard/leaderboard_repository.dart';
 import '../leaderboard/leaderboard_screen.dart';
+import '../moderation/account_restriction_screen.dart';
+import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
@@ -18,10 +20,12 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.authRepository,
+    this.moderationStatus,
     this.isDev = false,
   });
 
   final AuthRepository authRepository;
+  final ModerationStatus? moderationStatus;
   final bool isDev;
 
   @override
@@ -41,6 +45,57 @@ class _HomeScreenState extends State<HomeScreen> {
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
   bool _isSigningOut = false;
+  String? _shownModerationNoticeSignature;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _showModerationNotice();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.moderationStatus != widget.moderationStatus) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showModerationNotice();
+      });
+    }
+  }
+
+  void _showModerationNotice() {
+    if (!mounted) return;
+    final status = widget.moderationStatus;
+    if (status == null ||
+        (!status.isPlayRestricted && status.state != ModerationState.warning)) {
+      return;
+    }
+
+    final signature =
+        '${status.state.name}:${status.scope.name}:'
+        '${status.message}:${status.endsAt?.toIso8601String()}:'
+        '${status.warningCount}';
+    if (_shownModerationNoticeSignature == signature) return;
+    _shownModerationNoticeSignature = signature;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: fieldGray900,
+        duration: const Duration(seconds: 8),
+        margin: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+        padding: const EdgeInsets.fromLTRB(16, 13, 8, 13),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
+        content: ModerationStatusNoticeContent(status: status),
+        action: SnackBarAction(
+          label: 'GOT IT',
+          textColor: fieldEmerald500,
+          onPressed: () {},
+        ),
+      ),
+    );
+  }
 
   void _selectTab(int index) {
     setState(() {
@@ -130,6 +185,105 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedIndex: _selectedIndex,
         onSelected: _selectTab,
       ),
+    );
+  }
+}
+
+class ModerationStatusNoticeContent extends StatelessWidget {
+  const ModerationStatusNoticeContent({super.key, required this.status});
+
+  final ModerationStatus status;
+
+  @override
+  Widget build(BuildContext context) {
+    final isWarning = status.state == ModerationState.warning;
+    final message = status.message.isNotEmpty
+        ? status.message
+        : isWarning
+        ? 'A warning has been added to your account. Please keep Field safe and respectful.'
+        : 'You cannot join or schedule matches right now, but you can still browse Field.';
+    final endLabel = !isWarning && status.endsAt != null
+        ? 'Until ${formatModerationDateTime(status.endsAt!)}'
+        : null;
+    final warningCountLabel = !isWarning
+        ? null
+        : status.warningCount > 0
+        ? '${status.warningCount} account '
+              '${status.warningCount == 1 ? 'warning' : 'warnings'}'
+        : 'Warning recorded on your account';
+
+    return Row(
+      key: Key(
+        isWarning ? 'account-warning-notice' : 'play-restriction-notice',
+      ),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF59E0B).withValues(alpha: 0.16),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(
+            isWarning
+                ? Icons.warning_amber_rounded
+                : Icons.sports_soccer_rounded,
+            color: const Color(0xFFFBBF24),
+            size: 21,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isWarning ? 'ACCOUNT WARNING' : 'PLAY ACCESS PAUSED',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                ),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                message,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.78),
+                  fontSize: 13,
+                  height: 1.3,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (warningCountLabel != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  warningCountLabel,
+                  style: const TextStyle(
+                    color: Color(0xFFFBBF24),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+              if (endLabel != null) ...[
+                const SizedBox(height: 3),
+                Text(
+                  endLabel,
+                  style: const TextStyle(
+                    color: fieldEmerald500,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

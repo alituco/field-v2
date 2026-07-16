@@ -239,12 +239,22 @@ class FixturePlayerRatingUpdate {
     required this.ratingChange,
     required this.ratingAfter,
     this.result,
+    this.scoreMargin,
+    this.marginMultiplier,
+    this.baseRatingChange,
+    this.marginBonusApplied,
   });
 
   final int ratingBefore;
   final int ratingChange;
   final int ratingAfter;
   final String? result;
+  final int? scoreMargin;
+  final double? marginMultiplier;
+  final int? baseRatingChange;
+  final int? marginBonusApplied;
+
+  bool get hasMarginAdjustment => (marginBonusApplied ?? 0) != 0;
 }
 
 class FixtureScorer {

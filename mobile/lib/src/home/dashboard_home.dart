@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../clans/clan.dart';
@@ -14,6 +16,7 @@ import '../leaderboard/leaderboard_repository.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_booking_screen.dart';
 import '../open_queue/open_queue_kit_indicator.dart';
+import '../open_queue/open_queue_party_repository.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../open_queue/open_queue_review_screen.dart';
 import '../open_queue/open_queue_screen.dart';
@@ -55,6 +58,8 @@ class _DashboardHomeState extends State<DashboardHome> {
   PlayerRatingLeaderboardEntry? _rating;
   LeaderboardSeason _ratingSeason = activeLeaderboardSeason;
   OpenQueueBooking? _booking;
+  OpenQueueBooking? _partyInviteBooking;
+  _HomePartyInviteNotice? _partyInviteNotice;
   int _openQueuePlayerCount = 0;
   List<Clan> _clans = const [];
   Clan? _myClan;
@@ -65,11 +70,45 @@ class _DashboardHomeState extends State<DashboardHome> {
   Map<String, OpenQueueMatchDetail> _recentSoloDetails = const {};
   bool _loading = true;
   String? _error;
+  StreamSubscription<void>? _partyNotificationSubscription;
+  Timer? _partyNotificationReloadDebounce;
 
   @override
   void initState() {
     super.initState();
+    _watchPartyNotifications();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _partyNotificationReloadDebounce?.cancel();
+    unawaited(_partyNotificationSubscription?.cancel());
+    super.dispose();
+  }
+
+  void _watchPartyNotifications() {
+    final repository = widget.openQueueRepository;
+    if (repository is! OpenQueuePartyNotificationRepository) return;
+    final notificationRepository =
+        repository as OpenQueuePartyNotificationRepository;
+    _partyNotificationSubscription = notificationRepository
+        .watchPartyInviteNotifications()
+        .listen(
+          (_) {
+            _partyNotificationReloadDebounce?.cancel();
+            _partyNotificationReloadDebounce = Timer(
+              const Duration(milliseconds: 250),
+              () {
+                if (mounted) unawaited(_load());
+              },
+            );
+          },
+          onError: (_) {
+            // Realtime is supplemental. Pull-to-refresh and navigation
+            // reloads still surface every persisted invitation.
+          },
+        );
   }
 
   Future<void> _load() async {
@@ -93,6 +132,7 @@ class _DashboardHomeState extends State<DashboardHome> {
       if (!mounted) return;
       final profile = results[0] as PlayerProfile;
       final rating = results[1] as PlayerRatingLeaderboardEntry;
+      final booking = results[2] as OpenQueueBooking?;
       final games = results[3] as List<OpenQueueGame>;
       final clans = results[4] as List<Clan>;
       final membership = results[5] as ClanMembership?;
@@ -107,6 +147,7 @@ class _DashboardHomeState extends State<DashboardHome> {
           .map((game) => game.id)
           .toSet()
           .take(2);
+      final partyInviteFuture = _loadPartyInvite(booking);
       final detailEntries =
           await Future.wait<MapEntry<String, OpenQueueMatchDetail>?>([
             for (final gameId in recentSoloIds)
@@ -120,12 +161,15 @@ class _DashboardHomeState extends State<DashboardHome> {
                 }
               }(),
           ]);
+      final partyInvite = await partyInviteFuture;
       if (!mounted) return;
       setState(() {
         _profile = profile;
         _rating = rating;
         _ratingSeason = ratingSeason;
-        _booking = results[2] as OpenQueueBooking?;
+        _booking = booking;
+        _partyInviteBooking = partyInvite.booking;
+        _partyInviteNotice = partyInvite.notice;
         _openQueuePlayerCount = games.fold<int>(
           0,
           (total, game) => total + game.confirmedCount,
@@ -159,6 +203,76 @@ class _DashboardHomeState extends State<DashboardHome> {
     }
   }
 
+  Future<_HomePartyInviteLoad> _loadPartyInvite(
+    OpenQueueBooking? booking,
+  ) async {
+    final repository = widget.openQueueRepository;
+    final notificationRepository =
+        repository is OpenQueuePartyNotificationRepository
+        ? repository as OpenQueuePartyNotificationRepository
+        : null;
+    if (notificationRepository != null) {
+      try {
+        final notifications = await notificationRepository
+            .listPartyInviteNotifications();
+        if (notifications.isNotEmpty) {
+          final notification = notifications.first;
+          OpenQueueBooking? inviteBooking =
+              booking?.gameId == notification.gameId ? booking : null;
+          final bookingLookup = repository is OpenQueueBookingLookupRepository
+              ? repository as OpenQueueBookingLookupRepository
+              : null;
+          if (inviteBooking == null && bookingLookup != null) {
+            inviteBooking = await bookingLookup.getMyUpcomingBookingForGame(
+              notification.gameId,
+            );
+          }
+          if (inviteBooking != null) {
+            return _HomePartyInviteLoad(
+              booking: inviteBooking,
+              notice: _HomePartyInviteNotice(
+                gameId: notification.gameId,
+                notificationId: notification.id,
+                inviterName: notification.inviter.displayName,
+                dateLabel: inviteBooking.game.prominentDateLabel,
+                timeLabel: inviteBooking.game.startTimeLabel,
+              ),
+            );
+          }
+        }
+      } catch (_) {
+        // Older local databases may not have the notification RPC yet. The
+        // booking-scoped party context below remains a safe compatibility
+        // fallback during migration rollout.
+      }
+    }
+    if (booking == null) return const _HomePartyInviteLoad();
+    final partyRepository = repository is OpenQueuePartyRepository
+        ? repository as OpenQueuePartyRepository
+        : null;
+    if (partyRepository == null) return const _HomePartyInviteLoad();
+    try {
+      final context = await partyRepository.getPartyContext(booking.gameId);
+      if (context.gameId != booking.gameId || context.receivedInvites.isEmpty) {
+        return const _HomePartyInviteLoad();
+      }
+      final invite = context.receivedInvites.first;
+      return _HomePartyInviteLoad(
+        booking: booking,
+        notice: _HomePartyInviteNotice(
+          gameId: booking.gameId,
+          inviterName: invite.owner.displayName,
+          dateLabel: booking.game.prominentDateLabel,
+          timeLabel: booking.game.startTimeLabel,
+        ),
+      );
+    } catch (_) {
+      // Party alerts are supplemental; a temporary alert failure must never
+      // prevent the player's booking and Home feed from loading.
+      return const _HomePartyInviteLoad();
+    }
+  }
+
   Future<void> _openQueue() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -174,6 +288,38 @@ class _DashboardHomeState extends State<DashboardHome> {
   Future<void> _openBooking() async {
     final booking = _booking;
     if (booking == null) return;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => OpenQueueBookingScreen(
+          repository: widget.openQueueRepository,
+          booking: booking,
+          onNavigateTab: widget.onNavigateTab,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _openPartyInvite() async {
+    final booking = _partyInviteBooking ?? _booking;
+    if (booking == null) return;
+    final notice = _partyInviteNotice;
+    final repository = widget.openQueueRepository;
+    final notificationRepository =
+        repository is OpenQueuePartyNotificationRepository
+        ? repository as OpenQueuePartyNotificationRepository
+        : null;
+    final notificationId = notice?.notificationId;
+    if (notificationId != null && notificationRepository != null) {
+      try {
+        await notificationRepository.markPartyInviteNotificationRead(
+          notificationId,
+        );
+      } catch (_) {
+        // Reading the invite must not be blocked by a notification receipt.
+      }
+    }
+    if (!mounted) return;
     await Navigator.of(context).push<bool>(
       MaterialPageRoute<bool>(
         builder: (_) => OpenQueueBookingScreen(
@@ -265,7 +411,7 @@ class _DashboardHomeState extends State<DashboardHome> {
             sourceLabel: 'SOLO',
             showTeamRatings: false,
             initiallyShowWatch: initiallyShowWatch,
-            playerRatingUpdate: detail.viewerRatingUpdate ?? playerRatingUpdate,
+            playerRatingUpdate: playerRatingUpdate ?? detail.viewerRatingUpdate,
             refreshFixture: () async {
               final next = await widget.openQueueRepository.getMatchDetail(
                 game.id,
@@ -421,9 +567,13 @@ class _DashboardHomeState extends State<DashboardHome> {
                 onRanks: widget.onOpenRanks,
               ),
               const SizedBox(height: 18),
-              if (_booking case final booking?)
-                _ConfirmedQueueHero(booking: booking, onTap: _openBooking)
-              else
+              if (_partyInviteNotice case final notice?) ...[
+                _HomePartyInviteAlert(notice: notice, onTap: _openPartyInvite),
+                const SizedBox(height: 10),
+              ],
+              if (_booking case final booking?) ...[
+                _ConfirmedQueueHero(booking: booking, onTap: _openBooking),
+              ] else
                 _FindGameHero(
                   onTap: _openQueue,
                   playerCount: _openQueuePlayerCount,
@@ -892,6 +1042,141 @@ class _FindGameHero extends StatelessWidget {
             ],
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _HomePartyInviteLoad {
+  const _HomePartyInviteLoad({this.booking, this.notice});
+
+  final OpenQueueBooking? booking;
+  final _HomePartyInviteNotice? notice;
+}
+
+class _HomePartyInviteNotice {
+  const _HomePartyInviteNotice({
+    required this.gameId,
+    required this.inviterName,
+    required this.dateLabel,
+    required this.timeLabel,
+    this.notificationId,
+  });
+
+  final String gameId;
+  final String? notificationId;
+  final String inviterName;
+  final String dateLabel;
+  final String timeLabel;
+}
+
+class _HomePartyInviteAlert extends StatelessWidget {
+  const _HomePartyInviteAlert({required this.notice, required this.onTap});
+
+  final _HomePartyInviteNotice notice;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      key: ValueKey('home-party-invite-${notice.gameId}'),
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(15),
+          decoration: BoxDecoration(
+            border: Border.all(color: fieldEmerald200, width: 1.4),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x1410B981),
+                blurRadius: 18,
+                offset: Offset(0, 7),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: const BoxDecoration(
+                  color: fieldEmerald50,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.group_add_rounded,
+                  color: fieldEmerald700,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'PARTY INVITE WAITING',
+                      style: TextStyle(
+                        color: fieldEmerald700,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      '${notice.inviterName} wants to team up',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${notice.dateLabel} · ${notice.timeLabel}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    'REVIEW',
+                    style: TextStyle(
+                      color: fieldEmerald700,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: .6,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    color: fieldEmerald700,
+                    size: 19,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1539,6 +1824,10 @@ class _HomeActivityItem {
         ratingChange: event.ratingChange,
         ratingAfter: event.ratingAfter,
         result: event.result,
+        scoreMargin: event.scoreMargin,
+        marginMultiplier: event.marginMultiplier,
+        baseRatingChange: event.baseRatingChange,
+        marginBonusApplied: event.marginBonusApplied,
       );
     }
     final soloUpdate = soloDetail?.viewerRatingUpdate;

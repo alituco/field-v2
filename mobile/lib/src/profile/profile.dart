@@ -140,6 +140,10 @@ class ProfileRatingEvent {
     this.opponentAverageRating,
     this.expectedScore,
     this.calculationVersion,
+    this.scoreMargin,
+    this.marginMultiplier,
+    this.baseRatingChange,
+    this.marginBonusApplied,
   });
 
   final String id;
@@ -157,6 +161,10 @@ class ProfileRatingEvent {
   final double? opponentAverageRating;
   final double? expectedScore;
   final String? calculationVersion;
+  final int? scoreMargin;
+  final double? marginMultiplier;
+  final int? baseRatingChange;
+  final int? marginBonusApplied;
 
   bool get isSolo => sourceType == 'OPEN_QUEUE';
 
@@ -184,6 +192,10 @@ class ProfileRatingEvent {
         null => null,
         final value => value.toString(),
       },
+      scoreMargin: _asNullableInt(json['score_margin']),
+      marginMultiplier: _asDouble(json['margin_multiplier']),
+      baseRatingChange: _asNullableInt(json['base_rating_change']),
+      marginBonusApplied: _asNullableInt(json['margin_bonus_applied']),
     );
   }
 }

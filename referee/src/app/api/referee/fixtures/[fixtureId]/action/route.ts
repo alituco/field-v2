@@ -3,6 +3,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { queueBroadcastStop } from "@/lib/broadcasts";
 import { assertCanManageFixture } from "@/lib/fixture-access";
+import {
+  parseAdminCancellationInput,
+  parseAdminScoreOverrideInput,
+  parseMatchStoppageInput,
+  parseRefereeClanForfeitInput,
+  parseRefereeReportInput,
+} from "@/lib/match-action-input";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 
 type RouteContext = {
@@ -18,7 +25,12 @@ type ActionBody = {
     | "goal"
     | "blue_card"
     | "expire_blue_card"
-    | "finish";
+    | "finish"
+    | "report"
+    | "forfeit"
+    | "stop"
+    | "cancel"
+    | "override_score";
   durationSeconds?: number;
   clanId?: string;
   profileId?: string;
@@ -26,7 +38,20 @@ type ActionBody = {
   blueCardId?: string;
   elapsedSeconds?: number;
   participantIds?: string[];
-};
+  subjectType?: string;
+  subjectId?: string;
+  reportedClanId?: string;
+  category?: string;
+  details?: string;
+  priority?: string;
+  replayOffsetSeconds?: number;
+  mode?: string;
+  reasonCode?: string;
+  reason?: string;
+  note?: string;
+  homeScore?: number;
+  awayScore?: number;
+} & Record<string, unknown>;
 
 type FixtureRow = {
   id: string;
@@ -61,6 +86,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     );
 
     const body = (await request.json()) as ActionBody;
+
+    let result: Record<string, unknown> = {};
 
     switch (body.action) {
       case "start":
@@ -102,11 +129,131 @@ export async function POST(request: NextRequest, context: RouteContext) {
           console.error("Could not queue automatic broadcast stop", broadcastError);
         }
         break;
+      case "report": {
+        const report = parseRefereeReportInput(body, "CLAN", fixtureId);
+        const { data, error } = await db.rpc("submit_referee_moderation_report", {
+          reporter_referee_id_to_use: refereeContext.referee.profileId,
+          subject_type_to_use: report.subjectType,
+          subject_id_to_use: report.subjectId,
+          category_to_use: report.category,
+          details_to_use: report.details,
+          priority_to_use: report.priority,
+          fixture_id_to_use: fixtureId,
+          open_queue_game_id_to_use: null,
+          replay_offset_seconds_to_use: report.replayOffsetSeconds,
+        });
+        if (error) throw new Error(`Could not submit report: ${error.message}`);
+        result = { reportId: String(data) };
+        break;
+      }
+      case "forfeit": {
+        const forfeit = parseRefereeClanForfeitInput(body);
+        const { data, error } = await db.rpc("referee_report_clan_forfeit", {
+          actor_referee_id: refereeContext.referee.profileId,
+          fixture_id_to_stop: fixtureId,
+          reported_clan_id_to_use: forfeit.reportedClanId,
+          category_to_use: forfeit.category,
+          details_to_use: forfeit.details,
+          reason_code_to_use: forfeit.reasonCode,
+          note_to_use: forfeit.note || null,
+          replay_offset_seconds_to_use: forfeit.replayOffsetSeconds,
+        });
+        if (error) {
+          throw new Error(`Could not award provisional forfeit: ${error.message}`);
+        }
+        result = data && typeof data === "object"
+          ? data as Record<string, unknown>
+          : { decisionId: String(data), status: "PENDING_REVIEW" };
+
+        try {
+          await queueBroadcastStop(
+            db,
+            fixtureId,
+            refereeContext.referee.profileId,
+          );
+        } catch (broadcastError) {
+          console.error("Could not stop forfeited match broadcast", broadcastError);
+        }
+        break;
+      }
+      case "stop": {
+        const stoppage = parseMatchStoppageInput(body);
+        const { data, error } = await db.rpc("referee_record_match_stoppage", {
+          actor_referee_id: refereeContext.referee.profileId,
+          match_kind_to_use: "CLAN",
+          match_id_to_stop: fixtureId,
+          mode_to_use: stoppage.mode,
+          reason_code_to_use: stoppage.reasonCode,
+          note_to_use: stoppage.note || null,
+        });
+        if (error) throw new Error(`Could not stop match: ${error.message}`);
+        result = { stoppageId: String(data), mode: stoppage.mode };
+
+        if (stoppage.mode === "ABANDON") {
+          try {
+            await queueBroadcastStop(
+              db,
+              fixtureId,
+              refereeContext.referee.profileId,
+            );
+          } catch (broadcastError) {
+            console.error("Could not stop abandoned match broadcast", broadcastError);
+          }
+        }
+        break;
+      }
+      case "cancel": {
+        if (refereeContext.referee.role !== "admin") {
+          return NextResponse.json(
+            { error: "Admin referee access required." },
+            { status: 403 },
+          );
+        }
+        const cancellation = parseAdminCancellationInput(body);
+        const { error } = await db.rpc("admin_cancel_match", {
+          actor_admin_id: refereeContext.referee.profileId,
+          match_kind_to_use: "CLAN",
+          match_id_to_cancel: fixtureId,
+          reason_code_to_use: cancellation.reasonCode,
+          reason_to_use: cancellation.reason,
+        });
+        if (error) throw new Error(`Could not cancel match: ${error.message}`);
+        try {
+          await queueBroadcastStop(
+            db,
+            fixtureId,
+            refereeContext.referee.profileId,
+          );
+        } catch (broadcastError) {
+          console.error("Could not stop cancelled match broadcast", broadcastError);
+        }
+        break;
+      }
+      case "override_score": {
+        if (refereeContext.referee.role !== "admin") {
+          return NextResponse.json(
+            { error: "Admin referee access required." },
+            { status: 403 },
+          );
+        }
+        const score = parseAdminScoreOverrideInput(body);
+        const { data, error } = await db.rpc("admin_override_match_score", {
+          actor_admin_id: refereeContext.referee.profileId,
+          match_kind_to_use: "CLAN",
+          match_id_to_update: fixtureId,
+          home_score_to_use: score.homeScore,
+          away_score_to_use: score.awayScore,
+          reason_to_use: score.reason,
+        });
+        if (error) throw new Error(`Could not correct score: ${error.message}`);
+        result = { revisionId: String(data) };
+        break;
+      }
       default:
         return NextResponse.json({ error: "Unknown action." }, { status: 400 });
     }
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Action failed." },
