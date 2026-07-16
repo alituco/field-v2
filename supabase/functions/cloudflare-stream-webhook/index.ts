@@ -1,0 +1,327 @@
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+
+type CloudflareVideoPayload = {
+  uid?: unknown;
+  created?: unknown;
+  readyToStream?: unknown;
+  status?: {
+    state?: unknown;
+    errorReasonText?: unknown;
+  };
+  playback?: {
+    hls?: unknown;
+  };
+  meta?: {
+    fixture_id?: unknown;
+    open_queue_game_id?: unknown;
+  };
+};
+
+type MatchedBroadcast = {
+  kind: "CLAN" | "SOLO";
+  id: string;
+  streamRequestedAt: string | null;
+};
+
+Deno.serve(async (request) => {
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed." }, 405);
+  }
+
+  const webhookSecret = Deno.env.get("CLOUDFLARE_STREAM_WEBHOOK_SECRET");
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  if (!webhookSecret || !supabaseUrl || !serviceRoleKey) {
+    return json({ error: "Stream webhook is not configured." }, 500);
+  }
+
+  const rawBody = await request.text();
+  const signature = request.headers.get("Webhook-Signature");
+  if (!await hasValidSignature(rawBody, signature, webhookSecret)) {
+    return json({ error: "Invalid webhook signature." }, 401);
+  }
+
+  let payload: CloudflareVideoPayload;
+  try {
+    payload = JSON.parse(rawBody) as CloudflareVideoPayload;
+  } catch {
+    return json({ error: "Invalid webhook payload." }, 400);
+  }
+
+  const videoId = stringValue(payload.uid);
+  const metadataFixtureId = stringValue(payload.meta?.fixture_id);
+  const metadataOpenQueueGameId = stringValue(
+    payload.meta?.open_queue_game_id,
+  );
+  if (!videoId) {
+    return json({ received: true, ignored: true });
+  }
+
+  const admin = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+
+  const fixtureByVideo = await admin
+    .from("fixture_broadcasts")
+    .select("fixture_id,stream_requested_at")
+    .eq("active_video_id", videoId)
+    .limit(1)
+    .maybeSingle();
+  if (fixtureByVideo.error) {
+    return json({ error: "Could not match the recording." }, 500);
+  }
+
+  let broadcast: MatchedBroadcast | null = fixtureByVideo.data
+    ? {
+      kind: "CLAN",
+      id: String(fixtureByVideo.data.fixture_id),
+      streamRequestedAt: stringValue(fixtureByVideo.data.stream_requested_at),
+    }
+    : null;
+  if (!broadcast) {
+    const soloByVideo = await admin
+      .from("open_queue_broadcasts")
+      .select("game_id,stream_requested_at")
+      .eq("active_video_id", videoId)
+      .limit(1)
+      .maybeSingle();
+    if (soloByVideo.error) {
+      return json({ error: "Could not match the solo recording." }, 500);
+    }
+    if (soloByVideo.data) {
+      broadcast = {
+        kind: "SOLO",
+        id: String(soloByVideo.data.game_id),
+        streamRequestedAt: stringValue(soloByVideo.data.stream_requested_at),
+      };
+    }
+  }
+
+  if (!broadcast && metadataFixtureId && isUuid(metadataFixtureId)) {
+    const byFixture = await admin
+      .from("fixture_broadcasts")
+      .select("fixture_id,stream_requested_at")
+      .eq("fixture_id", metadataFixtureId)
+      .maybeSingle();
+    if (byFixture.error) {
+      return json({ error: "Could not match the fixture." }, 500);
+    }
+    if (byFixture.data) {
+      broadcast = {
+        kind: "CLAN",
+        id: String(byFixture.data.fixture_id),
+        streamRequestedAt: stringValue(byFixture.data.stream_requested_at),
+      };
+    }
+  }
+
+  if (
+    !broadcast &&
+    metadataOpenQueueGameId &&
+    isUuid(metadataOpenQueueGameId)
+  ) {
+    const byGame = await admin
+      .from("open_queue_broadcasts")
+      .select("game_id,stream_requested_at")
+      .eq("game_id", metadataOpenQueueGameId)
+      .maybeSingle();
+    if (byGame.error) {
+      return json({ error: "Could not match the solo game." }, 500);
+    }
+    if (byGame.data) {
+      broadcast = {
+        kind: "SOLO",
+        id: String(byGame.data.game_id),
+        streamRequestedAt: stringValue(byGame.data.stream_requested_at),
+      };
+    }
+  }
+
+  if (!broadcast) {
+    return json({ received: true, ignored: true });
+  }
+
+  const matchId = broadcast.id;
+  const broadcastTable = broadcast.kind === "SOLO"
+    ? "open_queue_broadcasts"
+    : "fixture_broadcasts";
+  const broadcastIdColumn = broadcast.kind === "SOLO" ? "game_id" : "fixture_id";
+  const recordingStartedAt = validRecordingTimestamp(payload.created);
+  if (isRecordingOlderThanRequest(
+    recordingStartedAt,
+    broadcast.streamRequestedAt,
+  )) {
+    return json({ received: true, ignored: true, reason: "stale recording" });
+  }
+  const state = stringValue(payload.status?.state)?.toLowerCase();
+  if (state === "error") {
+    const errorMessage = stringValue(payload.status?.errorReasonText) ??
+      "Cloudflare could not process the match recording.";
+    const { data, error } = await admin
+      .from(broadcastTable)
+      .update({
+        active_video_id: videoId,
+        status: "ERROR",
+        error_message: errorMessage,
+      })
+      .eq(broadcastIdColumn, matchId)
+      .or(`active_video_id.is.null,active_video_id.eq.${videoId}`)
+      .select(broadcastIdColumn)
+      .maybeSingle();
+    if (error) return json({ error: "Could not save recording error." }, 500);
+    if (!data) {
+      return json({ received: true, ignored: true, reason: "stale recording" });
+    }
+    return json({ received: true });
+  }
+
+  const isReady = payload.readyToStream === true || state === "ready";
+  if (!isReady) {
+    return json({ received: true, processing: true });
+  }
+
+  const replayUrl = stringValue(payload.playback?.hls) ??
+    cloudflareHlsUrl(videoId);
+  if (!replayUrl) {
+    return json({ received: true, processing: true });
+  }
+
+  const readyAt = new Date().toISOString();
+  const { data: updatedBroadcast, error: broadcastError } = await admin
+    .from(broadcastTable)
+    .update({
+      active_video_id: videoId,
+      status: "REPLAY_READY",
+      replay_hls_url: replayUrl,
+      recording_ready_at: readyAt,
+      ...(recordingStartedAt
+        ? { stream_started_at: recordingStartedAt }
+        : {}),
+      error_message: null,
+    })
+    .eq(broadcastIdColumn, matchId)
+    .or(`active_video_id.is.null,active_video_id.eq.${videoId}`)
+    .select(broadcastIdColumn)
+    .maybeSingle();
+  if (broadcastError) {
+    return json({ error: "Could not save the finished recording." }, 500);
+  }
+  if (!updatedBroadcast) {
+    return json({ received: true, ignored: true, reason: "stale recording" });
+  }
+
+  const matchTable = broadcast.kind === "SOLO" ? "open_queue_games" : "fixtures";
+  const { error: fixtureError } = await admin
+    .from(matchTable)
+    .update({ video_url: replayUrl })
+    .eq("id", matchId);
+  if (fixtureError) {
+    return json({ error: "Could not attach the recording to the match." }, 500);
+  }
+
+  return json({ received: true });
+});
+
+async function hasValidSignature(
+  rawBody: string,
+  signatureHeader: string | null,
+  secret: string,
+) {
+  if (!signatureHeader) return false;
+
+  const values = signatureHeader.split(",").map((value) => value.trim());
+  const timestamp = values
+    .find((value) => value.startsWith("time="))
+    ?.slice("time=".length);
+  const signatures = values
+    .filter((value) => value.startsWith("sig1="))
+    .map((value) => value.slice("sig1=".length).toLowerCase());
+  if (!timestamp || signatures.length === 0 || !/^\d+$/.test(timestamp)) {
+    return false;
+  }
+
+  const ageSeconds = Math.abs(Date.now() / 1000 - Number(timestamp));
+  if (!Number.isFinite(ageSeconds) || ageSeconds > 300) return false;
+
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const digest = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`${timestamp}.${rawBody}`),
+  );
+  const expected = Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return signatures.some((signature) => constantTimeEqual(expected, signature));
+}
+
+function cloudflareHlsUrl(videoId: string) {
+  const rawCustomerCode = Deno.env.get("CLOUDFLARE_STREAM_CUSTOMER_CODE");
+  if (!rawCustomerCode) return null;
+  const withoutProtocol = rawCustomerCode.trim().replace(/^https?:\/\//i, "");
+  const customerCode = withoutProtocol
+    .split("/")[0]
+    .replace(/\.$/, "")
+    .replace(/^customer-/i, "")
+    .replace(/\.cloudflarestream\.com$/i, "");
+  if (!/^[a-z0-9-]+$/i.test(customerCode)) return null;
+  return `https://customer-${customerCode}.cloudflarestream.com/${videoId}/manifest/video.m3u8`;
+}
+
+function constantTimeEqual(left: string, right: string) {
+  if (left.length !== right.length) return false;
+  let difference = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    difference |= left.charCodeAt(index) ^ right.charCodeAt(index);
+  }
+  return difference === 0;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function validRecordingTimestamp(value: unknown) {
+  const raw = stringValue(value);
+  if (!raw) return null;
+  const milliseconds = Date.parse(raw);
+  if (!Number.isFinite(milliseconds) || milliseconds > Date.now() + 60_000) {
+    return null;
+  }
+  return new Date(milliseconds).toISOString();
+}
+
+function isRecordingOlderThanRequest(
+  recordingStartedAt: string | null,
+  streamRequestedAt: string | null,
+) {
+  if (!recordingStartedAt || !streamRequestedAt) return false;
+  const recordingMilliseconds = Date.parse(recordingStartedAt);
+  const requestMilliseconds = Date.parse(streamRequestedAt);
+  if (!Number.isFinite(recordingMilliseconds) ||
+    !Number.isFinite(requestMilliseconds)) {
+    return false;
+  }
+  return recordingMilliseconds < requestMilliseconds - 60_000;
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(value);
+}
+
+function json(body: Record<string, unknown>, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Cache-Control": "no-store",
+      "Content-Type": "application/json",
+    },
+  });
+}

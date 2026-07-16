@@ -4,10 +4,59 @@ import 'leaderboard.dart';
 
 abstract class LeaderboardRepository {
   Future<LeaderboardPlayerStats> loadPlayerStats(LeaderboardSeason season);
+
+  Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
+    LeaderboardSeason season,
+  );
+
+  Future<List<PlayerRatingLeaderboardEntry>> loadPlayerRatingLeaderboard({
+    required LeaderboardSeason season,
+    String region = 'bahrain',
+  });
 }
 
 class SupabaseLeaderboardRepository implements LeaderboardRepository {
   SupabaseClient get _client => Supabase.instance.client;
+
+  @override
+  Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
+    LeaderboardSeason season,
+  ) async {
+    final response = await _client.rpc(
+      'get_my_season_player_rating',
+      params: {
+        'region_to_use': 'bahrain',
+        'season_starts_on': season.startsOn,
+        'season_ends_on': season.endsOn,
+      },
+    );
+    final rows = response as List<dynamic>;
+    if (rows.isEmpty) throw StateError('Your Player Rating is unavailable.');
+    return PlayerRatingLeaderboardEntry.fromJson(
+      Map<String, dynamic>.from(rows.first as Map),
+    );
+  }
+
+  @override
+  Future<List<PlayerRatingLeaderboardEntry>> loadPlayerRatingLeaderboard({
+    required LeaderboardSeason season,
+    String region = 'bahrain',
+  }) async {
+    final response = await _client.rpc(
+      'list_season_player_rating_leaderboard',
+      params: {
+        'region_to_use': region,
+        'season_starts_on': season.startsOn,
+        'season_ends_on': season.endsOn,
+      },
+    );
+    return [
+      for (final row in response as List<dynamic>)
+        PlayerRatingLeaderboardEntry.fromJson(
+          Map<String, dynamic>.from(row as Map),
+        ),
+    ];
+  }
 
   @override
   Future<LeaderboardPlayerStats> loadPlayerStats(

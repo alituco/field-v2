@@ -246,7 +246,7 @@ class _ClansScreenState extends State<ClansScreen> {
                     ),
                     if (myClan != null)
                       const Text(
-                        'VIEW ONLY',
+                        '',
                         style: TextStyle(
                           color: fieldGray400,
                           fontSize: 11,

@@ -191,6 +191,12 @@ String? _messageForKnownError(String message) {
   if (message.contains('needs at least 7 players')) {
     return 'Your clan needs at least 7 players before you can book this match.';
   }
+  if (message.contains('maximum of 2 upcoming matches')) {
+    return 'Your clan already has 2 upcoming matches. Finish or cancel one before scheduling another.';
+  }
+  if (message.contains('maximum of 2 upcoming solo games')) {
+    return 'You already have 2 upcoming solo games. Cancel one before booking another.';
+  }
   if (message.contains('maximum of 20 players')) {
     return 'This clan is full. Clans can have up to 20 players.';
   }

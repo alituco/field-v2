@@ -1,5 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'date_of_birth.dart';
+
 abstract class AuthRepository {
   Session? get currentSession;
   User? get currentUser;
@@ -8,6 +10,7 @@ abstract class AuthRepository {
   Future<void> sendPhoneOtp(String phone);
   Future<void> verifyPhoneOtp({required String phone, required String token});
   Future<void> updateDisplayName(String displayName);
+  Future<void> updateDateOfBirth(DateTime dateOfBirth);
   Future<void> switchToUserForDevelopment(String profileId);
   Future<void> signOut();
 }
@@ -102,15 +105,38 @@ class SupabaseAuthRepository implements AuthRepository {
       throw AuthSessionMissingException();
     }
 
+    await _client.rpc(
+      'save_my_onboarding_profile',
+      params: {
+        'display_name_to_use': trimmedName,
+        'date_of_birth_to_use': null,
+      },
+    );
+
     await _client.auth.updateUser(
       UserAttributes(data: {'display_name': trimmedName, 'name': trimmedName}),
     );
+  }
 
-    await _client.from('profiles').upsert({
-      'id': user.id,
-      'phone': user.phone,
-      'display_name': trimmedName,
-    }, onConflict: 'id');
+  @override
+  Future<void> updateDateOfBirth(DateTime dateOfBirth) async {
+    if (!isEligibleDateOfBirth(dateOfBirth)) {
+      throw const AuthException('You must be at least 16 years old to play.');
+    }
+    final user = currentUser;
+    if (user == null) {
+      throw AuthSessionMissingException();
+    }
+
+    final isoDate = dateOfBirthToIso(dateOfBirth);
+    await _client.rpc(
+      'save_my_onboarding_profile',
+      params: {'display_name_to_use': null, 'date_of_birth_to_use': isoDate},
+    );
+
+    await _client.auth.updateUser(
+      UserAttributes(data: {'date_of_birth': isoDate}),
+    );
   }
 
   @override

@@ -9,6 +9,10 @@ import type {
   Player,
   RefereeFixture,
 } from "./types";
+import {
+  loadRefereeRiskSignals,
+  riskContextFor,
+} from "./referee-risk-context";
 
 const fixtureSelect = `
   id,
@@ -17,6 +21,8 @@ const fixtureSelect = `
   day,
   time_slot,
   match_date,
+  home_score,
+  away_score,
   cancellation_code,
   cancellation_reason,
   cancelled_at,
@@ -112,26 +118,70 @@ async function hydrateFixtureRows(
     ),
   ];
 
-  const [players, clocks, goals, events, blueCards] = await Promise.all([
-    loadPlayers(db, clanIds),
-    loadClocks(db, fixtureIds),
-    loadGoals(db, fixtureIds),
-    loadEvents(db, fixtureIds),
-    loadBlueCards(db, fixtureIds),
-  ]);
+  const [players, participantIds, clocks, goals, events, blueCards] =
+    await Promise.all([
+      loadPlayers(db, clanIds),
+      loadParticipantIds(db, fixtureIds),
+      loadClocks(db, fixtureIds),
+      loadGoals(db, fixtureIds),
+      loadEvents(db, fixtureIds),
+      loadBlueCards(db, fixtureIds),
+    ]);
 
-  return fixtureRows.map((fixture) => ({
-    ...fixture,
-    players: players.filter(
+  const riskSignals = await loadRefereeRiskSignals(
+    db,
+    players.map((player) => player.id),
+    clanIds,
+  );
+
+  return fixtureRows.map((fixture) => {
+    const fixturePlayers = players.filter(
       (player) =>
         player.clanId === fixture.homeClan.id ||
         player.clanId === fixture.awayClan.id,
-    ),
-    clock: clocks.get(fixture.id) ?? null,
-    goals: goals.filter((goal) => goal.fixtureId === fixture.id),
-    events: events.filter((event) => event.fixtureId === fixture.id),
-    blueCards: blueCards.filter((card) => card.fixtureId === fixture.id),
-  }));
+    );
+    const fixtureParticipantIds = participantIds.get(fixture.id) ?? [];
+    const relevantPlayerIds = fixtureParticipantIds.length > 0
+      ? fixtureParticipantIds
+      : fixturePlayers.map((player) => player.id);
+
+    return {
+      ...fixture,
+      players: fixturePlayers,
+      participantIds: fixtureParticipantIds,
+      clock: clocks.get(fixture.id) ?? null,
+      goals: goals.filter((goal) => goal.fixtureId === fixture.id),
+      events: events.filter((event) => event.fixtureId === fixture.id),
+      blueCards: blueCards.filter((card) => card.fixtureId === fixture.id),
+      riskContext: riskContextFor(
+        riskSignals,
+        [fixture.homeClan.id, fixture.awayClan.id],
+        relevantPlayerIds,
+      ),
+    };
+  });
+}
+
+async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
+  const participantIds = new Map<string, string[]>();
+  if (fixtureIds.length === 0) return participantIds;
+
+  const { data, error } = await db
+    .from("fixture_player_appearances")
+    .select("fixture_id,profile_id")
+    .in("fixture_id", fixtureIds)
+    .eq("played", true);
+
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    const fixtureId = String(row.fixture_id);
+    const current = participantIds.get(fixtureId) ?? [];
+    current.push(String(row.profile_id));
+    participantIds.set(fixtureId, current);
+  }
+
+  return participantIds;
 }
 
 async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
@@ -167,6 +217,7 @@ async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
       displayName: String(profile.display_name ?? "Unnamed player"),
       username: nullableString(profile.username),
       avatarUrl: nullableString(profile.avatar_url),
+      ratingAtTeamAssignment: null,
     } satisfies Player;
   });
 }
@@ -277,6 +328,7 @@ async function loadBlueCards(db: SupabaseClient, fixtureIds: string[]) {
 
 function normalizeFixtureRow(row: Record<string, unknown>) {
   return {
+    matchKind: "CLAN",
     id: String(row.id),
     status: String(row.status) as RefereeFixture["status"],
     venue: String(row.venue ?? ""),
@@ -287,13 +339,21 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     cancellationReason: nullableString(row.cancellation_reason),
     cancelledAt: nullableString(row.cancelled_at),
     cancelledBy: nullableString(row.cancelled_by),
+    homeScore: nullableNumber(row.home_score),
+    awayScore: nullableNumber(row.away_score),
+    whiteAverageSr: null,
+    blackAverageSr: null,
+    matchAverageSr: null,
+    teamSrSpread: null,
     homeClan: normalizeClan(asObject(row.home_clan)),
     awayClan: normalizeClan(asObject(row.away_clan)),
     players: [],
+    participantIds: [],
     clock: null,
     goals: [],
     events: [],
     blueCards: [],
+    riskContext: riskContextFor(new Map(), [], []),
   } satisfies RefereeFixture;
 }
 
@@ -322,4 +382,10 @@ function asObject(value: unknown): Record<string, unknown> {
 function nullableString(value: unknown) {
   if (value === null || value === undefined) return null;
   return String(value);
+}
+
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }

@@ -16,6 +16,11 @@ const fieldGray200 = Color(0xFFE5E7EB);
 const fieldGray100 = Color(0xFFF3F4F6);
 const fieldEmerald600 = Color(0xFF059669);
 const fieldEmerald500 = Color(0xFF10B981);
+const fieldEmerald800 = Color(0xFF065F46);
+const fieldEmerald700 = Color(0xFF047857);
+const fieldEmerald200 = Color(0xFFA7F3D0);
+const fieldEmerald100 = Color(0xFFD1FAE5);
+const fieldEmerald50 = Color(0xFFECFDF5);
 const fieldBlue600 = Color(0xFF2563EB);
 
 enum HeaderActionTone { blue, pink }
@@ -151,7 +156,7 @@ class FieldPageHeader extends StatelessWidget {
                 filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
                 child: DecoratedBox(
                   decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.38),
+                    color: Colors.white.withValues(alpha: 0.70),
                     border: Border(
                       bottom: BorderSide(
                         color: Colors.white.withValues(alpha: 0.28),

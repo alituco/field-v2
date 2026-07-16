@@ -2,9 +2,16 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:video_player/video_player.dart';
 
+import '../clans/clan.dart';
+import '../clans/clan_detail_screen.dart';
+import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../core/field_confirmation_dialog.dart';
+import '../profile/goal_clip_downloader.dart';
+import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import 'fixture.dart';
@@ -17,29 +24,59 @@ class FixtureDetailScreen extends StatefulWidget {
     required this.fixture,
     required this.fixtureRepository,
     required this.myClanMembership,
+    this.refreshFixture,
+    this.sourceLabel,
+    this.showTeamRatings = true,
+    this.playerRatingUpdate,
+    this.initiallyShowWatch = false,
+    this.clanRepository,
+    this.profileRepository,
+    this.goalClipDownloader,
   });
 
   final Fixture fixture;
   final FixtureRepository fixtureRepository;
   final MyClanMembership? myClanMembership;
+  final Future<Fixture> Function()? refreshFixture;
+  final String? sourceLabel;
+  final bool showTeamRatings;
+  final FixturePlayerRatingUpdate? playerRatingUpdate;
+  final bool initiallyShowWatch;
+  final ClanRepository? clanRepository;
+  final ProfileRepository? profileRepository;
+  final GoalClipDownloader? goalClipDownloader;
 
   @override
   State<FixtureDetailScreen> createState() => _FixtureDetailScreenState();
 }
 
+enum _FixtureDetailSection { watch, timeline, lineups }
+
 class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late Fixture _fixture = widget.fixture;
-  final ProfileRepository _profileRepository = SupabaseProfileRepository();
+  late final ProfileRepository _profileRepository;
+  late final GoalClipDownloader _goalClipDownloader;
+  late final ClanRepository _clanRepository;
+  late _FixtureDetailSection _selectedSection;
   Timer? _refreshTimer;
   bool _isJoining = false;
   bool _isCompleting = false;
   bool _isRefreshing = false;
   bool _didChange = false;
+  String? _openingClanId;
   String? _errorText;
 
   @override
   void initState() {
     super.initState();
+    _profileRepository =
+        widget.profileRepository ?? SupabaseProfileRepository();
+    _goalClipDownloader =
+        widget.goalClipDownloader ?? DeviceGoalClipDownloader();
+    _clanRepository = widget.clanRepository ?? SupabaseClanRepository();
+    _selectedSection = widget.initiallyShowWatch
+        ? _FixtureDetailSection.watch
+        : _FixtureDetailSection.timeline;
     _configureRefreshTimer();
     unawaited(_refreshFixture(quiet: true));
   }
@@ -199,6 +236,55 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     );
   }
 
+  Future<void> _openClan(FixtureClan fixtureClan) async {
+    if (_openingClanId != null || fixtureClan.id.trim().isEmpty) return;
+    setState(() => _openingClanId = fixtureClan.id);
+
+    try {
+      final results = await Future.wait<dynamic>([
+        _clanRepository.listClans(),
+        _clanRepository.getMyClanMembership(),
+      ]);
+      final clans = results[0] as List<Clan>;
+      Clan? target;
+      for (final clan in clans) {
+        if (clan.id == fixtureClan.id) {
+          target = clan;
+          break;
+        }
+      }
+      if (target == null) {
+        throw StateError('Clan not found.');
+      }
+      if (!mounted) return;
+
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ClanDetailScreen(
+            clan: target!,
+            clanRepository: _clanRepository,
+            fixtureRepository: widget.fixtureRepository,
+            currentMembership: results[1] as ClanMembership?,
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open that clan. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingClanId = null);
+    }
+  }
+
   Future<void> _refreshFixture({bool quiet = false}) async {
     if (_isRefreshing) return;
     if (!quiet) {
@@ -207,7 +293,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     _isRefreshing = true;
 
     try {
-      final fixture = await widget.fixtureRepository.getFixture(_fixture.id);
+      final fixture =
+          await (widget.refreshFixture?.call() ??
+              widget.fixtureRepository.getFixture(_fixture.id));
       if (!mounted) return;
       setState(() {
         _fixture = fixture;
@@ -241,7 +329,71 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         const Duration(seconds: 10),
         (_) => _refreshFixture(quiet: true),
       );
+      return;
     }
+    if (_fixture.broadcast?.shouldPoll == true) {
+      _refreshTimer = Timer.periodic(
+        const Duration(seconds: 10),
+        (_) => _refreshFixture(quiet: true),
+      );
+    }
+  }
+
+  Widget _buildSelectedSection() {
+    return switch (_selectedSection) {
+      _FixtureDetailSection.watch => _BroadcastPanel(
+        fixture: _fixture,
+        sourceLabel: widget.sourceLabel,
+        profileRepository: _profileRepository,
+        goalClipDownloader: _goalClipDownloader,
+      ),
+      _FixtureDetailSection.timeline => Column(
+        children: [
+          _InfoGrid(fixture: _fixture),
+          if (_canSeePayments) ...[
+            const SizedBox(height: 18),
+            _TeamPaymentsPanel(
+              fixture: _fixture,
+              onOpenProfile: _openPlayerProfile,
+            ),
+          ],
+          if (_fixture.isFinal && widget.playerRatingUpdate != null) ...[
+            const SizedBox(height: 18),
+            _PlayerRatingUpdateCard(update: widget.playerRatingUpdate!),
+          ],
+          if (_fixture.isFinal &&
+              (_fixture.homeSrChange != null ||
+                  _fixture.awaySrChange != null)) ...[
+            const SizedBox(height: 18),
+            _RatingUpdates(fixture: _fixture),
+          ],
+          const SizedBox(height: 18),
+          if (_fixture.timeline.isEmpty)
+            const _EmptyFixtureSection(
+              icon: Icons.timeline_rounded,
+              title: 'No timeline yet',
+              message: 'Match events will appear here as the game is played.',
+            )
+          else
+            _MatchTimeline(
+              fixture: _fixture,
+              onOpenProfile: _openPlayerProfile,
+            ),
+        ],
+      ),
+      _FixtureDetailSection.lineups =>
+        _fixture.homeLineup.isEmpty && _fixture.awayLineup.isEmpty
+            ? const _EmptyFixtureSection(
+                icon: Icons.groups_2_rounded,
+                title: 'Lineups not available yet',
+                message:
+                    'The team formations will appear here once players are assigned.',
+              )
+            : _FormationLineupsPanel(
+                fixture: _fixture,
+                onOpenProfile: _openPlayerProfile,
+              ),
+    };
   }
 
   @override
@@ -260,69 +412,347 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
           )
         : null;
 
-    return Scaffold(
-      backgroundColor: fieldBackground,
-      body: FieldHeaderOverlay(
-        header: FieldPageHeader(
-          title: 'Match Details',
-          showBack: true,
-          onBack: () => Navigator.of(context).pop(_didChange),
-        ),
-        child: ListView(
-          padding: fieldHeaderAwarePadding(
-            context,
-            bottom: bottomAction == null ? 32 : 116,
+    final title = widget.sourceLabel == null
+        ? 'Match Details'
+        : '${widget.sourceLabel} Match';
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+        statusBarBrightness: Brightness.dark,
+      ),
+      child: Scaffold(
+        backgroundColor: fieldBackground,
+        body: FieldHeaderOverlay(
+          header: _FixtureDetailHeader(
+            title: title,
+            onBack: () => Navigator.of(context).pop(_didChange),
           ),
-          children: [
-            _Scoreboard(fixture: _fixture),
-            if (_errorText != null) ...[
+          child: ListView(
+            padding: EdgeInsets.only(bottom: bottomAction == null ? 32 : 116),
+            children: [
+              SizedBox(
+                width: double.infinity,
+                child: _Scoreboard(
+                  fixture: _fixture,
+                  sourceLabel: widget.sourceLabel,
+                  showTeamRatings: widget.showTeamRatings,
+                  onHomeClanTap: widget.sourceLabel?.toUpperCase() == 'SOLO'
+                      ? null
+                      : () => _openClan(_fixture.homeClan),
+                  onAwayClanTap:
+                      widget.sourceLabel?.toUpperCase() == 'SOLO' ||
+                          _fixture.awayClan == null
+                      ? null
+                      : () => _openClan(_fixture.awayClan!),
+                  openingClanId: _openingClanId,
+                ),
+              ),
               const SizedBox(height: 14),
-              _ErrorCallout(message: _errorText!),
-            ],
-            if (_fixture.isCancelled) ...[
-              const SizedBox(height: 18),
-              _CancellationPanel(fixture: _fixture),
-            ],
-            const SizedBox(height: 18),
-            _InfoGrid(fixture: _fixture),
-            if (_canSeePayments) ...[
-              const SizedBox(height: 18),
-              _TeamPaymentsPanel(
-                fixture: _fixture,
-                onOpenProfile: _openPlayerProfile,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _FixtureSectionSwitcher(
+                  selected: _selectedSection,
+                  onSelected: (section) {
+                    if (_selectedSection == section) return;
+                    setState(() => _selectedSection = section);
+                  },
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Column(
+                  children: [
+                    if (_errorText != null) ...[
+                      const SizedBox(height: 14),
+                      _ErrorCallout(message: _errorText!),
+                    ],
+                    if (_fixture.isCancelled) ...[
+                      const SizedBox(height: 18),
+                      _CancellationPanel(fixture: _fixture),
+                    ],
+                    const SizedBox(height: 18),
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 180),
+                      switchInCurve: Curves.easeOut,
+                      switchOutCurve: Curves.easeIn,
+                      child: KeyedSubtree(
+                        key: ValueKey(_selectedSection),
+                        child: _buildSelectedSection(),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
-            if (_fixture.scorers.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              _GoalContributions(fixture: _fixture),
-            ],
-            if (_fixture.timeline.isNotEmpty) ...[
-              const SizedBox(height: 18),
-              _MatchTimeline(
-                fixture: _fixture,
-                onOpenProfile: _openPlayerProfile,
-              ),
-            ],
-            if (_fixture.isFinal &&
-                (_fixture.homeSrChange != null ||
-                    _fixture.awaySrChange != null)) ...[
-              const SizedBox(height: 18),
-              _RatingUpdates(fixture: _fixture),
-            ],
-            const SizedBox(height: 18),
-            _BroadcastPanel(fixture: _fixture),
+          ),
+        ),
+        bottomNavigationBar: bottomAction,
+      ),
+    );
+  }
+}
+
+class _FixtureDetailHeader extends StatelessWidget {
+  const _FixtureDetailHeader({required this.title, required this.onBack});
+
+  final String title;
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) {
+    final topInset = MediaQuery.paddingOf(context).top;
+
+    return Container(
+      key: const ValueKey('fixture-detail-header'),
+      height: topInset + 64,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.42),
+            Colors.black.withValues(alpha: 0.12),
+            Colors.transparent,
           ],
         ),
       ),
-      bottomNavigationBar: bottomAction,
+      padding: EdgeInsets.fromLTRB(16, topInset, 16, 0),
+      child: Row(
+        children: [
+          Material(
+            color: Colors.white.withValues(alpha: 0.13),
+            shape: const CircleBorder(),
+            child: InkWell(
+              onTap: onBack,
+              customBorder: const CircleBorder(),
+              child: Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.24),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.arrow_back_rounded,
+                  color: Colors.white,
+                  size: 21,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          const SizedBox(
+            width: 4,
+            height: 25,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [fieldEmerald500, fieldBlue600],
+                ),
+                borderRadius: BorderRadius.all(Radius.circular(99)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              title.toUpperCase(),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                height: 1,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FixtureSectionSwitcher extends StatelessWidget {
+  const _FixtureSectionSwitcher({
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final _FixtureDetailSection selected;
+  final ValueChanged<_FixtureDetailSection> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    const items = [
+      (_FixtureDetailSection.watch, Icons.play_circle_outline_rounded, 'WATCH'),
+      (_FixtureDetailSection.timeline, Icons.timeline_rounded, 'TIMELINE'),
+      (_FixtureDetailSection.lineups, Icons.groups_2_rounded, 'LINEUPS'),
+    ];
+
+    return Container(
+      key: const ValueKey('fixture-main-switcher'),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: fieldGray100,
+        border: Border.all(color: fieldGray200),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          for (final item in items)
+            Expanded(
+              child: _FixtureSectionButton(
+                icon: item.$2,
+                label: item.$3,
+                selected: selected == item.$1,
+                onTap: () => onSelected(item.$1),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FixtureSectionButton extends StatelessWidget {
+  const _FixtureSectionButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? Colors.white : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        key: ValueKey('fixture-section-${label.toLowerCase()}'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          height: 48,
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: selected
+                ? const [
+                    BoxShadow(
+                      color: Color(0x12111827),
+                      blurRadius: 8,
+                      offset: Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: selected ? fieldEmerald600 : fieldGray500,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                maxLines: 1,
+                style: TextStyle(
+                  color: selected ? fieldGray900 : fieldGray500,
+                  fontSize: 9,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyFixtureSection extends StatelessWidget {
+  const _EmptyFixtureSection({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 34),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: fieldGray400, size: 28),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldGray900,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 12,
+              height: 1.35,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
 
 class _Scoreboard extends StatelessWidget {
-  const _Scoreboard({required this.fixture});
+  const _Scoreboard({
+    required this.fixture,
+    required this.sourceLabel,
+    required this.showTeamRatings,
+    required this.onHomeClanTap,
+    required this.onAwayClanTap,
+    required this.openingClanId,
+  });
 
   final Fixture fixture;
+  final String? sourceLabel;
+  final bool showTeamRatings;
+  final VoidCallback? onHomeClanTap;
+  final VoidCallback? onAwayClanTap;
+  final String? openingClanId;
 
   @override
   Widget build(BuildContext context) {
@@ -338,7 +768,14 @@ class _Scoreboard extends StatelessWidget {
         fixture.awayScore! > fixture.homeScore!;
 
     return Container(
-      padding: const EdgeInsets.all(22),
+      key: const ValueKey('fixture-scoreboard'),
+      width: double.infinity,
+      padding: EdgeInsets.fromLTRB(
+        22,
+        fieldPageHeaderExtent(context) + 14,
+        22,
+        12,
+      ),
       decoration: BoxDecoration(
         gradient: const RadialGradient(
           center: Alignment(0.8, -0.8),
@@ -346,7 +783,7 @@ class _Scoreboard extends StatelessWidget {
           colors: [Color(0xFF374151), Color(0xFF111827), Color(0xFF000000)],
           stops: [0, 0.52, 1],
         ),
-        borderRadius: BorderRadius.circular(26),
+        borderRadius: BorderRadius.zero,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.22),
@@ -372,40 +809,71 @@ class _Scoreboard extends StatelessWidget {
           ),
           Column(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 6,
-                ),
-                decoration: BoxDecoration(
-                  color: fixture.isLive
-                      ? const Color(0xFFEF4444)
-                      : fixture.isFinal
-                      ? Colors.white.withValues(alpha: 0.18)
-                      : fieldEmerald600,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: Text(
-                  fixture.detailStatusLabel.toUpperCase(),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  if (sourceLabel != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 11,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        sourceLabel!,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.6,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 7),
+                  ],
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 11,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: fixture.isLive
+                          ? const Color(0xFFEF4444)
+                          : fixture.isFinal
+                          ? Colors.white.withValues(alpha: 0.18)
+                          : fieldEmerald600,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      fixture.detailStatusLabel.toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
               if (fixture.isLive) ...[
                 const SizedBox(height: 10),
                 _LiveMinutePill(clock: fixture.clock),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
               Row(
                 children: [
                   Expanded(
                     child: _ScoreboardClan(
                       clan: fixture.homeClan,
                       winner: homeWin,
+                      showRating: showTeamRatings,
+                      averagePlayerRating: fixture.homeAveragePlayerRating,
+                      onTap: onHomeClanTap,
+                      isOpening: openingClanId == fixture.homeClanId,
                     ),
                   ),
                   Padding(
@@ -459,10 +927,23 @@ class _Scoreboard extends StatelessWidget {
                         : _ScoreboardClan(
                             clan: fixture.awayClan!,
                             winner: awayWin,
+                            showRating: showTeamRatings,
+                            averagePlayerRating:
+                                fixture.awayAveragePlayerRating,
+                            onTap: onAwayClanTap,
+                            isOpening: openingClanId == fixture.awayClanId,
                           ),
                   ),
                 ],
               ),
+              if (!showTeamRatings &&
+                  fixture.matchAveragePlayerRating != null) ...[
+                const SizedBox(height: 12),
+                _MatchAverageRatingPill(
+                  average: fixture.matchAveragePlayerRating!,
+                  spread: fixture.teamRatingSpread,
+                ),
+              ],
             ],
           ),
         ],
@@ -472,17 +953,28 @@ class _Scoreboard extends StatelessWidget {
 }
 
 class _ScoreboardClan extends StatelessWidget {
-  const _ScoreboardClan({required this.clan, required this.winner});
+  const _ScoreboardClan({
+    required this.clan,
+    required this.winner,
+    required this.showRating,
+    required this.averagePlayerRating,
+    required this.onTap,
+    required this.isOpening,
+  });
 
   final FixtureClan clan;
   final bool winner;
+  final bool showRating;
+  final int? averagePlayerRating;
+  final VoidCallback? onTap;
+  final bool isOpening;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
+    final content = Column(
       children: [
-        FixtureClanAvatar(clan: clan, size: 64),
-        const SizedBox(height: 10),
+        FixtureClanAvatar(clan: clan, size: 56),
+        const SizedBox(height: 7),
         Text(
           clan.name,
           maxLines: 2,
@@ -495,21 +987,134 @@ class _ScoreboardClan extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 8),
-        TierBadge(rank: clan.rank, small: true),
-        const SizedBox(height: 6),
-        Text(
-          '${clan.skillRating} SR${clan.regionRank == null ? '' : ' · ${_regionName(clan.region)} #${clan.regionRank}'}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: fieldGray400,
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
+        if (onTap != null) ...[
+          const SizedBox(height: 3),
+          if (isOpening)
+            const SizedBox.square(
+              dimension: 12,
+              child: CircularProgressIndicator(
+                strokeWidth: 1.7,
+                color: fieldEmerald200,
+              ),
+            )
+          else
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'VIEW CLAN',
+                  style: TextStyle(
+                    color: fieldEmerald200,
+                    fontSize: 8,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                SizedBox(width: 1),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: fieldEmerald200,
+                  size: 12,
+                ),
+              ],
+            ),
+        ],
+        if (showRating) ...[
+          const SizedBox(height: 5),
+          Text(
+            '${clan.skillRating} CLAN SR',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldEmerald200,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.35,
+            ),
+          ),
+          if (clan.regionRank case final regionRank?) ...[
+            const SizedBox(height: 2),
+            Text(
+              '#$regionRank ${_regionName(clan.region).toUpperCase()}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: fieldGray400,
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.25,
+              ),
+            ),
+          ],
+          const SizedBox(height: 3),
+        ] else if (averagePlayerRating case final rating?) ...[
+          const SizedBox(height: 5),
+          Text(
+            '$rating AVG PLAYER RATING',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: fieldEmerald200,
+              fontSize: 9,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.2,
+            ),
+          ),
+          const SizedBox(height: 3),
+        ] else
+          const SizedBox(height: 3),
+      ],
+    );
+
+    if (onTap == null) return content;
+    return Semantics(
+      button: true,
+      label: 'View ${clan.name} clan',
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(18),
+        child: InkWell(
+          key: ValueKey('fixture-clan-link-${clan.id}'),
+          onTap: isOpening ? null : onTap,
+          borderRadius: BorderRadius.circular(18),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+            child: content,
           ),
         ),
-      ],
+      ),
+    );
+  }
+}
+
+class _MatchAverageRatingPill extends StatelessWidget {
+  const _MatchAverageRatingPill({required this.average, required this.spread});
+
+  final int average;
+  final int? spread;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        'MATCH AVG $average SR${spread == null ? '' : '  ·  $spread SR SPREAD'}',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.4,
+        ),
+      ),
     );
   }
 }
@@ -628,116 +1233,6 @@ class _LiveMinutePillState extends State<_LiveMinutePill> {
           letterSpacing: 0,
         ),
       ),
-    );
-  }
-}
-
-class _GoalContributions extends StatelessWidget {
-  const _GoalContributions({required this.fixture});
-
-  final Fixture fixture;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: fieldGray100),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            children: [
-              Icon(Icons.sports_soccer_rounded, color: fieldEmerald600),
-              SizedBox(width: 8),
-              Text(
-                'GOALS & ASSISTS',
-                style: TextStyle(
-                  color: fieldGray900,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          for (final scorer in fixture.scorers) ...[
-            _GoalContributionRow(fixture: fixture, scorer: scorer),
-            if (scorer != fixture.scorers.last)
-              const Divider(height: 18, color: fieldGray100),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _GoalContributionRow extends StatelessWidget {
-  const _GoalContributionRow({required this.fixture, required this.scorer});
-
-  final Fixture fixture;
-  final FixtureScorer scorer;
-
-  @override
-  Widget build(BuildContext context) {
-    final team = _teamTagFor(fixture, scorer.clanId);
-    final assistLabel = scorer.assistProfileId == null
-        ? 'No assist'
-        : 'Assist ${scorer.assistName}';
-
-    return Row(
-      children: [
-        Container(
-          width: 42,
-          height: 42,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: const Color(0xFFECFDF5),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            '${scorer.minute}\'',
-            style: const TextStyle(
-              color: fieldEmerald600,
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                scorer.scorerName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              const SizedBox(height: 3),
-              Text(
-                '$team · $assistLabel',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: fieldGray500,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
     );
   }
 }
@@ -933,6 +1428,450 @@ class _InfoGrid extends StatelessWidget {
       ],
     );
   }
+}
+
+class _FormationLineupsPanel extends StatelessWidget {
+  const _FormationLineupsPanel({
+    required this.fixture,
+    required this.onOpenProfile,
+  });
+
+  final Fixture fixture;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    final homePlayers = _visibleLineup(fixture.homeLineup);
+    final awayPlayers = _visibleLineup(fixture.awayLineup);
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x0D111827),
+            blurRadius: 12,
+            offset: Offset(0, 5),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.groups_2_rounded, color: fieldBlue600, size: 19),
+              SizedBox(width: 8),
+              Text(
+                'TEAM LINEUPS',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Text(
+            fixture.teamRatingSpread == null
+                ? 'Both 7-a-side formations, including each keeper.'
+                : 'Balanced to a ${fixture.teamRatingSpread} SR average spread.',
+            style: const TextStyle(
+              color: fieldGray500,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 14),
+          AspectRatio(
+            aspectRatio: 0.5,
+            child: _FormationPitch(
+              homeName: fixture.homeClan.name,
+              awayName: fixture.awayClan?.name ?? 'Away Team',
+              homeAverage: fixture.homeAveragePlayerRating,
+              awayAverage: fixture.awayAveragePlayerRating,
+              homePlayers: _formationEntries(homePlayers),
+              awayPlayers: _formationEntries(awayPlayers),
+              onOpenProfile: onOpenProfile,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FormationPitch extends StatelessWidget {
+  const _FormationPitch({
+    required this.homeName,
+    required this.awayName,
+    required this.homeAverage,
+    required this.awayAverage,
+    required this.homePlayers,
+    required this.awayPlayers,
+    required this.onOpenProfile,
+  });
+
+  final String homeName;
+  final String awayName;
+  final int? homeAverage;
+  final int? awayAverage;
+  final List<_FormationEntry> homePlayers;
+  final List<_FormationEntry> awayPlayers;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      key: const ValueKey('fixture-formation-pitch'),
+      borderRadius: BorderRadius.circular(22),
+      child: CustomPaint(
+        painter: const _PitchPainter(),
+        child: Stack(
+          children: [
+            Positioned(
+              top: 13,
+              left: 13,
+              right: 13,
+              child: _PitchTeamLabel(
+                name: homeName,
+                averageRating: homeAverage,
+                alignRight: false,
+              ),
+            ),
+            Positioned.fill(
+              top: 44,
+              bottom: 44,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 7),
+                child: Column(
+                  children: [
+                    Expanded(
+                      child: _TeamFormation(
+                        entries: homePlayers,
+                        direction: _FormationDirection.down,
+                        onOpenProfile: onOpenProfile,
+                      ),
+                    ),
+                    Expanded(
+                      child: _TeamFormation(
+                        entries: awayPlayers,
+                        direction: _FormationDirection.up,
+                        onOpenProfile: onOpenProfile,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: 13,
+              left: 13,
+              right: 13,
+              child: _PitchTeamLabel(
+                name: awayName,
+                averageRating: awayAverage,
+                alignRight: true,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+enum _FormationDirection { down, up }
+
+class _TeamFormation extends StatelessWidget {
+  const _TeamFormation({
+    required this.entries,
+    required this.direction,
+    required this.onOpenProfile,
+  });
+
+  final List<_FormationEntry> entries;
+  final _FormationDirection direction;
+  final ValueChanged<String> onOpenProfile;
+
+  @override
+  Widget build(BuildContext context) {
+    if (entries.isEmpty) {
+      return const Center(
+        child: Text(
+          'LINEUP PENDING',
+          style: TextStyle(
+            color: Color(0xBFFFFFFF),
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1,
+          ),
+        ),
+      );
+    }
+
+    const orderedRoles = ['GK', 'DEF', 'MID', 'ATT'];
+    final roles = direction == _FormationDirection.down
+        ? orderedRoles
+        : orderedRoles.reversed.toList();
+
+    return Column(
+      children: [
+        for (final role in roles)
+          Expanded(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                for (final entry in entries.where(
+                  (entry) => entry.role == role,
+                ))
+                  _FormationPlayerMarker(
+                    entry: entry,
+                    onTap: () => onOpenProfile(entry.player.id),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _FormationPlayerMarker extends StatelessWidget {
+  const _FormationPlayerMarker({required this.entry, required this.onTap});
+
+  final _FormationEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final player = entry.player;
+    final avatarUrl = player.avatarUrl?.trim();
+    final rating = player.displayedRating;
+    return SizedBox(
+      width: 96,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(14),
+          child: Padding(
+            padding: EdgeInsets.zero,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: player.isMe ? fieldEmerald200 : Colors.white,
+                    shape: BoxShape.circle,
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x35111827),
+                        blurRadius: 5,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: CircleAvatar(
+                    radius: 22,
+                    backgroundColor: player.side.toUpperCase() == 'AWAY'
+                        ? fieldGray900
+                        : fieldGray100,
+                    backgroundImage: avatarUrl != null && avatarUrl.isNotEmpty
+                        ? NetworkImage(avatarUrl)
+                        : null,
+                    child: avatarUrl != null && avatarUrl.isNotEmpty
+                        ? null
+                        : Text(
+                            player.initials,
+                            style: TextStyle(
+                              color: player.side.toUpperCase() == 'AWAY'
+                                  ? Colors.white
+                                  : fieldGray700,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  player.isMe
+                      ? '${player.displayName} (You)'
+                      : player.displayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    height: 1,
+                    fontWeight: FontWeight.w900,
+                    shadows: [Shadow(color: Color(0x80111827), blurRadius: 3)],
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  rating == null ? entry.role : '${entry.role} · $rating SR',
+                  maxLines: 1,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 8,
+                    height: 1,
+                    fontWeight: FontWeight.w800,
+                    shadows: [Shadow(color: Color(0x80111827), blurRadius: 2)],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PitchTeamLabel extends StatelessWidget {
+  const _PitchTeamLabel({
+    required this.name,
+    required this.averageRating,
+    required this.alignRight,
+  });
+
+  final String name;
+  final int? averageRating;
+  final bool alignRight;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: alignRight ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: const Color(0xC9111827),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Text(
+          '${name.toUpperCase()}${averageRating == null ? '' : ' · $averageRating AVG SR'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 8,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.3,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PitchPainter extends CustomPainter {
+  const _PitchPainter();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bounds = Offset.zero & size;
+    canvas.drawRect(bounds, Paint()..color = const Color(0xFF07845F));
+
+    final stripePaint = Paint()..color = Colors.white.withValues(alpha: 0.055);
+    final stripeHeight = size.height / 8;
+    for (var index = 0; index < 8; index += 2) {
+      canvas.drawRect(
+        Rect.fromLTWH(0, index * stripeHeight, size.width, stripeHeight),
+        stripePaint,
+      );
+    }
+
+    final linePaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.52)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8;
+    final inset = Rect.fromLTWH(14, 14, size.width - 28, size.height - 28);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(inset, const Radius.circular(16)),
+      linePaint,
+    );
+    canvas.drawLine(
+      Offset(14, size.height / 2),
+      Offset(size.width - 14, size.height / 2),
+      linePaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      size.width * 0.16,
+      linePaint,
+    );
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height / 2),
+      2.2,
+      Paint()..color = Colors.white.withValues(alpha: 0.62),
+    );
+    final boxWidth = size.width * 0.48;
+    final boxHeight = size.height * 0.12;
+    canvas.drawRect(
+      Rect.fromLTWH((size.width - boxWidth) / 2, 14, boxWidth, boxHeight),
+      linePaint,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(
+        (size.width - boxWidth) / 2,
+        size.height - 14 - boxHeight,
+        boxWidth,
+        boxHeight,
+      ),
+      linePaint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PitchPainter oldDelegate) => false;
+}
+
+class _FormationEntry {
+  const _FormationEntry({required this.player, required this.role});
+
+  final FixtureLineupPlayer player;
+  final String role;
+}
+
+List<FixtureLineupPlayer> _visibleLineup(List<FixtureLineupPlayer> players) {
+  final played = players.where((player) => player.played).toList();
+  final visible = played.isEmpty ? players : played;
+  return visible.take(7).toList();
+}
+
+List<_FormationEntry> _formationEntries(List<FixtureLineupPlayer> players) {
+  const fallback = ['GK', 'DEF', 'DEF', 'MID', 'MID', 'ATT', 'ATT'];
+  return [
+    for (var index = 0; index < players.length; index++)
+      _FormationEntry(
+        player: players[index],
+        role: _formationRole(
+          players[index].role,
+          fallback[index % fallback.length],
+        ),
+      ),
+  ];
+}
+
+String _formationRole(String rawRole, String fallback) {
+  final role = rawRole.trim().toUpperCase();
+  if (role == 'GK' || role.contains('GOALKEEP')) return 'GK';
+  if (role == 'DEF' || role.contains('DEFEND')) return 'DEF';
+  if (role == 'MID' || role.contains('MIDFIELD')) return 'MID';
+  if (role == 'ATT' || role.contains('ATTACK') || role.contains('FORWARD')) {
+    return 'ATT';
+  }
+  return fallback;
 }
 
 class _CancellationPanel extends StatelessWidget {
@@ -1299,6 +2238,241 @@ String _shortPaymentDate(DateTime value) {
   return '${months[local.month - 1]} ${local.day}';
 }
 
+class _PlayerRatingUpdateCard extends StatelessWidget {
+  const _PlayerRatingUpdateCard({required this.update});
+
+  final FixturePlayerRatingUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    final change = update.ratingChange;
+    final positive = change > 0;
+    final negative = change < 0;
+    final changeColor = positive
+        ? fieldEmerald600
+        : negative
+        ? const Color(0xFFDC2626)
+        : fieldGray500;
+    final changeBackground = positive
+        ? fieldEmerald50
+        : negative
+        ? const Color(0xFFFEF2F2)
+        : fieldGray100;
+    final result = update.result?.trim().toUpperCase();
+
+    return Container(
+      key: const ValueKey('fixture-player-rating-update'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray100),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.trending_up_rounded,
+                color: fieldBlue600,
+                size: 22,
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'PLAYER RATING UPDATE',
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              if (result != null && result.isNotEmpty)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: switch (result) {
+                      'WIN' => fieldEmerald50,
+                      'LOSS' => const Color(0xFFFEF2F2),
+                      _ => fieldGray100,
+                    },
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    result,
+                    style: TextStyle(
+                      color: switch (result) {
+                        'WIN' => fieldEmerald700,
+                        'LOSS' => const Color(0xFFDC2626),
+                        _ => fieldGray600,
+                      },
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              _PlayerRatingValue(label: 'BEFORE', value: update.ratingBefore),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Icon(
+                  Icons.arrow_forward_rounded,
+                  color: fieldGray300,
+                  size: 20,
+                ),
+              ),
+              _PlayerRatingValue(label: 'AFTER', value: update.ratingAfter),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: changeBackground,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '${change > 0 ? '+' : ''}$change SR',
+                  style: TextStyle(
+                    color: changeColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (update.hasMarginAdjustment) ...[
+            const SizedBox(height: 14),
+            _PlayerRatingMarginAdjustment(update: update),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PlayerRatingMarginAdjustment extends StatelessWidget {
+  const _PlayerRatingMarginAdjustment({required this.update});
+
+  final FixturePlayerRatingUpdate update;
+
+  @override
+  Widget build(BuildContext context) {
+    final adjustment = update.marginBonusApplied!;
+    final isWinBonus = adjustment > 0;
+    final margin = update.scoreMargin;
+    final marginLabel = margin == null ? '' : '$margin-GOAL ';
+    final baseChange = update.baseRatingChange;
+    final detail = [
+      '${_signedRating(adjustment)} SR included in this update',
+      if (baseChange != null) 'standard result ${_signedRating(baseChange)} SR',
+    ].join(' · ');
+    final foreground = isWinBonus ? fieldEmerald700 : const Color(0xFFC2410C);
+    final background = isWinBonus ? fieldEmerald50 : const Color(0xFFFFF7ED);
+
+    return Container(
+      key: const ValueKey('fixture-player-rating-margin-adjustment'),
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            isWinBonus
+                ? Icons.auto_awesome_rounded
+                : Icons.stacked_line_chart_rounded,
+            color: foreground,
+            size: 17,
+          ),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  isWinBonus
+                      ? '${marginLabel}WIN BONUS'
+                      : '${marginLabel}MARGIN ADJUSTMENT',
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  detail,
+                  style: TextStyle(
+                    color: foreground,
+                    fontSize: 11,
+                    height: 1.25,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _signedRating(int value) => '${value > 0 ? '+' : ''}$value';
+
+class _PlayerRatingValue extends StatelessWidget {
+  const _PlayerRatingValue({required this.label, required this.value});
+
+  final String label;
+  final int value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 8,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          '$value',
+          style: const TextStyle(
+            color: fieldGray900,
+            fontSize: 20,
+            height: 1,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class _RatingUpdates extends StatelessWidget {
   const _RatingUpdates({required this.fixture});
 
@@ -1406,13 +2580,815 @@ class _SrChangeTile extends StatelessWidget {
   }
 }
 
-class _BroadcastPanel extends StatelessWidget {
-  const _BroadcastPanel({required this.fixture});
+class _BroadcastPanel extends StatefulWidget {
+  const _BroadcastPanel({
+    required this.fixture,
+    required this.sourceLabel,
+    required this.profileRepository,
+    required this.goalClipDownloader,
+  });
 
   final Fixture fixture;
+  final String? sourceLabel;
+  final ProfileRepository profileRepository;
+  final GoalClipDownloader goalClipDownloader;
+
+  @override
+  State<_BroadcastPanel> createState() => _BroadcastPanelState();
+}
+
+enum _CompletedVideoView { highlights, fullGame }
+
+enum _MatchVideoAction { downloadFullGame, createClip }
+
+enum _CustomClipOutcome { saveToProfile, download }
+
+class _ClipRange {
+  const _ClipRange({required this.startSeconds, required this.endSeconds});
+
+  final double startSeconds;
+  final double endSeconds;
+
+  double get durationSeconds => endSeconds - startSeconds;
+}
+
+class _BroadcastPanelState extends State<_BroadcastPanel> {
+  VideoPlayerController? _controller;
+  Timer? _retryTimer;
+  String? _loadedUrl;
+  String? _playerError;
+  bool _isLoading = false;
+  bool _isAdvancingHighlight = false;
+  int _activeHighlightIndex = 0;
+  int _playerLoadGeneration = 0;
+  Duration _fullGamePosition = Duration.zero;
+  _CompletedVideoView _completedView = _CompletedVideoView.highlights;
+  late List<FixtureHighlightMoment> _highlightMoments;
+  final Set<String> _savedGoalEventIds = <String>{};
+  String? _savingGoalEventId;
+  String? _downloadingGoalEventId;
+  double? _goalDownloadProgress;
+  bool _isDownloadingFullGame = false;
+  double? _fullGameDownloadProgress;
+  bool _isCreatingCustomClip = false;
+  double? _customClipDownloadProgress;
+
+  Fixture get fixture => widget.fixture;
+
+  bool get _showHighlights {
+    return fixture.isFinal && _completedView == _CompletedVideoView.highlights;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _highlightMoments = _highlightMomentsFor(fixture);
+    unawaited(_syncPlayer());
+  }
+
+  @override
+  void didUpdateWidget(covariant _BroadcastPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldHighlightSignature = _highlightSignature(_highlightMoments);
+    _highlightMoments = _highlightMomentsFor(fixture);
+    final highlightsChanged =
+        oldHighlightSignature != _highlightSignature(_highlightMoments);
+    if (!oldWidget.fixture.isFinal && widget.fixture.isFinal) {
+      _completedView = _CompletedVideoView.highlights;
+      _activeHighlightIndex = 0;
+      _fullGamePosition = Duration.zero;
+    }
+    final oldUrl = _playbackUrl(oldWidget.fixture);
+    final nextUrl = _playbackUrl(widget.fixture);
+    if (oldUrl != nextUrl ||
+        oldWidget.fixture.broadcast?.status !=
+            widget.fixture.broadcast?.status) {
+      unawaited(_syncPlayer(force: oldUrl == nextUrl));
+    } else if (highlightsChanged && _showHighlights) {
+      unawaited(_resetHighlightPlayback());
+    }
+  }
+
+  @override
+  void dispose() {
+    _playerLoadGeneration += 1;
+    _retryTimer?.cancel();
+    final controller = _controller;
+    controller?.removeListener(_handlePlaybackTick);
+    unawaited(controller?.dispose());
+    super.dispose();
+  }
+
+  Future<void> _syncPlayer({bool force = false}) async {
+    final loadGeneration = ++_playerLoadGeneration;
+    final url = _playbackUrl(fixture);
+    if (url == null) {
+      _retryTimer?.cancel();
+      final previous = _controller;
+      previous?.removeListener(_handlePlaybackTick);
+      _controller = null;
+      _loadedUrl = null;
+      if (previous != null) await previous.dispose();
+      if (mounted && loadGeneration == _playerLoadGeneration) {
+        setState(() {
+          _isLoading = false;
+          _playerError = null;
+        });
+      }
+      return;
+    }
+
+    if (!force &&
+        _loadedUrl == url &&
+        _controller?.value.isInitialized == true) {
+      return;
+    }
+
+    _retryTimer?.cancel();
+    final previous = _controller;
+    previous?.removeListener(_handlePlaybackTick);
+    _controller = null;
+    _loadedUrl = null;
+    if (previous != null) await previous.dispose();
+    if (!mounted || loadGeneration != _playerLoadGeneration) return;
+    setState(() {
+      _isLoading = true;
+      _playerError = null;
+    });
+
+    final next = VideoPlayerController.networkUrl(Uri.parse(url));
+    try {
+      await next.initialize();
+      await next.setLooping(false);
+      if (!mounted ||
+          loadGeneration != _playerLoadGeneration ||
+          _playbackUrl(fixture) != url) {
+        await next.dispose();
+        return;
+      }
+      _highlightMoments = _highlightMomentsFor(fixture, next);
+      if (_showHighlights) {
+        _activeHighlightIndex = 0;
+        final highlights = _availableHighlights(next);
+        if (highlights.isNotEmpty) {
+          await next.seekTo(highlights.first.start);
+        }
+      } else if (fixture.isFinal) {
+        await next.seekTo(_boundedPosition(_fullGamePosition, next));
+      }
+      if (!mounted || loadGeneration != _playerLoadGeneration) {
+        await next.dispose();
+        return;
+      }
+      next.addListener(_handlePlaybackTick);
+      setState(() {
+        _controller = next;
+        _loadedUrl = url;
+        _isLoading = false;
+      });
+    } catch (_) {
+      await next.dispose();
+      if (!mounted || loadGeneration != _playerLoadGeneration) return;
+      setState(() {
+        _isLoading = false;
+        _playerError = _playerFailureMessage;
+      });
+      if (fixture.broadcast?.shouldPoll == true || fixture.isFinal) {
+        _retryTimer = Timer(
+          const Duration(seconds: 10),
+          () => unawaited(_syncPlayer(force: true)),
+        );
+      }
+    }
+  }
+
+  String? _playbackUrl(Fixture value) {
+    if (value.isLive) return value.livePlaybackUrl;
+    if (value.isFinal) return value.fullGamePlaybackUrl;
+    return null;
+  }
+
+  String get _playerFailureMessage {
+    if (fixture.isLive) return 'The live stream is not ready yet.';
+    if (_showHighlights) return 'Highlights are still loading.';
+    return 'The full game replay is still loading.';
+  }
+
+  List<FixtureHighlightMoment> _availableHighlights(
+    VideoPlayerController? controller,
+  ) {
+    if (controller?.value.isInitialized != true ||
+        controller!.value.duration <= Duration.zero) {
+      return _highlightMoments;
+    }
+    return _highlightMoments
+        .where((moment) => moment.start < controller.value.duration)
+        .toList(growable: false);
+  }
+
+  List<FixtureHighlightMoment> _highlightMomentsFor(
+    Fixture value, [
+    VideoPlayerController? controller,
+  ]) {
+    final playbackController = controller ?? _controller;
+    if (playbackController?.value.isInitialized == true &&
+        playbackController!.value.duration > Duration.zero) {
+      return value.highlightMomentsForReplay(playbackController.value.duration);
+    }
+    return value.highlightMoments;
+  }
+
+  String _highlightSignature(List<FixtureHighlightMoment> moments) {
+    return moments
+        .map(
+          (moment) =>
+              '${moment.event.id}:${moment.start.inMilliseconds}:${moment.end.inMilliseconds}',
+        )
+        .join('|');
+  }
+
+  Future<void> _resetHighlightPlayback() async {
+    final controller = _controller;
+    if (controller?.value.isInitialized != true) {
+      if (_playbackUrl(fixture) != null) {
+        unawaited(_syncPlayer(force: true));
+      }
+      return;
+    }
+    await _playHighlightAt(0, autoplay: controller!.value.isPlaying);
+  }
+
+  Future<void> _playHighlightAt(
+    int requestedIndex, {
+    bool autoplay = true,
+  }) async {
+    if (_isAdvancingHighlight) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final highlights = _availableHighlights(controller);
+    if (highlights.isEmpty) return;
+    final index = requestedIndex.clamp(0, highlights.length - 1);
+
+    _isAdvancingHighlight = true;
+    try {
+      if (controller.value.isPlaying) await controller.pause();
+      if (!mounted || controller != _controller) return;
+      setState(() => _activeHighlightIndex = index);
+      await controller.seekTo(
+        _boundedPosition(highlights[index].start, controller),
+      );
+      if (!mounted || controller != _controller) return;
+      if (autoplay) await controller.play();
+    } finally {
+      _isAdvancingHighlight = false;
+    }
+  }
+
+  Duration _boundedPosition(
+    Duration position,
+    VideoPlayerController controller,
+  ) {
+    if (position.isNegative) return Duration.zero;
+    final duration = controller.value.duration;
+    if (duration > Duration.zero && position > duration) return duration;
+    return position;
+  }
+
+  Future<void> _selectCompletedView(_CompletedVideoView view) async {
+    if (!fixture.isFinal || view == _completedView) return;
+
+    final controller = _controller;
+    if (_completedView == _CompletedVideoView.fullGame &&
+        controller?.value.isInitialized == true) {
+      _fullGamePosition = controller!.value.position;
+    }
+    if (controller?.value.isPlaying == true) await controller!.pause();
+    if (!mounted) return;
+
+    setState(() {
+      _completedView = view;
+      _activeHighlightIndex = 0;
+      _playerError = null;
+    });
+
+    if (controller?.value.isInitialized != true) return;
+    if (view == _CompletedVideoView.highlights) {
+      await _playHighlightAt(0, autoplay: false);
+    } else {
+      await controller!.seekTo(_boundedPosition(_fullGamePosition, controller));
+    }
+  }
+
+  void _handlePlaybackTick() {
+    final controller = _controller;
+    if (!_showHighlights ||
+        _isAdvancingHighlight ||
+        controller == null ||
+        !controller.value.isInitialized ||
+        !controller.value.isPlaying) {
+      return;
+    }
+
+    final highlights = _availableHighlights(controller);
+    if (highlights.isEmpty) return;
+    final index = _activeHighlightIndex.clamp(0, highlights.length - 1);
+    final end = _boundedPosition(highlights[index].end, controller);
+    if (controller.value.position + const Duration(milliseconds: 250) < end) {
+      return;
+    }
+    unawaited(_advanceHighlight(controller, highlights, index));
+  }
+
+  Future<void> _advanceHighlight(
+    VideoPlayerController controller,
+    List<FixtureHighlightMoment> highlights,
+    int currentIndex,
+  ) async {
+    if (_isAdvancingHighlight) return;
+    if (currentIndex < highlights.length - 1) {
+      await _playHighlightAt(currentIndex + 1);
+      return;
+    }
+
+    _isAdvancingHighlight = true;
+    try {
+      await controller.pause();
+      await controller.seekTo(
+        _boundedPosition(highlights[currentIndex].end, controller),
+      );
+    } finally {
+      _isAdvancingHighlight = false;
+    }
+  }
+
+  Future<void> _togglePlayback() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    if (controller.value.isPlaying) {
+      await controller.pause();
+    } else {
+      if (_showHighlights) {
+        final highlights = _availableHighlights(controller);
+        if (highlights.isEmpty) return;
+        final index = _activeHighlightIndex.clamp(0, highlights.length - 1);
+        final end = _boundedPosition(highlights[index].end, controller);
+        if (controller.value.position + const Duration(milliseconds: 250) >=
+            end) {
+          final nextIndex = index == highlights.length - 1 ? 0 : index + 1;
+          await _playHighlightAt(nextIndex);
+          return;
+        }
+      }
+      await controller.play();
+    }
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _openFullscreen() async {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) return;
+    final highlights = _showHighlights
+        ? _availableHighlights(controller)
+        : const <FixtureHighlightMoment>[];
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => _FullscreenVideoPage(
+          controller: controller,
+          allowSeeking: fixture.isFinal,
+          highlights: highlights,
+          modeLabel: fixture.isLive
+              ? 'LIVE'
+              : _showHighlights
+              ? 'HIGHLIGHTS'
+              : 'FULL GAME',
+          onTogglePlayback: _togglePlayback,
+        ),
+      ),
+    );
+    if (mounted) setState(() {});
+  }
+
+  ProfileHighlightSource get _clipSourceType {
+    return widget.sourceLabel?.trim().toUpperCase() == 'SOLO'
+        ? ProfileHighlightSource.solo
+        : ProfileHighlightSource.clan;
+  }
+
+  bool _canAddGoalToProfile(FixtureHighlightMoment moment) {
+    final profileId = widget.profileRepository.currentUserId;
+    return profileId != null &&
+        profileId.isNotEmpty &&
+        (moment.event.profileId == profileId ||
+            moment.event.assistProfileId == profileId) &&
+        moment.event.id.trim().isNotEmpty;
+  }
+
+  Future<void> _addGoalToProfile(FixtureHighlightMoment moment) async {
+    final eventId = moment.event.id.trim();
+    if (!_canAddGoalToProfile(moment) ||
+        _savingGoalEventId != null ||
+        _savedGoalEventIds.contains(eventId)) {
+      return;
+    }
+
+    final isAssist =
+        moment.event.assistProfileId ==
+            widget.profileRepository.currentUserId &&
+        moment.event.profileId != widget.profileRepository.currentUserId;
+    final title = await _showGoalClipTitleSheet(moment);
+    if (!mounted || title == null) return;
+    setState(() => _savingGoalEventId = eventId);
+    try {
+      final highlight = await widget.profileRepository.createGoalClip(
+        ProfileGoalClipRequest(
+          sourceType: _clipSourceType,
+          matchId: fixture.id,
+          eventId: eventId,
+          title: title,
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _savedGoalEventIds.add(eventId));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            highlight.isReady
+                ? '${isAssist ? 'Assist' : 'Goal'} added to your profile.'
+                : '${isAssist ? 'Assist' : 'Goal'} is being prepared for your profile.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not add this clip. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _savingGoalEventId = null);
+    }
+  }
+
+  Future<String?> _showGoalClipTitleSheet(FixtureHighlightMoment moment) {
+    final currentProfileId = widget.profileRepository.currentUserId;
+    final isAssist =
+        moment.event.assistProfileId == currentProfileId &&
+        moment.event.profileId != currentProfileId;
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => _ClipTitleSheet(
+        initialTitle:
+            "${isAssist ? 'Assist' : 'Goal'} · ${moment.event.minute}'",
+        heading: isAssist ? 'ADD ASSIST TO PROFILE' : 'ADD GOAL TO PROFILE',
+        description: 'Give your clip a simple title.',
+        actionLabel: 'Add to my profile',
+      ),
+    );
+  }
+
+  Future<void> _downloadGoalClip(FixtureHighlightMoment moment) async {
+    final eventId = moment.event.id.trim();
+    if (eventId.isEmpty || _downloadingGoalEventId != null) return;
+    setState(() {
+      _downloadingGoalEventId = eventId;
+      _goalDownloadProgress = 0;
+    });
+    try {
+      final media = await widget.profileRepository.getGoalClipDownload(
+        sourceType: _clipSourceType,
+        matchId: fixture.id,
+        eventId: eventId,
+      );
+      await widget.goalClipDownloader.downloadToGallery(
+        url: media.downloadUrl,
+        fileName:
+            'Goal_${moment.event.minute}_${fixture.homeClan.tag}_vs_${fixture.awayClan?.tag ?? 'match'}.mp4',
+        onProgress: (progress) {
+          if (mounted) setState(() => _goalDownloadProgress = progress);
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Goal saved to your Photos.')),
+      );
+    } catch (error) {
+      _showMediaError(error, 'We could not download this goal. Try again.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _downloadingGoalEventId = null;
+          _goalDownloadProgress = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _confirmFullGameDownload() async {
+    if (_isDownloadingFullGame || _isCreatingCustomClip) return;
+    final confirmed = await showFieldConfirmDialog(
+      context: context,
+      icon: Icons.download_rounded,
+      eyebrow: 'Save recording',
+      title: 'Download the full game?',
+      message:
+          'The full recording can be a large file. Keep Field open while it saves to Photos.',
+      detail: 'Highlights and custom clips are much smaller downloads.',
+      confirmLabel: 'Download game',
+      cancelLabel: 'Not now',
+    );
+    if (confirmed && mounted) await _downloadFullGame();
+  }
+
+  Future<void> _downloadFullGame() async {
+    setState(() {
+      _isDownloadingFullGame = true;
+      _fullGameDownloadProgress = null;
+    });
+    try {
+      ProfileFullGameDownload result = await widget.profileRepository
+          .prepareFullGameDownload(
+            sourceType: _clipSourceType,
+            matchId: fixture.id,
+          );
+      for (var attempt = 0; result.isProcessing && attempt < 45; attempt++) {
+        await Future<void>.delayed(const Duration(seconds: 2));
+        if (!mounted) return;
+        result = await widget.profileRepository.prepareFullGameDownload(
+          sourceType: _clipSourceType,
+          matchId: fixture.id,
+        );
+      }
+      if (result.status == ProfileFullGameDownloadStatus.failed) {
+        throw StateError(
+          result.errorMessage ??
+              'The full-game download could not be prepared.',
+        );
+      }
+      final downloadUrl = result.downloadUrl;
+      if (!result.isReady || downloadUrl == null) {
+        throw StateError(
+          'The full game is still being prepared. Try again in a moment.',
+        );
+      }
+      await widget.goalClipDownloader.downloadToGallery(
+        url: downloadUrl,
+        fileName:
+            '${fixture.homeClan.tag}_vs_${fixture.awayClan?.tag ?? 'match'}_full_game.mp4',
+        onProgress: (progress) {
+          if (mounted) setState(() => _fullGameDownloadProgress = progress);
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Full game saved to your Photos.')),
+      );
+    } catch (error) {
+      _showMediaError(error, 'We could not download the full game. Try again.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadingFullGame = false;
+          _fullGameDownloadProgress = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _openCustomClipEditor() async {
+    if (_isDownloadingFullGame || _isCreatingCustomClip) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      _showMediaError(
+        StateError('The match recording is not ready yet.'),
+        'The match recording is not ready yet.',
+      );
+      return;
+    }
+
+    if (controller.value.isPlaying) await controller.pause();
+    final initialPosition = controller.value.position;
+    if (_showHighlights) {
+      await _selectCompletedView(_CompletedVideoView.fullGame);
+      await controller.seekTo(_boundedPosition(initialPosition, controller));
+    }
+    if (!mounted) return;
+
+    final range = await Navigator.of(context).push<_ClipRange>(
+      MaterialPageRoute<_ClipRange>(
+        fullscreenDialog: true,
+        builder: (_) => _CustomClipEditorPage(
+          controller: controller,
+          thumbnailUrls: _clipTimelineThumbnailUrls(controller.value.duration),
+          initialPosition: controller.value.position,
+        ),
+      ),
+    );
+    if (!mounted || range == null) return;
+
+    final outcome = await showModalBottomSheet<_CustomClipOutcome>(
+      context: context,
+      useSafeArea: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (_) => const _CustomClipOutcomeSheet(),
+    );
+    if (!mounted || outcome == null) return;
+
+    String title =
+        'Match clip · ${_formatVideoTime(Duration(milliseconds: (range.startSeconds * 1000).round()))}';
+    if (outcome == _CustomClipOutcome.saveToProfile) {
+      final chosenTitle = await showModalBottomSheet<String>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (_) => _ClipTitleSheet(
+          initialTitle: title,
+          heading: 'SAVE CLIP TO PROFILE',
+          description: 'Give this moment a simple title.',
+          actionLabel: 'Save to my profile',
+        ),
+      );
+      if (!mounted || chosenTitle == null) return;
+      title = chosenTitle;
+    }
+
+    setState(() {
+      _isCreatingCustomClip = true;
+      _customClipDownloadProgress = outcome == _CustomClipOutcome.download
+          ? 0
+          : null;
+    });
+    final request = ProfileCustomClipRequest(
+      sourceType: _clipSourceType,
+      matchId: fixture.id,
+      startSeconds: range.startSeconds,
+      endSeconds: range.endSeconds,
+      title: title,
+    );
+    try {
+      if (outcome == _CustomClipOutcome.saveToProfile) {
+        await widget.profileRepository.createCustomClip(request);
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Clip added to your profile.')),
+        );
+      } else {
+        final media = await widget.profileRepository.getCustomClipDownload(
+          request,
+        );
+        await widget.goalClipDownloader.downloadToGallery(
+          url: media.downloadUrl,
+          fileName:
+              '${fixture.homeClan.tag}_vs_${fixture.awayClan?.tag ?? 'match'}_clip.mp4',
+          onProgress: (progress) {
+            if (mounted) setState(() => _customClipDownloadProgress = progress);
+          },
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Clip saved to your Photos.')),
+        );
+      }
+    } catch (error) {
+      _showMediaError(error, 'We could not create this clip. Try again.');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCreatingCustomClip = false;
+          _customClipDownloadProgress = null;
+        });
+      }
+    }
+  }
+
+  void _handleVideoAction(_MatchVideoAction action) {
+    switch (action) {
+      case _MatchVideoAction.downloadFullGame:
+        unawaited(_confirmFullGameDownload());
+        break;
+      case _MatchVideoAction.createClip:
+        unawaited(_openCustomClipEditor());
+        break;
+    }
+  }
+
+  List<String> _clipTimelineThumbnailUrls(Duration duration) {
+    final playbackUri = Uri.tryParse(fixture.fullGamePlaybackUrl ?? '');
+    final videoId = fixture.broadcast?.activeVideoId?.trim();
+    if (playbackUri == null ||
+        !playbackUri.hasScheme ||
+        videoId == null ||
+        videoId.isEmpty ||
+        !(playbackUri.host.endsWith('cloudflarestream.com') ||
+            playbackUri.host.endsWith('videodelivery.net'))) {
+      return const [];
+    }
+    const count = 10;
+    final durationSeconds = duration.inMilliseconds / 1000;
+    return [
+      for (var index = 0; index < count; index++)
+        playbackUri
+            .replace(
+              path: '/$videoId/thumbnails/thumbnail.jpg',
+              queryParameters: {
+                'time': '${(durationSeconds * index / (count - 1)).round()}s',
+                'height': '96',
+                'fit': 'crop',
+              },
+            )
+            .toString(),
+    ];
+  }
+
+  Widget _buildVideoActionOverlay() {
+    if (_isDownloadingFullGame || _isCreatingCustomClip) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: const Color(0xCC111827),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: _WatchMediaProgress(
+          progress: _isDownloadingFullGame
+              ? _fullGameDownloadProgress
+              : _customClipDownloadProgress,
+          label: _isDownloadingFullGame ? 'Full game' : 'Creating clip',
+          onDark: true,
+        ),
+      );
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xB3111827),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white24),
+      ),
+      child: PopupMenuButton<_MatchVideoAction>(
+        key: const ValueKey('watch-actions-menu'),
+        tooltip: 'Match video options',
+        color: Colors.white,
+        surfaceTintColor: Colors.white,
+        elevation: 12,
+        position: PopupMenuPosition.under,
+        padding: EdgeInsets.zero,
+        icon: const Icon(Icons.more_horiz_rounded, color: Colors.white),
+        onSelected: _handleVideoAction,
+        itemBuilder: (_) => const [
+          PopupMenuItem<_MatchVideoAction>(
+            key: ValueKey('download-full-game'),
+            value: _MatchVideoAction.downloadFullGame,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.download_rounded),
+              title: Text('Download full game'),
+              subtitle: Text('Save the entire recording'),
+            ),
+          ),
+          PopupMenuItem<_MatchVideoAction>(
+            key: ValueKey('create-match-clip'),
+            value: _MatchVideoAction.createClip,
+            child: ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.content_cut_rounded),
+              title: Text('Create a clip'),
+              subtitle: Text('Choose up to 60 seconds'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMediaError(Object error, String fallback) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(userFacingError(error, fallback: fallback))),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final isLive = fixture.isLive;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1428,17 +3404,15 @@ class _BroadcastPanel extends StatelessWidget {
               children: [
                 Icon(
                   Icons.play_circle_rounded,
-                  color: fixture.isLive
-                      ? const Color(0xFFEF4444)
-                      : const Color(0xFFDC2626),
+                  color: isLive ? const Color(0xFFEF4444) : fieldEmerald600,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  fixture.isFinal
-                      ? 'MATCH REPLAY'
-                      : fixture.isLive
+                  isLive
                       ? 'LIVE STREAM'
-                      : 'LIVE BROADCAST',
+                      : fixture.isFinal
+                      ? 'WATCH MATCH'
+                      : 'MATCH VIDEO',
                   style: const TextStyle(
                     color: fieldGray900,
                     fontSize: 14,
@@ -1446,46 +3420,424 @@ class _BroadcastPanel extends StatelessWidget {
                     letterSpacing: 0,
                   ),
                 ),
+                if (isLive) ...[
+                  const Spacer(),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEE2E2),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'LIVE',
+                      style: TextStyle(
+                        color: Color(0xFFDC2626),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
+          if (fixture.isFinal) ...[
+            const Divider(height: 1, color: fieldGray100),
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<_CompletedVideoView>(
+                  key: const ValueKey('completed-video-switcher'),
+                  showSelectedIcon: false,
+                  expandedInsets: EdgeInsets.zero,
+                  segments: const [
+                    ButtonSegment<_CompletedVideoView>(
+                      value: _CompletedVideoView.highlights,
+                      label: Text('Highlights'),
+                    ),
+                    ButtonSegment<_CompletedVideoView>(
+                      value: _CompletedVideoView.fullGame,
+                      label: Text('Full Game'),
+                    ),
+                  ],
+                  selected: {_completedView},
+                  onSelectionChanged: (selection) {
+                    unawaited(_selectCompletedView(selection.first));
+                  },
+                  style: SegmentedButton.styleFrom(
+                    selectedBackgroundColor: fieldGray900,
+                    selectedForegroundColor: Colors.white,
+                    backgroundColor: Colors.white,
+                    foregroundColor: fieldGray700,
+                    side: const BorderSide(color: fieldGray200),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ),
+          ],
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: Container(
-              color: fieldGray900,
-              child: Center(
-                child: fixture.isLive
-                    ? FilledButton(
-                        onPressed: () {},
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFEF4444),
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Watch Live'),
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            fixture.isFinal
-                                ? Icons.shield_rounded
-                                : Icons.schedule_rounded,
-                            color: fieldGray400,
-                            size: 34,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            fixture.isFinal
-                                ? 'VOD Not Available'
-                                : 'Broadcast starts on match day',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 15,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
+            child: Container(color: fieldGray900, child: _buildPlayerBody()),
+          ),
+          if (fixture.isFinal) _buildCompletedPlaybackControls(),
+          if (!fixture.isFinal && !fixture.isCancelled)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+              color: const Color(0xFFF9FAFB),
+              child: const Row(
+                children: [
+                  Icon(
+                    Icons.auto_awesome_rounded,
+                    size: 17,
+                    color: fieldGray500,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Highlights will be available after the game',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlayerBody() {
+    final isLive = fixture.isLive;
+    final isProcessing =
+        fixture.broadcast?.isProcessing == true ||
+        fixture.broadcast?.isStopping == true;
+    final controller = _controller;
+    final highlights = _availableHighlights(controller);
+    final hasNoUsableHighlights =
+        _highlightMoments.isEmpty ||
+        (controller?.value.isInitialized == true && highlights.isEmpty);
+
+    if (_showHighlights && hasNoUsableHighlights) {
+      final recordedGoals = fixture.timeline.where((event) {
+        return event.eventType.toUpperCase() == 'GOAL' &&
+            event.note?.toLowerCase() != 'admin correction';
+      }).length;
+      final isWaitingForHighlightTiming =
+          recordedGoals > 0 && isProcessing && _highlightMoments.isEmpty;
+      return _buildEmptyState(
+        icon: Icons.auto_awesome_rounded,
+        title: isWaitingForHighlightTiming
+            ? 'Preparing highlights...'
+            : recordedGoals == 0
+            ? 'No goal highlights from this match'
+            : 'Highlights are not available for this recording',
+        detail: isWaitingForHighlightTiming
+            ? 'They will appear as soon as the recording is ready.'
+            : fixture.fullGamePlaybackUrl == null
+            ? 'The full game replay is not available yet.'
+            : 'You can still watch the full game.',
+        actionLabel: fixture.fullGamePlaybackUrl == null
+            ? null
+            : 'Watch full game',
+        onAction: fixture.fullGamePlaybackUrl == null
+            ? null
+            : () =>
+                  unawaited(_selectCompletedView(_CompletedVideoView.fullGame)),
+      );
+    }
+
+    if (controller != null && controller.value.isInitialized) {
+      final activeHighlight = _showHighlights && highlights.isNotEmpty
+          ? highlights[_activeHighlightIndex.clamp(0, highlights.length - 1)]
+          : null;
+      return _InlineVideoPlayer(
+        controller: controller,
+        isLive: isLive,
+        rangeStart: activeHighlight?.start ?? Duration.zero,
+        rangeEnd: activeHighlight?.end ?? controller.value.duration,
+        label: activeHighlight == null
+            ? isLive
+                  ? 'LIVE'
+                  : 'FULL GAME'
+            : _highlightLabel(highlights),
+        seekKey: ValueKey(
+          activeHighlight == null ? 'full-game-seek' : 'highlight-video-seek',
+        ),
+        onTogglePlayback: _togglePlayback,
+        onOpenFullscreen: _openFullscreen,
+        actionOverlay: fixture.isFinal && fixture.fullGamePlaybackUrl != null
+            ? _buildVideoActionOverlay()
+            : null,
+      );
+    }
+
+    if (_isLoading) {
+      return const _VideoSkeleton();
+    }
+
+    final message =
+        _playerError ??
+        (isLive
+            ? 'Connecting to live stream...'
+            : _showHighlights && isProcessing
+            ? 'Preparing highlights...'
+            : _showHighlights
+            ? 'Highlights are not available yet'
+            : fixture.isFinal && isProcessing
+            ? 'Preparing the full game replay...'
+            : fixture.isFinal
+            ? 'Full game replay is not available yet'
+            : fixture.isCancelled
+            ? 'No video is available for this match'
+            : 'Broadcast starts on match day');
+    final detail = _showHighlights && isProcessing
+        ? 'They will appear as soon as the recording is ready.'
+        : null;
+    return _buildEmptyState(
+      icon: _showHighlights
+          ? Icons.auto_awesome_rounded
+          : fixture.isFinal
+          ? Icons.movie_creation_outlined
+          : isLive
+          ? Icons.sensors_rounded
+          : Icons.schedule_rounded,
+      title: message,
+      detail: detail,
+      actionLabel: _playerError == null ? null : 'Try again',
+      onAction: _playerError == null
+          ? null
+          : () => unawaited(_syncPlayer(force: true)),
+    );
+  }
+
+  String _highlightLabel(List<FixtureHighlightMoment> highlights) {
+    final index = _activeHighlightIndex.clamp(0, highlights.length - 1);
+    final event = highlights[index].event;
+    final scorer = event.playerName == 'Unknown' ? 'Goal' : event.playerName;
+    return '$scorer · ${event.minute}\' · ${index + 1}/${highlights.length}';
+  }
+
+  Widget _buildCompletedPlaybackControls() {
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      return const SizedBox.shrink();
+    }
+
+    if (_showHighlights) {
+      final highlights = _availableHighlights(controller);
+      if (highlights.isEmpty) return const SizedBox.shrink();
+      final selected =
+          highlights[_activeHighlightIndex.clamp(0, highlights.length - 1)];
+      return _GoalJumpBar(
+        highlights: highlights,
+        activeIndex: _activeHighlightIndex,
+        onSelect: (index) => unawaited(_playHighlightAt(index)),
+        canAddSelected: _canAddGoalToProfile(selected),
+        isSavingSelected: _savingGoalEventId == selected.event.id,
+        isSelectedSaved: _savedGoalEventIds.contains(selected.event.id),
+        isDownloadingSelected: _downloadingGoalEventId == selected.event.id,
+        downloadProgress: _downloadingGoalEventId == selected.event.id
+            ? _goalDownloadProgress
+            : null,
+        onAddSelected: () => unawaited(_addGoalToProfile(selected)),
+        onDownloadSelected: () => unawaited(_downloadGoalClip(selected)),
+      );
+    }
+
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildEmptyState({
+    required IconData icon,
+    required String title,
+    String? detail,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: fieldGray400, size: 34),
+          const SizedBox(height: 8),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          if (detail != null) ...[
+            const SizedBox(height: 5),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                detail,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: fieldGray400,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+          if (actionLabel != null && onAction != null) ...[
+            const SizedBox(height: 10),
+            TextButton(onPressed: onAction, child: Text(actionLabel)),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ClipTitleSheet extends StatefulWidget {
+  const _ClipTitleSheet({
+    required this.initialTitle,
+    required this.heading,
+    required this.description,
+    required this.actionLabel,
+  });
+
+  final String initialTitle;
+  final String heading;
+  final String description;
+  final String actionLabel;
+
+  @override
+  State<_ClipTitleSheet> createState() => _ClipTitleSheetState();
+}
+
+class _ClipTitleSheetState extends State<_ClipTitleSheet> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialTitle,
+  );
+  String? _validationMessage;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final value = _controller.text.trim();
+    if (value.length < 2 || value.length > 80) {
+      setState(() {
+        _validationMessage = 'Use a title between 2 and 80 characters.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(value);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        18,
+        20,
+        20 + MediaQuery.viewInsetsOf(context).bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: const BoxDecoration(
+                  color: Color(0xFFE8FFF6),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.movie_creation_rounded,
+                  color: fieldEmerald600,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.heading,
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      widget.description,
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          TextField(
+            key: const ValueKey('goal-clip-title-field'),
+            controller: _controller,
+            autofocus: true,
+            maxLength: 80,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _save(),
+            decoration: InputDecoration(
+              labelText: 'Clip title',
+              hintText: 'Top corner finish',
+              errorText: _validationMessage,
+              filled: true,
+              fillColor: const Color(0xFFF8FAFC),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: fieldGray200),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            height: 52,
+            child: FilledButton.icon(
+              key: const ValueKey('save-goal-clip'),
+              onPressed: _save,
+              icon: const Icon(Icons.add_rounded),
+              label: Text(widget.actionLabel),
+              style: FilledButton.styleFrom(
+                backgroundColor: fieldEmerald600,
+                foregroundColor: Colors.white,
+                textStyle: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
             ),
           ),
@@ -1493,6 +3845,2171 @@ class _BroadcastPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CustomClipEditorPage extends StatefulWidget {
+  const _CustomClipEditorPage({
+    required this.controller,
+    required this.initialPosition,
+    required this.thumbnailUrls,
+  });
+
+  final VideoPlayerController controller;
+  final Duration initialPosition;
+  final List<String> thumbnailUrls;
+
+  @override
+  State<_CustomClipEditorPage> createState() => _CustomClipEditorPageState();
+}
+
+class _CustomClipEditorPageState extends State<_CustomClipEditorPage> {
+  static const _maxClipSeconds = 60.0;
+  static const _seekDebounceDuration = Duration(milliseconds: 45);
+  static const _previewEndTolerance = Duration(milliseconds: 120);
+
+  late final double _recordingSeconds;
+  late RangeValues _range;
+  late double _timelineStart;
+  late double _timelineEnd;
+  Timer? _seekDebounce;
+  int _seekGeneration = 0;
+  bool _lastMovedStart = false;
+  bool _isPreviewing = false;
+  bool _isStoppingAtEnd = false;
+  bool _isClosing = false;
+  bool _isDraggingPlayhead = false;
+  double? _draggedPlayheadSeconds;
+
+  @override
+  void initState() {
+    super.initState();
+    _recordingSeconds = (widget.controller.value.duration.inMilliseconds / 1000)
+        .clamp(1.0, double.infinity)
+        .toDouble();
+    final current = (widget.initialPosition.inMilliseconds / 1000)
+        .clamp(0.0, _recordingSeconds)
+        .toDouble();
+    var start = (current - 10).clamp(0.0, _recordingSeconds).toDouble();
+    var end = (current + 20).clamp(0.0, _recordingSeconds).toDouble();
+    if (end - start > _maxClipSeconds) end = start + _maxClipSeconds;
+    if (end - start < 1) {
+      end = (start + 1).clamp(0.0, _recordingSeconds).toDouble();
+      start = (end - 1).clamp(0.0, _recordingSeconds).toDouble();
+    }
+    _range = RangeValues(start, end);
+    _setTimelineWindowAround(current);
+    widget.controller.addListener(_handleControllerTick);
+  }
+
+  @override
+  void dispose() {
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    widget.controller.removeListener(_handleControllerTick);
+    super.dispose();
+  }
+
+  double get _clipDuration => _range.end - _range.start;
+  double get _clipCenter => (_range.start + _range.end) / 2;
+
+  Duration _durationAt(double seconds) {
+    return Duration(
+      milliseconds: (seconds * Duration.millisecondsPerSecond).round(),
+    );
+  }
+
+  String _time(double seconds) => _formatVideoTime(_durationAt(seconds));
+
+  void _setTimelineWindowAround(double center) {
+    final windowLength = _recordingSeconds < 120 ? _recordingSeconds : 120.0;
+    final maxStart = (_recordingSeconds - windowLength).clamp(
+      0.0,
+      _recordingSeconds,
+    );
+    _timelineStart = (center - (windowLength / 2))
+        .clamp(0.0, maxStart)
+        .toDouble();
+    _timelineEnd = _timelineStart + windowLength;
+  }
+
+  void _handleControllerTick() {
+    if (!_isPreviewing || _isStoppingAtEnd || !mounted) return;
+    final value = widget.controller.value;
+    if (!value.isInitialized || !value.isPlaying) return;
+    final end = _durationAt(_range.end);
+    if (value.position + _previewEndTolerance < end) return;
+    _isStoppingAtEnd = true;
+    unawaited(_stopPreviewAtEnd());
+  }
+
+  Future<void> _stopPreviewAtEnd() async {
+    try {
+      await widget.controller.pause();
+      await widget.controller.seekTo(_durationAt(_range.end));
+      if (mounted) setState(() => _isPreviewing = false);
+    } finally {
+      _isStoppingAtEnd = false;
+    }
+  }
+
+  void _queueSeek(double seconds, {bool immediate = false}) {
+    _seekDebounce?.cancel();
+    final generation = ++_seekGeneration;
+    final target = seconds.clamp(0.0, _recordingSeconds).toDouble();
+    if (immediate) {
+      unawaited(_performSeek(target, generation));
+      return;
+    }
+    _seekDebounce = Timer(
+      _seekDebounceDuration,
+      () => unawaited(_performSeek(target, generation)),
+    );
+  }
+
+  Future<void> _performSeek(double seconds, int generation) async {
+    if (widget.controller.value.isPlaying) await widget.controller.pause();
+    if (!mounted || generation != _seekGeneration) return;
+    if (_isPreviewing) setState(() => _isPreviewing = false);
+    await widget.controller.seekTo(_durationAt(seconds));
+    if (!mounted || generation != _seekGeneration || _isDraggingPlayhead) {
+      return;
+    }
+    if (_draggedPlayheadSeconds != null) {
+      setState(() => _draggedPlayheadSeconds = null);
+    }
+  }
+
+  void _updateRange(RangeValues next, {bool immediate = false}) {
+    final movedStart = (next.start - _range.start).abs();
+    final movedEnd = (next.end - _range.end).abs();
+    _lastMovedStart = movedStart > movedEnd;
+    var start = next.start.clamp(_timelineStart, _timelineEnd).toDouble();
+    var end = next.end.clamp(_timelineStart, _timelineEnd).toDouble();
+    if (end - start > _maxClipSeconds) {
+      if (_lastMovedStart) {
+        start = end - _maxClipSeconds;
+      } else {
+        end = start + _maxClipSeconds;
+      }
+    }
+    if (end - start < 1) {
+      if ((start - _range.start).abs() > (end - _range.end).abs()) {
+        start = end - 1;
+      } else {
+        end = start + 1;
+      }
+    }
+    start = start.clamp(_timelineStart, _timelineEnd).toDouble();
+    end = end.clamp(_timelineStart, _timelineEnd).toDouble();
+    if (end - start < 1) {
+      start = (end - 1).clamp(_timelineStart, _timelineEnd).toDouble();
+      end = (start + 1).clamp(_timelineStart, _timelineEnd).toDouble();
+    }
+    setState(() {
+      _range = RangeValues(start, end);
+      _draggedPlayheadSeconds = null;
+    });
+    _queueSeek(_lastMovedStart ? start : end, immediate: immediate);
+  }
+
+  void _finishRangeDrag() {
+    _queueSeek(_lastMovedStart ? _range.start : _range.end, immediate: true);
+  }
+
+  void _adjustStart(double delta) {
+    final lowerBound = (_range.end - _maxClipSeconds)
+        .clamp(_timelineStart, _timelineEnd)
+        .toDouble();
+    final start = (_range.start + delta)
+        .clamp(lowerBound, _range.end - 1)
+        .toDouble();
+    _updateRange(RangeValues(start, _range.end), immediate: true);
+  }
+
+  void _adjustEnd(double delta) {
+    final upperBound = (_range.start + _maxClipSeconds)
+        .clamp(_timelineStart, _timelineEnd)
+        .toDouble();
+    final end = (_range.end + delta)
+        .clamp(_range.start + 1, upperBound)
+        .toDouble();
+    _updateRange(RangeValues(_range.start, end), immediate: true);
+  }
+
+  void _moveClipThroughMatch(double requestedCenter, {bool immediate = false}) {
+    final duration = _clipDuration;
+    final maxStart = (_recordingSeconds - duration).clamp(
+      0.0,
+      _recordingSeconds,
+    );
+    final start = (requestedCenter - (duration / 2))
+        .clamp(0.0, maxStart)
+        .toDouble();
+    final end = start + duration;
+    final center = (start + end) / 2;
+    setState(() {
+      _range = RangeValues(start, end);
+      _setTimelineWindowAround(center);
+      _draggedPlayheadSeconds = null;
+    });
+    _queueSeek(center, immediate: immediate);
+  }
+
+  void _startPlayheadDrag(double seconds) {
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    if (widget.controller.value.isPlaying) {
+      unawaited(widget.controller.pause());
+    }
+    setState(() {
+      _isPreviewing = false;
+      _isDraggingPlayhead = true;
+      _draggedPlayheadSeconds = seconds;
+    });
+  }
+
+  void _dragPlayhead(double seconds) {
+    setState(() => _draggedPlayheadSeconds = seconds);
+    _queueSeek(seconds);
+  }
+
+  void _finishPlayheadDrag(double seconds) {
+    setState(() {
+      _isDraggingPlayhead = false;
+      _draggedPlayheadSeconds = seconds;
+    });
+    _queueSeek(seconds, immediate: true);
+  }
+
+  Future<void> _previewSelection() async {
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    if (widget.controller.value.isPlaying) await widget.controller.pause();
+    await widget.controller.seekTo(_durationAt(_range.start));
+    if (!mounted) return;
+    setState(() {
+      _isPreviewing = true;
+      _draggedPlayheadSeconds = null;
+    });
+    await widget.controller.play();
+  }
+
+  Future<void> _togglePlayback() async {
+    if (widget.controller.value.isPlaying) {
+      await widget.controller.pause();
+      if (mounted) setState(() => _isPreviewing = false);
+      return;
+    }
+    final positionSeconds =
+        widget.controller.value.position.inMilliseconds / 1000;
+    if (positionSeconds < _range.start ||
+        positionSeconds >= _range.end - 0.12) {
+      await widget.controller.seekTo(_durationAt(_range.start));
+    }
+    if (!mounted) return;
+    setState(() {
+      _isPreviewing = true;
+      _draggedPlayheadSeconds = null;
+    });
+    await widget.controller.play();
+  }
+
+  Future<void> _close([_ClipRange? result]) async {
+    if (_isClosing) return;
+    _isClosing = true;
+    _seekDebounce?.cancel();
+    _seekGeneration += 1;
+    if (widget.controller.value.isPlaying) await widget.controller.pause();
+    if (!mounted) return;
+    Navigator.of(context).pop(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopScope<_ClipRange>(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_close());
+      },
+      child: Scaffold(
+        backgroundColor: fieldGray900,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _buildHeader(),
+              _buildVideoPreview(),
+              Expanded(child: _buildEditorPanel()),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return SizedBox(
+      height: 58,
+      child: Row(
+        children: [
+          IconButton(
+            key: const ValueKey('custom-clip-cancel'),
+            tooltip: 'Cancel clip',
+            onPressed: () => unawaited(_close()),
+            color: Colors.white,
+            icon: const Icon(Icons.close_rounded),
+          ),
+          const Expanded(
+            child: Text(
+              'CREATE A MATCH CLIP',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+          const SizedBox(width: 48),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoPreview() {
+    return AspectRatio(
+      key: const ValueKey('custom-clip-video-preview'),
+      aspectRatio: 16 / 9,
+      child: ValueListenableBuilder<VideoPlayerValue>(
+        valueListenable: widget.controller,
+        builder: (context, value, _) {
+          final rawPosition = value.position.inMilliseconds / 1000;
+          final shownPosition = rawPosition
+              .clamp(_range.start, _range.end)
+              .toDouble();
+          final progress = _clipDuration <= 0
+              ? 0.0
+              : ((shownPosition - _range.start) / _clipDuration)
+                    .clamp(0.0, 1.0)
+                    .toDouble();
+          return ColoredBox(
+            color: Colors.black,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Center(
+                  child: AspectRatio(
+                    aspectRatio: value.aspectRatio == 0
+                        ? 16 / 9
+                        : value.aspectRatio,
+                    child: VideoPlayer(widget.controller),
+                  ),
+                ),
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Color(0x52000000),
+                        Color(0x00000000),
+                        Color(0x00000000),
+                        Color(0xB8000000),
+                      ],
+                      stops: [0, 0.28, 0.58, 1],
+                    ),
+                  ),
+                ),
+                GestureDetector(
+                  key: const ValueKey('custom-clip-video-tap-target'),
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => unawaited(_togglePlayback()),
+                ),
+                Center(
+                  child: AnimatedOpacity(
+                    opacity: value.isPlaying ? 0 : 1,
+                    duration: const Duration(milliseconds: 160),
+                    child: IgnorePointer(
+                      ignoring: value.isPlaying,
+                      child: IconButton(
+                        key: const ValueKey('custom-clip-video-play'),
+                        tooltip: 'Play selected clip',
+                        onPressed: () => unawaited(_togglePlayback()),
+                        iconSize: 38,
+                        padding: const EdgeInsets.all(12),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xB3111827),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size(62, 62),
+                        ),
+                        icon: const Icon(Icons.play_arrow_rounded),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 10,
+                  right: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xB3111827),
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: Text(
+                      '${_clipDuration.round()} SEC MAX 60',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 10,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      LinearProgressIndicator(
+                        key: const ValueKey('custom-clip-preview-progress'),
+                        value: progress,
+                        minHeight: 3,
+                        borderRadius: BorderRadius.circular(999),
+                        backgroundColor: Colors.white30,
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          fieldEmerald500,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Text(
+                            _time(shownPosition),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${_time(_range.start)} – ${_time(_range.end)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              fontFeatures: [FontFeature.tabularFigures()],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildEditorPanel() {
+    return Container(
+      width: double.infinity,
+      decoration: const BoxDecoration(
+        color: Color(0xFFF7F9FC),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(
+          18,
+          18,
+          18,
+          18 + MediaQuery.paddingOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'SELECT YOUR MOMENT',
+              style: TextStyle(
+                color: fieldGray900,
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 3),
+            const Text(
+              'Move through the match, trim both ends, then preview it before continuing.',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 15),
+            _buildMatchNavigator(),
+            const SizedBox(height: 14),
+            _buildTrimEditor(),
+            const SizedBox(height: 14),
+            _buildEndpointControls(),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ValueListenableBuilder<VideoPlayerValue>(
+                valueListenable: widget.controller,
+                builder: (context, value, _) {
+                  return OutlinedButton.icon(
+                    key: const ValueKey('custom-clip-preview-selection'),
+                    onPressed: value.isPlaying && _isPreviewing
+                        ? () => unawaited(_togglePlayback())
+                        : () => unawaited(_previewSelection()),
+                    icon: Icon(
+                      value.isPlaying && _isPreviewing
+                          ? Icons.pause_rounded
+                          : Icons.replay_rounded,
+                    ),
+                    label: Text(
+                      value.isPlaying && _isPreviewing
+                          ? 'Pause preview'
+                          : 'Preview selection',
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: fieldGray900,
+                      side: const BorderSide(color: fieldGray300),
+                      textStyle: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 9),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: FilledButton.icon(
+                key: const ValueKey('custom-clip-continue'),
+                onPressed: () => unawaited(
+                  _close(
+                    _ClipRange(
+                      startSeconds: _range.start,
+                      endSeconds: _range.end,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.arrow_forward_rounded),
+                label: const Text('Continue'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: fieldEmerald600,
+                  foregroundColor: Colors.white,
+                  textStyle: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMatchNavigator() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'MOVE THROUGH MATCH',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              _time(_clipCenter),
+              style: const TextStyle(
+                color: fieldGray900,
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: SizedBox(
+            height: 56,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                _ClipFilmstrip(thumbnailUrls: widget.thumbnailUrls),
+                ColoredBox(color: Colors.black.withValues(alpha: 0.2)),
+                SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 2,
+                    activeTrackColor: Colors.white54,
+                    inactiveTrackColor: Colors.white38,
+                    thumbColor: fieldEmerald500,
+                    overlayColor: fieldEmerald500.withValues(alpha: 0.18),
+                    thumbShape: const RoundSliderThumbShape(
+                      enabledThumbRadius: 8,
+                    ),
+                    overlayShape: const RoundSliderOverlayShape(
+                      overlayRadius: 16,
+                    ),
+                  ),
+                  child: Slider(
+                    key: const ValueKey('custom-clip-match-position'),
+                    min: 0,
+                    max: _recordingSeconds,
+                    value: _clipCenter.clamp(0.0, _recordingSeconds),
+                    label: _time(_clipCenter),
+                    onChanged: _moveClipThroughMatch,
+                    onChangeEnd: (value) =>
+                        _moveClipThroughMatch(value, immediate: true),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTrimEditor() {
+    final windowDuration = _timelineEnd - _timelineStart;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Text(
+              'TRIM CLIP',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 10,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const Spacer(),
+            Text(
+              '${_time(_timelineStart)} – ${_time(_timelineEnd)}',
+              style: const TextStyle(
+                color: fieldGray500,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 7),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final startFraction = windowDuration <= 0
+                ? 0.0
+                : ((_range.start - _timelineStart) / windowDuration)
+                      .clamp(0.0, 1.0)
+                      .toDouble();
+            final endFraction = windowDuration <= 0
+                ? 1.0
+                : ((_range.end - _timelineStart) / windowDuration)
+                      .clamp(0.0, 1.0)
+                      .toDouble();
+            return ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: SizedBox(
+                height: 64,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const _ClipTrimTrackBackground(),
+                    Positioned(
+                      left: 0,
+                      top: 0,
+                      bottom: 0,
+                      width: width * startFraction,
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.58),
+                      ),
+                    ),
+                    Positioned(
+                      left: width * endFraction,
+                      right: 0,
+                      top: 0,
+                      bottom: 0,
+                      child: ColoredBox(
+                        color: Colors.black.withValues(alpha: 0.58),
+                      ),
+                    ),
+                    Positioned(
+                      left: width * startFraction,
+                      width: (width * (endFraction - startFraction)).clamp(
+                        2.0,
+                        width,
+                      ),
+                      top: 0,
+                      bottom: 0,
+                      child: IgnorePointer(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: fieldEmerald500,
+                              width: 3,
+                            ),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+                    ),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 4,
+                        activeTrackColor: fieldEmerald500,
+                        inactiveTrackColor: Colors.transparent,
+                        rangeThumbShape: const RoundRangeSliderThumbShape(
+                          enabledThumbRadius: 8,
+                        ),
+                        thumbColor: Colors.white,
+                        overlayColor: fieldEmerald500.withValues(alpha: 0.2),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 17,
+                        ),
+                      ),
+                      child: RangeSlider(
+                        key: const ValueKey('custom-clip-range'),
+                        min: _timelineStart,
+                        max: _timelineEnd,
+                        values: _range,
+                        labels: RangeLabels(
+                          _time(_range.start),
+                          _time(_range.end),
+                        ),
+                        onChanged: _updateRange,
+                        onChangeEnd: (_) => _finishRangeDrag(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 6),
+        ValueListenableBuilder<VideoPlayerValue>(
+          valueListenable: widget.controller,
+          builder: (context, value, _) {
+            final controllerSeconds = value.position.inMilliseconds / 1000;
+            final playhead = (_draggedPlayheadSeconds ?? controllerSeconds)
+                .clamp(_range.start, _range.end)
+                .toDouble();
+            return Row(
+              children: [
+                const Icon(
+                  Icons.drag_indicator_rounded,
+                  size: 17,
+                  color: fieldGray400,
+                ),
+                const SizedBox(width: 3),
+                Expanded(
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      activeTrackColor: fieldEmerald500,
+                      inactiveTrackColor: fieldGray200,
+                      thumbColor: fieldGray900,
+                      overlayColor: fieldGray900.withValues(alpha: 0.1),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 7,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 15,
+                      ),
+                    ),
+                    child: Slider(
+                      key: const ValueKey('custom-clip-playhead'),
+                      min: _range.start,
+                      max: _range.end,
+                      value: playhead,
+                      label: _time(playhead),
+                      semanticFormatterCallback: (_) =>
+                          'Preview frame at ${_time(playhead)}',
+                      onChangeStart: _startPlayheadDrag,
+                      onChanged: _dragPlayhead,
+                      onChangeEnd: _finishPlayheadDrag,
+                    ),
+                  ),
+                ),
+                SizedBox(
+                  width: 42,
+                  child: Text(
+                    _time(playhead),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      color: fieldGray700,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _buildEndpointControls() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: fieldGray200),
+        borderRadius: BorderRadius.circular(15),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _ClipEndpoint(
+              label: 'START',
+              value: _time(_range.start),
+              onPreview: () => _queueSeek(_range.start, immediate: true),
+              onBack: () => _adjustStart(-1),
+              onForward: () => _adjustStart(1),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.arrow_forward_rounded,
+                  color: fieldGray400,
+                  size: 19,
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  '${_clipDuration.round()} SEC',
+                  key: const ValueKey('custom-clip-duration'),
+                  style: const TextStyle(
+                    color: fieldEmerald600,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _ClipEndpoint(
+              label: 'END',
+              value: _time(_range.end),
+              onPreview: () => _queueSeek(_range.end, immediate: true),
+              onBack: () => _adjustEnd(-1),
+              onForward: () => _adjustEnd(1),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClipFilmstrip extends StatelessWidget {
+  const _ClipFilmstrip({required this.thumbnailUrls});
+
+  final List<String> thumbnailUrls;
+
+  @override
+  Widget build(BuildContext context) {
+    if (thumbnailUrls.isEmpty) return const _ClipTrimTrackBackground();
+    return Row(
+      children: [
+        for (var index = 0; index < thumbnailUrls.length; index++)
+          Expanded(
+            child: Image.network(
+              thumbnailUrls[index],
+              height: double.infinity,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => _ClipFrameFallback(index: index),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ClipTrimTrackBackground extends StatelessWidget {
+  const _ClipTrimTrackBackground();
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        for (var index = 0; index < 10; index++)
+          Expanded(child: _ClipFrameFallback(index: index)),
+      ],
+    );
+  }
+}
+
+class _ClipFrameFallback extends StatelessWidget {
+  const _ClipFrameFallback({required this.index});
+
+  final int index;
+
+  @override
+  Widget build(BuildContext context) {
+    final even = index.isEven;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: even
+              ? const [Color(0xFF233148), Color(0xFF0F172A)]
+              : const [Color(0xFF145F50), Color(0xFF111827)],
+        ),
+        border: const Border(
+          right: BorderSide(color: Colors.white12, width: 0.5),
+        ),
+      ),
+      child: const Center(
+        child: Icon(
+          Icons.sports_soccer_rounded,
+          color: Colors.white24,
+          size: 15,
+        ),
+      ),
+    );
+  }
+}
+
+class _ClipEndpoint extends StatelessWidget {
+  const _ClipEndpoint({
+    required this.label,
+    required this.value,
+    required this.onPreview,
+    required this.onBack,
+    required this.onForward,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onPreview;
+  final VoidCallback onBack;
+  final VoidCallback onForward;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: fieldGray400,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+          ),
+        ),
+        const SizedBox(height: 5),
+        InkWell(
+          onTap: onPreview,
+          borderRadius: BorderRadius.circular(10),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+            child: Text(
+              value,
+              style: const TextStyle(
+                color: fieldGray900,
+                fontSize: 19,
+                fontWeight: FontWeight.w900,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              tooltip: 'Move $label back 1 second',
+              onPressed: onBack,
+              visualDensity: VisualDensity.compact,
+              iconSize: 17,
+              icon: const Icon(Icons.remove_rounded),
+            ),
+            const Text(
+              '1s',
+              style: TextStyle(
+                color: fieldGray500,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Move $label forward 1 second',
+              onPressed: onForward,
+              visualDensity: VisualDensity.compact,
+              iconSize: 17,
+              icon: const Icon(Icons.add_rounded),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _CustomClipOutcomeSheet extends StatelessWidget {
+  const _CustomClipOutcomeSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        20,
+        18,
+        20,
+        20 + MediaQuery.paddingOf(context).bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'WHAT DO YOU WANT TO DO?',
+            style: TextStyle(
+              color: fieldGray900,
+              fontSize: 17,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'You can keep this moment on Field or save it straight to Photos.',
+            style: TextStyle(
+              color: fieldGray500,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 18),
+          _ClipOutcomeButton(
+            key: const ValueKey('custom-clip-save'),
+            icon: Icons.person_add_alt_1_rounded,
+            title: 'Save to my profile',
+            detail: 'Add a title and show it in your Clips',
+            filled: true,
+            onTap: () =>
+                Navigator.of(context).pop(_CustomClipOutcome.saveToProfile),
+          ),
+          const SizedBox(height: 10),
+          _ClipOutcomeButton(
+            key: const ValueKey('custom-clip-download'),
+            icon: Icons.download_rounded,
+            title: 'Download now',
+            detail: 'Save it to your phone without posting it',
+            filled: false,
+            onTap: () => Navigator.of(context).pop(_CustomClipOutcome.download),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClipOutcomeButton extends StatelessWidget {
+  const _ClipOutcomeButton({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.detail,
+    required this.filled,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String detail;
+  final bool filled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final foreground = filled ? Colors.white : fieldGray900;
+    return Material(
+      color: filled ? fieldGray900 : Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+        side: BorderSide(color: filled ? fieldGray900 : fieldGray200),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: filled
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : const Color(0xFFE8FFF6),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  icon,
+                  color: filled ? Colors.white : fieldEmerald600,
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      detail,
+                      style: TextStyle(
+                        color: filled ? fieldGray300 : fieldGray500,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: foreground),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WatchMediaProgress extends StatelessWidget {
+  const _WatchMediaProgress({
+    required this.label,
+    this.progress,
+    this.onDark = false,
+  });
+
+  final String label;
+  final double? progress;
+  final bool onDark;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = progress?.clamp(0.0, 1.0).toDouble();
+    return Semantics(
+      label: _progressActionLabel(label, value),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 17,
+            height: 17,
+            child: CircularProgressIndicator(
+              value: value,
+              strokeWidth: 2.2,
+              color: onDark ? Colors.white : fieldEmerald600,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            _progressActionLabel(label, value),
+            style: TextStyle(
+              color: onDark ? Colors.white : fieldGray600,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _progressActionLabel(String label, double? progress) {
+  if (progress == null) return '$label...';
+  return '$label ${(progress.clamp(0.0, 1.0) * 100).round()}%';
+}
+
+class _GoalJumpBar extends StatelessWidget {
+  const _GoalJumpBar({
+    required this.highlights,
+    required this.activeIndex,
+    required this.onSelect,
+    required this.canAddSelected,
+    required this.isSavingSelected,
+    required this.isSelectedSaved,
+    required this.isDownloadingSelected,
+    required this.downloadProgress,
+    required this.onAddSelected,
+    required this.onDownloadSelected,
+  });
+
+  final List<FixtureHighlightMoment> highlights;
+  final int activeIndex;
+  final ValueChanged<int> onSelect;
+  final bool canAddSelected;
+  final bool isSavingSelected;
+  final bool isSelectedSaved;
+  final bool isDownloadingSelected;
+  final double? downloadProgress;
+  final VoidCallback onAddSelected;
+  final VoidCallback onDownloadSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedIndex = activeIndex.clamp(0, highlights.length - 1);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 11, 12, 13),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: fieldGray100)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.video_library_rounded,
+                color: fieldEmerald600,
+                size: 17,
+              ),
+              const SizedBox(width: 7),
+              const Text(
+                'GOAL CHAPTERS',
+                style: TextStyle(
+                  color: fieldGray700,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.7,
+                ),
+              ),
+              const Spacer(),
+              const Text(
+                'Tap to jump',
+                style: TextStyle(
+                  color: fieldGray400,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (var index = 0; index < highlights.length; index++) ...[
+                  ChoiceChip(
+                    key: ValueKey('highlight-goal-$index'),
+                    label: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          index == selectedIndex
+                              ? Icons.play_circle_fill_rounded
+                              : Icons.play_arrow_rounded,
+                          size: 16,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Goal ${index + 1} · ${highlights[index].event.minute}\'',
+                        ),
+                      ],
+                    ),
+                    selected: index == selectedIndex,
+                    showCheckmark: false,
+                    onSelected: (_) => onSelect(index),
+                    selectedColor: fieldGray900,
+                    backgroundColor: const Color(0xFFF9FAFB),
+                    side: const BorderSide(color: fieldGray200),
+                    labelStyle: TextStyle(
+                      color: index == selectedIndex
+                          ? Colors.white
+                          : fieldGray700,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (index != highlights.length - 1) const SizedBox(width: 7),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              key: const ValueKey('download-highlight-clip'),
+              onPressed: isDownloadingSelected ? null : onDownloadSelected,
+              icon: isDownloadingSelected
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.download_rounded, size: 18),
+              label: Text(
+                isDownloadingSelected
+                    ? _progressActionLabel('Saving', downloadProgress)
+                    : 'Download this goal',
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: fieldEmerald600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            ),
+          ),
+          if (canAddSelected) ...[
+            const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: const ValueKey('add-goal-to-profile'),
+                onPressed: isSavingSelected || isSelectedSaved
+                    ? null
+                    : onAddSelected,
+                icon: isSavingSelected
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        isSelectedSaved
+                            ? Icons.check_circle_rounded
+                            : Icons.add_circle_outline_rounded,
+                        size: 18,
+                      ),
+                label: Text(
+                  isSavingSelected
+                      ? 'Preparing your clip...'
+                      : isSelectedSaved
+                      ? 'Added to your profile'
+                      : 'Add this clip to your profile',
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: isSelectedSaved
+                      ? fieldEmerald600
+                      : fieldGray900,
+                  side: BorderSide(
+                    color: isSelectedSaved ? fieldEmerald600 : fieldGray200,
+                  ),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _InlineVideoPlayer extends StatefulWidget {
+  const _InlineVideoPlayer({
+    required this.controller,
+    required this.isLive,
+    required this.rangeStart,
+    required this.rangeEnd,
+    required this.label,
+    required this.seekKey,
+    required this.onTogglePlayback,
+    required this.onOpenFullscreen,
+    this.actionOverlay,
+  });
+
+  final VideoPlayerController controller;
+  final bool isLive;
+  final Duration rangeStart;
+  final Duration rangeEnd;
+  final String label;
+  final Key seekKey;
+  final Future<void> Function() onTogglePlayback;
+  final VoidCallback onOpenFullscreen;
+  final Widget? actionOverlay;
+
+  @override
+  State<_InlineVideoPlayer> createState() => _InlineVideoPlayerState();
+}
+
+class _InlineVideoPlayerState extends State<_InlineVideoPlayer> {
+  static const _controlsFadeDuration = Duration(milliseconds: 180);
+  static const _controlsVisibleDuration = Duration(seconds: 3);
+
+  Timer? _controlsTimer;
+  bool _controlsVisible = true;
+
+  @override
+  void didUpdateWidget(covariant _InlineVideoPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.rangeStart != widget.rangeStart ||
+        oldWidget.rangeEnd != widget.rangeEnd) {
+      _showControls();
+    }
+  }
+
+  @override
+  void dispose() {
+    _controlsTimer?.cancel();
+    super.dispose();
+  }
+
+  void _toggleControls() {
+    _controlsTimer?.cancel();
+    setState(() => _controlsVisible = !_controlsVisible);
+    if (_controlsVisible) _restartControlsTimer();
+  }
+
+  void _showControls() {
+    _controlsTimer?.cancel();
+    if (!_controlsVisible && mounted) {
+      setState(() => _controlsVisible = true);
+    }
+    _restartControlsTimer();
+  }
+
+  void _restartControlsTimer() {
+    _controlsTimer?.cancel();
+    if (!widget.controller.value.isPlaying) return;
+    _controlsTimer = Timer(_controlsVisibleDuration, () {
+      if (mounted) setState(() => _controlsVisible = false);
+    });
+  }
+
+  Future<void> _togglePlayback() async {
+    await widget.onTogglePlayback();
+    _showControls();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: widget.controller,
+      builder: (context, value, _) {
+        return Stack(
+          key: const ValueKey('inline-video-player'),
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: value.aspectRatio == 0
+                    ? 16 / 9
+                    : value.aspectRatio,
+                child: VideoPlayer(widget.controller),
+              ),
+            ),
+            GestureDetector(
+              key: const ValueKey('inline-video-tap-target'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleControls,
+            ),
+            Positioned.fill(
+              child: AnimatedOpacity(
+                key: const ValueKey('inline-video-controls-opacity'),
+                duration: _controlsFadeDuration,
+                opacity: _controlsVisible ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      const DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [
+                              Color(0x99000000),
+                              Color(0x00000000),
+                              Color(0x12000000),
+                              Color(0xD9000000),
+                            ],
+                            stops: [0, 0.26, 0.54, 1],
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 10,
+                        left: 12,
+                        right: widget.actionOverlay == null ? 12 : 62,
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 5,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xA6111827),
+                              borderRadius: BorderRadius.circular(7),
+                            ),
+                            child: Text(
+                              widget.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Center(
+                        child: IconButton(
+                          key: const ValueKey('inline-playback-toggle'),
+                          tooltip: value.isPlaying ? 'Pause' : 'Play',
+                          onPressed: () => unawaited(_togglePlayback()),
+                          iconSize: 38,
+                          padding: const EdgeInsets.all(12),
+                          style: IconButton.styleFrom(
+                            backgroundColor: const Color(0xB3111827),
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size(62, 62),
+                          ),
+                          icon: Icon(
+                            value.isPlaying
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 0,
+                        bottom: 0,
+                        left: 0,
+                        child: _VideoTimelineControls(
+                          controller: widget.controller,
+                          rangeStart: widget.rangeStart,
+                          rangeEnd: widget.rangeEnd,
+                          allowSeeking: !widget.isLive,
+                          sliderKey: widget.seekKey,
+                          onInteraction: _showControls,
+                          onFullscreen: () {
+                            _showControls();
+                            widget.onOpenFullscreen();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            if (widget.actionOverlay != null)
+              Positioned(top: 8, right: 8, child: widget.actionOverlay!),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _VideoTimelineControls extends StatefulWidget {
+  const _VideoTimelineControls({
+    required this.controller,
+    required this.rangeStart,
+    required this.rangeEnd,
+    required this.allowSeeking,
+    required this.sliderKey,
+    this.onInteraction,
+    this.onFullscreen,
+  });
+
+  final VideoPlayerController controller;
+  final Duration rangeStart;
+  final Duration rangeEnd;
+  final bool allowSeeking;
+  final Key sliderKey;
+  final VoidCallback? onInteraction;
+  final VoidCallback? onFullscreen;
+
+  @override
+  State<_VideoTimelineControls> createState() => _VideoTimelineControlsState();
+}
+
+class _VideoTimelineControlsState extends State<_VideoTimelineControls> {
+  double? _dragMilliseconds;
+  bool _resumeAfterDrag = false;
+  Future<void>? _pauseBeforeDrag;
+
+  @override
+  void didUpdateWidget(covariant _VideoTimelineControls oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller ||
+        oldWidget.rangeStart != widget.rangeStart ||
+        oldWidget.rangeEnd != widget.rangeEnd) {
+      _dragMilliseconds = null;
+      _resumeAfterDrag = false;
+      _pauseBeforeDrag = null;
+    }
+  }
+
+  void _startDrag(double milliseconds) {
+    _resumeAfterDrag = widget.controller.value.isPlaying;
+    _pauseBeforeDrag = _resumeAfterDrag ? widget.controller.pause() : null;
+    widget.onInteraction?.call();
+    setState(() => _dragMilliseconds = milliseconds);
+  }
+
+  void _updateDrag(double milliseconds) {
+    setState(() => _dragMilliseconds = milliseconds);
+  }
+
+  Future<void> _finishDrag(double milliseconds) async {
+    await _pauseBeforeDrag;
+    await widget.controller.seekTo(
+      Duration(milliseconds: milliseconds.round()),
+    );
+    if (_resumeAfterDrag) await widget.controller.play();
+    widget.onInteraction?.call();
+    _pauseBeforeDrag = null;
+    if (mounted) {
+      setState(() {
+        _dragMilliseconds = null;
+        _resumeAfterDrag = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: widget.controller,
+      builder: (context, value, _) {
+        final durationMilliseconds = value.duration.inMilliseconds;
+        final boundedDurationMilliseconds = durationMilliseconds <= 0
+            ? 1
+            : durationMilliseconds;
+        final startMilliseconds = widget.rangeStart.inMilliseconds
+            .clamp(0, boundedDurationMilliseconds)
+            .toDouble();
+        final requestedEndMilliseconds = widget.rangeEnd.inMilliseconds
+            .clamp(0, boundedDurationMilliseconds)
+            .toDouble();
+        final endMilliseconds = requestedEndMilliseconds <= startMilliseconds
+            ? (startMilliseconds + 1)
+                  .clamp(1.0, boundedDurationMilliseconds.toDouble())
+                  .toDouble()
+            : requestedEndMilliseconds;
+        final double maxMilliseconds = endMilliseconds <= startMilliseconds
+            ? startMilliseconds + 1
+            : endMilliseconds;
+        final double positionMilliseconds =
+            (_dragMilliseconds ?? value.position.inMilliseconds.toDouble())
+                .clamp(startMilliseconds, maxMilliseconds)
+                .toDouble();
+        final shownPosition = Duration(
+          milliseconds: (positionMilliseconds - startMilliseconds).round(),
+        );
+        final shownDuration = Duration(
+          milliseconds: (endMilliseconds - startMilliseconds).round().clamp(
+            0,
+            boundedDurationMilliseconds,
+          ),
+        );
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (widget.allowSeeking)
+                SizedBox(
+                  height: 27,
+                  child: SliderTheme(
+                    data: SliderTheme.of(context).copyWith(
+                      trackHeight: 3,
+                      activeTrackColor: fieldEmerald500,
+                      inactiveTrackColor: Colors.white38,
+                      thumbColor: Colors.white,
+                      overlayColor: Colors.white.withValues(alpha: 0.16),
+                      thumbShape: const RoundSliderThumbShape(
+                        enabledThumbRadius: 6,
+                      ),
+                      overlayShape: const RoundSliderOverlayShape(
+                        overlayRadius: 13,
+                      ),
+                    ),
+                    child: Slider(
+                      key: widget.sliderKey,
+                      min: startMilliseconds,
+                      max: maxMilliseconds,
+                      value: positionMilliseconds,
+                      label: _formatVideoTime(shownPosition),
+                      semanticFormatterCallback: (_) =>
+                          '${_formatVideoTime(shownPosition)} of ${_formatVideoTime(shownDuration)}',
+                      onChangeStart: durationMilliseconds <= 0
+                          ? null
+                          : _startDrag,
+                      onChanged: durationMilliseconds <= 0 ? null : _updateDrag,
+                      onChangeEnd: durationMilliseconds <= 0
+                          ? null
+                          : (milliseconds) =>
+                                unawaited(_finishDrag(milliseconds)),
+                    ),
+                  ),
+                ),
+              Row(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Text(
+                      widget.allowSeeking
+                          ? '${_formatVideoTime(shownPosition)} / ${_formatVideoTime(shownDuration)}'
+                          : 'LIVE',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                        shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (widget.onFullscreen != null)
+                    IconButton(
+                      key: const ValueKey('recording-fullscreen-button'),
+                      tooltip: 'Fullscreen',
+                      onPressed: widget.onFullscreen,
+                      visualDensity: VisualDensity.compact,
+                      color: Colors.white,
+                      iconSize: 25,
+                      icon: const Icon(Icons.fullscreen_rounded),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+String _formatVideoTime(Duration value) {
+  final totalSeconds = value.inSeconds < 0 ? 0 : value.inSeconds;
+  final hours = totalSeconds ~/ 3600;
+  final minutes = (totalSeconds % 3600) ~/ 60;
+  final seconds = totalSeconds % 60;
+  if (hours > 0) {
+    return '$hours:${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+  }
+  return '$minutes:${seconds.toString().padLeft(2, '0')}';
+}
+
+class _VideoSkeleton extends StatelessWidget {
+  const _VideoSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.all(22),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Color(0xFF374151),
+              shape: BoxShape.circle,
+            ),
+            child: SizedBox(width: 54, height: 54),
+          ),
+          SizedBox(height: 14),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: Color(0xFF374151),
+              borderRadius: BorderRadius.all(Radius.circular(5)),
+            ),
+            child: SizedBox(width: 170, height: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FullscreenVideoPage extends StatefulWidget {
+  const _FullscreenVideoPage({
+    required this.controller,
+    required this.allowSeeking,
+    required this.highlights,
+    required this.modeLabel,
+    required this.onTogglePlayback,
+  });
+
+  final VideoPlayerController controller;
+  final bool allowSeeking;
+  final List<FixtureHighlightMoment> highlights;
+  final String modeLabel;
+  final Future<void> Function() onTogglePlayback;
+
+  @override
+  State<_FullscreenVideoPage> createState() => _FullscreenVideoPageState();
+}
+
+class _FullscreenVideoPageState extends State<_FullscreenVideoPage> {
+  static const _controlsFadeDuration = Duration(milliseconds: 180);
+  static const _controlsVisibleDuration = Duration(seconds: 3);
+
+  Timer? _controlsTimer;
+  bool _controlsVisible = true;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(
+      SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]),
+    );
+    unawaited(
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _restartControlsTimer();
+    });
+  }
+
+  @override
+  void dispose() {
+    _controlsTimer?.cancel();
+    unawaited(
+      SystemChrome.setPreferredOrientations(const [
+        DeviceOrientation.portraitUp,
+      ]),
+    );
+    unawaited(SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge));
+    super.dispose();
+  }
+
+  void _toggleControls() {
+    _controlsTimer?.cancel();
+    setState(() => _controlsVisible = !_controlsVisible);
+    if (_controlsVisible) _restartControlsTimer();
+  }
+
+  void _showControls() {
+    _controlsTimer?.cancel();
+    if (!_controlsVisible && mounted) {
+      setState(() => _controlsVisible = true);
+    }
+    _restartControlsTimer();
+  }
+
+  void _restartControlsTimer() {
+    _controlsTimer?.cancel();
+    if (!widget.controller.value.isPlaying) return;
+    _controlsTimer = Timer(_controlsVisibleDuration, () {
+      if (mounted) setState(() => _controlsVisible = false);
+    });
+  }
+
+  Future<void> _togglePlayback() async {
+    await widget.onTogglePlayback();
+    _showControls();
+  }
+
+  _PlaybackWindow _playbackWindow(VideoPlayerValue value) {
+    if (widget.highlights.isEmpty) {
+      return _PlaybackWindow(
+        start: Duration.zero,
+        end: value.duration,
+        label: widget.modeLabel,
+      );
+    }
+
+    var selected = widget.highlights.first;
+    for (final highlight in widget.highlights) {
+      if (value.position < highlight.start) break;
+      selected = highlight;
+    }
+    final event = selected.event;
+    final scorer = event.playerName == 'Unknown' ? 'Goal' : event.playerName;
+    final goalIndex = widget.highlights.indexOf(selected) + 1;
+    return _PlaybackWindow(
+      start: selected.start,
+      end: selected.end > value.duration ? value.duration : selected.end,
+      label:
+          'GOAL $goalIndex OF ${widget.highlights.length}  ·  $scorer  ·  ${event.minute}\'',
+    );
+  }
+
+  Future<void> _seekBy(Duration delta) async {
+    final value = widget.controller.value;
+    final window = _playbackWindow(value);
+    final requested = value.position + delta;
+    final target = requested < window.start
+        ? window.start
+        : requested > window.end
+        ? window.end
+        : requested;
+    await widget.controller.seekTo(target);
+    _showControls();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.controller.value.aspectRatio == 0
+                    ? 16 / 9
+                    : widget.controller.value.aspectRatio,
+                child: VideoPlayer(widget.controller),
+              ),
+            ),
+            GestureDetector(
+              key: const ValueKey('fullscreen-video-tap-target'),
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleControls,
+            ),
+            Positioned.fill(
+              child: AnimatedOpacity(
+                key: const ValueKey('fullscreen-controls-opacity'),
+                duration: _controlsFadeDuration,
+                opacity: _controlsVisible ? 1 : 0,
+                child: IgnorePointer(
+                  ignoring: !_controlsVisible,
+                  child: ValueListenableBuilder<VideoPlayerValue>(
+                    valueListenable: widget.controller,
+                    builder: (context, value, _) {
+                      final window = _playbackWindow(value);
+                      return Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          const DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Color(0xA6000000),
+                                  Color(0x00000000),
+                                  Color(0x16000000),
+                                  Color(0xE6000000),
+                                ],
+                                stops: [0, 0.25, 0.58, 1],
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 10,
+                            left: 10,
+                            right: 16,
+                            child: Row(
+                              children: [
+                                DecoratedBox(
+                                  decoration: const BoxDecoration(
+                                    color: Color(0x8F111827),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: IconButton(
+                                    key: const ValueKey('fullscreen-exit'),
+                                    tooltip: 'Exit fullscreen',
+                                    onPressed: () =>
+                                        Navigator.of(context).pop(),
+                                    color: Colors.white,
+                                    icon: const Icon(Icons.arrow_back_rounded),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(
+                                    window.label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                      letterSpacing: 0.2,
+                                      shadows: [
+                                        Shadow(
+                                          color: Colors.black87,
+                                          blurRadius: 5,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Center(
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (widget.allowSeeking)
+                                  IconButton(
+                                    key: const ValueKey('fullscreen-skip-back'),
+                                    tooltip: 'Back 10 seconds',
+                                    onPressed: () => unawaited(
+                                      _seekBy(const Duration(seconds: -10)),
+                                    ),
+                                    color: Colors.white,
+                                    iconSize: 31,
+                                    icon: const Icon(Icons.replay_10_rounded),
+                                  ),
+                                const SizedBox(width: 18),
+                                IconButton(
+                                  key: const ValueKey(
+                                    'fullscreen-playback-toggle',
+                                  ),
+                                  tooltip: value.isPlaying ? 'Pause' : 'Play',
+                                  onPressed: () => unawaited(_togglePlayback()),
+                                  iconSize: 42,
+                                  padding: const EdgeInsets.all(14),
+                                  style: IconButton.styleFrom(
+                                    backgroundColor: const Color(0xA6111827),
+                                    foregroundColor: Colors.white,
+                                    minimumSize: const Size(70, 70),
+                                  ),
+                                  icon: Icon(
+                                    value.isPlaying
+                                        ? Icons.pause_rounded
+                                        : Icons.play_arrow_rounded,
+                                  ),
+                                ),
+                                const SizedBox(width: 18),
+                                if (widget.allowSeeking)
+                                  IconButton(
+                                    key: const ValueKey(
+                                      'fullscreen-skip-forward',
+                                    ),
+                                    tooltip: 'Forward 10 seconds',
+                                    onPressed: () => unawaited(
+                                      _seekBy(const Duration(seconds: 10)),
+                                    ),
+                                    color: Colors.white,
+                                    iconSize: 31,
+                                    icon: const Icon(Icons.forward_10_rounded),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          Positioned(
+                            right: 18,
+                            bottom: 6,
+                            left: 18,
+                            child: _VideoTimelineControls(
+                              controller: widget.controller,
+                              rangeStart: window.start,
+                              rangeEnd: window.end,
+                              allowSeeking: widget.allowSeeking,
+                              sliderKey: const ValueKey(
+                                'fullscreen-video-seek',
+                              ),
+                              onInteraction: _showControls,
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PlaybackWindow {
+  const _PlaybackWindow({
+    required this.start,
+    required this.end,
+    required this.label,
+  });
+
+  final Duration start;
+  final Duration end;
+  final String label;
 }
 
 class _JoinActionBar extends StatelessWidget {

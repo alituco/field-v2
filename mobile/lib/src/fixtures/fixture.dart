@@ -11,6 +11,12 @@ enum FixtureTimeSlot {
   final String label;
 }
 
+const clanFixtureTimeSlots = <FixtureTimeSlot>[FixtureTimeSlot.early];
+
+bool isFixtureMatchDay(DateTime date) {
+  return date.weekday == DateTime.tuesday || date.weekday == DateTime.friday;
+}
+
 class FixtureClan {
   const FixtureClan({
     required this.id,
@@ -110,6 +116,63 @@ class FixtureClock {
   }
 }
 
+class FixtureBroadcast {
+  const FixtureBroadcast({
+    required this.status,
+    this.liveInputId,
+    this.activeVideoId,
+    this.hlsUrl,
+    this.replayHlsUrl,
+    this.streamStartedAt,
+    this.streamStoppedAt,
+    this.recordingReadyAt,
+    this.errorMessage,
+  });
+
+  final String status;
+  final String? liveInputId;
+  final String? activeVideoId;
+  final String? hlsUrl;
+  final String? replayHlsUrl;
+  final DateTime? streamStartedAt;
+  final DateTime? streamStoppedAt;
+  final DateTime? recordingReadyAt;
+  final String? errorMessage;
+
+  bool get isLive => status.toUpperCase() == 'LIVE';
+
+  bool get isStarting => status.toUpperCase() == 'STARTING';
+
+  bool get isProcessing => status.toUpperCase() == 'PROCESSING';
+
+  bool get isStopping => status.toUpperCase() == 'STOPPING';
+
+  bool get isReplayReady => status.toUpperCase() == 'REPLAY_READY';
+
+  bool get shouldPoll => isStarting || isLive || isStopping || isProcessing;
+
+  String? get playbackUrl {
+    final replay = replayHlsUrl?.trim();
+    if (replay != null && replay.isNotEmpty) return replay;
+    final live = hlsUrl?.trim();
+    return live == null || live.isEmpty ? null : live;
+  }
+
+  factory FixtureBroadcast.fromJson(Map<String, dynamic> json) {
+    return FixtureBroadcast(
+      status: json['status'] as String? ?? 'NOT_CONFIGURED',
+      liveInputId: json['live_input_id'] as String?,
+      activeVideoId: json['active_video_id'] as String?,
+      hlsUrl: json['hls_url'] as String?,
+      replayHlsUrl: json['replay_hls_url'] as String?,
+      streamStartedAt: _asDate(json['stream_started_at']),
+      streamStoppedAt: _asDate(json['stream_stopped_at']),
+      recordingReadyAt: _asDate(json['recording_ready_at']),
+      errorMessage: json['error_message'] as String?,
+    );
+  }
+}
+
 class FixtureParticipant {
   const FixtureParticipant({
     required this.id,
@@ -128,6 +191,70 @@ class FixtureParticipant {
       username: (json['username'] as String?)?.trim(),
     );
   }
+}
+
+class FixtureLineupPlayer {
+  const FixtureLineupPlayer({
+    required this.id,
+    required this.displayName,
+    required this.role,
+    required this.side,
+    required this.played,
+    required this.isMe,
+    this.username,
+    this.avatarUrl,
+    this.ratingAtTeamAssignment,
+    this.ratingAtMatchStart,
+    this.ratingChange,
+  });
+
+  final String id;
+  final String displayName;
+  final String? username;
+  final String? avatarUrl;
+  final String role;
+  final String side;
+  final bool played;
+  final bool isMe;
+  final int? ratingAtTeamAssignment;
+  final int? ratingAtMatchStart;
+  final int? ratingChange;
+
+  int? get displayedRating => ratingAtMatchStart ?? ratingAtTeamAssignment;
+
+  String get initials {
+    final words = displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .toList();
+    if (words.isEmpty) return '?';
+    return words.take(2).map((word) => word[0]).join().toUpperCase();
+  }
+}
+
+class FixturePlayerRatingUpdate {
+  const FixturePlayerRatingUpdate({
+    required this.ratingBefore,
+    required this.ratingChange,
+    required this.ratingAfter,
+    this.result,
+    this.scoreMargin,
+    this.marginMultiplier,
+    this.baseRatingChange,
+    this.marginBonusApplied,
+  });
+
+  final int ratingBefore;
+  final int ratingChange;
+  final int ratingAfter;
+  final String? result;
+  final int? scoreMargin;
+  final double? marginMultiplier;
+  final int? baseRatingChange;
+  final int? marginBonusApplied;
+
+  bool get hasMarginAdjustment => (marginBonusApplied ?? 0) != 0;
 }
 
 class FixtureScorer {
@@ -183,6 +310,7 @@ class FixtureTimelineEvent {
     required this.minute,
     required this.second,
     required this.createdAt,
+    this.occurredAt,
     this.clanId,
     this.profileId,
     this.assistProfileId,
@@ -201,12 +329,15 @@ class FixtureTimelineEvent {
   final int second;
   final String? note;
   final DateTime? createdAt;
+  final DateTime? occurredAt;
   final FixtureParticipant? player;
   final FixtureParticipant? assist;
 
   String get playerName => player?.displayName ?? 'Unknown';
 
   String get assistName => assist?.displayName ?? 'Unknown';
+
+  DateTime? get highlightTimestamp => occurredAt ?? createdAt;
 
   factory FixtureTimelineEvent.fromJson(Map<String, dynamic> json) {
     final player = _nestedMap(json['player'] ?? json['profiles']);
@@ -223,10 +354,23 @@ class FixtureTimelineEvent {
       second: _asInt(json['second']),
       note: (json['note'] as String?)?.trim(),
       createdAt: _asDate(json['created_at']),
+      occurredAt: _asDate(json['occurred_at']),
       player: player == null ? null : FixtureParticipant.fromJson(player),
       assist: assist == null ? null : FixtureParticipant.fromJson(assist),
     );
   }
+}
+
+class FixtureHighlightMoment {
+  const FixtureHighlightMoment({
+    required this.event,
+    required this.start,
+    required this.end,
+  });
+
+  final FixtureTimelineEvent event;
+  final Duration start;
+  final Duration end;
 }
 
 class Fixture {
@@ -263,8 +407,16 @@ class Fixture {
     this.createdAt,
     this.updatedAt,
     this.clock,
+    this.broadcast,
     this.scorers = const [],
     this.timeline = const [],
+    this.homeAveragePlayerRating,
+    this.awayAveragePlayerRating,
+    this.matchAveragePlayerRating,
+    this.teamRatingSpread,
+    this.teamsAssignedAt,
+    this.homeLineup = const [],
+    this.awayLineup = const [],
   });
 
   final String id;
@@ -299,8 +451,16 @@ class Fixture {
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final FixtureClock? clock;
+  final FixtureBroadcast? broadcast;
   final List<FixtureScorer> scorers;
   final List<FixtureTimelineEvent> timeline;
+  final int? homeAveragePlayerRating;
+  final int? awayAveragePlayerRating;
+  final int? matchAveragePlayerRating;
+  final int? teamRatingSpread;
+  final DateTime? teamsAssignedAt;
+  final List<FixtureLineupPlayer> homeLineup;
+  final List<FixtureLineupPlayer> awayLineup;
 
   bool get isOpen => status == FixtureStatus.open;
 
@@ -309,6 +469,100 @@ class Fixture {
   bool get isLive => status == FixtureStatus.live;
 
   bool get isCancelled => status == FixtureStatus.cancelled;
+
+  String? get livePlaybackUrl => _nonEmptyUrl(broadcast?.hlsUrl);
+
+  String? get fullGamePlaybackUrl {
+    return _nonEmptyUrl(broadcast?.replayHlsUrl) ?? _nonEmptyUrl(videoUrl);
+  }
+
+  /// Goal windows aligned to the recording's wall clock for post-game playback.
+  List<FixtureHighlightMoment> get highlightMoments {
+    return _highlightMomentsFromOrigin(broadcast?.streamStartedAt);
+  }
+
+  /// Goal windows aligned from the finalized replay rather than its delayed
+  /// live-status timestamp. Both known recording boundaries are considered
+  /// because either boundary can be stale: startup reporting can be delayed,
+  /// while a repeated stop request can move the recorded stop time forward.
+  List<FixtureHighlightMoment> highlightMomentsForReplay(
+    Duration replayDuration,
+  ) {
+    final startedAtMoments = _highlightMomentsFromOrigin(
+      broadcast?.streamStartedAt,
+    );
+    final streamStoppedAt = broadcast?.streamStoppedAt;
+    if (streamStoppedAt == null || replayDuration <= Duration.zero) {
+      return startedAtMoments;
+    }
+
+    final stoppedAtMoments = _highlightMomentsFromOrigin(
+      streamStoppedAt.subtract(replayDuration),
+    );
+    final stoppedAtUsableGoals = _usableHighlightCount(
+      stoppedAtMoments,
+      replayDuration,
+    );
+    final startedAtUsableGoals = _usableHighlightCount(
+      startedAtMoments,
+      replayDuration,
+    );
+
+    // Prefer the stop-derived boundary on a tie. It is the more accurate
+    // correction when the live-start notification arrived late, and preserves
+    // the existing replay alignment in that case. The start boundary only
+    // takes over when it demonstrably recovers more playable goal windows.
+    return startedAtUsableGoals > stoppedAtUsableGoals
+        ? startedAtMoments
+        : stoppedAtMoments;
+  }
+
+  int _usableHighlightCount(
+    List<FixtureHighlightMoment> moments,
+    Duration replayDuration,
+  ) {
+    return moments.where((moment) => moment.start < replayDuration).length;
+  }
+
+  List<FixtureHighlightMoment> _highlightMomentsFromOrigin(
+    DateTime? replayOrigin,
+  ) {
+    if (!isFinal) return const [];
+
+    if (replayOrigin == null) return const [];
+
+    const leadIn = Duration(seconds: 10);
+    // Referee events use wall-clock time while the encoded recording can trail
+    // that clock. The extra ten seconds absorbs that playback offset and still
+    // leaves a full reaction window after the visible goal.
+    const followThrough = Duration(seconds: 20);
+    final moments = <FixtureHighlightMoment>[];
+    final goals =
+        timeline.where((event) {
+          return event.eventType.toUpperCase() == 'GOAL' &&
+              event.highlightTimestamp != null &&
+              event.note?.toLowerCase() != 'admin correction';
+        }).toList()..sort((left, right) {
+          return left.highlightTimestamp!.compareTo(right.highlightTimestamp!);
+        });
+
+    for (final goal in goals) {
+      final offset = goal.highlightTimestamp!.difference(replayOrigin);
+      final end = offset + followThrough;
+      if (end <= Duration.zero) continue;
+
+      final start = offset - leadIn;
+      moments.add(
+        FixtureHighlightMoment(
+          event: goal,
+          start: start.isNegative ? Duration.zero : start,
+          end: end,
+        ),
+      );
+    }
+
+    return moments;
+  }
 
   String get cancellationTitle {
     return switch (cancellationCode) {
@@ -397,9 +651,23 @@ class Fixture {
     final homeClan = _nestedMap(json['home_clan'] ?? json['clans']) ?? const {};
     final awayClan = _nestedMap(json['away_clan']);
     final clock = _nestedMap(json['fixture_clock_states']);
+    final broadcast = _nestedMap(json['fixture_broadcasts']);
     final homePayer = _nestedMap(json['home_payer']);
     final awayPayer = _nestedMap(json['away_payer']);
     final cancellationActor = _nestedMap(json['cancellation_actor']);
+    final homeLineup = _fixtureLineupFromJson(
+      json['fixture_player_appearances'],
+      'HOME',
+    );
+    final awayLineup = _fixtureLineupFromJson(
+      json['fixture_player_appearances'],
+      'AWAY',
+    );
+    final homeAverage = _lineupAverageRating(homeLineup);
+    final awayAverage = _lineupAverageRating(awayLineup);
+    final matchAverage = homeAverage == null || awayAverage == null
+        ? null
+        : ((homeAverage + awayAverage) / 2).round();
 
     return Fixture(
       id: json['id'] as String,
@@ -448,8 +716,25 @@ class Fixture {
       createdAt: _asDate(json['created_at']),
       updatedAt: _asDate(json['updated_at']),
       clock: clock == null ? null : FixtureClock.fromJson(clock),
+      broadcast: broadcast == null
+          ? null
+          : FixtureBroadcast.fromJson(broadcast),
       scorers: _scorersFromJson(json['fixture_scorers']),
       timeline: _timelineFromJson(json['fixture_events']),
+      homeAveragePlayerRating:
+          _asNullableInt(json['home_average_player_rating']) ?? homeAverage,
+      awayAveragePlayerRating:
+          _asNullableInt(json['away_average_player_rating']) ?? awayAverage,
+      matchAveragePlayerRating:
+          _asNullableInt(json['match_average_player_rating']) ?? matchAverage,
+      teamRatingSpread:
+          _asNullableInt(json['team_rating_spread']) ??
+          (homeAverage == null || awayAverage == null
+              ? null
+              : (homeAverage - awayAverage).abs()),
+      teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      homeLineup: homeLineup,
+      awayLineup: awayLineup,
     );
   }
 }
@@ -504,6 +789,50 @@ Map<String, dynamic> _jsonMap(Object? value) {
   return const {};
 }
 
+List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
+  if (value is! List) return const [];
+  final players = <FixtureLineupPlayer>[];
+  for (final rawRow in value) {
+    if (rawRow is! Map) continue;
+    final row = Map<String, dynamic>.from(rawRow);
+    if ((row['side'] as String? ?? '').toUpperCase() != side) continue;
+    final profile = _nestedMap(row['player']);
+    if (profile == null) continue;
+    players.add(
+      FixtureLineupPlayer(
+        id: row['profile_id'] as String? ?? profile['id'] as String? ?? '',
+        displayName: (profile['display_name'] as String? ?? 'Unknown').trim(),
+        username: (profile['username'] as String?)?.trim(),
+        avatarUrl: (profile['avatar_url'] as String?)?.trim(),
+        role: (row['position'] as String? ?? '').trim(),
+        side: side,
+        played: row['played'] as bool? ?? false,
+        isMe: row['is_me'] as bool? ?? false,
+        ratingAtMatchStart: _asNullableInt(row['rating_at_start']),
+        ratingChange: _asNullableInt(row['rating_change']),
+      ),
+    );
+  }
+  players.sort((left, right) {
+    if (left.played != right.played) return left.played ? -1 : 1;
+    return left.displayName.compareTo(right.displayName);
+  });
+  return players;
+}
+
+int? _lineupAverageRating(List<FixtureLineupPlayer> players) {
+  if (players.isEmpty) return null;
+  final played = players.where((player) => player.played).toList();
+  final included = played.isEmpty ? players : played;
+  final ratings = included
+      .map((player) => player.displayedRating)
+      .whereType<int>()
+      .toList();
+  if (ratings.isEmpty) return null;
+  return (ratings.reduce((total, rating) => total + rating) / ratings.length)
+      .round();
+}
+
 int _asInt(Object? value, {int fallback = 0}) {
   if (value is int) return value;
   if (value is num) return value.toInt();
@@ -523,6 +852,11 @@ DateTime? _asDate(Object? value) {
   if (value is DateTime) return value;
   if (value is String) return DateTime.tryParse(value);
   return null;
+}
+
+String? _nonEmptyUrl(String? value) {
+  final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
 int? _scoreFromRowsOrValue(Object? rows, String? clanId, Object? value) {

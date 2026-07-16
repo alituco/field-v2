@@ -33,6 +33,29 @@ void main() {
       expect(userFacingError(error), 'That username is already taken.');
     });
 
+    test('explains upcoming clan and solo limits', () {
+      expect(
+        userFacingError(
+          const PostgrestException(
+            message:
+                'Your clan can have a maximum of 2 upcoming matches. Finish or cancel one before scheduling another.',
+            code: 'P0001',
+          ),
+        ),
+        'Your clan already has 2 upcoming matches. Finish or cancel one before scheduling another.',
+      );
+      expect(
+        userFacingError(
+          const PostgrestException(
+            message:
+                'You can have a maximum of 2 upcoming solo games. Cancel one before booking another.',
+            code: 'P0001',
+          ),
+        ),
+        'You already have 2 upcoming solo games. Cancel one before booking another.',
+      );
+    });
+
     test('maps network internals to an offline message', () {
       final error = Exception(
         "ClientException with SocketException: Failed host lookup: 'example.supabase.co' (errno = 8)",

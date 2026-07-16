@@ -1,4 +1,12 @@
-export type FixtureStatus = "OPEN" | "SCHEDULED" | "LIVE" | "FINAL" | "CANCELLED";
+export type MatchKind = "CLAN" | "SOLO";
+
+export type FixtureStatus =
+  | "OPEN"
+  | "FULL"
+  | "SCHEDULED"
+  | "LIVE"
+  | "FINAL"
+  | "CANCELLED";
 
 export type ClockStatus = "NOT_STARTED" | "RUNNING" | "PAUSED" | "ENDED";
 
@@ -6,13 +14,60 @@ export type FixtureEventType =
   | "MATCH_STARTED"
   | "MATCH_PAUSED"
   | "MATCH_RESUMED"
+  | "MATCH_STOPPED"
   | "MATCH_ENDED"
   | "GOAL"
   | "BLUE_CARD"
   | "BLUE_CARD_EXPIRED"
-  | "CORRECTION";
+  | "CORRECTION"
+  | "FORFEIT_PROVISIONAL"
+  | "FORFEIT_CONFIRMED"
+  | "FORFEIT_OVERTURNED";
 
 export type BlueCardStatus = "ACTIVE" | "EXPIRED" | "CLEARED";
+
+export type BroadcastStatus =
+  | "NOT_CONFIGURED"
+  | "READY"
+  | "STARTING"
+  | "LIVE"
+  | "STOPPING"
+  | "PROCESSING"
+  | "REPLAY_READY"
+  | "ERROR";
+
+export type FixtureBroadcastState = {
+  matchKind?: MatchKind;
+  fixtureId: string;
+  openQueueGameId?: string | null;
+  liveInputId: string | null;
+  activeVideoId: string | null;
+  status: BroadcastStatus;
+  hlsUrl: string | null;
+  replayHlsUrl: string | null;
+  streamRequestedAt: string | null;
+  streamStartedAt: string | null;
+  streamStoppedAt: string | null;
+  recordingReadyAt: string | null;
+  errorMessage: string | null;
+};
+
+export type BroadcastDeviceState = {
+  deviceKey: string;
+  displayName: string;
+  status: "OFFLINE" | "READY" | "STREAMING" | "ERROR";
+  obsConnected: boolean;
+  obsStreaming: boolean;
+  currentFixtureId: string | null;
+  currentOpenQueueGameId?: string | null;
+  lastSeenAt: string | null;
+  errorMessage: string | null;
+};
+
+export type BroadcastControlResponse = {
+  broadcast: FixtureBroadcastState | null;
+  device: BroadcastDeviceState | null;
+};
 
 export type Clan = {
   id: string;
@@ -29,6 +84,40 @@ export type Player = {
   displayName: string;
   username: string | null;
   avatarUrl: string | null;
+  ratingAtTeamAssignment: number | null;
+};
+
+export type ModerationSubjectType = "PLAYER" | "CLAN";
+
+export type ModerationRiskLevel = "AWARE" | "ELEVATED" | "HIGH";
+
+export type ModerationRiskSignal = {
+  subjectType: ModerationSubjectType;
+  subjectId: string;
+  level: ModerationRiskLevel;
+  /** Short, evidence-neutral labels. No allegations or reporter identities. */
+  labels: string[];
+  /** Excludes reports dismissed by an admin and reports marked duplicate. */
+  priorReports: number;
+  recentReports: number;
+  distinctRecentReporters: number;
+  openReports: number;
+  actionedReports: number;
+  priorRefereeReports: number;
+  priorWarnings: number;
+  activeRestriction: {
+    actionType: "SUSPENSION" | "BAN";
+    scope: "NONE" | "PLAY" | "ACCOUNT" | "SCHEDULING";
+    endsAt: string | null;
+  } | null;
+  lastReportedAt: string | null;
+};
+
+export type RefereeRiskContext = {
+  teams: ModerationRiskSignal[];
+  players: ModerationRiskSignal[];
+  /** Reminds the referee that reports are context, not a verdict. */
+  guidance: string;
 };
 
 export type FixtureClock = {
@@ -76,6 +165,7 @@ export type BlueCard = {
 };
 
 export type RefereeFixture = {
+  matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
   venue: string;
@@ -86,13 +176,21 @@ export type RefereeFixture = {
   cancellationReason: string | null;
   cancelledAt: string | null;
   cancelledBy: string | null;
+  homeScore: number | null;
+  awayScore: number | null;
+  whiteAverageSr: number | null;
+  blackAverageSr: number | null;
+  matchAverageSr: number | null;
+  teamSrSpread: number | null;
   homeClan: Clan;
   awayClan: Clan;
   players: Player[];
+  participantIds: string[];
   clock: FixtureClock | null;
   goals: Goal[];
   events: FixtureEvent[];
   blueCards: BlueCard[];
+  riskContext: RefereeRiskContext;
 };
 
 export type RefereeFixturesResponse = {
@@ -113,6 +211,7 @@ export type RefereeListItem = {
 };
 
 export type AssignableFixture = {
+  matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
   venue: string;

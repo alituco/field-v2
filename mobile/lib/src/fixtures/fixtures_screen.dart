@@ -1,17 +1,44 @@
 import 'package:flutter/material.dart';
 
+import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../open_queue/open_queue.dart';
+import '../open_queue/open_queue_repository.dart';
+import '../open_queue/open_queue_review_screen.dart';
+import '../open_queue/open_queue_screen.dart';
 import 'create_fixture_screen.dart';
 import 'fixture.dart';
 import 'fixture_detail_screen.dart';
+import 'fixture_play_chooser.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
 
+Future<OpenQueueRole?> showSoloFixtureAvailabilitySheet(
+  BuildContext context,
+  OpenQueueGame game,
+) {
+  return showModalBottomSheet<OpenQueueRole>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (context) => _SoloFixtureSheet(game: game),
+  );
+}
+
 class FixturesScreen extends StatefulWidget {
-  const FixturesScreen({super.key, required this.fixtureRepository});
+  const FixturesScreen({
+    super.key,
+    required this.fixtureRepository,
+    required this.openQueueRepository,
+    this.clanRepository,
+    this.onNavigateTab,
+  });
 
   final FixtureRepository fixtureRepository;
+  final OpenQueueRepository openQueueRepository;
+  final ClanRepository? clanRepository;
+  final ValueChanged<int>? onNavigateTab;
 
   @override
   State<FixturesScreen> createState() => _FixturesScreenState();
@@ -19,6 +46,7 @@ class FixturesScreen extends StatefulWidget {
 
 class _FixturesScreenState extends State<FixturesScreen> {
   List<Fixture> _fixtures = const [];
+  List<OpenQueueGame> _soloGames = const [];
   MyClanMembership? _myClanMembership;
   FixtureStatus? _selectedStatus;
   DateTime? _selectedMatchDate;
@@ -40,14 +68,18 @@ class _FixturesScreenState extends State<FixturesScreen> {
     try {
       final results = await Future.wait([
         widget.fixtureRepository.listFixtures(),
+        widget.openQueueRepository.listFixtureGames(),
         widget.fixtureRepository.getMyClanMembership(),
       ]);
       if (!mounted) return;
       final fixtures = results[0] as List<Fixture>;
+      final soloGames = results[1] as List<OpenQueueGame>;
+      final matches = _fixtureFeedItems(fixtures, soloGames);
       setState(() {
         _fixtures = fixtures;
-        _myClanMembership = results[1] as MyClanMembership?;
-        _selectedMatchDate ??= _defaultMatchDate(fixtures);
+        _soloGames = soloGames;
+        _myClanMembership = results[2] as MyClanMembership?;
+        _selectedMatchDate ??= _defaultMatchDate(matches);
       });
     } catch (error) {
       if (!mounted) return;
@@ -64,31 +96,81 @@ class _FixturesScreenState extends State<FixturesScreen> {
     }
   }
 
-  List<DateTime> get _calendarDates => _matchCalendarDates(_fixtures);
+  List<_FixtureFeedItem> get _matches =>
+      _fixtureFeedItems(_fixtures, _soloGames);
 
-  List<Fixture> get _selectedDateFixtures {
+  List<DateTime> get _calendarDates => _matchCalendarDates(_matches);
+
+  List<_FixtureFeedItem> get _selectedDateMatches {
     final selectedDate = _selectedMatchDate;
     if (selectedDate == null) return const [];
 
-    return _fixtures
-        .where((fixture) => _sameDay(fixture.matchDate, selectedDate))
+    return _matches
+        .where((match) => _sameDay(match.matchDate, selectedDate))
         .toList();
   }
 
-  List<Fixture> get _filteredFixtures {
-    final fixtures = _selectedDateFixtures;
-    if (_selectedStatus == null) return fixtures;
-    return fixtures
-        .where((fixture) => fixture.status == _selectedStatus)
+  List<_FixtureFeedItem> get _filteredMatches {
+    final matches = _selectedDateMatches;
+    if (_selectedStatus == null) return matches;
+    return matches
+        .where((match) => match.filterStatus == _selectedStatus)
         .toList();
   }
 
-  Future<void> _openCreateMatch() async {
+  Map<FixtureStatus, int> _statusCounts(Iterable<_FixtureFeedItem> matches) {
+    final counts = <FixtureStatus, int>{};
+    for (final match in matches) {
+      counts.update(
+        match.filterStatus,
+        (count) => count + 1,
+        ifAbsent: () => 1,
+      );
+    }
+    return counts;
+  }
+
+  Future<void> _openPlay() async {
+    final selection = await showFixturePlayChooser(
+      context: context,
+      cachedMembership: _myClanMembership,
+      loadMembership: widget.fixtureRepository.getMyClanMembership,
+    );
+    if (selection == null || !mounted) return;
+
+    if (selection.mode == FixturePlayMode.solo) {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => OpenQueueScreen(
+            repository: widget.openQueueRepository,
+            onNavigateTab: widget.onNavigateTab,
+          ),
+        ),
+      );
+      if (mounted) await _load();
+      return;
+    }
+
+    final membership = selection.membership;
+    setState(() => _myClanMembership = membership);
+    if (membership?.canManageMatches != true) {
+      final goToClans = await showClanScheduleBlockedDialog(
+        context: context,
+        membership: membership,
+      );
+      if (goToClans && mounted) widget.onNavigateTab?.call(2);
+      return;
+    }
+
+    await _openCreateMatch(membership!);
+  }
+
+  Future<void> _openCreateMatch(MyClanMembership membership) async {
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (context) => CreateFixtureScreen(
           fixtureRepository: widget.fixtureRepository,
-          myClanMembership: _myClanMembership,
+          myClanMembership: membership,
         ),
       ),
     );
@@ -103,6 +185,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
         builder: (context) => FixtureDetailScreen(
           fixture: fixture,
           fixtureRepository: widget.fixtureRepository,
+          clanRepository: widget.clanRepository,
           myClanMembership: _myClanMembership,
         ),
       ),
@@ -112,23 +195,98 @@ class _FixturesScreenState extends State<FixturesScreen> {
     }
   }
 
+  Future<void> _openSoloGame(OpenQueueGame game) async {
+    if (game.status == 'FULL' ||
+        game.status == 'LIVE' ||
+        game.status == 'FINAL') {
+      await _openSoloMatchDetail(game);
+      return;
+    }
+
+    final role = await showSoloFixtureAvailabilitySheet(context, game);
+    if (role == null || !mounted) return;
+
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => OpenQueueReviewScreen(
+          repository: widget.openQueueRepository,
+          game: game,
+          role: role,
+          onNavigateTab: widget.onNavigateTab,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _openSoloMatchDetail(OpenQueueGame game) async {
+    try {
+      final detail = await widget.openQueueRepository.getMatchDetail(game.id);
+      if (!mounted) return;
+      await Navigator.of(context).push<bool>(
+        MaterialPageRoute<bool>(
+          builder: (_) => FixtureDetailScreen(
+            fixture: detail.toFixture(),
+            fixtureRepository: widget.fixtureRepository,
+            clanRepository: widget.clanRepository,
+            myClanMembership: null,
+            sourceLabel: 'SOLO',
+            showTeamRatings: false,
+            playerRatingUpdate: detail.viewerRatingUpdate,
+            refreshFixture: () async {
+              final next = await widget.openQueueRepository.getMatchDetail(
+                game.id,
+              );
+              return next.toFixture();
+            },
+          ),
+        ),
+      );
+      if (mounted) await _load();
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not open this solo match. Try again.',
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  Widget _matchCard(_FixtureFeedItem match) {
+    final fixture = match.fixture;
+    if (fixture != null) {
+      return FixtureCard(fixture: fixture, onTap: () => _openFixture(fixture));
+    }
+
+    final game = match.soloGame!;
+    return SoloFixtureCard(game: game, onTap: () => _openSoloGame(game));
+  }
+
   @override
   Widget build(BuildContext context) {
+    final matches = _matches;
     final calendarDates = _calendarDates;
     final selectedDate =
         _selectedMatchDate ??
         (calendarDates.isEmpty ? null : calendarDates.first);
-    final selectedDateFixtures = _selectedDateFixtures;
-    final filteredFixtures = _filteredFixtures;
+    final selectedDateMatches = _selectedDateMatches;
+    final filteredMatches = _filteredMatches;
+    final selectedStatusCounts = _statusCounts(selectedDateMatches);
 
     return FieldHeaderOverlay(
       header: FieldPageHeader(
         title: 'Fixtures',
         rightAction: HeaderActionButton(
-          icon: Icons.add_rounded,
-          label: 'Host',
-          tone: HeaderActionTone.pink,
-          onPressed: _openCreateMatch,
+          icon: Icons.sports_soccer_rounded,
+          label: 'Play',
+          tone: HeaderActionTone.blue,
+          onPressed: _openPlay,
         ),
       ),
       child: RefreshIndicator(
@@ -139,14 +297,17 @@ class _FixturesScreenState extends State<FixturesScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           padding: fieldHeaderAwarePadding(context, top: 24, bottom: 124),
           children: [
-            FixtureHeroBanner(fixtures: _fixtures),
+            FixtureHeroBanner(
+              totalMatches: matches.length,
+              statusCounts: _statusCounts(matches),
+            ),
             const SizedBox(height: 24),
             const _SectionLabel('Match Calendar'),
             const SizedBox(height: 10),
             _MatchDayCalendar(
               dates: calendarDates,
               selectedDate: selectedDate,
-              fixtures: _fixtures,
+              matches: matches,
               onSelected: (date) {
                 setState(() {
                   _selectedMatchDate = date;
@@ -159,7 +320,8 @@ class _FixturesScreenState extends State<FixturesScreen> {
             const SizedBox(height: 10),
             FixtureStatusFilters(
               selectedStatus: _selectedStatus,
-              fixtures: selectedDateFixtures,
+              statusCounts: selectedStatusCounts,
+              totalMatches: selectedDateMatches.length,
               onSelected: (status) {
                 setState(() => _selectedStatus = status);
               },
@@ -168,17 +330,17 @@ class _FixturesScreenState extends State<FixturesScreen> {
             _SectionLabel(
               selectedDate == null
                   ? 'No Match Day Selected'
-                  : '${_longDateLabel(selectedDate)} - ${filteredFixtures.length} Match${filteredFixtures.length == 1 ? '' : 'es'}',
+                  : '${_longDateLabel(selectedDate)} - ${filteredMatches.length} Match${filteredMatches.length == 1 ? '' : 'es'}',
             ),
             const SizedBox(height: 12),
             if (_isLoading)
               const _FixturesLoadingState()
             else if (_errorText != null)
               _FixturesErrorState(message: _errorText!, onRetry: _load)
-            else if (filteredFixtures.isEmpty)
+            else if (filteredMatches.isEmpty)
               const _FixturesEmptyState()
             else
-              for (var i = 0; i < filteredFixtures.length; i++) ...[
+              for (var i = 0; i < filteredMatches.length; i++) ...[
                 TweenAnimationBuilder<double>(
                   tween: Tween(begin: 0, end: 1),
                   duration: Duration(milliseconds: 240 + (i * 50)),
@@ -192,13 +354,9 @@ class _FixturesScreenState extends State<FixturesScreen> {
                       ),
                     );
                   },
-                  child: FixtureCard(
-                    fixture: filteredFixtures[i],
-                    onTap: () => _openFixture(filteredFixtures[i]),
-                  ),
+                  child: _matchCard(filteredMatches[i]),
                 ),
-                if (i != filteredFixtures.length - 1)
-                  const SizedBox(height: 12),
+                if (i != filteredMatches.length - 1) const SizedBox(height: 12),
               ],
           ],
         ),
@@ -211,13 +369,13 @@ class _MatchDayCalendar extends StatefulWidget {
   const _MatchDayCalendar({
     required this.dates,
     required this.selectedDate,
-    required this.fixtures,
+    required this.matches,
     required this.onSelected,
   });
 
   final List<DateTime> dates;
   final DateTime? selectedDate;
-  final List<Fixture> fixtures;
+  final List<_FixtureFeedItem> matches;
   final ValueChanged<DateTime> onSelected;
 
   @override
@@ -283,7 +441,7 @@ class _MatchDayCalendarState extends State<_MatchDayCalendar> {
       return const _StatePanel(
         icon: Icons.calendar_month_rounded,
         title: 'No match days',
-        message: 'Tuesday and Thursday match days will show here.',
+        message: 'Tuesday and Friday match days will show here.',
       );
     }
 
@@ -300,8 +458,8 @@ class _MatchDayCalendarState extends State<_MatchDayCalendar> {
           final selected =
               widget.selectedDate != null &&
               _sameDay(date, widget.selectedDate!);
-          final count = widget.fixtures
-              .where((fixture) => _sameDay(fixture.matchDate, date))
+          final count = widget.matches
+              .where((match) => _sameDay(match.matchDate, date))
               .length;
 
           return _MatchDayChip(
@@ -550,7 +708,412 @@ class _FixturesEmptyState extends StatelessWidget {
     return const _StatePanel(
       icon: Icons.sports_mma_rounded,
       title: 'No matches yet',
-      message: 'Host a match to put the first fixture on the board.',
+      message: 'There are no clan or solo games on this match day.',
+    );
+  }
+}
+
+const _soloFixtureSpotOrder = [
+  OpenQueueRole.goalkeeper,
+  OpenQueueRole.defender,
+  OpenQueueRole.midfielder,
+  OpenQueueRole.attacker,
+];
+
+class _SoloFixtureSheet extends StatelessWidget {
+  const _SoloFixtureSheet({required this.game});
+
+  final OpenQueueGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _soloFixtureStatus(game);
+    final showScore =
+        status == FixtureStatus.live || status == FixtureStatus.finalResult;
+    final showAvailability =
+        !showScore &&
+        status != FixtureStatus.cancelled &&
+        game.startsAt.isAfter(DateTime.now());
+    final canSelectSpot =
+        game.status.toUpperCase() == 'OPEN' &&
+        !game.hasMyBooking &&
+        !game.isFull &&
+        game.startsAt.isAfter(DateTime.now());
+    final startsAt = game.bahrainStartsAt;
+    final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
+
+    return SafeArea(
+      top: false,
+      child: Container(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        decoration: const BoxDecoration(
+          color: fieldBackground,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 22),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 42,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: fieldGray300,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      'SOLO',
+                      style: TextStyle(
+                        color: fieldBlue600,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    _soloStatusLabel(game),
+                    style: TextStyle(
+                      color: status == FixtureStatus.live
+                          ? Colors.redAccent
+                          : fieldGray600,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Open Queue Game',
+                style: TextStyle(
+                  color: fieldGray900,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -0.4,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${_longDateLabel(DateTime(startsAt.year, startsAt.month, startsAt.day))} · ${game.timeLabel}',
+                style: const TextStyle(
+                  color: fieldGray500,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 18),
+              if (showScore)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 16,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: fieldGray100),
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'WHITE',
+                          style: TextStyle(
+                            color: fieldGray700,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${game.whiteScore ?? 0}  –  ${game.blackScore ?? 0}',
+                        style: const TextStyle(
+                          color: fieldGray900,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const Expanded(
+                        child: Text(
+                          'BLACK',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: fieldGray700,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (showScore) const SizedBox(height: 12),
+              _SoloSheetRow(
+                icon: Icons.location_on_outlined,
+                label: 'Venue',
+                value: game.venue,
+              ),
+              const SizedBox(height: 10),
+              _SoloSheetRow(
+                icon: Icons.groups_rounded,
+                label: 'Players',
+                value: '${game.confirmedCount} of ${game.capacity} confirmed',
+              ),
+              if (game.hasMyBooking) ...[
+                const SizedBox(height: 10),
+                _SoloSheetRow(
+                  icon: Icons.verified_rounded,
+                  label: 'Your spot',
+                  value:
+                      '${game.myBookingRole?.label ?? 'Confirmed'}${game.myBookingTeam == null ? '' : ' · ${game.myBookingTeam}'}',
+                  highlighted: true,
+                ),
+              ],
+              if (showAvailability) ...[
+                const SizedBox(height: 22),
+                const Text(
+                  'AVAILABLE SPOTS',
+                  style: TextStyle(
+                    color: fieldGray700,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 1.25,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  game.hasMyBooking
+                      ? 'You are already confirmed. Here is what remains for this game.'
+                      : game.isFull
+                      ? 'This game is full. There are no positions left.'
+                      : 'Tap an available position to book this exact game.',
+                  style: const TextStyle(
+                    color: fieldGray500,
+                    fontSize: 12,
+                    height: 1.35,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                GridView.count(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  crossAxisCount: 2,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1.72,
+                  children: [
+                    for (final role in _soloFixtureSpotOrder)
+                      _SoloSpotTile(
+                        role: role,
+                        spots: game.spotsFor(role),
+                        enabled: canSelectSpot && game.spotsFor(role) > 0,
+                        onSelected: () => Navigator.of(context).pop(role),
+                      ),
+                  ],
+                ),
+              ],
+              if (!showAvailability && !showScore) ...[
+                const SizedBox(height: 18),
+                const Text(
+                  'Position booking is closed for this game.',
+                  style: TextStyle(
+                    color: fieldGray500,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(50),
+                    foregroundColor: fieldGray700,
+                    side: const BorderSide(color: fieldGray200),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  child: const Text(
+                    'Close',
+                    style: TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SoloSpotTile extends StatelessWidget {
+  const _SoloSpotTile({
+    required this.role,
+    required this.spots,
+    required this.enabled,
+    required this.onSelected,
+  });
+
+  final OpenQueueRole role;
+  final int spots;
+  final bool enabled;
+  final VoidCallback onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasSpots = spots > 0;
+    final spotLabel = switch (spots) {
+      <= 0 => 'Full',
+      1 => '1 spot left',
+      _ => '$spots spots left',
+    };
+
+    return Material(
+      key: ValueKey('solo-spot-${role.code}'),
+      color: enabled
+          ? fieldEmerald50
+          : hasSpots
+          ? Colors.white
+          : fieldGray100,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        onTap: enabled ? onSelected : null,
+        borderRadius: BorderRadius.circular(16),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            border: Border.all(color: enabled ? fieldEmerald200 : fieldGray200),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 7,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: enabled ? fieldEmerald600 : fieldGray300,
+                      borderRadius: BorderRadius.circular(7),
+                    ),
+                    child: Text(
+                      role.code,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    enabled
+                        ? Icons.chevron_right_rounded
+                        : Icons.lock_outline_rounded,
+                    color: enabled ? fieldEmerald600 : fieldGray400,
+                    size: 18,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                role.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                spotLabel,
+                style: TextStyle(
+                  color: enabled ? fieldEmerald700 : fieldGray500,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SoloSheetRow extends StatelessWidget {
+  const _SoloSheetRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.highlighted = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final bool highlighted;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(
+          icon,
+          size: 19,
+          color: highlighted ? fieldEmerald600 : fieldGray400,
+        ),
+        const SizedBox(width: 10),
+        Text(
+          '$label:',
+          style: const TextStyle(
+            color: fieldGray500,
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: highlighted ? fieldEmerald700 : fieldGray900,
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -612,30 +1175,32 @@ class _StatePanel extends StatelessWidget {
   }
 }
 
-DateTime? _defaultMatchDate(List<Fixture> fixtures) {
-  final calendarDates = _matchCalendarDates(fixtures);
+DateTime? _defaultMatchDate(List<_FixtureFeedItem> matches) {
+  final calendarDates = _matchCalendarDates(matches);
   if (calendarDates.isEmpty) return null;
 
-  final today = _dateOnly(DateTime.now());
-  final upcomingMatchDays =
-      calendarDates
-          .where((date) => _isEnabledMatchDay(date) && !date.isBefore(today))
-          .toList()
-        ..sort();
-  if (upcomingMatchDays.isNotEmpty) return upcomingMatchDays.first;
+  final today = _bahrainToday();
+  final actualDates = <String, DateTime>{
+    for (final match in matches)
+      _dateKey(match.matchDate): _dateOnly(match.matchDate),
+  }.values.toList()..sort();
+  final upcoming = actualDates.where((date) => !date.isBefore(today)).toList();
+  if (upcoming.isNotEmpty) return upcoming.first;
+  if (actualDates.isNotEmpty) return actualDates.last;
 
-  return calendarDates.first;
+  return calendarDates.firstWhere(
+    (date) => !date.isBefore(today),
+    orElse: () => calendarDates.last,
+  );
 }
 
-List<DateTime> _matchCalendarDates(List<Fixture> fixtures) {
+List<DateTime> _matchCalendarDates(List<_FixtureFeedItem> matches) {
   final datesByKey = <String, DateTime>{};
-  final today = _dateOnly(DateTime.now());
+  final today = _bahrainToday();
 
-  for (final fixture in fixtures) {
-    final date = _dateOnly(fixture.matchDate);
-    if (_isEnabledMatchDay(date)) {
-      datesByKey[_dateKey(date)] = date;
-    }
+  for (final match in matches) {
+    final date = _dateOnly(match.matchDate);
+    datesByKey[_dateKey(date)] = date;
   }
 
   var cursor = today.subtract(const Duration(days: 1));
@@ -662,8 +1227,91 @@ List<DateTime> _matchCalendarDates(List<Fixture> fixtures) {
   return dates;
 }
 
+List<_FixtureFeedItem> _fixtureFeedItems(
+  List<Fixture> fixtures,
+  List<OpenQueueGame> soloGames,
+) {
+  final matches = <_FixtureFeedItem>[
+    for (final fixture in fixtures) _FixtureFeedItem.clan(fixture),
+    for (final game in soloGames)
+      if (game.status != 'CANCELLED') _FixtureFeedItem.solo(game),
+  ];
+  matches.sort((left, right) {
+    final date = left.matchDate.compareTo(right.matchDate);
+    if (date != 0) return date;
+    final time = left.sortMinutes.compareTo(right.sortMinutes);
+    if (time != 0) return time;
+    return left.id.compareTo(right.id);
+  });
+  return matches;
+}
+
+class _FixtureFeedItem {
+  const _FixtureFeedItem._({this.fixture, this.soloGame});
+
+  factory _FixtureFeedItem.clan(Fixture fixture) {
+    return _FixtureFeedItem._(fixture: fixture);
+  }
+
+  factory _FixtureFeedItem.solo(OpenQueueGame game) {
+    return _FixtureFeedItem._(soloGame: game);
+  }
+
+  final Fixture? fixture;
+  final OpenQueueGame? soloGame;
+
+  String get id => fixture?.id ?? soloGame!.id;
+
+  DateTime get matchDate {
+    final clanFixture = fixture;
+    if (clanFixture != null) return _dateOnly(clanFixture.matchDate);
+    final startsAt = soloGame!.bahrainStartsAt;
+    return DateTime(startsAt.year, startsAt.month, startsAt.day);
+  }
+
+  FixtureStatus get filterStatus {
+    final clanFixture = fixture;
+    return clanFixture?.status ?? _soloFixtureStatus(soloGame!);
+  }
+
+  int get sortMinutes {
+    final game = soloGame;
+    if (game != null) {
+      final startsAt = game.bahrainStartsAt;
+      return startsAt.hour * 60 + startsAt.minute;
+    }
+    return fixture!.timeSlot.startsWith('8:30') ? 20 * 60 + 30 : 19 * 60;
+  }
+}
+
+FixtureStatus _soloFixtureStatus(OpenQueueGame game) {
+  return switch (game.status.toUpperCase()) {
+    'OPEN' when game.isFull => FixtureStatus.scheduled,
+    'FULL' => FixtureStatus.scheduled,
+    'LIVE' => FixtureStatus.live,
+    'FINAL' => FixtureStatus.finalResult,
+    'CANCELLED' => FixtureStatus.cancelled,
+    _ => FixtureStatus.open,
+  };
+}
+
+String _soloStatusLabel(OpenQueueGame game) {
+  return switch (game.status.toUpperCase()) {
+    'OPEN' when game.isFull => 'FULL',
+    'FULL' => 'FULL',
+    'LIVE' => 'LIVE NOW',
+    'FINAL' => 'FINAL',
+    _ => 'SPOTS AVAILABLE',
+  };
+}
+
+DateTime _bahrainToday() {
+  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+  return DateTime(now.year, now.month, now.day);
+}
+
 bool _isEnabledMatchDay(DateTime date) {
-  return date.weekday == DateTime.tuesday || date.weekday == DateTime.thursday;
+  return isFixtureMatchDay(date);
 }
 
 bool _sameNullableDay(DateTime? a, DateTime? b) {

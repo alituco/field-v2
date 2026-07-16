@@ -18,7 +18,7 @@ class CreateFixtureScreen extends StatefulWidget {
   });
 
   final FixtureRepository fixtureRepository;
-  final MyClanMembership? myClanMembership;
+  final MyClanMembership myClanMembership;
 
   @override
   State<CreateFixtureScreen> createState() => _CreateFixtureScreenState();
@@ -34,18 +34,24 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   FixtureTimeSlot? _selectedTimeSlot;
   bool _isLoadingOpenFixtures = true;
   bool _isSubmitting = false;
+  bool _isCheckingAccess = true;
+  bool _accessReady = false;
   String? _errorText;
+  String? _accessMessage;
+  late MyClanMembership _membership;
   late final AnimationController _successController;
 
-  bool get _canAct => widget.myClanMembership?.canManageMatches == true;
+  bool get _canAct => _accessReady && _membership.canManageMatches;
 
   @override
   void initState() {
     super.initState();
+    _membership = widget.myClanMembership;
     _successController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 2600),
     );
+    _validateAccess();
     _loadOpenFixtures();
   }
 
@@ -53,6 +59,69 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   void dispose() {
     _successController.dispose();
     super.dispose();
+  }
+
+  Future<bool> _validateAccess({bool showLoading = true}) async {
+    if (showLoading) {
+      setState(() {
+        _isCheckingAccess = true;
+        _accessMessage = null;
+      });
+    }
+
+    try {
+      final latest = await widget.fixtureRepository.getMyClanMembership();
+      if (!mounted) return false;
+
+      final sameClan = latest?.clan.id == widget.myClanMembership.clan.id;
+      if (latest == null) {
+        setState(() {
+          _accessReady = false;
+          _accessMessage =
+              'You are no longer an active member of ${widget.myClanMembership.clan.name}. Clan games can only be scheduled by a current owner or leader.';
+        });
+        return false;
+      }
+      if (!sameClan) {
+        setState(() {
+          _accessReady = false;
+          _accessMessage =
+              'Your active clan has changed. Go back to Fixtures and start again so the match is scheduled for the right clan.';
+        });
+        return false;
+      }
+      if (!latest.canManageMatches) {
+        setState(() {
+          _membership = latest;
+          _accessReady = false;
+          _accessMessage =
+              'You are a member of ${latest.clan.name}, but only its owner or a leader can schedule or join clan games.';
+        });
+        return false;
+      }
+
+      setState(() {
+        _membership = latest;
+        _accessReady = true;
+        _accessMessage = null;
+      });
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      setState(() {
+        _accessReady = false;
+        _accessMessage = userFacingError(
+          error,
+          fallback:
+              'We could not verify that you can schedule for this clan. Check your connection and try again.',
+        );
+      });
+      return false;
+    } finally {
+      if (mounted && showLoading) {
+        setState(() => _isCheckingAccess = false);
+      }
+    }
   }
 
   Future<void> _loadOpenFixtures() async {
@@ -67,7 +136,13 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       setState(() {
         _fixtures = fixtures;
         _openFixtures = fixtures
-            .where((fixture) => fixture.status == FixtureStatus.open)
+            .where(
+              (fixture) =>
+                  fixture.status == FixtureStatus.open &&
+                  fixture.homeClanId != widget.myClanMembership.clan.id &&
+                  fixture.timeSlot == FixtureTimeSlot.early.label &&
+                  isFixtureMatchDay(fixture.matchDate),
+            )
             .toList();
       });
     } catch (error) {
@@ -104,7 +179,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       return;
     }
 
-    if (fixture.homeClanId == widget.myClanMembership?.clan.id) {
+    if (fixture.homeClanId == _membership.clan.id) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Your clan is already hosting this match.'),
@@ -132,7 +207,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
         _selectedDate != null &&
             !_selectedDate!.isBefore(firstDate) &&
             !_selectedDate!.isAfter(lastDate) &&
-            _isMatchDay(_selectedDate!)
+            isFixtureMatchDay(_selectedDate!)
         ? _selectedDate!
         : _nextMatchDay(firstDate);
     final picked = await showDialog<DateTime>(
@@ -162,15 +237,21 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   }
 
   Future<void> _submit() async {
-    final membership = widget.myClanMembership;
     final date = _selectedDate;
     final timeSlot = _selectedTimeSlot;
-    if (membership == null || date == null || timeSlot == null) return;
+    if (date == null || timeSlot == null) return;
 
     setState(() {
       _isSubmitting = true;
       _errorText = null;
     });
+
+    final stillAllowed = await _validateAccess(showLoading: false);
+    if (!stillAllowed) {
+      if (mounted) setState(() => _isSubmitting = false);
+      return;
+    }
+    final membership = _membership;
 
     try {
       await Future<void>.delayed(const Duration(milliseconds: 900));
@@ -243,16 +324,35 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
               ),
             );
           },
-          child: _buildStep(),
+          child: _buildBody(),
         ),
       ),
-      bottomNavigationBar: _buildBottomAction(),
+      bottomNavigationBar: _accessReady && !_isCheckingAccess
+          ? _buildBottomAction()
+          : null,
     );
+  }
+
+  Widget _buildBody() {
+    if (_isCheckingAccess) {
+      return const _ClanAccessLoadingStep(key: ValueKey('access-loading'));
+    }
+    if (!_accessReady) {
+      return _ClanAccessBlockedStep(
+        key: const ValueKey('access-blocked'),
+        clanName: widget.myClanMembership.clan.name,
+        message:
+            _accessMessage ??
+            'Only the clan owner or a leader can schedule this game.',
+        onRetry: _validateAccess,
+      );
+    }
+    return _buildStep();
   }
 
   String get _headerTitle {
     return switch (_step) {
-      _CreateFixtureStep.chooseAction => 'Play',
+      _CreateFixtureStep.chooseAction => 'Clan Game',
       _CreateFixtureStep.selectTime => 'Select Time',
       _CreateFixtureStep.summary => 'Confirm Match',
       _CreateFixtureStep.success => 'Success',
@@ -260,6 +360,10 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   }
 
   void _handleBack() {
+    if (!_accessReady || _isCheckingAccess) {
+      Navigator.of(context).pop(false);
+      return;
+    }
     if (_step == _CreateFixtureStep.chooseAction) {
       Navigator.of(context).pop(false);
       return;
@@ -284,6 +388,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     return switch (_step) {
       _CreateFixtureStep.chooseAction => _ChooseActionStep(
         key: const ValueKey('choose'),
+        membership: _membership,
         openFixtures: _openFixtures,
         isLoading: _isLoadingOpenFixtures,
         errorText: _errorText,
@@ -293,6 +398,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       ),
       _CreateFixtureStep.selectTime => _SelectTimeStep(
         key: const ValueKey('time'),
+        membership: _membership,
         selectedDate: _selectedDate,
         selectedTimeSlot: _selectedTimeSlot,
         fixtures: _fixtures,
@@ -302,7 +408,8 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       _CreateFixtureStep.summary => _SummaryStep(
         key: const ValueKey('summary'),
         fixtureToJoin: _selectedFixtureToJoin,
-        myClan: widget.myClanMembership?.clan,
+        membership: _membership,
+        myClan: _membership.clan,
         fixtureRepository: widget.fixtureRepository,
         date: _selectedDate!,
         timeSlot: _selectedTimeSlot!,
@@ -312,6 +419,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
         key: const ValueKey('success'),
         controller: _successController,
         joined: _selectedFixtureToJoin != null,
+        clanName: _membership.clan.name,
       ),
     };
   }
@@ -369,9 +477,239 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   }
 }
 
+class _ClanAccessLoadingStep extends StatelessWidget {
+  const _ClanAccessLoadingStep({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: fieldHeaderAwarePadding(context, top: 72, bottom: 40),
+      children: const [
+        Center(
+          child: Column(
+            children: [
+              SizedBox(
+                width: 34,
+                height: 34,
+                child: CircularProgressIndicator(
+                  color: fieldEmerald600,
+                  strokeWidth: 3,
+                ),
+              ),
+              SizedBox(height: 18),
+              Text(
+                'Checking clan access…',
+                style: TextStyle(
+                  color: fieldGray700,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ClanAccessBlockedStep extends StatelessWidget {
+  const _ClanAccessBlockedStep({
+    super.key,
+    required this.clanName,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String clanName;
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      padding: fieldHeaderAwarePadding(context, top: 28, bottom: 40),
+      children: [
+        Container(
+          padding: const EdgeInsets.all(22),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: const Color(0xFFFED7AA)),
+            borderRadius: BorderRadius.circular(22),
+          ),
+          child: Column(
+            children: [
+              Container(
+                width: 62,
+                height: 62,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF7ED),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(
+                  Icons.lock_outline_rounded,
+                  color: Color(0xFFEA580C),
+                  size: 30,
+                ),
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'You cannot schedule for $clanName',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 21,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: fieldGray600,
+                  fontSize: 14,
+                  height: 1.45,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onRetry,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(50),
+                  backgroundColor: fieldEmerald600,
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Check access again'),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ClanSchedulingBanner extends StatelessWidget {
+  const _ClanSchedulingBanner({required this.membership, this.compact = false});
+
+  final MyClanMembership? membership;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final membership = this.membership;
+    final clan = membership?.clan;
+    final roleLabel = switch (membership?.role) {
+      'owner' => 'Owner',
+      'leader' => 'Leader',
+      _ => 'Member',
+    };
+
+    return Container(
+      key: const ValueKey('clan-scheduling-banner'),
+      padding: EdgeInsets.all(compact ? 13 : 16),
+      decoration: BoxDecoration(
+        color: fieldEmerald50,
+        border: Border.all(color: fieldEmerald200),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          if (clan != null)
+            FixtureClanAvatar(clan: clan, size: compact ? 42 : 48)
+          else
+            Container(
+              width: compact ? 42 : 48,
+              height: compact ? 42 : 48,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.shield_outlined, color: fieldEmerald700),
+            ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'SCHEDULING FOR',
+                        style: TextStyle(
+                          color: fieldEmerald700,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: Text(
+                        roleLabel.toUpperCase(),
+                        style: const TextStyle(
+                          color: fieldEmerald700,
+                          fontSize: 8,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: .6,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  clan?.name ?? 'No clan selected',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: fieldGray900,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                if (!compact) ...[
+                  const SizedBox(height: 3),
+                  Text(
+                    clan == null
+                        ? 'Choose a clan before scheduling.'
+                        : 'This game will be created or joined for ${clan.name}.',
+                    style: const TextStyle(
+                      color: fieldGray600,
+                      fontSize: 11,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Icon(Icons.verified_rounded, color: fieldEmerald600, size: 22),
+        ],
+      ),
+    );
+  }
+}
+
 class _ChooseActionStep extends StatelessWidget {
   const _ChooseActionStep({
     super.key,
+    required this.membership,
     required this.openFixtures,
     required this.isLoading,
     required this.errorText,
@@ -380,6 +718,7 @@ class _ChooseActionStep extends StatelessWidget {
     required this.onJoin,
   });
 
+  final MyClanMembership? membership;
   final List<Fixture> openFixtures;
   final bool isLoading;
   final String? errorText;
@@ -389,9 +728,12 @@ class _ChooseActionStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final clanName = membership?.clan.name ?? 'your clan';
     return ListView(
       padding: fieldHeaderAwarePadding(context, bottom: 120),
       children: [
+        _ClanSchedulingBanner(membership: membership),
+        const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.all(22),
           decoration: BoxDecoration(
@@ -425,7 +767,7 @@ class _ChooseActionStep extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'Ready to Clash?',
+                    'Schedule a clan match',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 24,
@@ -434,7 +776,7 @@ class _ChooseActionStep extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Challenge open teams or host a new match to climb the ranks.',
+                    'Host a new match or choose an open opponent below. Every action here is for $clanName.',
                     style: TextStyle(
                       color: Colors.white.withValues(alpha: 0.86),
                       fontSize: 14,
@@ -449,7 +791,10 @@ class _ChooseActionStep extends StatelessWidget {
                     child: FilledButton.icon(
                       onPressed: onHost,
                       icon: const Icon(Icons.add_rounded),
-                      label: const Text('Host a Match'),
+                      label: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text('Host for $clanName'),
+                      ),
                       style: FilledButton.styleFrom(
                         backgroundColor: Colors.white,
                         foregroundColor: fieldEmerald600,
@@ -473,7 +818,7 @@ class _ChooseActionStep extends StatelessWidget {
           children: [
             const Expanded(
               child: Text(
-                'OPEN MATCHES',
+                'OPEN CLAN MATCHES',
                 style: TextStyle(
                   color: fieldGray900,
                   fontSize: 19,
@@ -522,11 +867,15 @@ class _ChooseActionStep extends StatelessWidget {
           const _SimplePanel(
             icon: Icons.shield_rounded,
             title: 'No open matches',
-            message: 'Host one to get the ball rolling.',
+            message: 'Host one for your clan to get the ball rolling.',
           )
         else
           for (var i = 0; i < openFixtures.length; i++) ...[
-            _JoinFixtureCard(fixture: openFixtures[i], onJoin: onJoin),
+            _JoinFixtureCard(
+              fixture: openFixtures[i],
+              clanName: clanName,
+              onJoin: onJoin,
+            ),
             if (i != openFixtures.length - 1) const SizedBox(height: 14),
           ],
       ],
@@ -535,9 +884,14 @@ class _ChooseActionStep extends StatelessWidget {
 }
 
 class _JoinFixtureCard extends StatelessWidget {
-  const _JoinFixtureCard({required this.fixture, required this.onJoin});
+  const _JoinFixtureCard({
+    required this.fixture,
+    required this.clanName,
+    required this.onJoin,
+  });
 
   final Fixture fixture;
+  final String clanName;
   final ValueChanged<Fixture> onJoin;
 
   @override
@@ -574,7 +928,10 @@ class _JoinFixtureCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                child: const Text('Join Match'),
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text('Join for $clanName'),
+                ),
               ),
             ),
           ),
@@ -587,6 +944,7 @@ class _JoinFixtureCard extends StatelessWidget {
 class _SelectTimeStep extends StatelessWidget {
   const _SelectTimeStep({
     super.key,
+    required this.membership,
     required this.selectedDate,
     required this.selectedTimeSlot,
     required this.fixtures,
@@ -594,6 +952,7 @@ class _SelectTimeStep extends StatelessWidget {
     required this.onSelectTimeSlot,
   });
 
+  final MyClanMembership? membership;
   final DateTime? selectedDate;
   final FixtureTimeSlot? selectedTimeSlot;
   final List<Fixture> fixtures;
@@ -604,13 +963,15 @@ class _SelectTimeStep extends StatelessWidget {
   Widget build(BuildContext context) {
     final availableSlots = selectedDate == null
         ? const <FixtureTimeSlot>[]
-        : FixtureTimeSlot.values
+        : clanFixtureTimeSlots
               .where((slot) => !_isBooked(fixtures, selectedDate!, slot))
               .toList();
 
     return ListView(
       padding: fieldHeaderAwarePadding(context, top: 18, bottom: 120),
       children: [
+        _ClanSchedulingBanner(membership: membership, compact: true),
+        const SizedBox(height: 20),
         const Text(
           'Pick a Date',
           style: TextStyle(
@@ -621,7 +982,7 @@ class _SelectTimeStep extends StatelessWidget {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Choose a Tuesday or Thursday first. Each kickoff can host one game.',
+          'Choose a Tuesday or Friday. Clan games always run from 7:00–8:00 PM.',
           style: TextStyle(
             color: fieldGray500,
             fontSize: 14,
@@ -704,7 +1065,7 @@ class _SelectTimeStep extends StatelessWidget {
                     if (availableSlots.isEmpty)
                       const _NoSlotsPanel()
                     else
-                      for (final slot in FixtureTimeSlot.values) ...[
+                      for (final slot in clanFixtureTimeSlots) ...[
                         _TimeSlotTile(
                           slot: slot,
                           selected: selectedTimeSlot == slot,
@@ -716,7 +1077,7 @@ class _SelectTimeStep extends StatelessWidget {
                           ),
                           onTap: () => onSelectTimeSlot(slot),
                         ),
-                        if (slot != FixtureTimeSlot.values.last)
+                        if (slot != clanFixtureTimeSlots.last)
                           const SizedBox(height: 10),
                       ],
                   ],
@@ -777,7 +1138,7 @@ class _NoSlotsPanel extends StatelessWidget {
           SizedBox(width: 12),
           Expanded(
             child: Text(
-              'This date is fully booked. Pick another Tuesday or Thursday.',
+              'The 7:00–8:00 PM clan game is booked. Pick another Tuesday or Friday.',
               style: TextStyle(
                 color: Color(0xFF9A3412),
                 fontSize: 14,
@@ -965,7 +1326,7 @@ class _MatchDatePickerDialogState extends State<_MatchDatePickerDialog> {
   bool _isEnabled(DateTime date) {
     return !date.isBefore(widget.firstDate) &&
         !date.isAfter(widget.lastDate) &&
-        _isMatchDay(date);
+        isFixtureMatchDay(date);
   }
 
   @override
@@ -1271,6 +1632,7 @@ class _SummaryStep extends StatelessWidget {
   const _SummaryStep({
     super.key,
     required this.fixtureToJoin,
+    required this.membership,
     required this.myClan,
     required this.fixtureRepository,
     required this.date,
@@ -1279,6 +1641,7 @@ class _SummaryStep extends StatelessWidget {
   });
 
   final Fixture? fixtureToJoin;
+  final MyClanMembership? membership;
   final FixtureClan? myClan;
   final FixtureRepository fixtureRepository;
   final DateTime date;
@@ -1290,6 +1653,8 @@ class _SummaryStep extends StatelessWidget {
     return ListView(
       padding: fieldHeaderAwarePadding(context, top: 18, bottom: 120),
       children: [
+        _ClanSchedulingBanner(membership: membership, compact: true),
+        const SizedBox(height: 14),
         Container(
           padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
@@ -1863,10 +2228,12 @@ class _SuccessStep extends StatelessWidget {
     super.key,
     required this.controller,
     required this.joined,
+    required this.clanName,
   });
 
   final AnimationController controller;
   final bool joined;
+  final String clanName;
 
   @override
   Widget build(BuildContext context) {
@@ -1929,8 +2296,8 @@ class _SuccessStep extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   joined
-                      ? 'Your game is on the board. Get ready for battle.'
-                      : 'Your match is now open for challenges.',
+                      ? '$clanName is confirmed for this game.'
+                      : '$clanName is now hosting this match and open for challenges.',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: fieldGray500,
@@ -2125,14 +2492,10 @@ class _SimplePanel extends StatelessWidget {
 
 DateTime _nextMatchDay(DateTime start) {
   var date = start;
-  while (!_isMatchDay(date)) {
+  while (!isFixtureMatchDay(date)) {
     date = date.add(const Duration(days: 1));
   }
   return date;
-}
-
-bool _isMatchDay(DateTime date) {
-  return date.weekday == DateTime.tuesday || date.weekday == DateTime.thursday;
 }
 
 bool _isBooked(List<Fixture> fixtures, DateTime date, FixtureTimeSlot slot) {

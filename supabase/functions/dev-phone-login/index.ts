@@ -24,6 +24,8 @@ type ConfiguredDevUsers = {
   error?: string;
 };
 
+const devDateOfBirth = "2000-01-01";
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -92,6 +94,7 @@ Deno.serve(async (request) => {
         id: userId,
         phone: devUser.phone,
         display_name: devUser.displayName,
+        date_of_birth: devDateOfBirth,
       },
       { onConflict: "id" },
     );
@@ -143,6 +146,7 @@ async function ensureDevUser({
     user_metadata: {
       display_name: displayName,
       name: displayName,
+      date_of_birth: devDateOfBirth,
     },
   });
 
@@ -168,6 +172,7 @@ async function ensureDevUser({
         ...existingUser.user_metadata,
         display_name: displayName,
         name: displayName,
+        date_of_birth: devDateOfBirth,
       },
     },
   );

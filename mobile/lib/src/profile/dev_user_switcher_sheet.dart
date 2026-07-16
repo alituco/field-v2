@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
@@ -75,24 +76,20 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
   Future<void> _switchUser(DevProfileOption profile) async {
     if (_switchingUserId != null || profile.id == widget.currentUserId) return;
 
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFieldConfirmDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Switch account?'),
-        content: Text('Continue as ${profile.displayName}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Switch'),
-          ),
-        ],
-      ),
+      icon: Icons.switch_account_rounded,
+      eyebrow: 'Switch user',
+      title: 'Continue as ${profile.displayName}?',
+      message:
+          'The app will reload this user’s profile, bookings, and clan access.',
+      detail: profile.username.isEmpty
+          ? profile.displayName
+          : '@${profile.username}',
+      cancelLabel: 'Stay here',
+      confirmLabel: 'Switch user',
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
 
     setState(() => _switchingUserId = profile.id);
     try {
