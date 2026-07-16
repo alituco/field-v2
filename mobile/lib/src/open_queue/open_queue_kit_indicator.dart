@@ -8,10 +8,12 @@ class OpenQueueKitIndicator extends StatelessWidget {
     super.key,
     required this.booking,
     this.compact = false,
+    this.inline = false,
   });
 
   final OpenQueueBooking booking;
   final bool compact;
+  final bool inline;
 
   @override
   Widget build(BuildContext context) {
@@ -21,6 +23,9 @@ class OpenQueueKitIndicator extends StatelessWidget {
 
     final team = booking.assignedTeam;
     final instruction = booking.kitInstruction;
+    if (inline) {
+      return _InlineOpenQueueKitIndicator(team: team, instruction: instruction);
+    }
     if (team == null || instruction == null) {
       return Semantics(
         container: true,
@@ -154,6 +159,125 @@ class OpenQueueKitIndicator extends StatelessWidget {
                 Icons.check_circle_rounded,
                 color: foreground.withValues(alpha: 0.76),
                 size: compact ? 18 : 21,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineOpenQueueKitIndicator extends StatelessWidget {
+  const _InlineOpenQueueKitIndicator({
+    required this.team,
+    required this.instruction,
+  });
+
+  final String? team;
+  final String? instruction;
+
+  @override
+  Widget build(BuildContext context) {
+    if (team == null || instruction == null) {
+      return Semantics(
+        container: true,
+        label: 'Match kit assignment is updating',
+        child: Container(
+          key: const ValueKey('kit-assignment-updating'),
+          constraints: const BoxConstraints(minHeight: 40),
+          child: const Row(
+            children: [
+              Icon(Icons.sync_rounded, color: Color(0xFFB45309), size: 22),
+              SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'MATCH KIT',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: .8,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'UPDATING',
+                      style: TextStyle(
+                        color: Color(0xFF92400E),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final isBlack = team == openQueueBlackTeamId;
+    return Semantics(
+      container: true,
+      label: 'Match kit: ${instruction!.toLowerCase()}',
+      child: ExcludeSemantics(
+        child: Container(
+          key: const ValueKey('kit-instruction'),
+          constraints: const BoxConstraints(minHeight: 40),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: isBlack ? fieldGray900 : Colors.white,
+                  border: Border.all(
+                    color: isBlack ? fieldGray900 : fieldGray300,
+                    width: 1.5,
+                  ),
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                child: Icon(
+                  Icons.checkroom_rounded,
+                  color: isBlack ? Colors.white : fieldGray900,
+                  size: 21,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'MATCH KIT',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 8,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: .8,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      instruction!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 12,
+                        height: 1,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),

@@ -28,7 +28,7 @@ void main() {
     await _pumpDashboard(tester, game, team: openQueueWhiteTeamId);
 
     expect(find.text('MATCH PENDING'), findsOneWidget);
-    expect(find.text('8 / 12 CONFIRMED'), findsOneWidget);
+    expect(find.text('8 / 12 PLAYERS'), findsOneWidget);
     expect(find.text('MATCH CONFIRMED'), findsNothing);
     expect(find.text('Midfielder · 8:30 PM'), findsOneWidget);
     expect(find.textContaining('TODAY ·'), findsOneWidget);
@@ -48,7 +48,7 @@ void main() {
     await _pumpDashboard(tester, game, team: openQueueBlackTeamId);
 
     expect(find.text('MATCH CONFIRMED'), findsOneWidget);
-    expect(find.text('12 / 12 CONFIRMED'), findsOneWidget);
+    expect(find.text('12 / 12 PLAYERS'), findsOneWidget);
     expect(find.text('MATCH PENDING'), findsNothing);
     expect(find.textContaining('TOMORROW ·'), findsOneWidget);
     expect(find.text('WEAR BLACK'), findsOneWidget);
@@ -70,7 +70,7 @@ void main() {
     await _pumpDashboard(tester, game);
 
     expect(find.text('MATCH CONFIRMED'), findsOneWidget);
-    expect(find.text('KIT ASSIGNMENT UPDATING'), findsOneWidget);
+    expect(find.text('UPDATING'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('kit-assignment-updating')),
       findsOneWidget,
@@ -94,6 +94,10 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('MATCH PENDING').hitTestable(), findsOneWidget);
+    final initialCarouselSize = tester.getSize(
+      find.byKey(const ValueKey('home-solo-bookings-carousel')),
+    );
+    final initialMatchdayTop = tester.getTopLeft(find.text('MATCHDAY')).dy;
 
     await tester.drag(
       find.byKey(const ValueKey('home-solo-bookings-carousel')),
@@ -111,6 +115,29 @@ void main() {
     );
     expect(find.text('REGISTER FOR A SECOND GAME'), findsOneWidget);
     expect(find.text('FIND A GAME'), findsOneWidget);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('home-solo-bookings-carousel'))),
+      initialCarouselSize,
+    );
+    expect(tester.getTopLeft(find.text('MATCHDAY')).dy, initialMatchdayTop);
+
+    await tester.drag(
+      find.byKey(const ValueKey('home-solo-bookings-carousel')),
+      const Offset(320, 0),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('home-solo-carousel-page-1')),
+      findsOneWidget,
+    );
+    expect(find.text('MATCH PENDING').hitTestable(), findsOneWidget);
+
+    await tester.drag(
+      find.byKey(const ValueKey('home-solo-bookings-carousel')),
+      const Offset(-320, 0),
+    );
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('REGISTER FOR A SECOND GAME'));
     await tester.pumpAndSettle();
@@ -149,8 +176,8 @@ void main() {
     final laterGame = _fixtureGame(
       id: 'booked-later',
       date: today.add(const Duration(days: 5)),
-      status: 'OPEN',
-      confirmedCount: 9,
+      status: 'FULL',
+      confirmedCount: 12,
       myBookingId: 'booking-later',
       myBookingRole: OpenQueueRole.attacker,
     );

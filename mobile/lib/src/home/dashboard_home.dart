@@ -1209,6 +1209,7 @@ class _SoloBookingsSection extends StatefulWidget {
 
 class _SoloBookingsSectionState extends State<_SoloBookingsSection> {
   static const maxBookings = 2;
+  static const carouselHeight = 310.0;
 
   late final PageController _pageController;
   int _currentPage = 0;
@@ -1261,10 +1262,6 @@ class _SoloBookingsSectionState extends State<_SoloBookingsSection> {
   @override
   Widget build(BuildContext context) {
     final bookings = _orderedBookings;
-    final carouselHeight =
-        bookings.any((booking) => booking.game.isUpcomingMatchConfirmed)
-        ? 400.0
-        : 310.0;
     return Column(
       key: const ValueKey('home-solo-bookings-section'),
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1285,7 +1282,9 @@ class _SoloBookingsSectionState extends State<_SoloBookingsSection> {
             key: const ValueKey('home-solo-bookings-carousel'),
             controller: _pageController,
             itemCount: maxBookings,
+            allowImplicitScrolling: true,
             clipBehavior: Clip.none,
+            physics: const BouncingScrollPhysics(),
             onPageChanged: (page) => setState(() => _currentPage = page),
             itemBuilder: (context, index) {
               if (index < bookings.length) {
@@ -1354,6 +1353,7 @@ class _BookSecondSoloGameCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(28),
             ),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Container(
@@ -1420,12 +1420,9 @@ class _ConfirmedQueueHero extends StatelessWidget {
   Widget build(BuildContext context) {
     final game = booking.game;
     final isConfirmed = game.isUpcomingMatchConfirmed;
-    final isClose = game.isToday || game.isTomorrow;
     final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
     final accent = isConfirmed ? fieldEmerald100 : const Color(0xFFFEF3C7);
-    final dateForeground = isConfirmed
-        ? fieldEmerald800
-        : const Color(0xFF78350F);
+    final infoAccent = isConfirmed ? fieldEmerald700 : const Color(0xFFB45309);
 
     return Material(
       key: ValueKey('home-solo-booking-${booking.id}'),
@@ -1435,7 +1432,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(28),
         child: Container(
-          padding: const EdgeInsets.all(22),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: RadialGradient(
               center: Alignment.topLeft,
@@ -1502,7 +1499,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      '$confirmedCount / ${game.capacity} CONFIRMED',
+                      '$confirmedCount / ${game.capacity} PLAYERS',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 9,
@@ -1528,52 +1525,71 @@ class _ConfirmedQueueHero extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
-                  vertical: 10,
+                  vertical: 11,
                 ),
                 decoration: BoxDecoration(
-                  color: isClose
-                      ? Colors.white
-                      : Colors.white.withValues(alpha: 0.12),
-                  border: Border.all(
-                    color: Colors.white.withValues(alpha: isClose ? 0.9 : 0.2),
-                  ),
+                  color: Colors.white.withValues(alpha: 0.96),
+                  border: Border.all(color: Colors.white),
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.calendar_month_rounded,
-                          color: isClose ? dateForeground : Colors.white,
-                          size: 18,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            game.prominentDateLabel,
+                    Expanded(
+                      flex: 11,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'MATCH DATE',
                             style: TextStyle(
-                              color: isClose ? dateForeground : Colors.white,
-                              fontSize: isClose ? 15 : 13,
+                              color: fieldGray500,
+                              fontSize: 8,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: isClose ? 0.5 : 0.2,
+                              letterSpacing: .8,
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    if (isConfirmed) ...[
-                      const SizedBox(height: 10),
-                      Container(
-                        height: 1,
-                        color: isClose
-                            ? fieldGray200
-                            : Colors.white.withValues(alpha: 0.18),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.calendar_month_rounded,
+                                color: infoAccent,
+                                size: 20,
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  game.prominentDateLabel,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: fieldGray900,
+                                    fontSize: 12,
+                                    height: 1.15,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 10),
-                      OpenQueueKitIndicator(booking: booking),
-                    ],
+                    ),
+                    const SizedBox(width: 10),
+                    Container(width: 1, height: 44, color: fieldGray200),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 10,
+                      child: isConfirmed
+                          ? OpenQueueKitIndicator(
+                              booking: booking,
+                              compact: true,
+                              inline: true,
+                            )
+                          : const _PendingHomeKitSummary(),
+                    ),
                   ],
                 ),
               ),
@@ -1598,16 +1614,6 @@ class _ConfirmedQueueHero extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (isConfirmed)
-                    if (booking.assignedTeam case final team?)
-                      Text(
-                        '$team · ${_bookingTeamAverage(booking)} AVG SR',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
                 ],
               ),
               const SizedBox(height: 13),
@@ -1627,13 +1633,46 @@ class _ConfirmedQueueHero extends StatelessWidget {
   }
 }
 
-String _bookingTeamAverage(OpenQueueBooking booking) {
-  final rating = switch (booking.assignedTeam) {
-    openQueueWhiteTeamId => booking.game.whiteAverageSr,
-    openQueueBlackTeamId => booking.game.blackAverageSr,
-    _ => null,
-  };
-  return rating?.toString() ?? '—';
+class _PendingHomeKitSummary extends StatelessWidget {
+  const _PendingHomeKitSummary();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Row(
+      children: [
+        Icon(Icons.checkroom_outlined, color: fieldGray400, size: 24),
+        SizedBox(width: 7),
+        Expanded(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'MATCH KIT',
+                style: TextStyle(
+                  color: fieldGray500,
+                  fontSize: 8,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: .8,
+                ),
+              ),
+              SizedBox(height: 2),
+              Text(
+                'AFTER CONFIRMATION',
+                maxLines: 2,
+                style: TextStyle(
+                  color: fieldGray700,
+                  fontSize: 10,
+                  height: 1.05,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 class _MyClanSection extends StatelessWidget {
