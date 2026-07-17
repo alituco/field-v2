@@ -15,6 +15,8 @@ import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_repository.dart';
+import '../reliability/reliability_repository.dart';
+import '../reliability/reliability_status_card.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'profile.dart';
@@ -30,6 +32,7 @@ class ProfileScreen extends StatefulWidget {
     this.fixtureRepository,
     this.openQueueRepository,
     this.moderationRepository,
+    this.reliabilityRepository,
     this.profileId,
     this.devModeEnabled = false,
     this.onSwitchUser,
@@ -42,6 +45,7 @@ class ProfileScreen extends StatefulWidget {
   final FixtureRepository? fixtureRepository;
   final OpenQueueRepository? openQueueRepository;
   final ModerationRepository? moderationRepository;
+  final ReliabilityRepository? reliabilityRepository;
   final String? profileId;
   final bool devModeEnabled;
   final Future<void> Function(String profileId)? onSwitchUser;
@@ -469,6 +473,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       if (clanId == null) return;
                       _openClan(clanId: clanId, clanName: entry.clanName);
                     },
+                  ),
+                ],
+                if (_isCurrentProfile &&
+                    widget.reliabilityRepository != null) ...[
+                  const SizedBox(height: 16),
+                  ReliabilityStatusCard(
+                    repository: widget.reliabilityRepository!,
                   ),
                 ],
                 if (_isCurrentProfile || profile.highlights.isNotEmpty) ...[

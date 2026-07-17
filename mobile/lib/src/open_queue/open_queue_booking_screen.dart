@@ -6,6 +6,7 @@ import '../clans/clan_widgets.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
+import '../reliability/reliability_deadline_notice.dart';
 import 'open_queue.dart';
 import 'open_queue_kit_indicator.dart';
 import 'open_queue_party.dart';
@@ -328,24 +329,64 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       return;
     }
     if (!mounted) return;
-    final receivesRefund = preview.refundPercent > 0;
-    final confirmed = await showFieldConfirmDialog(
-      context: context,
-      icon: Icons.event_busy_rounded,
-      eyebrow: 'Your booking',
-      title: 'Cancel your spot?',
-      message: receivesRefund
-          ? 'Your position will reopen immediately for another player.'
-          : 'This is a game-day cancellation. Your position will reopen immediately for another player.',
-      detail: receivesRefund
-          ? '${preview.refundPercent}% refund · ${preview.refundLabel}'
-          : 'No refund is available after the game day begins.',
-      cancelLabel: 'Keep my spot',
-      confirmLabel: 'Cancel booking',
-      destructive: true,
-      confirmEnabled: preview.canCancel,
-    );
-    if (!confirmed || !mounted) return;
+    var previewUpdated = false;
+    while (mounted) {
+      if (!mounted) return;
+      final consequenceLines = <String>[
+        preview.refundDestinationLabel,
+        if (preview.effectiveRefundBps > 0 && preview.refundAmountFils > 0)
+          preview.refundLabel,
+        if (preview.strikeDelta > 0)
+          '+${preview.strikeDelta} reliability ${preview.strikeDelta == 1 ? 'strike' : 'strikes'}',
+        if (preview.depositForfeited) 'Reliability deposit forfeited',
+      ];
+      final explanation = preview.explanation?.trim();
+      final confirmed = await showFieldConfirmDialog(
+        context: context,
+        icon: Icons.event_busy_rounded,
+        eyebrow: previewUpdated
+            ? 'Updated ${preview.outcomeLabel}'
+            : preview.outcomeLabel,
+        title: previewUpdated
+            ? 'Cancellation terms changed'
+            : 'Cancel your spot?',
+        message: explanation == null || explanation.isEmpty
+            ? 'Your position will reopen immediately. These consequences were calculated using server time and the policy active for this match.'
+            : explanation,
+        detail: consequenceLines.join('\n'),
+        cancelLabel: 'Keep my spot',
+        confirmLabel: preview.canCancel
+            ? 'Confirm cancellation'
+            : 'Unavailable',
+        destructive: true,
+        confirmEnabled: preview.canCancel,
+      );
+      if (!confirmed || !mounted) return;
+
+      OpenQueueCancellationPreview latestPreview;
+      try {
+        latestPreview = await widget.repository.previewCancellation(
+          _booking.id,
+        );
+      } catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              userFacingError(
+                error,
+                fallback: 'Could not verify the cancellation terms.',
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+      if (preview.hasSameConsequencesAs(latestPreview)) break;
+      preview = latestPreview;
+      previewUpdated = true;
+    }
+    if (!mounted) return;
     setState(() => _cancelling = true);
     try {
       await widget.repository.cancelBooking(_booking.id);
@@ -376,6 +417,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     final confirmedCount = game.confirmedCount.clamp(0, game.capacity);
     final hasPendingPartyInvite =
         _partyContext?.receivedInvites.isNotEmpty ?? false;
+    final assignmentTiming = game.teamAssignmentLeadLabel;
+    final partyTiming =
+        _partyContext?.partyLockLeadLabel ?? game.partyLockLeadLabel;
     final showPartyBeforeMatchDate =
         widget.newlyBooked || hasPendingPartyInvite;
     final String teamLabel;
@@ -389,17 +433,17 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       teamInfoMessage =
           'Your match is confirmed. Pull to refresh while your team and kit assignment finishes updating.';
     } else if (isConfirmed) {
-      teamLabel = 'Assigned 3 hours before kickoff';
+      teamLabel = 'Assigned $assignmentTiming';
       teamInfoMessage =
-          'Your match is on. Teams and kits are finalized 3 hours before kickoff, when party changes close.';
+          'Your match is on. Teams and kits are finalized $assignmentTiming. Party changes close $partyTiming.';
     } else if (isTeamAssignmentDue) {
       teamLabel = 'Assigned when the match fills';
       teamInfoMessage =
           'Your spot is secured. Teams and kits are assigned as soon as ${game.capacity}/${game.capacity} players confirm.';
     } else {
-      teamLabel = 'Assigned 3 hours before kickoff';
+      teamLabel = 'Assigned $assignmentTiming';
       teamInfoMessage =
-          'Your spot is secured. Teams and kits are finalized 3 hours before kickoff once ${game.capacity}/${game.capacity} players confirm.';
+          'Your spot is secured. Teams and kits are finalized $assignmentTiming once ${game.capacity}/${game.capacity} players confirm.';
     }
     return Scaffold(
       extendBody: true,
@@ -430,6 +474,17 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               ],
               const SizedBox(height: 12),
               _BookingMatchDayCard(booking: booking),
+              if (widget.repository
+                  is OpenQueueReliabilityLookupRepository) ...[
+                const SizedBox(height: 12),
+                ReliabilityDeadlineNotice(
+                  includeNoShowCutoff: true,
+                  load: () =>
+                      (widget.repository
+                              as OpenQueueReliabilityLookupRepository)
+                          .getMatchReliabilityContext(game.id),
+                ),
+              ],
               if (!showPartyBeforeMatchDate && _partyRepository != null) ...[
                 const SizedBox(height: 12),
                 _partyCard(),

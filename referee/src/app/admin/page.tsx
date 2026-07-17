@@ -11,8 +11,10 @@ import type {
 } from "@/lib/types";
 
 import forfeitStyles from "./forfeit-review.module.css";
+import { ReliabilitySection } from "./reliability-section";
 
-type AdminSection = "overview" | "games" | "reports" | "people" | "audit";
+type AdminSection = "overview" | "games" | "reliability" | "reports" | "people" | "audit";
+type AdminGamesView = "SCHEDULED" | "FINAL";
 type JsonRecord = Record<string, unknown>;
 
 type OverviewMetric = {
@@ -174,6 +176,7 @@ export default function AdminPage() {
   const [reportStatus, setReportStatus] = useState("OPEN");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [reliabilityRefreshKey, setReliabilityRefreshKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
@@ -513,7 +516,13 @@ export default function AdminPage() {
             <button
               className="admin-icon-button"
               disabled={refreshing}
-              onClick={() => void loadAll(true)}
+              onClick={() => {
+                if (section === "reliability") {
+                  setReliabilityRefreshKey((value) => value + 1);
+                } else {
+                  void loadAll(true);
+                }
+              }}
               title="Refresh admin data"
               type="button"
             >
@@ -607,6 +616,13 @@ export default function AdminPage() {
               onModerate={setModerationSubject}
               onRevoke={(subject, action) => setRevokeDialog({ subject, action })}
             />
+          ) : section === "reliability" ? (
+            <ReliabilitySection
+              accessToken={accessToken}
+              refreshKey={reliabilityRefreshKey}
+              onError={setError}
+              onNotice={setNotice}
+            />
           ) : (
             <AuditSection audit={overview.audit} />
           )}
@@ -690,6 +706,7 @@ const adminNavItems: Array<{
 }> = [
   { id: "overview", label: "Overview", shortLabel: "Home", icon: "overview" },
   { id: "games", label: "Games", shortLabel: "Games", icon: "games" },
+  { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
@@ -779,12 +796,26 @@ function OverviewSection({
   forfeits: AdminForfeit[];
   onNavigate: (section: AdminSection) => void;
 }) {
+  const now = Date.now();
   const upcoming = games
-    .filter((game) => ["OPEN", "FULL", "SCHEDULED", "LIVE"].includes(game.status))
-    .sort((left, right) =>
-      `${left.matchDate} ${left.timeSlot}`.localeCompare(`${right.matchDate} ${right.timeSlot}`),
+    .filter((game) =>
+      isScheduledAdminGame(game) &&
+      (game.status === "LIVE" || adminGameStartTimestamp(game) >= now)
     )
-    .slice(0, 5);
+    .sort(sortScheduledAdminGames)
+    .slice(0, 2);
+  const completedGames = games.filter((game) =>
+    isFinalAdminGame(game) && adminGameStartTimestamp(game) <= now
+  );
+  const lastMatchdayDate = completedGames
+    .map((game) => game.matchDate)
+    .sort((left, right) => right.localeCompare(left))[0] ?? null;
+  const lastMatchday = lastMatchdayDate
+    ? completedGames
+        .filter((game) => game.matchDate === lastMatchdayDate)
+        .sort(sortFinalAdminGames)
+        .slice(0, 2)
+    : [];
   const urgentReports = reports
     .filter((report) => ["HIGH", "CRITICAL", "URGENT"].includes(report.priority))
     .slice(0, 4);
@@ -849,28 +880,32 @@ function OverviewSection({
         <section className="admin-card">
           <AdminCardHeader
             eyebrow="Schedule"
-            title="Upcoming games"
+            title="Games snapshot"
             actionLabel="All games"
             onAction={() => onNavigate("games")}
           />
-          {upcoming.length === 0 ? (
-            <AdminEmpty icon="games" title="No upcoming games" detail="The schedule is clear." />
-          ) : (
-            <div className="admin-compact-game-list">
-              {upcoming.map((game) => (
-                <article key={`${game.matchKind}-${game.id}`}>
-                  <div className={`admin-game-emblem ${game.matchKind.toLowerCase()}`}>
-                    {game.matchKind === "SOLO" ? "S" : game.homeClan.emblem}
-                  </div>
-                  <div>
-                    <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
-                    <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
-                  </div>
-                  <StatusBadge status={game.status} />
-                </article>
-              ))}
+          <div className="admin-game-snapshot-section">
+            <div className="admin-game-snapshot-label">
+              <span>Next 2 games</span>
+              <small>Closest first</small>
             </div>
-          )}
+            {upcoming.length === 0 ? (
+              <p className="admin-game-snapshot-empty">No upcoming games scheduled.</p>
+            ) : (
+              <CompactGameList games={upcoming} />
+            )}
+          </div>
+          <div className="admin-game-snapshot-section recent">
+            <div className="admin-game-snapshot-label">
+              <span>Last matchday</span>
+              <small>{lastMatchdayDate ? formatAdminDate(lastMatchdayDate) : "No history"}</small>
+            </div>
+            {lastMatchday.length === 0 ? (
+              <p className="admin-game-snapshot-empty">No completed or cancelled games yet.</p>
+            ) : (
+              <CompactGameList games={lastMatchday} />
+            )}
+          </div>
         </section>
       </div>
 
@@ -910,6 +945,25 @@ function OverviewSection({
           <CompactAuditList items={overview.audit.slice(0, 5)} />
         </section>
       </div>
+    </div>
+  );
+}
+
+function CompactGameList({ games }: { games: RefereeFixture[] }) {
+  return (
+    <div className="admin-compact-game-list">
+      {games.map((game) => (
+        <article key={`${game.matchKind}-${game.id}`}>
+          <div className={`admin-game-emblem ${game.matchKind.toLowerCase()}`}>
+            {game.matchKind === "SOLO" ? "S" : game.homeClan.emblem}
+          </div>
+          <div>
+            <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
+            <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
+          </div>
+          <StatusBadge status={game.status} />
+        </article>
+      ))}
     </div>
   );
 }
@@ -1136,6 +1190,7 @@ function GamesSection({
   onOverrideScore: (fixture: RefereeFixture) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [view, setView] = useState<AdminGamesView>("SCHEDULED");
   const [status, setStatus] = useState("ALL");
   const [kind, setKind] = useState("ALL");
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -1145,20 +1200,28 @@ function GamesSection({
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return games.filter((game) => {
-      if (status !== "ALL" && game.status !== status) return false;
-      if (kind !== "ALL" && game.matchKind !== kind) return false;
-      if (!needle) return true;
-      return [
-        game.homeClan.name,
-        game.homeClan.tag,
-        game.awayClan.name,
-        game.awayClan.tag,
-        game.venue,
-        game.matchDate,
-      ].some((value) => value.toLowerCase().includes(needle));
-    });
-  }, [games, kind, query, status]);
+    return games
+      .filter((game) => {
+        if (view === "SCHEDULED" ? !isScheduledAdminGame(game) : !isFinalAdminGame(game)) {
+          return false;
+        }
+        if (status !== "ALL" && game.status !== status) return false;
+        if (kind !== "ALL" && game.matchKind !== kind) return false;
+        if (!needle) return true;
+        return [
+          game.homeClan.name,
+          game.homeClan.tag,
+          game.awayClan.name,
+          game.awayClan.tag,
+          game.venue,
+          game.matchDate,
+        ].some((value) => value.toLowerCase().includes(needle));
+      })
+      .sort(view === "SCHEDULED" ? sortScheduledAdminGames : sortFinalAdminGames);
+  }, [games, kind, query, status, view]);
+
+  const scheduledCount = games.filter(isScheduledAdminGame).length;
+  const finalCount = games.filter(isFinalAdminGame).length;
 
   const active = filtered.find((game) => `${game.matchKind}-${game.id}` === activeId) ??
     filtered[0] ??
@@ -1198,6 +1261,36 @@ function GamesSection({
   return (
     <div className="admin-games-layout">
       <section className="admin-card admin-games-browser">
+        <div className="admin-game-view-tabs" role="tablist" aria-label="Game timing">
+          <button
+            aria-selected={view === "SCHEDULED"}
+            className={view === "SCHEDULED" ? "active" : ""}
+            onClick={() => {
+              setView("SCHEDULED");
+              setStatus("ALL");
+              setActiveId(null);
+            }}
+            role="tab"
+            type="button"
+          >
+            <span>Scheduled <b>{scheduledCount}</b></span>
+            <small>Upcoming and live</small>
+          </button>
+          <button
+            aria-selected={view === "FINAL"}
+            className={view === "FINAL" ? "active" : ""}
+            onClick={() => {
+              setView("FINAL");
+              setStatus("ALL");
+              setActiveId(null);
+            }}
+            role="tab"
+            type="button"
+          >
+            <span>Final <b>{finalCount}</b></span>
+            <small>Completed and cancelled</small>
+          </button>
+        </div>
         <div className="admin-table-toolbar">
           <label className="admin-search-field">
             <AdminIcon name="search" />
@@ -1213,13 +1306,20 @@ function GamesSection({
             <option value="SOLO">Solo</option>
           </select>
           <select onChange={(event) => setStatus(event.target.value)} value={status}>
-            <option value="ALL">All statuses</option>
-            <option value="LIVE">Live</option>
-            <option value="SCHEDULED">Scheduled</option>
-            <option value="FULL">Full</option>
-            <option value="OPEN">Open</option>
-            <option value="FINAL">Final</option>
-            <option value="CANCELLED">Cancelled</option>
+            <option value="ALL">All {view === "SCHEDULED" ? "scheduled" : "final"} statuses</option>
+            {view === "SCHEDULED" ? (
+              <>
+                <option value="LIVE">Live</option>
+                <option value="SCHEDULED">Scheduled</option>
+                <option value="FULL">Full</option>
+                <option value="OPEN">Open</option>
+              </>
+            ) : (
+              <>
+                <option value="FINAL">Final</option>
+                <option value="CANCELLED">Cancelled</option>
+              </>
+            )}
           </select>
         </div>
         <div className="admin-table-count">{filtered.length} games</div>
@@ -2262,7 +2362,7 @@ function AdminPageSkeleton() {
 }
 
 type AdminIconName =
-  | "overview" | "games" | "reports" | "people" | "audit" | "referee"
+  | "overview" | "games" | "policy" | "reports" | "people" | "audit" | "referee"
   | "logout" | "refresh" | "alert" | "check" | "arrow" | "search"
   | "replay" | "external" | "edit" | "cancel" | "lock" | "dismiss"
   | "close" | "live" | "shield";
@@ -2271,6 +2371,7 @@ function AdminIcon({ name }: { name: AdminIconName }) {
   const paths: Record<AdminIconName, React.ReactNode> = {
     overview: <><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></>,
     games: <><path d="M5 5h14v14H5z" /><path d="M8 3v4M16 3v4M5 10h14" /></>,
+    policy: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="M8 9h8M8 13h5M8 17h3" /></>,
     reports: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 11h6M9 15h6" /></>,
     people: <><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 20v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
     audit: <><path d="M12 22a10 10 0 1 0-10-10" /><path d="M2 4v6h6M12 6v6l4 2" /></>,
@@ -2555,6 +2656,7 @@ function sectionTitle(section: AdminSection) {
   return {
     overview: "Good overview. Fast decisions.",
     games: "Games control",
+    reliability: "Reliability policy",
     reports: "Reports inbox",
     people: "Players & clans",
     audit: "Audit log",
@@ -2565,6 +2667,7 @@ function sectionSubtitle(section: AdminSection) {
   return {
     overview: "See what needs attention across Field today.",
     games: "Review, correct, cancel and watch every match.",
+    reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     reports: "Triage player reports privately and consistently.",
     people: "Understand patterns before taking proportionate action.",
     audit: "A permanent trail of sensitive admin decisions.",
@@ -2629,6 +2732,50 @@ function assignedRefereeName(
 function displayScore(fixture: RefereeFixture) {
   if (fixture.homeScore === null && fixture.awayScore === null) return "—";
   return `${fixture.homeScore ?? 0} – ${fixture.awayScore ?? 0}`;
+}
+
+function isScheduledAdminGame(fixture: RefereeFixture) {
+  return ["OPEN", "FULL", "SCHEDULED", "LIVE"].includes(fixture.status);
+}
+
+function isFinalAdminGame(fixture: RefereeFixture) {
+  return ["FINAL", "CANCELLED"].includes(fixture.status);
+}
+
+function adminGameStartTimestamp(fixture: RefereeFixture) {
+  const dateMatch = fixture.matchDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeMatch = fixture.timeSlot.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (dateMatch && timeMatch) {
+    const [, year, month, day] = dateMatch;
+    const rawHour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    const period = timeMatch[3].toUpperCase();
+    const hour = rawHour % 12 + (period === "PM" ? 12 : 0);
+    const timestamp = Date.parse(
+      `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00+03:00`,
+    );
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+
+  const fallback = Date.parse(`${fixture.matchDate}T12:00:00+03:00`);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function sortScheduledAdminGames(left: RefereeFixture, right: RefereeFixture) {
+  if (left.status === "LIVE" && right.status !== "LIVE") return -1;
+  if (right.status === "LIVE" && left.status !== "LIVE") return 1;
+
+  const now = Date.now();
+  const leftTime = adminGameStartTimestamp(left);
+  const rightTime = adminGameStartTimestamp(right);
+  const leftUpcoming = leftTime >= now;
+  const rightUpcoming = rightTime >= now;
+  if (leftUpcoming !== rightUpcoming) return leftUpcoming ? -1 : 1;
+  return leftUpcoming ? leftTime - rightTime : rightTime - leftTime;
+}
+
+function sortFinalAdminGames(left: RefereeFixture, right: RefereeFixture) {
+  return adminGameStartTimestamp(right) - adminGameStartTimestamp(left);
 }
 
 function forfeitHomeClan(decision: AdminForfeit) {

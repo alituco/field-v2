@@ -45,6 +45,7 @@ class OpenQueuePartyCard extends StatelessWidget {
       return _IncomingPartyInviteCard(
         invite: data.receivedInvites.first,
         maxPartySize: data.maxPartySize,
+        partyLockLeadLabel: data.partyLockLeadLabel,
         currentParty: data.myParty,
         actionKey: actionKey,
         error: error,
@@ -56,6 +57,7 @@ class OpenQueuePartyCard extends StatelessWidget {
       return _ActivePartyCard(
         party: party,
         maxPartySize: data.maxPartySize,
+        partyLockLeadLabel: data.partyLockLeadLabel,
         canUseParties: data.canUseParties,
         hasEligiblePlayers: data.eligiblePlayers.isNotEmpty,
         actionKey: actionKey,
@@ -66,11 +68,12 @@ class OpenQueuePartyCard extends StatelessWidget {
       );
     }
     if (!data.canUseParties) {
-      return const _PartyLockedCard();
+      return _PartyLockedCard(partyLockLeadLabel: data.partyLockLeadLabel);
     }
     return _CreatePartyCard(
       newlyBooked: newlyBooked,
       maxPartySize: data.maxPartySize,
+      partyLockLeadLabel: data.partyLockLeadLabel,
       creating: actionKey == 'create',
       error: error,
       onCreate: onCreate,
@@ -82,6 +85,7 @@ class _CreatePartyCard extends StatelessWidget {
   const _CreatePartyCard({
     required this.newlyBooked,
     required this.maxPartySize,
+    required this.partyLockLeadLabel,
     required this.creating,
     required this.onCreate,
     this.error,
@@ -89,6 +93,7 @@ class _CreatePartyCard extends StatelessWidget {
 
   final bool newlyBooked;
   final int maxPartySize;
+  final String partyLockLeadLabel;
   final bool creating;
   final String? error;
   final VoidCallback onCreate;
@@ -186,7 +191,7 @@ class _CreatePartyCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 9),
-          const _RebalanceNote(dark: true),
+          _RebalanceNote(dark: true, partyLockLeadLabel: partyLockLeadLabel),
           if (error != null) ...[
             const SizedBox(height: 11),
             _InlinePartyError(message: error!, dark: true),
@@ -226,6 +231,7 @@ class _IncomingPartyInviteCard extends StatefulWidget {
   const _IncomingPartyInviteCard({
     required this.invite,
     required this.maxPartySize,
+    required this.partyLockLeadLabel,
     required this.currentParty,
     required this.actionKey,
     required this.onAccept,
@@ -235,6 +241,7 @@ class _IncomingPartyInviteCard extends StatefulWidget {
 
   final OpenQueuePartyInvite invite;
   final int maxPartySize;
+  final String partyLockLeadLabel;
   final OpenQueueParty? currentParty;
   final String? actionKey;
   final String? error;
@@ -429,7 +436,9 @@ class _IncomingPartyInviteCardState extends State<_IncomingPartyInviteCard> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        const _RebalanceNote(),
+                        _RebalanceNote(
+                          partyLockLeadLabel: widget.partyLockLeadLabel,
+                        ),
                         if (switchingParties) ...[
                           const SizedBox(height: 11),
                           _PartySwitchWarning(
@@ -576,6 +585,7 @@ class _ActivePartyCard extends StatelessWidget {
   const _ActivePartyCard({
     required this.party,
     required this.maxPartySize,
+    required this.partyLockLeadLabel,
     required this.canUseParties,
     required this.hasEligiblePlayers,
     required this.actionKey,
@@ -587,6 +597,7 @@ class _ActivePartyCard extends StatelessWidget {
 
   final OpenQueueParty party;
   final int maxPartySize;
+  final String partyLockLeadLabel;
   final bool canUseParties;
   final bool hasEligiblePlayers;
   final String? actionKey;
@@ -705,10 +716,12 @@ class _ActivePartyCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 7),
-                const _RebalanceNote(),
+                _RebalanceNote(partyLockLeadLabel: partyLockLeadLabel),
                 if (!canUseParties) ...[
                   const SizedBox(height: 12),
-                  const _PartyMutationLockNotice(),
+                  _PartyMutationLockNotice(
+                    partyLockLeadLabel: partyLockLeadLabel,
+                  ),
                 ],
                 const SizedBox(height: 15),
                 for (var index = 0; index < party.members.length; index++) ...[
@@ -801,7 +814,9 @@ class _ActivePartyCard extends StatelessWidget {
 }
 
 class _PartyMutationLockNotice extends StatelessWidget {
-  const _PartyMutationLockNotice();
+  const _PartyMutationLockNotice({required this.partyLockLeadLabel});
+
+  final String partyLockLeadLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -813,15 +828,15 @@ class _PartyMutationLockNotice extends StatelessWidget {
         color: fieldGray100,
         borderRadius: BorderRadius.circular(11),
       ),
-      child: const Row(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(Icons.lock_clock_rounded, color: fieldGray500, size: 17),
-          SizedBox(width: 8),
+          const Icon(Icons.lock_clock_rounded, color: fieldGray500, size: 17),
+          const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Party changes close 3 hours before kickoff. Your confirmed group stays together, but no one can be invited, removed, or leave now.',
-              style: TextStyle(
+              'Party changes close $partyLockLeadLabel. Your confirmed group stays together, but no one can be invited, removed, or leave now.',
+              style: const TextStyle(
                 color: fieldGray600,
                 fontSize: 10,
                 height: 1.4,
@@ -950,7 +965,9 @@ class _PartyMemberRow extends StatelessWidget {
 }
 
 class _PartyLockedCard extends StatelessWidget {
-  const _PartyLockedCard();
+  const _PartyLockedCard({required this.partyLockLeadLabel});
+
+  final String partyLockLeadLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -962,15 +979,15 @@ class _PartyLockedCard extends StatelessWidget {
         border: Border.all(color: fieldGray200),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          Icon(Icons.lock_clock_rounded, color: fieldGray400),
-          SizedBox(width: 11),
+          const Icon(Icons.lock_clock_rounded, color: fieldGray400),
+          const SizedBox(width: 11),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Party changes are closed',
                   style: TextStyle(
                     color: fieldGray900,
@@ -978,10 +995,10 @@ class _PartyLockedCard extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                SizedBox(height: 3),
+                const SizedBox(height: 3),
                 Text(
-                  'Parties close 3 hours before kickoff so teams and kits can be finalized.',
-                  style: TextStyle(
+                  'Parties close $partyLockLeadLabel so teams and kits can be finalized.',
+                  style: const TextStyle(
                     color: fieldGray500,
                     fontSize: 11,
                     height: 1.35,
@@ -1072,8 +1089,9 @@ class _PartyErrorCard extends StatelessWidget {
 }
 
 class _RebalanceNote extends StatelessWidget {
-  const _RebalanceNote({this.dark = false});
+  const _RebalanceNote({required this.partyLockLeadLabel, this.dark = false});
 
+  final String partyLockLeadLabel;
   final bool dark;
 
   @override
@@ -1089,7 +1107,7 @@ class _RebalanceNote extends StatelessWidget {
         const SizedBox(width: 6),
         Expanded(
           child: Text(
-            'Parties and teams lock 3 hours before kickoff.',
+            'Party changes close $partyLockLeadLabel.',
             style: TextStyle(
               color: dark ? const Color(0xFFA7F3D0) : fieldGray500,
               fontSize: 10,

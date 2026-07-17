@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'fixture.dart';
+import 'fixture_reliability_roster.dart';
 
 abstract class FixtureRepository {
   Future<List<Fixture>> listFixtures();
@@ -34,7 +35,45 @@ abstract class FixtureRepository {
   });
 }
 
-class SupabaseFixtureRepository implements FixtureRepository {
+abstract interface class FixtureReliabilityBookingRepository {
+  Future<ClanFixtureChargePreview> previewCreateFixtureCharge({
+    required String clanId,
+    required DateTime matchDate,
+    required FixtureTimeSlot timeSlot,
+  });
+
+  Future<ClanFixtureChargePreview> previewJoinFixtureCharge({
+    required String fixtureId,
+    required String clanId,
+  });
+
+  Future<ClanFixtureCancellationPreview> previewFixtureCancellation(
+    String fixtureId,
+  );
+
+  Future<ClanFixtureCancellationPreview> cancelFixtureBooking({
+    required String fixtureId,
+    required String reason,
+  });
+}
+
+abstract interface class FixtureReliabilityRosterRepository {
+  Future<FixtureReliabilityRoster> getMyFixtureReliabilityRoster(
+    String fixtureId,
+  );
+
+  Future<FixtureReliabilityRoster> saveMyFixtureReliabilityRoster({
+    required String fixtureId,
+    required String clanId,
+    required List<String> profileIds,
+  });
+}
+
+class SupabaseFixtureRepository
+    implements
+        FixtureRepository,
+        FixtureReliabilityBookingRepository,
+        FixtureReliabilityRosterRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   static const _fixtureSelect = '''
@@ -285,6 +324,90 @@ class SupabaseFixtureRepository implements FixtureRepository {
   }
 
   @override
+  Future<ClanFixtureChargePreview> previewCreateFixtureCharge({
+    required String clanId,
+    required DateTime matchDate,
+    required FixtureTimeSlot timeSlot,
+  }) async {
+    final response = await _client.rpc(
+      'preview_create_clan_fixture_charge',
+      params: {
+        'clan_id_to_use': clanId,
+        'match_date_to_use': _dateParam(matchDate),
+        'time_slot_to_use': timeSlot.label,
+      },
+    );
+    return ClanFixtureChargePreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<ClanFixtureChargePreview> previewJoinFixtureCharge({
+    required String fixtureId,
+    required String clanId,
+  }) async {
+    final response = await _client.rpc(
+      'preview_join_clan_fixture_charge',
+      params: {'fixture_id_to_use': fixtureId, 'clan_id_to_use': clanId},
+    );
+    return ClanFixtureChargePreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<ClanFixtureCancellationPreview> previewFixtureCancellation(
+    String fixtureId,
+  ) async {
+    final response = await _client.rpc(
+      'preview_clan_fixture_cancellation',
+      params: {'fixture_id_to_use': fixtureId},
+    );
+    return ClanFixtureCancellationPreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<ClanFixtureCancellationPreview> cancelFixtureBooking({
+    required String fixtureId,
+    required String reason,
+  }) async {
+    final response = await _client.rpc(
+      'cancel_clan_fixture_booking',
+      params: {
+        'fixture_id_to_cancel': fixtureId,
+        'reason_to_use': reason.trim(),
+      },
+    );
+    return ClanFixtureCancellationPreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<FixtureReliabilityRoster> getMyFixtureReliabilityRoster(
+    String fixtureId,
+  ) async {
+    final response = await _client.rpc(
+      'get_my_fixture_reliability_roster',
+      params: {'fixture_id_to_view': fixtureId},
+    );
+    return FixtureReliabilityRoster.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<FixtureReliabilityRoster> saveMyFixtureReliabilityRoster({
+    required String fixtureId,
+    required String clanId,
+    required List<String> profileIds,
+  }) async {
+    await _client.rpc(
+      'set_fixture_reliability_roster',
+      params: {
+        'fixture_id_to_manage': fixtureId,
+        'clan_id_to_manage': clanId,
+        'profile_ids_to_confirm': profileIds,
+        'note_to_use': 'Confirmed from match booking details',
+      },
+    );
+    return getMyFixtureReliabilityRoster(fixtureId);
+  }
+
+  @override
   Future<List<FixtureSrScenario>> previewSrScenarios({
     required String homeClanId,
     required String awayClanId,
@@ -431,4 +554,14 @@ int _intValue(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value) ?? 0;
   return 0;
+}
+
+Map<String, dynamic> _rpcMap(Object? response) {
+  return switch (response) {
+    final Map value => Map<String, dynamic>.from(value),
+    final List value when value.isNotEmpty => Map<String, dynamic>.from(
+      value.first as Map,
+    ),
+    _ => throw StateError('The server did not return a reliability quote.'),
+  };
 }

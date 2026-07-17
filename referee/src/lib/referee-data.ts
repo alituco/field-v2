@@ -13,6 +13,7 @@ import {
   loadRefereeRiskSignals,
   riskContextFor,
 } from "./referee-risk-context";
+import { loadMatchReliabilityContext } from "./match-reliability";
 
 const fixtureSelect = `
   id,
@@ -76,7 +77,7 @@ export async function loadRefereeFixtures(
 
   if (fixturesError) throw fixturesError;
 
-  return hydrateFixtureRows(db, fixtures ?? []);
+  return hydrateFixtureRows(db, fixtures ?? [], true);
 }
 
 export async function loadAdminFixtures(
@@ -98,12 +99,13 @@ export async function loadAdminFixtures(
 
   if (fixturesError) throw fixturesError;
 
-  return hydrateFixtureRows(db, fixtures ?? []);
+  return hydrateFixtureRows(db, fixtures ?? [], false);
 }
 
 async function hydrateFixtureRows(
   db: SupabaseClient,
   fixtures: Record<string, unknown>[],
+  includeReliabilityContext: boolean,
 ) {
   if (fixtures.length === 0) return [];
 
@@ -118,7 +120,15 @@ async function hydrateFixtureRows(
     ),
   ];
 
-  const [players, participantIds, clocks, goals, events, blueCards] =
+  const [
+    players,
+    participantIds,
+    clocks,
+    goals,
+    events,
+    blueCards,
+    reliabilityContexts,
+  ] =
     await Promise.all([
       loadPlayers(db, clanIds),
       loadParticipantIds(db, fixtureIds),
@@ -126,6 +136,13 @@ async function hydrateFixtureRows(
       loadGoals(db, fixtureIds),
       loadEvents(db, fixtureIds),
       loadBlueCards(db, fixtureIds),
+      includeReliabilityContext
+        ? Promise.all(
+            fixtureIds.map((fixtureId) =>
+              loadMatchReliabilityContext(db, "CLAN", fixtureId)
+            ),
+          )
+        : Promise.resolve(fixtureIds.map(() => null)),
     ]);
 
   const riskSignals = await loadRefereeRiskSignals(
@@ -134,7 +151,7 @@ async function hydrateFixtureRows(
     clanIds,
   );
 
-  return fixtureRows.map((fixture) => {
+  return fixtureRows.map((fixture, fixtureIndex) => {
     const fixturePlayers = players.filter(
       (player) =>
         player.clanId === fixture.homeClan.id ||
@@ -158,6 +175,7 @@ async function hydrateFixtureRows(
         [fixture.homeClan.id, fixture.awayClan.id],
         relevantPlayerIds,
       ),
+      reliabilityContext: reliabilityContexts[fixtureIndex] ?? null,
     };
   });
 }
@@ -354,6 +372,7 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     events: [],
     blueCards: [],
     riskContext: riskContextFor(new Map(), [], []),
+    reliabilityContext: null,
   } satisfies RefereeFixture;
 }
 

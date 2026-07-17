@@ -15,6 +15,8 @@ import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import 'fixture.dart';
+import 'fixture_reliability_roster.dart';
+import 'fixture_reliability_roster_panel.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
 
@@ -60,11 +62,16 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   late _FixtureDetailSection _selectedSection;
   Timer? _refreshTimer;
   bool _isJoining = false;
+  bool _isCancelling = false;
   bool _isCompleting = false;
   bool _isRefreshing = false;
+  bool _isLoadingRoster = false;
+  bool _isSavingRoster = false;
   bool _didChange = false;
   String? _openingClanId;
   String? _errorText;
+  String? _rosterErrorText;
+  FixtureReliabilityRoster? _reliabilityRoster;
 
   @override
   void initState() {
@@ -79,6 +86,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         : _FixtureDetailSection.timeline;
     _configureRefreshTimer();
     unawaited(_refreshFixture(quiet: true));
+    unawaited(_loadReliabilityRoster(quiet: true));
   }
 
   @override
@@ -99,6 +107,18 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     return false;
   }
 
+  bool get _canCancelClanBooking {
+    final membership = widget.myClanMembership;
+    return widget.fixtureRepository is FixtureReliabilityBookingRepository &&
+        membership != null &&
+        membership.canManageMatches &&
+        (membership.clan.id == _fixture.homeClanId ||
+            membership.clan.id == _fixture.awayClanId) &&
+        (_fixture.status == FixtureStatus.open ||
+            _fixture.status == FixtureStatus.scheduled ||
+            _fixture.status == FixtureStatus.live);
+  }
+
   bool get _canSeePayments {
     final membership = widget.myClanMembership;
     if (membership == null) return false;
@@ -109,6 +129,17 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _fixture.status == FixtureStatus.open ||
         _fixture.status == FixtureStatus.scheduled;
     return isParticipating && isUpcoming;
+  }
+
+  bool get _shouldShowReliabilityRoster {
+    final membership = widget.myClanMembership;
+    return widget.sourceLabel?.toUpperCase() != 'SOLO' &&
+        widget.fixtureRepository is FixtureReliabilityRosterRepository &&
+        membership != null &&
+        (membership.clan.id == _fixture.homeClanId ||
+            membership.clan.id == _fixture.awayClanId) &&
+        (_fixture.status == FixtureStatus.open ||
+            _fixture.status == FixtureStatus.scheduled);
   }
 
   bool get _canComplete {
@@ -137,6 +168,41 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     });
 
     try {
+      final repository = widget.fixtureRepository;
+      if (repository case final FixtureReliabilityBookingRepository pricing) {
+        var quote = await pricing.previewJoinFixtureCharge(
+          fixtureId: _fixture.id,
+          clanId: membership.clan.id,
+        );
+        var quoteUpdated = false;
+        while (mounted) {
+          if (!mounted) return;
+          final confirmed = await showFieldConfirmDialog(
+            context: context,
+            icon: Icons.receipt_long_rounded,
+            eyebrow: quoteUpdated ? 'Updated checkout' : 'Exact checkout',
+            title: quoteUpdated
+                ? 'Checkout changed · ${quote.totalLabel}'
+                : 'Join for ${quote.totalLabel}?',
+            message:
+                'The server calculated ${quote.baseAmountLabel} for the match fee${quote.reliabilityDepositRequired ? ' plus a refundable ${quote.depositLabel} reliability deposit' : ''}.',
+            detail: quote.reliabilityDepositRequired
+                ? 'The deposit stays held while the match is live and returns as Field credit after a clean completed match.'
+                : 'No clan reliability deposit is required.',
+            confirmLabel: 'Pay ${quote.totalLabel}',
+            cancelLabel: 'Not now',
+          );
+          if (!confirmed || !mounted) return;
+          final latestQuote = await pricing.previewJoinFixtureCharge(
+            fixtureId: _fixture.id,
+            clanId: membership.clan.id,
+          );
+          if (quote.hasSameCheckoutTermsAs(latestQuote)) break;
+          quote = latestQuote;
+          quoteUpdated = true;
+        }
+        if (!mounted) return;
+      }
       final fixture = await widget.fixtureRepository.joinFixture(
         fixtureId: _fixture.id,
         awayClanId: membership.clan.id,
@@ -147,6 +213,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _didChange = true;
       });
       _configureRefreshTimer();
+      unawaited(_loadReliabilityRoster(quiet: true));
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Match joined. Game on.')));
@@ -162,6 +229,74 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       if (mounted) {
         setState(() => _isJoining = false);
       }
+    }
+  }
+
+  Future<void> _cancelClanBooking() async {
+    final repository = widget.fixtureRepository;
+    if (!_canCancelClanBooking ||
+        repository is! FixtureReliabilityBookingRepository) {
+      return;
+    }
+    final reliabilityRepository =
+        repository as FixtureReliabilityBookingRepository;
+    setState(() {
+      _isCancelling = true;
+      _errorText = null;
+    });
+    try {
+      var quote = await reliabilityRepository.previewFixtureCancellation(
+        _fixture.id,
+      );
+      if (!mounted) return;
+      if (!quote.canCancel) {
+        throw StateError('This clan match can no longer be cancelled.');
+      }
+      String? reason;
+      var quoteUpdated = false;
+      while (mounted) {
+        if (!mounted) return;
+        reason = await showModalBottomSheet<String>(
+          context: context,
+          isScrollControlled: true,
+          useSafeArea: true,
+          backgroundColor: Colors.transparent,
+          builder: (_) => _ClanCancellationSheet(
+            quote: quote,
+            initialReason: reason,
+            quoteUpdated: quoteUpdated,
+          ),
+        );
+        if (reason == null || !mounted) return;
+        final latestQuote = await reliabilityRepository
+            .previewFixtureCancellation(_fixture.id);
+        if (quote.hasSameConsequencesAs(latestQuote)) break;
+        quote = latestQuote;
+        quoteUpdated = true;
+      }
+      if (!mounted || reason == null) return;
+      await reliabilityRepository.cancelFixtureBooking(
+        fixtureId: _fixture.id,
+        reason: reason,
+      );
+      if (!mounted) return;
+      await _refreshFixture();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Clan cancellation and Field Wallet outcome recorded.'),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _errorText = userFacingError(
+          error,
+          fallback: 'We could not cancel this clan match.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _isCancelling = false);
     }
   }
 
@@ -302,6 +437,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _didChange = true;
       });
       _configureRefreshTimer();
+      unawaited(_loadReliabilityRoster(quiet: true));
     } catch (error) {
       if (!mounted || quiet) return;
       setState(
@@ -313,6 +449,107 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     } finally {
       _isRefreshing = false;
     }
+  }
+
+  Future<void> _loadReliabilityRoster({bool quiet = false}) async {
+    if (!_shouldShowReliabilityRoster || _isLoadingRoster) return;
+    final repository =
+        widget.fixtureRepository as FixtureReliabilityRosterRepository;
+    if (mounted) {
+      setState(() {
+        _isLoadingRoster = true;
+        if (!quiet) _rosterErrorText = null;
+      });
+    }
+    try {
+      final roster = await repository.getMyFixtureReliabilityRoster(
+        _fixture.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _reliabilityRoster = roster;
+        _rosterErrorText = null;
+      });
+    } catch (error) {
+      if (!mounted || (quiet && _reliabilityRoster != null)) return;
+      setState(() {
+        _rosterErrorText = userFacingError(
+          error,
+          fallback: 'We could not load your clan roster. Try again.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _isLoadingRoster = false);
+    }
+  }
+
+  Future<void> _openReliabilityRoster() async {
+    final roster = _reliabilityRoster;
+    final repository = widget.fixtureRepository;
+    if (roster == null ||
+        repository is! FixtureReliabilityRosterRepository ||
+        _isSavingRoster) {
+      return;
+    }
+    final reliabilityRepository =
+        repository as FixtureReliabilityRosterRepository;
+    final profileIds = await showFixtureReliabilityRosterSheet(
+      context: context,
+      roster: roster,
+    );
+    if (profileIds == null || !mounted) return;
+
+    setState(() {
+      _isSavingRoster = true;
+      _rosterErrorText = null;
+    });
+    try {
+      final saved = await reliabilityRepository.saveMyFixtureReliabilityRoster(
+        fixtureId: _fixture.id,
+        clanId: roster.clanId,
+        profileIds: profileIds,
+      );
+      if (!mounted) return;
+      setState(() {
+        _reliabilityRoster = saved;
+        _didChange = true;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '${saved.confirmedCount} players confirmed for matchday.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _rosterErrorText = userFacingError(
+          error,
+          fallback: 'We could not save this matchday roster.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _isSavingRoster = false);
+    }
+  }
+
+  Widget _buildReliabilityRoster() {
+    final roster = _reliabilityRoster;
+    if (roster != null) {
+      return FixtureReliabilityRosterCard(
+        roster: roster,
+        onOpen: _openReliabilityRoster,
+      );
+    }
+    final error = _rosterErrorText;
+    if (error != null) {
+      return FixtureReliabilityRosterErrorCard(
+        message: error,
+        onRetry: () => _loadReliabilityRoster(),
+      );
+    }
+    return const FixtureReliabilityRosterLoadingCard();
   }
 
   void _configureRefreshTimer() {
@@ -398,11 +635,16 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomAction = _fixture.isOpen
+    final bottomAction = _canJoin
         ? _JoinActionBar(
             canJoin: _canJoin,
             isJoining: _isJoining,
             onJoin: _joinFixture,
+          )
+        : _canCancelClanBooking
+        ? _CancelClanBookingActionBar(
+            isCancelling: _isCancelling,
+            onCancel: _cancelClanBooking,
           )
         : _canShowCompleteAction
         ? _CompleteActionBar(
@@ -471,6 +713,10 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
                     if (_fixture.isCancelled) ...[
                       const SizedBox(height: 18),
                       _CancellationPanel(fixture: _fixture),
+                    ],
+                    if (_shouldShowReliabilityRoster) ...[
+                      const SizedBox(height: 18),
+                      _buildReliabilityRoster(),
                     ],
                     const SizedBox(height: 18),
                     AnimatedSwitcher(
@@ -2101,15 +2347,19 @@ class _TeamPaymentsPanel extends StatelessWidget {
             children: [
               Icon(Icons.receipt_long_rounded, color: fieldEmerald600),
               SizedBox(width: 8),
-              Text(
-                'TEAM PAYMENTS',
-                style: TextStyle(
-                  color: fieldGray900,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w800,
+              Expanded(
+                child: Text(
+                  'TEAM PAYMENTS',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: fieldGray900,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
-              Spacer(),
+              SizedBox(width: 8),
               Text(
                 '20 BHD EACH',
                 style: TextStyle(
@@ -6010,6 +6260,263 @@ class _PlaybackWindow {
   final Duration start;
   final Duration end;
   final String label;
+}
+
+class _ClanCancellationSheet extends StatefulWidget {
+  const _ClanCancellationSheet({
+    required this.quote,
+    this.initialReason,
+    this.quoteUpdated = false,
+  });
+
+  final ClanFixtureCancellationPreview quote;
+  final String? initialReason;
+  final bool quoteUpdated;
+
+  @override
+  State<_ClanCancellationSheet> createState() => _ClanCancellationSheetState();
+}
+
+class _ClanCancellationSheetState extends State<_ClanCancellationSheet> {
+  late final _reasonController = TextEditingController(
+    text: widget.initialReason,
+  );
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final quote = widget.quote;
+    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
+    return Padding(
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: Material(
+        color: Colors.white,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: fieldGray200,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                widget.quoteUpdated
+                    ? 'CANCELLATION TERMS UPDATED'
+                    : 'CANCEL CLAN MATCH',
+                style: const TextStyle(
+                  color: Color(0xFFDC2626),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1.3,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                quote.createsForfeit
+                    ? 'This creates an official ${quote.forfeitScore}–0 forfeit'
+                    : 'Review the policy outcome',
+                style: const TextStyle(
+                  color: fieldGray900,
+                  fontSize: 22,
+                  height: 1.15,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(15),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: Column(
+                  children: [
+                    _CancellationFact(
+                      label: 'Clan strikes',
+                      value: '${quote.strikeDelta}',
+                    ),
+                    const SizedBox(height: 9),
+                    _CancellationFact(
+                      label: 'Total Field Wallet credit',
+                      value: '${quote.refundLabel} · ${quote.refundPercent}%',
+                    ),
+                    const SizedBox(height: 9),
+                    _CancellationFact(
+                      label: 'Reliability deposit',
+                      value: quote.depositForfeited
+                          ? 'Forfeited'
+                          : quote.depositRefundFils > 0
+                          ? 'Returned · ${quote.depositRefundLabel} included'
+                          : 'Not required',
+                    ),
+                    if (quote.createsForfeit) ...[
+                      const SizedBox(height: 9),
+                      const _CancellationFact(
+                        label: 'Player SR',
+                        value: 'No change · match not played',
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              const Text(
+                'Reason for the audit trail',
+                style: TextStyle(
+                  color: fieldGray700,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _reasonController,
+                autofocus: true,
+                maxLength: 1000,
+                minLines: 2,
+                maxLines: 4,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: 'Briefly explain why the clan is cancelling…',
+                  filled: true,
+                  fillColor: const Color(0xFFF9FAFB),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: const BorderSide(color: fieldGray200),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(15),
+                    borderSide: const BorderSide(color: fieldGray200),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Keep match'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton(
+                      onPressed:
+                          !quote.canCancel ||
+                              _reasonController.text.trim().length < 5
+                          ? null
+                          : () => Navigator.of(
+                              context,
+                            ).pop(_reasonController.text.trim()),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFDC2626),
+                        foregroundColor: Colors.white,
+                      ),
+                      child: const Text('Confirm cancellation'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CancellationFact extends StatelessWidget {
+  const _CancellationFact({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: fieldGray600,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        Text(
+          value,
+          textAlign: TextAlign.right,
+          style: const TextStyle(
+            color: fieldGray900,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CancelClanBookingActionBar extends StatelessWidget {
+  const _CancelClanBookingActionBar({
+    required this.isCancelling,
+    required this.onCancel,
+  });
+
+  final bool isCancelling;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: fieldGray100)),
+        ),
+        child: OutlinedButton.icon(
+          onPressed: isCancelling ? null : onCancel,
+          icon: isCancelling
+              ? const SizedBox(
+                  width: 17,
+                  height: 17,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.event_busy_rounded),
+          label: Text(
+            isCancelling ? 'Loading policy outcome…' : 'Cancel clan match',
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFB91C1C),
+            side: const BorderSide(color: Color(0xFFFECACA)),
+            minimumSize: const Size.fromHeight(50),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _JoinActionBar extends StatelessWidget {

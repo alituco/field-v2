@@ -2,6 +2,81 @@ import '../fixtures/fixture.dart';
 
 enum OpenQueueRole { goalkeeper, defender, midfielder, attacker }
 
+class OpenQueueBookingCostPreview {
+  const OpenQueueBookingCostPreview({
+    required this.currency,
+    required this.standardMatchFeeFils,
+    required this.replacementDiscountBps,
+    required this.discountAmountFils,
+    required this.matchFeeFils,
+    required this.reliabilityDepositRequired,
+    required this.reliabilityDepositBps,
+    required this.reliabilityDepositFils,
+    required this.totalFils,
+    this.policyVersionId,
+    this.replacementOfferExpiresAt,
+  });
+
+  final String currency;
+  final int standardMatchFeeFils;
+  final int replacementDiscountBps;
+  final int discountAmountFils;
+  final int matchFeeFils;
+  final bool reliabilityDepositRequired;
+  final int reliabilityDepositBps;
+  final int reliabilityDepositFils;
+  final int totalFils;
+  final String? policyVersionId;
+  final DateTime? replacementOfferExpiresAt;
+
+  String get standardMatchFeeLabel =>
+      _moneyLabel(standardMatchFeeFils, currency);
+  String get matchFeeLabel => _moneyLabel(matchFeeFils, currency);
+  String get discountLabel => _moneyLabel(discountAmountFils, currency);
+  String get depositLabel => _moneyLabel(reliabilityDepositFils, currency);
+  String get totalLabel => _moneyLabel(totalFils, currency);
+  int get discountPercent => (replacementDiscountBps / 100).round();
+  int get depositPercent => (reliabilityDepositBps / 100).round();
+
+  bool hasSameCheckoutTermsAs(OpenQueueBookingCostPreview other) {
+    return currency == other.currency &&
+        standardMatchFeeFils == other.standardMatchFeeFils &&
+        replacementDiscountBps == other.replacementDiscountBps &&
+        discountAmountFils == other.discountAmountFils &&
+        matchFeeFils == other.matchFeeFils &&
+        reliabilityDepositRequired == other.reliabilityDepositRequired &&
+        reliabilityDepositBps == other.reliabilityDepositBps &&
+        reliabilityDepositFils == other.reliabilityDepositFils &&
+        totalFils == other.totalFils &&
+        policyVersionId == other.policyVersionId;
+  }
+
+  factory OpenQueueBookingCostPreview.fromJson(Map<String, dynamic> json) {
+    return OpenQueueBookingCostPreview(
+      currency: (json['currency'] as String? ?? 'BHD').trim(),
+      standardMatchFeeFils: _asInt(json['standard_match_fee_fils']),
+      replacementDiscountBps: _asInt(json['replacement_discount_bps']),
+      discountAmountFils: _asInt(json['discount_amount_fils']),
+      matchFeeFils: _asInt(json['match_fee_fils']),
+      reliabilityDepositRequired:
+          json['reliability_deposit_required'] as bool? ?? false,
+      reliabilityDepositBps: _asInt(json['reliability_deposit_bps']),
+      reliabilityDepositFils: _asInt(json['reliability_deposit_fils']),
+      totalFils: _asInt(json['total_fils']),
+      policyVersionId: _nonEmptyString(json['policy_version_id']),
+      replacementOfferExpiresAt: _asDate(json['replacement_offer_expires_at']),
+    );
+  }
+}
+
+String _moneyLabel(int fils, String currency) {
+  final dinars = fils / 1000;
+  final amount = dinars == dinars.roundToDouble()
+      ? dinars.toInt().toString()
+      : dinars.toStringAsFixed(3);
+  return '$amount $currency';
+}
+
 extension OpenQueueRoleX on OpenQueueRole {
   String get code => switch (this) {
     OpenQueueRole.goalkeeper => 'GK',
@@ -56,6 +131,12 @@ class OpenQueueGame {
     this.matchAverageSr,
     this.teamSrSpread,
     this.teamsAssignedAt,
+    this.policyVersionId,
+    this.teamAssignmentAt,
+    this.partyLockAt,
+    this.teamAssignmentLeadMinutes,
+    this.partyLockLeadMinutes,
+    this.maxPartySize,
   });
 
   final String id;
@@ -79,6 +160,12 @@ class OpenQueueGame {
   final int? matchAverageSr;
   final int? teamSrSpread;
   final DateTime? teamsAssignedAt;
+  final String? policyVersionId;
+  final DateTime? teamAssignmentAt;
+  final DateTime? partyLockAt;
+  final int? teamAssignmentLeadMinutes;
+  final int? partyLockLeadMinutes;
+  final int? maxPartySize;
 
   bool get isFull => status == 'FULL' || confirmedCount >= capacity;
 
@@ -96,15 +183,18 @@ class OpenQueueGame {
     return status == 'FULL' && confirmedCount >= capacity && !hasRecordedScore;
   }
 
-  static const teamAssignmentLeadTime = Duration(hours: 3);
-
-  DateTime get teamAssignmentAt => startsAt.subtract(teamAssignmentLeadTime);
-
   bool get isTeamAssignmentDue => isTeamAssignmentDueAt(DateTime.now());
 
   bool isTeamAssignmentDueAt(DateTime now) {
-    return !now.isBefore(teamAssignmentAt);
+    final cutoff = teamAssignmentAt;
+    if (cutoff == null) return teamsAssignedAt != null;
+    return !now.isBefore(cutoff);
   }
+
+  String get teamAssignmentLeadLabel =>
+      openQueueLeadTimeLabel(teamAssignmentLeadMinutes);
+
+  String get partyLockLeadLabel => openQueueLeadTimeLabel(partyLockLeadMinutes);
 
   bool get hasActiveTeamAssignment {
     return isUpcomingMatchConfirmed &&
@@ -206,6 +296,14 @@ class OpenQueueGame {
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
       teamSrSpread: _asNullableRoundedInt(json['team_sr_spread']),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      policyVersionId: _nonEmptyString(json['policy_version_id']),
+      teamAssignmentAt: _asDate(json['team_assignment_at']),
+      partyLockAt: _asDate(json['party_lock_at']),
+      teamAssignmentLeadMinutes: _asNullableInt(
+        json['team_assignment_lead_minutes'],
+      ),
+      partyLockLeadMinutes: _asNullableInt(json['party_lock_lead_minutes']),
+      maxPartySize: _asNullableInt(json['max_party_size']),
     );
   }
 
@@ -229,8 +327,31 @@ class OpenQueueGame {
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
       teamSrSpread: _asNullableRoundedInt(json['team_sr_spread']),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      policyVersionId: _nonEmptyString(json['policy_version_id']),
+      teamAssignmentAt: _asDate(json['team_assignment_at']),
+      partyLockAt: _asDate(json['party_lock_at']),
+      teamAssignmentLeadMinutes: _asNullableInt(
+        json['team_assignment_lead_minutes'],
+      ),
+      partyLockLeadMinutes: _asNullableInt(json['party_lock_lead_minutes']),
+      maxPartySize: _asNullableInt(json['max_party_size']),
     );
   }
+}
+
+String openQueueLeadTimeLabel(int? minutes) {
+  if (minutes == null) return 'before kickoff';
+  if (minutes == 0) return 'at kickoff';
+  if (minutes % 60 == 0) {
+    final hours = minutes ~/ 60;
+    return '$hours ${hours == 1 ? 'hour' : 'hours'} before kickoff';
+  }
+  if (minutes < 60) {
+    return '$minutes ${minutes == 1 ? 'minute' : 'minutes'} before kickoff';
+  }
+  final hours = minutes ~/ 60;
+  final remainder = minutes % 60;
+  return '$hours ${hours == 1 ? 'hour' : 'hours'} $remainder minutes before kickoff';
 }
 
 const openQueueWhiteTeamId = 'WHITE';
@@ -535,16 +656,95 @@ class OpenQueueCancellationPreview {
     required this.refundPercent,
     required this.refundAmountFils,
     required this.refundCutoffAt,
+    this.serverNow,
+    this.policyVersionId,
+    this.outcomeCode,
+    this.strikeDelta = 0,
+    this.refundBps,
+    this.refundDestination,
+    this.depositForfeited = false,
+    this.explanation,
+    this.checkInDeadlineAt,
+    this.noShowCutoffAt,
   });
 
   final bool canCancel;
   final int refundPercent;
   final int refundAmountFils;
-  final DateTime refundCutoffAt;
+  final DateTime? refundCutoffAt;
+
+  /// Server time used to classify this cancellation. The client never
+  /// decides which policy window applies.
+  final DateTime? serverNow;
+  final String? policyVersionId;
+  final String? outcomeCode;
+  final int strikeDelta;
+  final int? refundBps;
+  final String? refundDestination;
+  final bool depositForfeited;
+  final String? explanation;
+  final DateTime? checkInDeadlineAt;
+  final DateTime? noShowCutoffAt;
+
+  int get effectiveRefundBps => refundBps ?? (refundPercent * 100);
+
+  String get refundPercentLabel {
+    final bps = effectiveRefundBps;
+    if (bps % 100 == 0) return '${bps ~/ 100}%';
+    return '${(bps / 100).toStringAsFixed(2)}%';
+  }
+
+  String get outcomeLabel => switch (outcomeCode?.toUpperCase()) {
+    'CANCELLED_EARLY' || 'EARLY_CANCELLATION' => 'Early cancellation',
+    'CANCELLED_LATE' || 'LATE_CANCELLATION' => 'Late cancellation',
+    'CANCELLED_VERY_LATE' ||
+    'VERY_LATE_CANCELLATION' => 'Very late cancellation',
+    'NO_SHOW' => 'No-show',
+    'FIELD_CANCELLED' ||
+    'FIELD_CAUSED_CANCELLATION' => 'Field-caused cancellation',
+    final String value when value.isNotEmpty =>
+      value
+          .toLowerCase()
+          .split('_')
+          .map(
+            (word) => word.isEmpty
+                ? word
+                : '${word[0].toUpperCase()}${word.substring(1)}',
+          )
+          .join(' '),
+    _ => 'Cancellation',
+  };
+
+  String get refundDestinationLabel {
+    final destination = refundDestination?.trim().toUpperCase();
+    if (effectiveRefundBps <= 0) return 'No refund';
+    if (destination == null ||
+        destination.isEmpty ||
+        destination == 'FIELD_WALLET') {
+      return '$refundPercentLabel to your Field wallet';
+    }
+    return '$refundPercentLabel to ${destination.replaceAll('_', ' ').toLowerCase()}';
+  }
 
   String get refundLabel {
-    if (refundPercent == 0) return 'No refund';
-    return '${(refundAmountFils / 1000).toStringAsFixed(3)} BHD refund';
+    if (effectiveRefundBps == 0) return 'No refund';
+    return '${(refundAmountFils / 1000).toStringAsFixed(3)} BHD to Field wallet';
+  }
+
+  bool hasSameConsequencesAs(OpenQueueCancellationPreview other) {
+    return canCancel == other.canCancel &&
+        policyVersionId == other.policyVersionId &&
+        outcomeCode == other.outcomeCode &&
+        strikeDelta == other.strikeDelta &&
+        effectiveRefundBps == other.effectiveRefundBps &&
+        refundAmountFils == other.refundAmountFils &&
+        refundDestination == other.refundDestination &&
+        depositForfeited == other.depositForfeited &&
+        explanation == other.explanation &&
+        checkInDeadlineAt?.millisecondsSinceEpoch ==
+            other.checkInDeadlineAt?.millisecondsSinceEpoch &&
+        noShowCutoffAt?.millisecondsSinceEpoch ==
+            other.noShowCutoffAt?.millisecondsSinceEpoch;
   }
 
   factory OpenQueueCancellationPreview.fromJson(Map<String, dynamic> json) {
@@ -552,9 +752,17 @@ class OpenQueueCancellationPreview {
       canCancel: json['can_cancel'] == true,
       refundPercent: _asInt(json['refund_percent']),
       refundAmountFils: _asInt(json['refund_amount_fils']),
-      refundCutoffAt: DateTime.parse(
-        json['refund_cutoff_at'] as String,
-      ).toLocal(),
+      refundCutoffAt: _asDate(json['refund_cutoff_at']),
+      serverNow: _asDate(json['server_now']),
+      policyVersionId: _nonEmptyString(json['policy_version_id']),
+      outcomeCode: _nonEmptyString(json['outcome_code']),
+      strikeDelta: _asInt(json['strike_delta']),
+      refundBps: _asNullableInt(json['refund_bps']),
+      refundDestination: _nonEmptyString(json['refund_destination']),
+      depositForfeited: json['deposit_forfeited'] == true,
+      explanation: _nonEmptyString(json['explanation']),
+      checkInDeadlineAt: _asDate(json['check_in_deadline_at']),
+      noShowCutoffAt: _asDate(json['no_show_cutoff_at']),
     );
   }
 }

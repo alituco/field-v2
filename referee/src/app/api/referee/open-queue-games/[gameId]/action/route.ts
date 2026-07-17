@@ -7,7 +7,12 @@ import {
   parseAdminCancellationInput,
   parseAdminScoreOverrideInput,
   parseMatchStoppageInput,
+  parseRefereeBulkCheckInInput,
+  parseRefereeCheckInInput,
+  parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
+  parseRefereeStartShorthandedInput,
+  parseRefereeVerifiedInjuryInput,
 } from "@/lib/match-action-input";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 
@@ -24,6 +29,12 @@ type ActionBody = {
     | "expire_blue_card"
     | "finish"
     | "report"
+    | "check_in_player"
+    | "check_in_players"
+    | "finalize_attendance"
+    | "record_verified_injury"
+    | "start_shorthanded"
+    | "end_shorthanded"
     | "stop"
     | "cancel"
     | "override_score";
@@ -34,6 +45,7 @@ type ActionBody = {
   blueCardId?: string;
   elapsedSeconds?: number;
   participantIds?: string[];
+  profileIds?: string[];
   subjectType?: string;
   subjectId?: string;
   category?: string;
@@ -46,6 +58,13 @@ type ActionBody = {
   note?: string;
   homeScore?: number;
   awayScore?: number;
+  unableToContinue?: boolean;
+  replacementAvailable?: boolean;
+  matchContinued?: boolean;
+  side?: string;
+  causedByProfileId?: string | null;
+  periodId?: string;
+  replacementProfileId?: string | null;
 } & Record<string, unknown>;
 
 type GameRow = { id: string; status: string };
@@ -126,6 +145,109 @@ export async function POST(request: NextRequest, context: RouteContext) {
         });
         if (error) throw new Error(`Could not submit report: ${error.message}`);
         result = { reportId: String(data) };
+        break;
+      }
+      case "check_in_player": {
+        const checkIn = parseRefereeCheckInInput(body);
+        const { data, error } = await db.rpc("referee_check_in_player", {
+          actor_referee_id: refereeContext.referee.profileId,
+          match_kind_to_use: "SOLO",
+          match_id_to_use: gameId,
+          profile_id_to_check_in: checkIn.profileId,
+        });
+        if (error) throw new Error(`Could not check in player: ${error.message}`);
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "check_in_players": {
+        const checkIn = parseRefereeBulkCheckInInput(body);
+        let reliabilityContext: unknown = null;
+        for (const profileId of checkIn.profileIds) {
+          const { data, error } = await db.rpc("referee_check_in_player", {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            profile_id_to_check_in: profileId,
+          });
+          if (error) {
+            throw new Error(`Could not check in all players: ${error.message}`);
+          }
+          reliabilityContext = data;
+        }
+        result = { reliabilityContext };
+        break;
+      }
+      case "finalize_attendance": {
+        const { data, error } = await db.rpc(
+          "referee_finalize_match_attendance",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not finalize attendance: ${error.message}`);
+        }
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "record_verified_injury": {
+        const injury = parseRefereeVerifiedInjuryInput(body);
+        const { data, error } = await db.rpc(
+          "referee_record_verified_injury",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            injured_profile_id_to_use: injury.profileId,
+            unable_to_continue_to_use: injury.unableToContinue,
+            replacement_available_to_use: injury.replacementAvailable,
+            match_continued_to_use: injury.matchContinued,
+            note_to_use: injury.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not record verified injury: ${error.message}`);
+        }
+        result = { evidence: data };
+        break;
+      }
+      case "start_shorthanded": {
+        const period = parseRefereeStartShorthandedInput(body, "SOLO");
+        const { data, error } = await db.rpc(
+          "referee_start_shorthanded_period",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            side_to_use: period.side,
+            reason_to_use: period.reason,
+            caused_by_profile_id_to_use: period.causedByProfileId,
+            note_to_use: period.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not start shorthanded period: ${error.message}`);
+        }
+        result = { periodId: String(data) };
+        break;
+      }
+      case "end_shorthanded": {
+        const period = parseRefereeEndShorthandedInput(body);
+        const { data, error } = await db.rpc(
+          "referee_end_shorthanded_period",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            period_id_to_end: period.periodId,
+            replacement_profile_id_to_use: period.replacementProfileId,
+            note_to_use: period.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not end shorthanded period: ${error.message}`);
+        }
+        result = { evidence: data };
         break;
       }
       case "stop": {

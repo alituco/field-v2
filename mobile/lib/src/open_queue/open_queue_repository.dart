@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'open_queue.dart';
 import 'open_queue_party_repository.dart';
+import '../reliability/reliability.dart';
 
 abstract class OpenQueueRepository {
   Future<List<OpenQueueGame>> listGames();
@@ -29,9 +30,24 @@ abstract interface class OpenQueueBookingLookupRepository {
   Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId);
 }
 
+abstract interface class OpenQueueReliabilityLookupRepository {
+  Future<MatchReliabilityContext?> getMatchReliabilityContext(String gameId);
+}
+
+abstract interface class OpenQueueBookingCostPreviewRepository {
+  Future<OpenQueueBookingCostPreview> previewBookingCost({
+    required String gameId,
+    required OpenQueueRole role,
+  });
+}
+
 class SupabaseOpenQueueRepository
     with SupabaseOpenQueuePartyRepository
-    implements OpenQueueRepository, OpenQueueBookingLookupRepository {
+    implements
+        OpenQueueRepository,
+        OpenQueueBookingLookupRepository,
+        OpenQueueReliabilityLookupRepository,
+        OpenQueueBookingCostPreviewRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   @override
@@ -101,6 +117,43 @@ class SupabaseOpenQueueRepository
       _ => throw StateError('Solo match not found.'),
     };
     return OpenQueueMatchDetail.fromJson(row);
+  }
+
+  @override
+  Future<MatchReliabilityContext?> getMatchReliabilityContext(
+    String gameId,
+  ) async {
+    final response = await _client.rpc(
+      'get_match_reliability_context',
+      params: {'match_kind_to_use': 'SOLO', 'match_id_to_use': gameId},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => null,
+    };
+    return row == null ? null : MatchReliabilityContext.fromJson(row);
+  }
+
+  @override
+  Future<OpenQueueBookingCostPreview> previewBookingCost({
+    required String gameId,
+    required OpenQueueRole role,
+  }) async {
+    final response = await _client.rpc(
+      'preview_open_queue_booking_cost',
+      params: {'game_id_to_book': gameId, 'role_to_book': role.code},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => throw StateError('Booking total is unavailable.'),
+    };
+    return OpenQueueBookingCostPreview.fromJson(row);
   }
 
   @override
@@ -187,11 +240,14 @@ class SupabaseOpenQueueRepository
       'preview_open_queue_cancellation',
       params: {'booking_id_to_preview': bookingId},
     );
-    final rows = response as List<dynamic>;
-    if (rows.isEmpty) throw StateError('Cancellation preview is unavailable.');
-    return OpenQueueCancellationPreview.fromJson(
-      Map<String, dynamic>.from(rows.first as Map),
-    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => throw StateError('Cancellation preview is unavailable.'),
+    };
+    return OpenQueueCancellationPreview.fromJson(row);
   }
 
   @override

@@ -13,6 +13,7 @@ import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../reliability/reliability_repository.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
 
@@ -40,6 +41,8 @@ class _HomeScreenState extends State<HomeScreen> {
       SupabaseLeaderboardRepository();
   final OpenQueueRepository _openQueueRepository =
       SupabaseOpenQueueRepository();
+  final ReliabilityRepository _reliabilityRepository =
+      SupabaseReliabilityRepository();
   int _selectedIndex = 0;
   int _clansActivationTick = 0;
   int _ranksActivationTick = 0;
@@ -170,6 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
+        reliabilityRepository: _reliabilityRepository,
         devModeEnabled: widget.isDev,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,

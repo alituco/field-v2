@@ -56,6 +56,16 @@ export const CANCELLATION_REASON_CODES = [
   "OTHER",
 ] as const;
 
+export const SHORTHANDED_REASONS = [
+  "LATE_ARRIVAL",
+  "NO_SHOW",
+  "INJURY",
+  "OTHER",
+] as const;
+
+export const SOLO_RELIABILITY_SIDES = ["WHITE", "BLACK"] as const;
+export const CLAN_RELIABILITY_SIDES = ["HOME", "AWAY"] as const;
+
 export type MatchKind = "CLAN" | "SOLO";
 export type ReportSubjectType = (typeof REPORT_SUBJECT_TYPES)[number];
 export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
@@ -64,6 +74,7 @@ export type StopMode = (typeof STOP_MODES)[number];
 export type StopReasonCode = (typeof STOP_REASON_CODES)[number];
 export type ForfeitStopReasonCode = (typeof FORFEIT_STOP_REASON_CODES)[number];
 export type ForfeitReviewAction = (typeof FORFEIT_REVIEW_ACTIONS)[number];
+export type ShorthandedReason = (typeof SHORTHANDED_REASONS)[number];
 
 type InputRecord = Record<string, unknown>;
 
@@ -240,6 +251,101 @@ export function parseAdminScoreOverrideInput(body: InputRecord) {
   return { homeScore, awayScore, reason };
 }
 
+export function parseRefereeCheckInInput(body: InputRecord) {
+  return {
+    profileId: uuidValue(
+      body.profileId,
+      "Choose a player from this match to check in.",
+    ),
+  };
+}
+
+export function parseRefereeBulkCheckInInput(body: InputRecord) {
+  if (!Array.isArray(body.profileIds)) {
+    throw new Error("Choose at least one player from this match to check in.");
+  }
+  const profileIds = [
+    ...new Set(
+      body.profileIds.map((profileId) =>
+        uuidValue(profileId, "Every check-in must belong to a valid player."),
+      ),
+    ),
+  ];
+  if (profileIds.length === 0 || profileIds.length > 50) {
+    throw new Error("Choose between 1 and 50 players to check in.");
+  }
+  return { profileIds };
+}
+
+export function parseRefereeVerifiedInjuryInput(body: InputRecord) {
+  return {
+    profileId: uuidValue(
+      body.profileId,
+      "Choose a checked-in player from this match.",
+    ),
+    unableToContinue: booleanValue(
+      body.unableToContinue,
+      "Confirm whether the player was unable to continue.",
+    ),
+    replacementAvailable: booleanValue(
+      body.replacementAvailable,
+      "Confirm whether a replacement was available.",
+    ),
+    matchContinued: booleanValue(
+      body.matchContinued,
+      "Confirm whether the match continued.",
+    ),
+    note: optionalBoundedText(body.note, 1000),
+  };
+}
+
+export function parseRefereeStartShorthandedInput(
+  body: InputRecord,
+  matchKind: MatchKind,
+) {
+  const allowedSides = matchKind === "SOLO"
+    ? SOLO_RELIABILITY_SIDES
+    : CLAN_RELIABILITY_SIDES;
+  const side = enumValue(
+    body.side,
+    allowedSides,
+    "Choose a team from this match.",
+  );
+  const reason = enumValue(
+    body.reason,
+    SHORTHANDED_REASONS,
+    "Choose why this team is playing short.",
+  );
+  const note = optionalBoundedText(body.note, 1000);
+  if (reason === "OTHER" && note.length < 5) {
+    throw new Error("Add a concise factual note for the other reason.");
+  }
+
+  return {
+    side,
+    reason,
+    causedByProfileId: optionalUuidValue(
+      body.causedByProfileId,
+      "Choose a player from this team or leave it blank.",
+    ),
+    note,
+  };
+}
+
+export function parseRefereeEndShorthandedInput(body: InputRecord) {
+  return {
+    periodId: uuidValue(
+      body.periodId,
+      "Choose an active shorthanded period.",
+    ),
+    replacementProfileId: optionalUuidValue(
+      body.replacementProfileId,
+      "Choose a replacement from this match or leave it blank.",
+    ),
+    note: optionalBoundedText(body.note, 1000),
+  };
+}
+
 function enumValue<const T extends readonly string[]>(
   value: unknown,
   allowed: T,
@@ -254,6 +360,16 @@ function uuidValue(value: unknown, message: string) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!UUID_PATTERN.test(normalized)) throw new Error(message);
   return normalized;
+}
+
+function optionalUuidValue(value: unknown, message: string) {
+  if (value == null || String(value).trim() === "") return null;
+  return uuidValue(value, message);
+}
+
+function booleanValue(value: unknown, message: string) {
+  if (typeof value !== "boolean") throw new Error(message);
+  return value;
 }
 
 function boundedText(

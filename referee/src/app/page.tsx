@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
+import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
 import { normalizePhoneNumber } from "@/lib/phone";
 import { formatPlayerSr } from "@/lib/open-queue-ratings";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -14,6 +15,7 @@ import type {
   FixtureEvent,
   ModerationRiskSignal,
   Player,
+  ReliabilityAttendancePlayer,
   RefereeAssignmentsResponse,
   RefereeFixture,
   RefereeFixturesResponse,
@@ -23,7 +25,7 @@ import type {
 type Tab = "games" | "assign" | "admin";
 type FixtureActionBody = Record<
   string,
-  string | number | string[] | null | undefined
+  string | number | boolean | string[] | null | undefined
 >;
 
 type Me = RefereeFixturesResponse["me"];
@@ -1187,11 +1189,21 @@ function GamesView({
         ))}
       </div>
 
-      <MatchContextDisclosure key={activeFixture.id} fixture={activeFixture} />
+      <MatchContextDisclosure
+        key={`match-context-${activeFixture.matchKind}-${activeFixture.id}`}
+        fixture={activeFixture}
+      />
+
+      <AttendancePanel
+        fixture={activeFixture}
+        submitting={submitting}
+        onEvidenceAction={onSafetyAction}
+        onRunAction={onRunAction}
+      />
 
       <TimerPanel
         compact
-        key={activeFixture.id}
+        key={`timer-${activeFixture.matchKind}-${activeFixture.id}`}
         fixture={activeFixture}
         submitting={submitting}
         onRunAction={onRunAction}
@@ -1344,6 +1356,223 @@ function GamesView({
       />
     </div>
   );
+}
+
+function AttendancePanel({
+  fixture,
+  submitting,
+  onEvidenceAction,
+  onRunAction,
+}: {
+  fixture: RefereeFixture;
+  submitting: string | null;
+  onEvidenceAction: (body: FixtureActionBody) => Promise<boolean>;
+  onRunAction: (body: FixtureActionBody) => Promise<void>;
+}) {
+  const context = fixture.reliabilityContext;
+  if (!context) {
+    return (
+      <section className="panel attendance-panel unavailable">
+        <div className="attendance-heading">
+          <div>
+            <span className="match-action-kicker">Player reliability</span>
+            <h2 className="panel-title">Attendance unavailable</h2>
+          </div>
+          <span className="attendance-state cutoff">Refresh required</span>
+        </div>
+        <p className="attendance-cutoff-note">
+          Do not record attendance from the laptop clock. Refresh the match to
+          restore the server-timed check-in controls.
+        </p>
+      </section>
+    );
+  }
+
+  const busy = submitting !== null;
+  const deadline = formatAttendanceTime(context.checkInDeadlineAt);
+  const kickoff = formatAttendanceTime(context.kickoffAt);
+  const cutoff = formatAttendanceTime(context.noShowCutoffAt);
+  const statusLabel = context.attendanceFinalized
+    ? "Attendance final"
+    : context.canFinalizeAttendance
+      ? "Ready to finalize"
+      : context.canCheckIn
+        ? "Ready for check-in"
+        : "Check-in closed";
+
+  return (
+    <section className="panel attendance-panel">
+      <div className="attendance-heading">
+        <div>
+          <span className="match-action-kicker">Player reliability</span>
+          <h2 className="panel-title">Match attendance</h2>
+        </div>
+        <span
+          className={`attendance-state ${
+            context.attendanceFinalized ? "final" : context.canFinalizeAttendance ? "cutoff" : "open"
+          }`}
+        >
+          {statusLabel}
+        </span>
+      </div>
+
+      <p className="attendance-deadline">
+        <strong>Referee check-in closes {cutoff}</strong>
+        <span>On-time arrival is by {deadline} · kickoff is {kickoff}</span>
+      </p>
+
+      <div className="attendance-summary" aria-label="Attendance totals">
+        <span><strong>{context.checkedInCount}</strong> checked in</span>
+        <span><strong>{context.lateCount}</strong> late</span>
+        <span><strong>{context.missingCount}</strong> missing</span>
+      </div>
+
+      <details className="attendance-roster" open={!context.attendanceFinalized}>
+        <summary>
+          <span>Player list</span>
+          <strong>{context.checkedInCount}/{context.expectedCount}</strong>
+          <DisclosureChevron />
+        </summary>
+        <div className="attendance-player-list">
+          {context.players.map((player) => (
+            <AttendancePlayerRow
+              canCheckIn={context.canCheckIn && !context.attendanceFinalized}
+              key={player.profileId}
+              player={player}
+              submitting={submitting}
+              onCheckIn={() => onRunAction({
+                action: "check_in_player",
+                profileId: player.profileId,
+              })}
+            />
+          ))}
+        </div>
+      </details>
+
+      <RefereeReliabilityEvidencePanel
+        fixture={fixture}
+        submitting={submitting}
+        onAction={onEvidenceAction}
+      />
+
+      {!context.attendanceFinalized && context.canFinalizeAttendance ? (
+        <div className="attendance-finalize">
+          <div>
+            <strong>No-show cutoff reached</strong>
+            <span>{context.missingCount} missing · cutoff {cutoff}</span>
+          </div>
+          <button
+            className="danger-button"
+            disabled={busy}
+            onClick={() => void onRunAction({ action: "finalize_attendance" })}
+            type="button"
+          >
+            {submitting === "finalize_attendance" ? "Finalizing…" : "Finalize"}
+          </button>
+        </div>
+      ) : !context.attendanceFinalized ? (
+        <p className="attendance-cutoff-note">
+          Missing players can be finalized after the {cutoff} no-show cutoff.
+          Kickoff is not delayed.
+        </p>
+      ) : (
+        <p className="attendance-cutoff-note final">
+          Outcomes saved · {context.onTimeCount} on time · {context.lateCount} late · {context.missingCount} no-show
+        </p>
+      )}
+    </section>
+  );
+}
+
+function AttendancePlayerRow({
+  player,
+  canCheckIn,
+  submitting,
+  onCheckIn,
+}: {
+  player: ReliabilityAttendancePlayer;
+  canCheckIn: boolean;
+  submitting: string | null;
+  onCheckIn: () => Promise<void>;
+}) {
+  const label = !player.expectedForMatch && player.status === "MISSING"
+    ? "Available"
+    : attendanceStatusLabel(player.status);
+  const time = formatAttendanceTime(player.checkedInAt);
+  const canRecord = canCheckIn &&
+    player.checkInEligible &&
+    !player.isCheckedIn &&
+    player.status === "MISSING";
+
+  return (
+    <div className="attendance-player">
+      <div className="attendance-player-identity">
+        <span className="attendance-avatar" aria-hidden="true">
+          {initials(player.displayName)}
+        </span>
+      <span>
+          <strong>{player.displayName}</strong>
+          <small>{[
+            player.teamName,
+            player.expectedForMatch ? "Planned roster" : "Available clan member",
+            player.role,
+          ].filter(Boolean).join(" · ") || "Player"}</small>
+        </span>
+      </div>
+      <span className={`attendance-player-status ${player.status.toLowerCase()}`}>
+        {label}{player.checkedInAt ? ` · ${time}` : ""}
+      </span>
+      {canRecord ? (
+        <button
+          className="ghost-button compact-button"
+          disabled={submitting !== null}
+          onClick={() => void onCheckIn()}
+          type="button"
+        >
+          Check in
+        </button>
+      ) : !player.isCheckedIn && !player.checkInEligible ? (
+        <span className="attendance-player-unavailable">Unavailable</span>
+      ) : null}
+    </div>
+  );
+}
+
+function attendanceStatusLabel(status: ReliabilityAttendancePlayer["status"]) {
+  switch (status) {
+    case "ON_TIME":
+      return "On time";
+    case "LATE":
+      return "Late";
+    case "NO_SHOW":
+      return "No-show";
+    case "EXCUSED":
+      return "Excused";
+    case "CHECKED_IN":
+      return "Checked in";
+    default:
+      return "Not checked in";
+  }
+}
+
+function formatAttendanceTime(value: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("en", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: "Asia/Bahrain",
+  }).format(date);
+}
+
+function initials(value: string) {
+  return value
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("") || "?";
 }
 
 function MatchContextDisclosure({ fixture }: { fixture: RefereeFixture }) {
@@ -1647,8 +1876,15 @@ function TimerPanel({
     (fixture.matchKind === "SOLO"
       ? fixture.status === "FULL"
       : fixture.status === "SCHEDULED");
+  const attendanceEligibleIds = fixture.reliabilityContext &&
+      fixture.reliabilityContext.expectedCount > 0
+    ? fixture.reliabilityContext.players
+        .filter((player) => player.isCheckedIn)
+        .map((player) => player.profileId)
+    : null;
+  const attendanceEligibleSignature = attendanceEligibleIds?.join(":") ?? "";
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>(
-    () => (isBeforeStart ? [] : fixture.participantIds),
+    () => (isBeforeStart ? attendanceEligibleIds ?? [] : fixture.participantIds),
   );
   const [correctedMinutes, setCorrectedMinutes] = useState(
     String(Math.floor(elapsedSeconds / 60)),
@@ -1657,6 +1893,14 @@ function TimerPanel({
     String(elapsedSeconds % 60).padStart(2, "0"),
   );
   const autoStopFixtureId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!isBeforeStart || attendanceEligibleIds === null) return;
+    setSelectedParticipantIds(attendanceEligibleIds);
+    // The signature changes only when the server-authored checked-in roster
+    // changes. Browser time is never used to decide attendance eligibility.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attendanceEligibleSignature, isBeforeStart]);
 
   useEffect(() => {
     if (!isClosed) return;
@@ -1711,9 +1955,12 @@ function TimerPanel({
   }
 
   function setClanSelected(clanId: string, selected: boolean) {
-    const clanPlayerIds = playersForClan(fixture, clanId).map(
-      (player) => player.id,
-    );
+    const eligibleSet = attendanceEligibleIds === null
+      ? null
+      : new Set(attendanceEligibleIds);
+    const clanPlayerIds = playersForClan(fixture, clanId)
+      .filter((player) => eligibleSet === null || eligibleSet.has(player.id))
+      .map((player) => player.id);
     setSelectedParticipantIds((current) => {
       if (selected) return [...new Set([...current, ...clanPlayerIds])];
       const clanPlayerIdSet = new Set(clanPlayerIds);
@@ -1770,6 +2017,7 @@ function TimerPanel({
               isBeforeStart ? selectedParticipantIds : fixture.participantIds
             }
             editable={isBeforeStart}
+            eligibleParticipantIds={attendanceEligibleIds ?? undefined}
             onPlayerSelected={setPlayerSelected}
             onClanSelected={setClanSelected}
           />
@@ -1781,6 +2029,7 @@ function TimerPanel({
             isBeforeStart ? selectedParticipantIds : fixture.participantIds
           }
           editable={isBeforeStart}
+          eligibleParticipantIds={attendanceEligibleIds ?? undefined}
           onPlayerSelected={setPlayerSelected}
           onClanSelected={setClanSelected}
         />
@@ -1949,16 +2198,21 @@ function LineupPanel({
   fixture,
   participantIds,
   editable,
+  eligibleParticipantIds,
   onPlayerSelected,
   onClanSelected,
 }: {
   fixture: RefereeFixture;
   participantIds: string[];
   editable: boolean;
+  eligibleParticipantIds?: string[];
   onPlayerSelected: (profileId: string, selected: boolean) => void;
   onClanSelected: (clanId: string, selected: boolean) => void;
 }) {
   const participantIdSet = new Set(participantIds);
+  const eligibleParticipantIdSet = eligibleParticipantIds == null
+    ? null
+    : new Set(eligibleParticipantIds);
   const clans = [fixture.homeClan, fixture.awayClan];
 
   return (
@@ -1989,6 +2243,9 @@ function LineupPanel({
           const selectedPlayers = roster.filter((player) =>
             participantIdSet.has(player.id)
           );
+          const eligiblePlayers = eligibleParticipantIdSet === null
+            ? roster
+            : roster.filter((player) => eligibleParticipantIdSet.has(player.id));
           const shownPlayers = editable ? roster : selectedPlayers;
 
           return (
@@ -1998,18 +2255,18 @@ function LineupPanel({
                   <strong>{clan.tag}</strong>
                   <span>{selectedPlayers.length} selected</span>
                 </div>
-                {editable && roster.length > 0 ? (
+                {editable && eligiblePlayers.length > 0 ? (
                   <button
                     className="lineup-toggle"
                     onClick={() =>
                       onClanSelected(
                         clan.id,
-                        selectedPlayers.length !== roster.length,
+                        selectedPlayers.length !== eligiblePlayers.length,
                       )
                     }
                     type="button"
                   >
-                    {selectedPlayers.length === roster.length
+                    {selectedPlayers.length === eligiblePlayers.length
                       ? "Clear"
                       : "Select all"}
                   </button>
@@ -2024,16 +2281,21 @@ function LineupPanel({
                 ) : (
                   shownPlayers.map((player) => {
                     const isSelected = participantIdSet.has(player.id);
+                    const isEligible = eligibleParticipantIdSet === null ||
+                      eligibleParticipantIdSet.has(player.id);
                     return (
                       <label
                         className={`lineup-player ${
                           isSelected ? "selected" : ""
-                        } ${editable ? "editable" : ""}`}
+                        } ${editable ? "editable" : ""} ${
+                          !isEligible ? "ineligible" : ""
+                        }`}
                         key={player.id}
                       >
                         {editable ? (
                           <input
                             checked={isSelected}
+                            disabled={!isEligible}
                             onChange={(event) =>
                               onPlayerSelected(player.id, event.target.checked)
                             }
@@ -2051,6 +2313,7 @@ function LineupPanel({
                             {fixture.matchKind === "SOLO"
                               ? ` · ${formatPlayerSr(player.ratingAtTeamAssignment)} SR at assignment`
                               : ""}
+                            {!isEligible ? " · Not checked in" : ""}
                           </small>
                         </span>
                       </label>

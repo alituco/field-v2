@@ -2,6 +2,130 @@ import '../clans/clan.dart';
 
 enum FixtureStatus { open, scheduled, live, finalResult, cancelled }
 
+class ClanFixtureChargePreview {
+  const ClanFixtureChargePreview({
+    required this.currency,
+    required this.baseAmountFils,
+    required this.reliabilityDepositRequired,
+    required this.reliabilityDepositBps,
+    required this.reliabilityDepositFils,
+    required this.totalFils,
+    required this.activeClanStrikes,
+    this.policyVersionId,
+  });
+
+  final String currency;
+  final int baseAmountFils;
+  final bool reliabilityDepositRequired;
+  final int reliabilityDepositBps;
+  final int reliabilityDepositFils;
+  final int totalFils;
+  final int activeClanStrikes;
+  final String? policyVersionId;
+
+  String get baseAmountLabel => _fixtureMoneyLabel(baseAmountFils, currency);
+  String get depositLabel =>
+      _fixtureMoneyLabel(reliabilityDepositFils, currency);
+  String get totalLabel => _fixtureMoneyLabel(totalFils, currency);
+  int get depositPercent => (reliabilityDepositBps / 100).round();
+
+  bool hasSameCheckoutTermsAs(ClanFixtureChargePreview other) {
+    return currency == other.currency &&
+        baseAmountFils == other.baseAmountFils &&
+        reliabilityDepositRequired == other.reliabilityDepositRequired &&
+        reliabilityDepositBps == other.reliabilityDepositBps &&
+        reliabilityDepositFils == other.reliabilityDepositFils &&
+        totalFils == other.totalFils &&
+        activeClanStrikes == other.activeClanStrikes &&
+        policyVersionId == other.policyVersionId;
+  }
+
+  factory ClanFixtureChargePreview.fromJson(Map<String, dynamic> json) {
+    return ClanFixtureChargePreview(
+      currency: (json['currency'] as String? ?? 'BHD').trim(),
+      baseAmountFils: _asInt(json['base_amount_fils']),
+      reliabilityDepositRequired:
+          json['reliability_deposit_required'] as bool? ?? false,
+      reliabilityDepositBps: _asInt(json['reliability_deposit_bps']),
+      reliabilityDepositFils: _asInt(json['reliability_deposit_fils']),
+      totalFils: _asInt(json['total_fils']),
+      activeClanStrikes: _asInt(json['active_clan_strikes']),
+      policyVersionId: (json['policy_version_id'] as String?)?.trim(),
+    );
+  }
+}
+
+class ClanFixtureCancellationPreview {
+  const ClanFixtureCancellationPreview({
+    required this.canCancel,
+    required this.outcomeCode,
+    required this.cancellationBand,
+    required this.strikeDelta,
+    required this.refundBps,
+    required this.refundAmountFils,
+    required this.depositForfeited,
+    required this.opponentRefundAmountFils,
+    required this.createsForfeit,
+    required this.forfeitScore,
+    required this.currency,
+    this.depositRefundFils = 0,
+    this.policyVersionId,
+  });
+
+  final bool canCancel;
+  final String outcomeCode;
+  final String cancellationBand;
+  final int strikeDelta;
+  final int refundBps;
+  final int refundAmountFils;
+  final bool depositForfeited;
+  final int opponentRefundAmountFils;
+  final bool createsForfeit;
+  final int forfeitScore;
+  final String currency;
+  final int depositRefundFils;
+  final String? policyVersionId;
+
+  int get refundPercent => (refundBps / 100).round();
+  String get refundLabel => _fixtureMoneyLabel(refundAmountFils, currency);
+  String get depositRefundLabel =>
+      _fixtureMoneyLabel(depositRefundFils, currency);
+
+  bool hasSameConsequencesAs(ClanFixtureCancellationPreview other) {
+    return canCancel == other.canCancel &&
+        outcomeCode == other.outcomeCode &&
+        cancellationBand == other.cancellationBand &&
+        strikeDelta == other.strikeDelta &&
+        refundBps == other.refundBps &&
+        refundAmountFils == other.refundAmountFils &&
+        depositForfeited == other.depositForfeited &&
+        opponentRefundAmountFils == other.opponentRefundAmountFils &&
+        createsForfeit == other.createsForfeit &&
+        forfeitScore == other.forfeitScore &&
+        currency == other.currency &&
+        depositRefundFils == other.depositRefundFils &&
+        policyVersionId == other.policyVersionId;
+  }
+
+  factory ClanFixtureCancellationPreview.fromJson(Map<String, dynamic> json) {
+    return ClanFixtureCancellationPreview(
+      canCancel: json['can_cancel'] as bool? ?? false,
+      outcomeCode: json['outcome_code'] as String? ?? '',
+      cancellationBand: json['cancellation_band'] as String? ?? '',
+      strikeDelta: _asInt(json['strike_delta']),
+      refundBps: _asInt(json['refund_bps']),
+      refundAmountFils: _asInt(json['refund_amount_fils']),
+      depositForfeited: json['deposit_forfeited'] as bool? ?? false,
+      opponentRefundAmountFils: _asInt(json['opponent_refund_amount_fils']),
+      createsForfeit: json['creates_forfeit'] as bool? ?? false,
+      forfeitScore: _asInt(json['forfeit_score'], fallback: 3),
+      currency: (json['currency'] as String? ?? 'BHD').trim(),
+      depositRefundFils: _asInt(json['deposit_refund_fils']),
+      policyVersionId: (json['policy_version_id'] as String?)?.trim(),
+    );
+  }
+}
+
 enum FixtureTimeSlot {
   early('7:00 PM - 8:00 PM'),
   late('8:30 PM - 9:30 PM');
@@ -838,6 +962,14 @@ int _asInt(Object? value, {int fallback = 0}) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value) ?? fallback;
   return fallback;
+}
+
+String _fixtureMoneyLabel(int fils, String currency) {
+  final dinars = fils / 1000;
+  final amount = dinars == dinars.roundToDouble()
+      ? dinars.toInt().toString()
+      : dinars.toStringAsFixed(3);
+  return '$amount $currency';
 }
 
 int? _asNullableInt(Object? value) {

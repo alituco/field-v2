@@ -998,6 +998,8 @@ OpenQueuePartyContext _partyContextWithInvite(
     gameStatus: game.status,
     canUseParties: true,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
     receivedInvites: const [
       OpenQueuePartyInvite(
         membershipId: 'invite-one',
@@ -1079,6 +1081,11 @@ OpenQueueGame _game({
     matchAverageSr: hasAssignmentMetadata ? 1200 : null,
     teamSrSpread: hasAssignmentMetadata ? 0 : null,
     teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
+    teamAssignmentAt: startsAt.subtract(const Duration(hours: 3)),
+    partyLockAt: startsAt.subtract(const Duration(hours: 3)),
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
+    maxPartySize: 4,
   );
 }
 
@@ -1322,6 +1329,8 @@ class _FakeOpenQueueRepository
           gameStatus: booking?.game.status ?? 'OPEN',
           canUseParties: true,
           maxPartySize: 4,
+          teamAssignmentLeadMinutes: 180,
+          partyLockLeadMinutes: 180,
           receivedInvites: const [],
           eligiblePlayers: const [],
         );

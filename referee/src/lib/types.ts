@@ -164,6 +164,85 @@ export type BlueCard = {
   second: number;
 };
 
+export type ReliabilityAttendanceStatus =
+  | "MISSING"
+  | "CHECKED_IN"
+  | "ON_TIME"
+  | "LATE"
+  | "NO_SHOW"
+  | "EXCUSED";
+
+export type ReliabilityAttendancePlayer = {
+  attendanceRecordId: string | null;
+  profileId: string;
+  displayName: string;
+  /** Planned by the team and therefore individually liable for a no-show. */
+  expectedForMatch: boolean;
+  /** Server-authoritative eligibility, including the seven-player side cap. */
+  checkInEligible: boolean;
+  teamId: string | null;
+  teamName: string | null;
+  side: "HOME" | "AWAY" | "WHITE" | "BLACK" | null;
+  role: string | null;
+  checkedInAt: string | null;
+  outcome: string | null;
+  status: ReliabilityAttendanceStatus;
+  isCheckedIn: boolean;
+};
+
+export type ReliabilityVerifiedInjury = {
+  id: string;
+  profileId: string;
+  side: "HOME" | "AWAY" | "WHITE" | "BLACK";
+  matchSecond: number;
+  unableToContinue: boolean;
+  replacementAvailable: boolean;
+  matchContinued: boolean;
+  note: string | null;
+};
+
+export type ReliabilityShorthandedPeriod = {
+  id: string;
+  side: "HOME" | "AWAY" | "WHITE" | "BLACK";
+  reason: "LATE_ARRIVAL" | "NO_SHOW" | "INJURY" | "OTHER";
+  causedByProfileId: string | null;
+  replacementProfileId: string | null;
+  startedMatchSecond: number;
+  endedMatchSecond: number | null;
+  note: string | null;
+};
+
+export type ReliabilityReplacementStep =
+  | "EMERGENCY_NOTIFICATION"
+  | "ON_FIELD_RESERVE"
+  | "PLAY_SHORTHANDED";
+
+export type MatchReliabilityContext = {
+  serverNow: string | null;
+  policyVersionId: string | null;
+  kickoffAt: string | null;
+  checkInDeadlineAt: string | null;
+  noShowCutoffAt: string | null;
+  reserveActivationMinutesAfterKickoff: number;
+  reserveActivationAt: string | null;
+  originalPlayerReclaimUntilMinutesAfterKickoff: number;
+  originalPlayerReclaimUntilAt: string | null;
+  replacementOrder: ReliabilityReplacementStep[];
+  reservePlanAutomated: boolean;
+  reservePlanAuthority: "FIELD_HOST" | null;
+  canCheckIn: boolean;
+  canFinalizeAttendance: boolean;
+  attendanceFinalized: boolean;
+  expectedCount: number;
+  checkedInCount: number;
+  onTimeCount: number;
+  lateCount: number;
+  missingCount: number;
+  players: ReliabilityAttendancePlayer[];
+  verifiedInjuries: ReliabilityVerifiedInjury[];
+  openShorthandedPeriods: ReliabilityShorthandedPeriod[];
+};
+
 export type RefereeFixture = {
   matchKind: MatchKind;
   id: string;
@@ -191,6 +270,7 @@ export type RefereeFixture = {
   events: FixtureEvent[];
   blueCards: BlueCard[];
   riskContext: RefereeRiskContext;
+  reliabilityContext: MatchReliabilityContext | null;
 };
 
 export type RefereeFixturesResponse = {

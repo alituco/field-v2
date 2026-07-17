@@ -6,8 +6,13 @@ import {
   parseAdminForfeitReviewInput,
   parseAdminScoreOverrideInput,
   parseMatchStoppageInput,
+  parseRefereeBulkCheckInInput,
+  parseRefereeCheckInInput,
   parseRefereeClanForfeitInput,
+  parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
+  parseRefereeStartShorthandedInput,
+  parseRefereeVerifiedInjuryInput,
 } from "../src/lib/match-action-input.ts";
 
 const MATCH_ID = "11111111-1111-4111-8111-111111111111";
@@ -224,5 +229,99 @@ test("admin match mutations require bounded values and meaningful reasons", () =
         reason: "typo",
       }),
     /official score/,
+  );
+});
+
+test("referee check-ins only accept normalized player ids", () => {
+  assert.deepEqual(
+    parseRefereeCheckInInput({ profileId: PLAYER_ID.toUpperCase() }),
+    { profileId: PLAYER_ID },
+  );
+  assert.deepEqual(
+    parseRefereeBulkCheckInInput({
+      profileIds: [PLAYER_ID, PLAYER_ID, MATCH_ID],
+    }),
+    { profileIds: [PLAYER_ID, MATCH_ID] },
+  );
+  assert.throws(
+    () => parseRefereeCheckInInput({ profileId: "someone-else" }),
+    /choose a player/i,
+  );
+  assert.throws(
+    () => parseRefereeBulkCheckInInput({ profileIds: [] }),
+    /between 1 and 50/i,
+  );
+});
+
+test("verified injury evidence requires a player and explicit boolean facts", () => {
+  assert.deepEqual(
+    parseRefereeVerifiedInjuryInput({
+      profileId: PLAYER_ID.toUpperCase(),
+      unableToContinue: true,
+      replacementAvailable: false,
+      matchContinued: true,
+      note: "Player left the pitch after treatment.",
+    }),
+    {
+      profileId: PLAYER_ID,
+      unableToContinue: true,
+      replacementAvailable: false,
+      matchContinued: true,
+      note: "Player left the pitch after treatment.",
+    },
+  );
+  assert.throws(
+    () => parseRefereeVerifiedInjuryInput({
+      profileId: PLAYER_ID,
+      unableToContinue: "yes",
+      replacementAvailable: false,
+      matchContinued: true,
+    }),
+    /confirm whether the player was unable/i,
+  );
+});
+
+test("shorthanded evidence is constrained to the match kind and known reasons", () => {
+  assert.deepEqual(
+    parseRefereeStartShorthandedInput({
+      side: "white",
+      reason: "late_arrival",
+      causedByProfileId: PLAYER_ID,
+      note: "Play started one player short.",
+    }, "SOLO"),
+    {
+      side: "WHITE",
+      reason: "LATE_ARRIVAL",
+      causedByProfileId: PLAYER_ID,
+      note: "Play started one player short.",
+    },
+  );
+  assert.throws(
+    () => parseRefereeStartShorthandedInput({
+      side: "HOME",
+      reason: "NO_SHOW",
+    }, "SOLO"),
+    /choose a team/i,
+  );
+  assert.throws(
+    () => parseRefereeStartShorthandedInput({
+      side: "AWAY",
+      reason: "OTHER",
+      note: "why",
+    }, "CLAN"),
+    /concise factual note/i,
+  );
+
+  assert.deepEqual(
+    parseRefereeEndShorthandedInput({
+      periodId: MATCH_ID,
+      replacementProfileId: PLAYER_ID,
+      note: "Replacement entered the field.",
+    }),
+    {
+      periodId: MATCH_ID,
+      replacementProfileId: PLAYER_ID,
+      note: "Replacement entered the field.",
+    },
   );
 });

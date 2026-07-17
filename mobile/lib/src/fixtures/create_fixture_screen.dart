@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -34,6 +35,8 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   FixtureTimeSlot? _selectedTimeSlot;
   bool _isLoadingOpenFixtures = true;
   bool _isSubmitting = false;
+  bool _isLoadingCharge = false;
+  ClanFixtureChargePreview? _chargePreview;
   bool _isCheckingAccess = true;
   bool _accessReady = false;
   String? _errorText;
@@ -169,6 +172,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       _selectedFixtureToJoin = null;
       _selectedDate = null;
       _selectedTimeSlot = null;
+      _chargePreview = null;
       _step = _CreateFixtureStep.selectTime;
     });
   }
@@ -197,6 +201,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
       );
       _step = _CreateFixtureStep.summary;
     });
+    unawaited(_loadChargePreview());
   }
 
   Future<void> _pickDate() async {
@@ -233,7 +238,68 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
 
   void _continueToSummary() {
     if (_selectedDate == null || _selectedTimeSlot == null) return;
-    setState(() => _step = _CreateFixtureStep.summary);
+    setState(() {
+      _chargePreview = null;
+      _step = _CreateFixtureStep.summary;
+    });
+    unawaited(_loadChargePreview());
+  }
+
+  Future<ClanFixtureChargePreview> _fetchChargePreview() async {
+    final date = _selectedDate;
+    final timeSlot = _selectedTimeSlot;
+    if (date == null || timeSlot == null) {
+      throw StateError('Choose a match date and time first.');
+    }
+    final repository = widget.fixtureRepository;
+    if (repository case final FixtureReliabilityBookingRepository pricing) {
+      final fixture = _selectedFixtureToJoin;
+      if (fixture == null) {
+        return pricing.previewCreateFixtureCharge(
+          clanId: _membership.clan.id,
+          matchDate: date,
+          timeSlot: timeSlot,
+        );
+      }
+      return pricing.previewJoinFixtureCharge(
+        fixtureId: fixture.id,
+        clanId: _membership.clan.id,
+      );
+    }
+    // Test repositories written before policy-backed checkout keep the legacy
+    // beta amount. The production Supabase repository always uses the quote RPC.
+    return const ClanFixtureChargePreview(
+      currency: 'BHD',
+      baseAmountFils: 20000,
+      reliabilityDepositRequired: false,
+      reliabilityDepositBps: 2000,
+      reliabilityDepositFils: 0,
+      totalFils: 20000,
+      activeClanStrikes: 0,
+    );
+  }
+
+  Future<void> _loadChargePreview() async {
+    setState(() {
+      _isLoadingCharge = true;
+      _errorText = null;
+    });
+    try {
+      final preview = await _fetchChargePreview();
+      if (!mounted) return;
+      setState(() => _chargePreview = preview);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _chargePreview = null;
+        _errorText = userFacingError(
+          error,
+          fallback: 'We could not calculate the exact checkout total.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _isLoadingCharge = false);
+    }
   }
 
   Future<void> _submit() async {
@@ -254,7 +320,21 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     final membership = _membership;
 
     try {
+      // Let the success transition breathe before the authoritative recheck,
+      // so the quote comparison remains the final client-side step before the
+      // server performs its own atomic charge validation.
       await Future<void>.delayed(const Duration(milliseconds: 900));
+      final latestCharge = await _fetchChargePreview();
+      if (!mounted) return;
+      if (_chargePreview == null ||
+          !_chargePreview!.hasSameCheckoutTermsAs(latestCharge)) {
+        setState(() {
+          _chargePreview = latestCharge;
+          _errorText =
+              'Your checkout terms changed. Review the updated total and deposit, then confirm again.';
+        });
+        return;
+      }
       if (_selectedFixtureToJoin == null) {
         await widget.fixtureRepository.createFixture(
           homeClanId: membership.clan.id,
@@ -375,6 +455,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     setState(() {
       _errorText = null;
       if (_step == _CreateFixtureStep.summary) {
+        _chargePreview = null;
         _step = _selectedFixtureToJoin == null
             ? _CreateFixtureStep.selectTime
             : _CreateFixtureStep.chooseAction;
@@ -414,6 +495,8 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
         date: _selectedDate!,
         timeSlot: _selectedTimeSlot!,
         errorText: _errorText,
+        chargePreview: _chargePreview,
+        isLoadingCharge: _isLoadingCharge,
       ),
       _CreateFixtureStep.success => _SuccessStep(
         key: const ValueKey('success'),
@@ -441,9 +524,12 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     }
 
     if (_step == _CreateFixtureStep.summary) {
+      final totalLabel = _chargePreview?.totalLabel;
       return _BottomAction(
         child: FilledButton.icon(
-          onPressed: _isSubmitting ? null : _submit,
+          onPressed: _isSubmitting || _isLoadingCharge || _chargePreview == null
+              ? null
+              : _submit,
           icon: _isSubmitting
               ? const SizedBox(
                   width: 18,
@@ -451,7 +537,13 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.apple_rounded),
-          label: Text(_isSubmitting ? 'Processing...' : 'Pay 20 BHD'),
+          label: Text(
+            _isSubmitting
+                ? 'Processing...'
+                : _isLoadingCharge
+                ? 'Calculating exact total…'
+                : 'Pay ${totalLabel ?? ''}',
+          ),
           style: FilledButton.styleFrom(
             backgroundColor: Colors.black,
             foregroundColor: Colors.white,
@@ -1638,6 +1730,8 @@ class _SummaryStep extends StatelessWidget {
     required this.date,
     required this.timeSlot,
     required this.errorText,
+    required this.chargePreview,
+    required this.isLoadingCharge,
   });
 
   final Fixture? fixtureToJoin;
@@ -1647,6 +1741,8 @@ class _SummaryStep extends StatelessWidget {
   final DateTime date;
   final FixtureTimeSlot timeSlot;
   final String? errorText;
+  final ClanFixtureChargePreview? chargePreview;
+  final bool isLoadingCharge;
 
   @override
   Widget build(BuildContext context) {
@@ -1709,38 +1805,10 @@ class _SummaryStep extends StatelessWidget {
               const SizedBox(height: 18),
               const Divider(color: fieldGray100),
               const SizedBox(height: 14),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Total Amount',
-                      style: TextStyle(
-                        color: fieldGray500,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.black,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: const Text(
-                      '20 BHD',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+              if (isLoadingCharge)
+                const _ChargePreviewLoading()
+              else if (chargePreview case final preview?)
+                _ChargeBreakdown(preview: preview),
             ],
           ),
         ),
@@ -1791,6 +1859,123 @@ class _SummaryStep extends StatelessWidget {
             ),
           ),
         ],
+      ],
+    );
+  }
+}
+
+class _ChargePreviewLoading extends StatelessWidget {
+  const _ChargePreviewLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Row(
+      children: [
+        SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        SizedBox(width: 10),
+        Text(
+          'Calculating the exact checkout total…',
+          style: TextStyle(
+            color: fieldGray500,
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ChargeBreakdown extends StatelessWidget {
+  const _ChargeBreakdown({required this.preview});
+
+  final ClanFixtureChargePreview preview;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        _ChargeLine(label: 'Match fee', value: preview.baseAmountLabel),
+        if (preview.reliabilityDepositRequired) ...[
+          const SizedBox(height: 10),
+          _ChargeLine(
+            label: 'Reliability deposit · ${preview.depositPercent}%',
+            value: preview.depositLabel,
+            valueColor: const Color(0xFFB45309),
+          ),
+        ],
+        const SizedBox(height: 13),
+        const Divider(color: fieldGray100, height: 1),
+        const SizedBox(height: 13),
+        _ChargeLine(
+          label: 'Exact total',
+          value: preview.totalLabel,
+          emphasized: true,
+        ),
+        if (preview.reliabilityDepositRequired) ...[
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBEB),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              'Your clan has ${preview.activeClanStrikes} active strike${preview.activeClanStrikes == 1 ? '' : 's'}. The deposit stays held while the match is live, then returns as Field credit after a clean completed match.',
+              style: const TextStyle(
+                color: Color(0xFF92400E),
+                fontSize: 12,
+                height: 1.4,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ChargeLine extends StatelessWidget {
+  const _ChargeLine({
+    required this.label,
+    required this.value,
+    this.emphasized = false,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final bool emphasized;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            style: TextStyle(
+              color: emphasized ? fieldGray900 : fieldGray500,
+              fontSize: emphasized ? 15 : 13,
+              fontWeight: emphasized ? FontWeight.w900 : FontWeight.w600,
+            ),
+          ),
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            color: valueColor ?? fieldGray900,
+            fontSize: emphasized ? 18 : 14,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
       ],
     );
   }
