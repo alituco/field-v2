@@ -3122,12 +3122,15 @@ button:disabled {
 .admin-status-badge.resolved { background: #dcfce7; color: #047857; }
 .admin-status-badge.scheduled,
 .admin-status-badge.full,
-.admin-status-badge.investigating { background: #dbeafe; color: #1d4ed8; }
+.admin-status-badge.investigating,
+.admin-status-badge.in_progress { background: #dbeafe; color: #1d4ed8; }
 .admin-status-badge.open,
 .admin-status-badge.triaged { background: #fef3c7; color: #a16207; }
 .admin-status-badge.final { background: #e2e8f0; color: #334155; }
 .admin-status-badge.cancelled,
 .admin-status-badge.dismissed { background: #fee2e2; color: #b91c1c; }
+.admin-status-badge.closed,
+.admin-status-badge.duplicate { background: #e2e8f0; color: #475569; }
 
 .admin-priority-report-list article {
   display: grid;
@@ -3150,6 +3153,51 @@ button:disabled {
 .admin-priority-badge.high { background: #ffedd5; color: #c2410c; }
 .admin-priority-badge.critical,
 .admin-priority-badge.urgent { background: #fee2e2; color: #b91c1c; }
+
+.admin-support-requester {
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+}
+
+.admin-support-requester > b {
+  max-width: 145px;
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 8px;
+  line-height: 1.25;
+  font-weight: 900;
+  text-align: center;
+}
+
+.admin-support-internal-note {
+  margin-top: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 13px;
+  background: #f8fafc;
+}
+
+.admin-support-internal-note strong {
+  color: #475569;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.admin-support-internal-note p {
+  margin-top: 7px;
+  color: #334155;
+  font-size: 10px;
+  line-height: 1.6;
+  font-weight: 650;
+}
+
+.admin-support-detail .admin-report-detail-head > span {
+  font-variant-numeric: tabular-nums;
+  font-weight: 900;
+}
 
 .admin-priority-report-list article > span:last-child {
   color: #94a3b8;
@@ -4925,7 +4973,7 @@ button:disabled {
     left: 10px;
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-columns: repeat(7, minmax(0, 1fr));
     min-height: 61px;
     border: 1px solid rgba(255, 255, 255, 0.52);
     border-radius: 18px;

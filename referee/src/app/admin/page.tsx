@@ -17,7 +17,14 @@ import type {
 import forfeitStyles from "./forfeit-review.module.css";
 import { ReliabilitySection } from "./reliability-section";
 
-type AdminSection = "overview" | "games" | "reliability" | "reports" | "people" | "audit";
+type AdminSection =
+  | "overview"
+  | "games"
+  | "reliability"
+  | "support"
+  | "reports"
+  | "people"
+  | "audit";
 type AdminGamesView = "SCHEDULED" | "FINAL";
 type JsonRecord = Record<string, unknown>;
 
@@ -64,6 +71,27 @@ type AdminReport = {
   replayOffsetSeconds: number | null;
   assignedTo: string | null;
   resolutionNote: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type AdminSupportTicket = {
+  id: string;
+  reference: string;
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED" | "DUPLICATE";
+  priority: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+  category: string;
+  subject: string;
+  description: string;
+  source: string;
+  requesterId: string | null;
+  requesterName: string;
+  requesterUsername: string | null;
+  requesterAvatarUrl: string | null;
+  assignedTo: string | null;
+  resolutionNote: string | null;
+  adminNote: string | null;
+  revision: number;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -151,6 +179,13 @@ type ReportDialog =
   | { report: AdminReport; action: "RESOLVE" | "DISMISS" }
   | null;
 
+type SupportDialog =
+  | {
+      ticket: AdminSupportTicket;
+      action: "RESOLVE" | "CLOSE" | "DUPLICATE";
+    }
+  | null;
+
 type RevokeDialog = {
   subject: FlaggedSubject;
   action: ActiveModerationAction;
@@ -175,9 +210,12 @@ export default function AdminPage() {
     fixtures: [],
   });
   const [reports, setReports] = useState<AdminReport[]>([]);
+  const [supportTickets, setSupportTickets] = useState<AdminSupportTicket[]>([]);
+  const [activeSupportCount, setActiveSupportCount] = useState(0);
   const [forfeits, setForfeits] = useState<AdminForfeit[]>([]);
   const [subjects, setSubjects] = useState<FlaggedSubject[]>([]);
   const [reportStatus, setReportStatus] = useState("OPEN");
+  const [supportStatus, setSupportStatus] = useState("ACTIVE");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reliabilityRefreshKey, setReliabilityRefreshKey] = useState(0);
@@ -186,6 +224,7 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [gameDialog, setGameDialog] = useState<GameDialog>(null);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
+  const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
     useState<FlaggedSubject | null>(null);
   const [revokeDialog, setRevokeDialog] = useState<RevokeDialog>(null);
@@ -233,6 +272,24 @@ export default function AdminPage() {
     setReports(normalizeReports(payload));
   }, [accessToken, authHeaders, reportStatus]);
 
+  const loadSupportTickets = useCallback(async () => {
+    if (!accessToken) return;
+    const query = `?status=${encodeURIComponent(supportStatus)}`;
+    const payload = await fetchJson<{
+      tickets?: AdminSupportTicket[];
+      activeCount?: number;
+    }>(
+      `/api/referee/admin/support${query}`,
+      { headers: authHeaders(), cache: "no-store" },
+    );
+    setSupportTickets(
+      Array.isArray(payload.tickets) ? payload.tickets : [],
+    );
+    setActiveSupportCount(
+      typeof payload.activeCount === "number" ? payload.activeCount : 0,
+    );
+  }, [accessToken, authHeaders, supportStatus]);
+
   const loadForfeits = useCallback(async () => {
     if (!accessToken) return;
     const payload = await fetchJson<{ forfeits?: AdminForfeit[] }>(
@@ -261,6 +318,7 @@ export default function AdminPage() {
         const results = await Promise.allSettled([
           loadOverview(),
           loadGames(),
+          loadSupportTickets(),
           loadReports(),
           loadSubjects(),
           loadForfeits(),
@@ -276,7 +334,15 @@ export default function AdminPage() {
         setRefreshing(false);
       }
     },
-    [accessToken, loadForfeits, loadGames, loadOverview, loadReports, loadSubjects],
+    [
+      accessToken,
+      loadForfeits,
+      loadGames,
+      loadOverview,
+      loadReports,
+      loadSubjects,
+      loadSupportTickets,
+    ],
   );
 
   useEffect(() => {
@@ -303,6 +369,13 @@ export default function AdminPage() {
       setError(errorMessage(loadError, "Could not refresh reports."));
     });
   }, [accessToken, loadReports, loading, reportStatus]);
+
+  useEffect(() => {
+    if (!accessToken || loading) return;
+    void loadSupportTickets().catch((loadError) => {
+      setError(errorMessage(loadError, "Could not refresh support tickets."));
+    });
+  }, [accessToken, loadSupportTickets, loading, supportStatus]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -413,6 +486,49 @@ export default function AdminPage() {
       await Promise.all([loadReports(), loadOverview(), loadSubjects()]);
     } catch (actionError) {
       setError(errorMessage(actionError, "Could not update the report."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function runSupportAction(
+    ticket: AdminSupportTicket,
+    action: "START" | "RESOLVE" | "CLOSE" | "REOPEN" | "DUPLICATE",
+    input: {
+      resolutionNote?: string;
+      adminNote?: string;
+    } = {},
+  ) {
+    setSubmitting(`support-${ticket.id}-${action}`);
+    setError(null);
+    try {
+      await fetchJson(`/api/referee/admin/support/${ticket.id}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          action,
+          expectedRevision: ticket.revision,
+          resolutionNote: input.resolutionNote,
+          adminNote: input.adminNote,
+        }),
+      });
+      setSupportDialog(null);
+      setNotice(
+        action === "START"
+          ? `${ticket.reference} is now being handled.`
+          : action === "REOPEN"
+            ? `${ticket.reference} reopened.`
+            : action === "DUPLICATE"
+              ? `${ticket.reference} closed as a duplicate.`
+              : action === "CLOSE"
+                ? `${ticket.reference} closed.`
+                : `${ticket.reference} resolved and the player was notified.`,
+      );
+      await loadSupportTickets();
+    } catch (actionError) {
+      setError(
+        errorMessage(actionError, "Could not update the support ticket."),
+      );
     } finally {
       setSubmitting(null);
     }
@@ -552,6 +668,7 @@ export default function AdminPage() {
         me={me}
         counts={{
           reports: overview.openReports,
+          support: activeSupportCount,
           attention:
             overview.attention.length +
             forfeits.filter((decision) => decision.status === "PENDING_REVIEW").length,
@@ -668,6 +785,24 @@ export default function AdminPage() {
                 setForfeitDialog({ decision, action })
               }
             />
+          ) : section === "support" ? (
+            <SupportSection
+              status={supportStatus}
+              submitting={submitting}
+              tickets={supportTickets}
+              onStatus={setSupportStatus}
+              onAction={(ticket, action) => {
+                if (
+                  action === "RESOLVE" ||
+                  action === "CLOSE" ||
+                  action === "DUPLICATE"
+                ) {
+                  setSupportDialog({ ticket, action });
+                } else {
+                  void runSupportAction(ticket, action);
+                }
+              }}
+            />
           ) : section === "people" ? (
             <PeopleSection
               subjects={subjects}
@@ -707,6 +842,20 @@ export default function AdminPage() {
               reportDialog.report,
               reportDialog.action,
               note,
+            )
+          }
+        />
+      ) : null}
+      {supportDialog ? (
+        <SupportActionDialog
+          dialog={supportDialog}
+          submitting={submitting !== null}
+          onClose={() => setSupportDialog(null)}
+          onSubmit={(input) =>
+            void runSupportAction(
+              supportDialog.ticket,
+              supportDialog.action,
+              input,
             )
           }
         />
@@ -765,6 +914,7 @@ const adminNavItems: Array<{
   { id: "overview", label: "Overview", shortLabel: "Home", icon: "overview" },
   { id: "games", label: "Games", shortLabel: "Games", icon: "games" },
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
+  { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
@@ -779,7 +929,7 @@ function AdminSidebar({
 }: {
   section: AdminSection;
   me: RefereeFixturesResponse["me"] | null;
-  counts: { reports: number; attention: number };
+  counts: { reports: number; support: number; attention: number };
   onSection: (section: AdminSection) => void;
   onSignOut: () => void;
 }) {
@@ -797,9 +947,11 @@ function AdminSidebar({
         {adminNavItems.map((item) => {
           const badge = item.id === "reports"
             ? counts.reports
-            : item.id === "overview"
-              ? counts.attention
-              : 0;
+            : item.id === "support"
+              ? counts.support
+              : item.id === "overview"
+                ? counts.attention
+                : 0;
           return (
             <button
               className={section === item.id ? "active" : ""}
@@ -1794,6 +1946,250 @@ function participantGroups(
   })).filter((group) => group.players.length > 0);
 }
 
+function SupportSection({
+  tickets,
+  status,
+  submitting,
+  onStatus,
+  onAction,
+}: {
+  tickets: AdminSupportTicket[];
+  status: string;
+  submitting: string | null;
+  onStatus: (status: string) => void;
+  onAction: (
+    ticket: AdminSupportTicket,
+    action: "START" | "RESOLVE" | "CLOSE" | "REOPEN" | "DUPLICATE",
+  ) => void;
+}) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const filtered = tickets.filter((ticket) =>
+    !needle ||
+    [
+      ticket.reference,
+      ticket.requesterName,
+      ticket.requesterUsername ?? "",
+      ticket.category,
+      ticket.subject,
+      ticket.description,
+    ].some((value) => value.toLowerCase().includes(needle))
+  );
+  const active =
+    filtered.find((ticket) => ticket.id === activeId) ??
+      filtered[0] ??
+      null;
+
+  useEffect(() => {
+    if (active && active.id !== activeId) setActiveId(active.id);
+  }, [active, activeId]);
+
+  return (
+    <div className="admin-reports-layout admin-support-layout">
+      <section className="admin-card admin-report-inbox admin-support-inbox">
+        <div className="admin-inbox-head">
+          <div>
+            <span className="admin-eyebrow">Private customer help</span>
+            <h2>Support inbox</h2>
+          </div>
+          <span>{filtered.length}</span>
+        </div>
+        <div className="admin-report-filters">
+          <label className="admin-search-field">
+            <AdminIcon name="search" />
+            <input
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search tickets"
+              value={query}
+            />
+          </label>
+          <select
+            onChange={(event) => onStatus(event.target.value)}
+            value={status}
+          >
+            <option value="ACTIVE">Needs attention</option>
+            <option value="OPEN">Open</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="RESOLVED">Resolved</option>
+            <option value="CLOSED">Closed</option>
+            <option value="DUPLICATE">Duplicates</option>
+            <option value="ALL">All tickets</option>
+          </select>
+        </div>
+        {filtered.length === 0 ? (
+          <AdminEmpty
+            detail={
+              status === "ACTIVE"
+                ? "New player requests will appear here."
+                : "Try another status or search."
+            }
+            icon="support"
+            title="No support tickets here"
+          />
+        ) : (
+          <div className="admin-report-list admin-support-list">
+            {filtered.map((ticket) => (
+              <button
+                className={active?.id === ticket.id ? "active" : ""}
+                key={ticket.id}
+                onClick={() => setActiveId(ticket.id)}
+                type="button"
+              >
+                <div className="admin-report-list-top">
+                  <PriorityBadge priority={ticket.priority} />
+                  <time>{relativeTime(ticket.createdAt)}</time>
+                </div>
+                <strong>{ticket.requesterName}</strong>
+                <p>{humanize(ticket.category)}</p>
+                <small>{truncate(ticket.description, 110)}</small>
+                <span className="admin-report-state">
+                  {humanize(ticket.status)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {active ? (
+        <section className="admin-card admin-report-detail admin-support-detail">
+          <div className="admin-report-detail-head">
+            <div>
+              <PriorityBadge priority={active.priority} />
+              <StatusBadge status={active.status} />
+            </div>
+            <span>{active.reference}</span>
+          </div>
+
+          <div className="admin-reported-subject admin-support-requester">
+            <div className="admin-subject-avatar">
+              {initials(active.requesterName)}
+            </div>
+            <div>
+              <span>Support request from</span>
+              <h2>{active.requesterName}</h2>
+              <p>
+                {active.requesterUsername
+                  ? `@${active.requesterUsername}`
+                  : "Player account"}
+              </p>
+            </div>
+            <b>{humanize(active.category)}</b>
+          </div>
+
+          <div className="admin-report-description">
+            <span>What the player told us</span>
+            <p>{active.description}</p>
+          </div>
+
+          <dl className="admin-report-facts">
+            <div>
+              <dt>Submitted</dt>
+              <dd>{formatDateTime(active.createdAt)}</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>{humanize(active.source)}</dd>
+            </div>
+            <div>
+              <dt>Assigned to</dt>
+              <dd>{active.assignedTo ?? "Unassigned"}</dd>
+            </div>
+            <div>
+              <dt>Last updated</dt>
+              <dd>{formatDateTime(active.updatedAt)}</dd>
+            </div>
+          </dl>
+
+          {active.resolutionNote ? (
+            <div className="admin-resolution-note">
+              <strong>Player-facing response</strong>
+              <p>{active.resolutionNote}</p>
+            </div>
+          ) : null}
+          {active.adminNote ? (
+            <div className="admin-support-internal-note">
+              <strong>Private admin note</strong>
+              <p>{active.adminNote}</p>
+            </div>
+          ) : null}
+
+          <div className="admin-report-actions admin-support-actions">
+            {active.status === "OPEN" ? (
+              <button
+                className="admin-primary-button"
+                disabled={submitting !== null}
+                onClick={() => onAction(active, "START")}
+                type="button"
+              >
+                Start handling
+              </button>
+            ) : null}
+            {["OPEN", "IN_PROGRESS"].includes(active.status) ? (
+              <>
+                <button
+                  className={
+                    active.status === "OPEN"
+                      ? "admin-secondary-button"
+                      : "admin-primary-button"
+                  }
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "RESOLVE")}
+                  type="button"
+                >
+                  Resolve
+                </button>
+                <button
+                  className="admin-text-danger"
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "DUPLICATE")}
+                  type="button"
+                >
+                  Duplicate
+                </button>
+              </>
+            ) : active.status === "RESOLVED" ? (
+              <>
+                <button
+                  className="admin-secondary-button"
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "REOPEN")}
+                  type="button"
+                >
+                  Reopen
+                </button>
+                <button
+                  className="admin-primary-button"
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "CLOSE")}
+                  type="button"
+                >
+                  Close ticket
+                </button>
+              </>
+            ) : (
+              <button
+                className="admin-secondary-button"
+                disabled={submitting !== null}
+                onClick={() => onAction(active, "REOPEN")}
+                type="button"
+              >
+                Reopen ticket
+              </button>
+            )}
+          </div>
+
+          <p className="admin-privacy-note">
+            <AdminIcon name="lock" /> Internal notes stay private. Resolution
+            messages may be sent to the player.
+          </p>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
 function ReportsSection({
   forfeits,
   reports,
@@ -2265,6 +2661,132 @@ function ReportResolutionDialog({
   );
 }
 
+function SupportActionDialog({
+  dialog,
+  submitting,
+  onClose,
+  onSubmit,
+}: {
+  dialog: NonNullable<SupportDialog>;
+  submitting: boolean;
+  onClose: () => void;
+  onSubmit: (input: {
+    resolutionNote?: string;
+    adminNote?: string;
+  }) => void;
+}) {
+  const resolving = dialog.action === "RESOLVE";
+  const closing = dialog.action === "CLOSE";
+  const duplicate = dialog.action === "DUPLICATE";
+  const [resolutionNote, setResolutionNote] = useState(
+    duplicate
+      ? "We closed this request because it duplicates another support ticket."
+      : "",
+  );
+  const [adminNote, setAdminNote] = useState("");
+  const canSubmit = resolving
+    ? resolutionNote.trim().length >= 8
+    : adminNote.trim().length >= 8;
+
+  return (
+    <AdminModal onClose={onClose}>
+      <div
+        className={`admin-modal-icon ${
+          resolving ? "good" : duplicate ? "neutral" : "warning"
+        }`}
+      >
+        <AdminIcon
+          name={resolving ? "check" : duplicate ? "dismiss" : "support"}
+        />
+      </div>
+      <span className="admin-eyebrow">
+        {dialog.ticket.reference} · private support workflow
+      </span>
+      <h2>
+        {resolving
+          ? "Resolve this support ticket"
+          : duplicate
+            ? "Mark this as a duplicate?"
+            : "Close this ticket?"}
+      </h2>
+      <p className="admin-modal-lead">
+        {dialog.ticket.requesterName} · {humanize(dialog.ticket.category)}
+      </p>
+
+      {!closing ? (
+        <label className="admin-modal-field">
+          <span>Message for the player</span>
+          <textarea
+            maxLength={2000}
+            onChange={(event) => setResolutionNote(event.target.value)}
+            placeholder="Explain clearly what was done and what happens next…"
+            rows={4}
+            value={resolutionNote}
+          />
+          <small>
+            {resolving
+              ? "This may be delivered to the player's private notifications."
+              : "The player will see why this request was closed."}
+          </small>
+        </label>
+      ) : null}
+
+      <label className="admin-modal-field">
+        <span>
+          {resolving ? "Private admin note · optional" : "Private admin note"}
+        </span>
+        <textarea
+          maxLength={2000}
+          onChange={(event) => setAdminNote(event.target.value)}
+          placeholder={
+            resolving
+              ? "Add evidence or operational context that should stay internal…"
+              : "Explain the closure or identify the original ticket…"
+          }
+          rows={4}
+          value={adminNote}
+        />
+      </label>
+
+      <div className="admin-modal-warning">
+        The transition, admin identity, before/after state, and private note are
+        permanently audited.
+      </div>
+      <div className="admin-modal-actions">
+        <button
+          className="admin-secondary-button"
+          disabled={submitting}
+          onClick={onClose}
+          type="button"
+        >
+          Go back
+        </button>
+        <button
+          className={
+            resolving ? "admin-primary-button" : "admin-danger-button"
+          }
+          disabled={submitting || !canSubmit}
+          onClick={() =>
+            onSubmit({
+              resolutionNote: resolutionNote.trim() || undefined,
+              adminNote: adminNote.trim() || undefined,
+            })
+          }
+          type="button"
+        >
+          {submitting
+            ? "Saving…"
+            : resolving
+              ? "Resolve ticket"
+              : duplicate
+                ? "Mark duplicate"
+                : "Close ticket"}
+        </button>
+      </div>
+    </AdminModal>
+  );
+}
+
 function ForfeitReviewConfirmationDialog({
   dialog,
   submitting,
@@ -2693,7 +3215,7 @@ function AdminPageSkeleton() {
 }
 
 type AdminIconName =
-  | "overview" | "games" | "policy" | "reports" | "people" | "audit" | "referee"
+  | "overview" | "games" | "policy" | "support" | "reports" | "people" | "audit" | "referee"
   | "logout" | "refresh" | "alert" | "check" | "arrow" | "search"
   | "replay" | "external" | "edit" | "cancel" | "lock" | "dismiss"
   | "close" | "live" | "shield";
@@ -2703,6 +3225,7 @@ function AdminIcon({ name }: { name: AdminIconName }) {
     overview: <><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></>,
     games: <><path d="M5 5h14v14H5z" /><path d="M8 3v4M16 3v4M5 10h14" /></>,
     policy: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="M8 9h8M8 13h5M8 17h3" /></>,
+    support: <><path d="M4 13v-2a8 8 0 0 1 16 0v2" /><path d="M4 13H3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2v-6H4ZM20 13h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2v-6h1ZM19 19c0 2-2 3-5 3" /></>,
     reports: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 11h6M9 15h6" /></>,
     people: <><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 20v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
     audit: <><path d="M12 22a10 10 0 1 0-10-10" /><path d="M2 4v6h6M12 6v6l4 2" /></>,
@@ -2988,6 +3511,7 @@ function sectionTitle(section: AdminSection) {
     overview: "Good overview. Fast decisions.",
     games: "Games control",
     reliability: "Reliability policy",
+    support: "Player support",
     reports: "Reports inbox",
     people: "Players & clans",
     audit: "Audit log",
@@ -2999,6 +3523,7 @@ function sectionSubtitle(section: AdminSection) {
     overview: "See what needs attention across Field today.",
     games: "Review, correct, cancel and watch every match.",
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
+    support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",
     people: "Understand patterns before taking proportionate action.",
     audit: "A permanent trail of sensitive admin decisions.",
@@ -3007,6 +3532,7 @@ function sectionSubtitle(section: AdminSection) {
 
 function metricIcon(key: string): AdminIconName {
   if (key.includes("report")) return "reports";
+  if (key.includes("support")) return "support";
   if (key.includes("live")) return "live";
   if (key.includes("restriction")) return "shield";
   return "alert";
@@ -3017,6 +3543,7 @@ function auditIcon(action: string): AdminIconName {
   if (value.includes("SCORE")) return "edit";
   if (value.includes("CANCEL")) return "cancel";
   if (value.includes("REPORT")) return "reports";
+  if (value.includes("SUPPORT")) return "support";
   if (value.includes("BAN") || value.includes("SUSPEND") || value.includes("WARN")) return "shield";
   return "audit";
 }
