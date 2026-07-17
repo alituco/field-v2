@@ -14,6 +14,572 @@
   --shadow: none;
 }
 
+/* Mobile-first referee cockpit ------------------------------------------ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.referee-topbar {
+  position: relative;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.referee-topbar-title,
+.referee-topbar-title > span:last-child {
+  display: flex;
+  min-width: 0;
+}
+
+.referee-topbar-title {
+  align-items: center;
+  gap: 10px;
+}
+
+.referee-topbar-title > span:last-child {
+  flex-direction: column;
+  gap: 2px;
+}
+
+.referee-topbar-title strong {
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 950;
+  letter-spacing: -0.02em;
+}
+
+.referee-topbar-title small {
+  overflow: hidden;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.referee-brand-mark,
+.referee-account-menu > summary {
+  display: grid;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.referee-brand-mark {
+  background: linear-gradient(145deg, #10b981, #047857);
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(5, 150, 105, 0.2);
+}
+
+.referee-account-menu {
+  position: relative;
+}
+
+.referee-account-menu > summary {
+  border: 1px solid #dce5e1;
+  background: #fff;
+  color: #0f172a;
+  cursor: pointer;
+  list-style: none;
+}
+
+.referee-account-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.referee-account-menu > div {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  width: 210px;
+  gap: 3px;
+  border: 1px solid #e2e8f0;
+  border-radius: 16px;
+  padding: 13px;
+  background: #fff;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.16);
+}
+
+.referee-account-menu > div > span {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.referee-account-menu > div > small {
+  margin-bottom: 7px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.referee-account-menu a,
+.referee-account-menu button {
+  min-height: 40px;
+  border-radius: 10px;
+  padding: 0 11px;
+  background: #f1f5f9;
+  color: #172033;
+  font-size: 11px;
+  font-weight: 850;
+  line-height: 40px;
+  text-align: left;
+  text-decoration: none;
+}
+
+.referee-account-menu button {
+  margin-top: 3px;
+  background: #fff1f2;
+  color: #be123c;
+  line-height: normal;
+}
+
+.referee-empty-state {
+  display: grid;
+  min-height: min(520px, calc(100dvh - 100px));
+  place-content: center;
+  justify-items: center;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.referee-empty-icon {
+  display: grid;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 18px;
+  place-items: center;
+  border-radius: 19px;
+  background: #ecfdf5;
+  color: #059669;
+  font-size: 24px;
+  font-weight: 950;
+}
+
+.referee-empty-state h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 23px;
+  font-weight: 950;
+}
+
+.referee-empty-state p {
+  max-width: 310px;
+  margin: 9px 0 20px;
+  color: #64748b;
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.55;
+}
+
+.referee-empty-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.referee-match-console {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.referee-match-header {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  padding: 13px 14px;
+  background: #fff;
+}
+
+.referee-match-header-top,
+.referee-kickoff-details {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.referee-match-header-top > span:first-child {
+  color: #8390a3;
+  font-size: 9px;
+  font-weight: 950;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.referee-match-header h1 {
+  margin: 1px 0 0;
+  color: #0f172a;
+  font-size: 22px;
+  font-weight: 950;
+  letter-spacing: -0.03em;
+}
+
+.referee-match-header h1 span {
+  padding: 0 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.referee-match-select select {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #dbe4ea;
+  border-radius: 12px;
+  padding: 0 36px 0 11px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 12px;
+  font-weight: 900;
+  outline: none;
+}
+
+.referee-kickoff-details {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.referee-kickoff-details strong {
+  color: #334155;
+  font-weight: 900;
+}
+
+.referee-kickoff-details span::before {
+  margin-right: 8px;
+  color: #cbd5e1;
+  content: "•";
+}
+
+.referee-view-tabs {
+  position: sticky;
+  z-index: 12;
+  top: 6px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  border-radius: 15px;
+  padding: 4px;
+  background: rgba(248, 250, 252, 0.94);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(16px);
+}
+
+.referee-view-tabs button {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 11px;
+  background: transparent;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.referee-view-tabs button > span {
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.referee-view-tabs button.active {
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.08);
+}
+
+.referee-view-tabs button.active > span {
+  color: #059669;
+}
+
+.referee-view-tabs small {
+  border-radius: 999px;
+  padding: 3px 5px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 7px;
+  font-weight: 950;
+}
+
+.referee-view-tabs small.alert {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+.referee-view-panel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.referee-view-panel > .panel,
+.referee-view-panel > .referee-disclosure,
+.referee-view-panel > .result-locked-note {
+  margin: 0;
+}
+
+.referee-attendance-glance {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  border: 1px solid #cceadd;
+  border-radius: 15px;
+  padding: 11px 13px;
+  background: linear-gradient(135deg, #f0fdf8, #fff);
+  color: #172033;
+  text-align: left;
+}
+
+.referee-attendance-glance > span:nth-child(2) strong,
+.referee-attendance-glance > span:nth-child(2) small {
+  display: block;
+}
+
+.referee-attendance-glance > span:nth-child(2) strong {
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.referee-attendance-glance > span:nth-child(2) small {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.referee-attendance-glance > span:last-child {
+  color: #059669;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.referee-attendance-count {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  gap: 2px;
+  min-width: 50px;
+  color: #047857;
+}
+
+.referee-attendance-count strong {
+  font-size: 22px;
+  font-weight: 950;
+}
+
+.referee-attendance-count small {
+  font-size: 8px;
+  font-weight: 850;
+}
+
+.timer-end-disclosure {
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.58);
+  text-align: center;
+}
+
+.timer-end-disclosure > summary {
+  display: inline-block;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 800;
+  list-style: none;
+  text-decoration: underline;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
+  text-underline-offset: 3px;
+}
+
+.timer-end-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.timer-end-disclosure > div {
+  display: grid;
+  gap: 8px;
+  margin-top: 5px;
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(127, 29, 29, 0.12);
+}
+
+.timer-end-disclosure span {
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.timer-end-disclosure .danger-button {
+  min-height: 42px;
+}
+
+.referee-operations-panel {
+  padding: 13px;
+}
+
+.referee-operations-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.referee-operations-heading > span:last-child,
+.referee-operations-heading strong,
+.referee-operations-heading small {
+  display: block;
+  min-width: 0;
+}
+
+.referee-operations-heading strong {
+  color: #172033;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.referee-operations-heading small {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.referee-operations-panel .reliability-evidence {
+  margin: 0;
+}
+
+@media (max-width: 600px) {
+  .app-shell:has(.referee-match-console),
+  .app-shell:has(.referee-empty-state) {
+    padding: max(9px, env(safe-area-inset-top)) 10px
+      max(16px, env(safe-area-inset-bottom));
+    background: #f4f7f6;
+  }
+
+  .content:has(.referee-match-console) .referee-topbar,
+  .content:has(.referee-empty-state) .referee-topbar {
+    position: sticky;
+    top: 0;
+    margin: -9px -10px 10px;
+    padding: max(9px, env(safe-area-inset-top)) 12px 8px;
+    background: rgba(244, 247, 246, 0.92);
+    backdrop-filter: blur(18px);
+  }
+
+  .referee-match-console {
+    gap: 8px;
+  }
+
+  .referee-match-header {
+    border-radius: 16px;
+    padding: 11px 12px;
+  }
+
+  .timer-card.compact {
+    border-radius: 20px;
+    padding: 14px;
+  }
+
+  .timer-card.compact .solo-sr-summary {
+    display: none;
+  }
+
+  .timer-card.compact .clock {
+    margin-top: 8px;
+  }
+
+  .timer-card.compact .clock-time {
+    font-size: 46px;
+  }
+
+  .timer-lineup-disclosure {
+    margin-top: 9px;
+  }
+
+  .referee-view-tabs {
+    top: max(7px, env(safe-area-inset-top));
+  }
+
+  .match-action-hub {
+    border-radius: 17px;
+    padding: 12px;
+  }
+
+  .match-action-heading {
+    margin-bottom: 9px;
+  }
+
+  .match-action-heading .panel-title {
+    font-size: 14px;
+  }
+
+  .panel.attendance-panel {
+    gap: 11px;
+    border-radius: 17px;
+    padding: 14px;
+  }
+
+  .attendance-roster > summary {
+    min-height: 50px;
+  }
+}
+
+@media (min-width: 601px) {
+  .content:has(.referee-match-console),
+  .content:has(.referee-empty-state) {
+    width: min(100%, 680px);
+  }
+}
+
+@media (min-width: 761px) {
+  .admin-table-toolbar {
+    grid-template-columns: minmax(220px, 1fr) repeat(3, auto);
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-table-toolbar select:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 761px) {
+  .admin-table-toolbar {
+    grid-template-columns: minmax(220px, 1fr) repeat(3, auto);
+  }
+}
+
+@media (max-width: 760px) {
+  .admin-table-toolbar select:last-child {
+    grid-column: 1 / -1;
+  }
+}
+
 /* Match-day reliability attendance -------------------------------------- */
 .panel.attendance-panel {
   display: grid;
@@ -251,6 +817,46 @@
   font-weight: 850;
 }
 
+.attendance-player-actions {
+  display: grid;
+  flex: none;
+  justify-items: end;
+  gap: 5px;
+}
+
+.attendance-remove-button {
+  min-height: 28px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  padding: 0 9px;
+  color: #b91c1c;
+  background: #fff7f7;
+  font: inherit;
+  font-size: 0.66rem;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.attendance-remove-button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.attendance-correction-modal {
+  width: min(100%, 440px);
+}
+
+.attendance-correction-notice {
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: #9a3412;
+  background: #fff7ed;
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .attendance-finalize {
   padding: 11px 12px;
   border: 1px solid #fecaca;
@@ -290,6 +896,32 @@
 
 .attendance-cutoff-note.final {
   color: #047857;
+}
+
+.timer-start-note {
+  margin: -2px 0 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.timer-start-note.admin-override {
+  color: #a7f3d0;
+}
+
+.lineup-panel-pending .lineup-heading {
+  align-items: flex-start;
+}
+
+.lineup-saved.pending {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.pending-team {
+  grid-column: 1 / -1;
 }
 
 .reliability-evidence {
@@ -5886,5 +6518,392 @@ details[open] > summary .disclosure-chevron {
 
   .safety-modal .input.textarea {
     min-height: 78px;
+  }
+}
+
+/* Final cockpit overrides live after the legacy console rules. */
+.referee-match-console {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.referee-match-console > .referee-match-header,
+.referee-match-console > .timer-card,
+.referee-match-console > .referee-view-tabs,
+.referee-match-console > .referee-view-panel {
+  grid-column: 1 / -1;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.referee-context-alert {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: #fff7f7;
+  color: #7f1d1d;
+  text-align: left;
+}
+
+.referee-context-alert > span:first-child {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: #fee2e2;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.referee-context-alert > span:nth-child(2) strong,
+.referee-context-alert > span:nth-child(2) small {
+  display: block;
+}
+
+.referee-context-alert > span:nth-child(2) strong {
+  font-size: 10px;
+  font-weight: 950;
+}
+
+.referee-context-alert > span:nth-child(2) small {
+  margin-top: 2px;
+  color: #9f1239;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.referee-context-alert > span:last-child {
+  font-size: 20px;
+}
+
+.admin-referee-assignment > label {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-referee-assignment > label > span {
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.admin-referee-assignment select,
+.admin-add-referee input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid #dbe3ea;
+  border-radius: 10px;
+  padding: 0 11px;
+  background: #fff;
+  color: #172033;
+  font-size: 0.76rem;
+  font-weight: 750;
+  outline: none;
+}
+
+.admin-referee-assignment select:focus,
+.admin-add-referee input:focus {
+  border-color: #10b981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1);
+}
+
+.admin-add-referee {
+  margin-top: 8px;
+  border-top: 1px solid #edf1f4;
+  padding-top: 8px;
+}
+
+.admin-add-referee > summary {
+  color: #047857;
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 850;
+  list-style: none;
+}
+
+.admin-add-referee > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-add-referee form {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.admin-game-players .admin-detail-section-title > b {
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 0.65rem;
+  font-weight: 900;
+}
+
+.admin-player-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-player-groups > section {
+  overflow: hidden;
+  border: 1px solid #e7ecf0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.admin-player-groups > section > header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 7px 9px;
+  background: #f8fafc;
+}
+
+.admin-player-groups > section > header > span {
+  font-size: 1rem;
+}
+
+.admin-player-groups > section > header > strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-player-groups > section > header > b {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 7px;
+  background: #e2e8f0;
+  color: #475569;
+  font-size: 0.66rem;
+}
+
+.admin-game-player-row {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 7px 9px;
+}
+
+.admin-game-player-row + .admin-game-player-row {
+  border-top: 1px solid #edf1f4;
+}
+
+.admin-game-player-row > img,
+.admin-game-player-avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.admin-game-player-avatar {
+  background: #e8f8f1;
+  color: #047857;
+  font-size: 0.64rem;
+  font-weight: 900;
+}
+
+.admin-game-player-row > span:nth-child(2),
+.admin-game-player-row > span:nth-child(2) strong,
+.admin-game-player-row > span:nth-child(2) small {
+  display: block;
+  min-width: 0;
+}
+
+.admin-game-player-row > span:nth-child(2) strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 0.72rem;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-game-player-row > span:nth-child(2) small {
+  margin-top: 2px;
+  overflow: hidden;
+  color: #94a3b8;
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-game-player-badges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.admin-game-player-badges b,
+.admin-game-player-badges em {
+  border-radius: 999px;
+  padding: 4px 6px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 0.52rem;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.admin-game-player-badges em {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.admin-game-player-row.muted {
+  opacity: 0.65;
+}
+
+.admin-player-footnote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 9px 0 0;
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 750;
+}
+
+.admin-player-footnote svg {
+  width: 14px;
+  height: 14px;
+  color: #059669;
+}
+
+.admin-player-history {
+  margin-top: 9px;
+  border-top: 1px solid #edf1f4;
+  padding-top: 8px;
+}
+
+.admin-player-history > summary {
+  color: #64748b;
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.admin-player-history > div {
+  margin-top: 7px;
+  overflow: hidden;
+  border: 1px solid #edf1f4;
+  border-radius: 10px;
+}
+
+.admin-player-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px dashed #dbe3ea;
+  border-radius: 11px;
+  padding: 13px;
+  color: #94a3b8;
+}
+
+.admin-player-empty > svg {
+  flex: none;
+  width: 22px;
+  height: 22px;
+}
+
+.admin-player-empty strong,
+.admin-player-empty small {
+  display: block;
+}
+
+.admin-player-empty strong {
+  color: #475569;
+  font-size: 0.7rem;
+}
+
+.admin-player-empty small {
+  margin-top: 2px;
+  font-size: 0.58rem;
+  line-height: 1.35;
+}
+
+.admin-player-loading {
+  display: grid;
+  gap: 7px;
+}
+
+.admin-player-loading i {
+  height: 45px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #f1f5f9 25%, #e7edf2 50%, #f1f5f9 75%);
+  background-size: 200% 100%;
+  animation: admin-player-shimmer 1.2s infinite linear;
+}
+
+@keyframes admin-player-shimmer {
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 600px) {
+  .app-shell:has(.referee-match-console),
+  .app-shell:has(.referee-empty-state) {
+    padding: max(9px, env(safe-area-inset-top)) 10px
+      max(16px, env(safe-area-inset-bottom));
+    background: #f4f7f6;
+  }
+
+  .content:has(.referee-match-console) .referee-topbar,
+  .content:has(.referee-empty-state) .referee-topbar {
+    position: sticky;
+    top: 0;
+    margin: -9px -10px 10px;
+    padding: max(9px, env(safe-area-inset-top)) 12px 8px;
+    background: rgba(244, 247, 246, 0.92);
+    backdrop-filter: blur(18px);
+  }
+
+  .referee-match-console {
+    gap: 8px;
+  }
+
+  .timer-card.compact {
+    border-radius: 20px;
+    padding: 14px;
+  }
+
+  .timer-card.compact .solo-sr-summary {
+    display: none;
+  }
+
+  .referee-view-tabs {
+    top: max(7px, env(safe-area-inset-top));
+  }
+
+  .admin-game-player-badges b {
+    display: none;
+  }
+}
+
+@media (min-width: 601px) {
+  .content:has(.referee-match-console),
+  .content:has(.referee-empty-state) {
+    width: min(100%, 680px);
   }
 }

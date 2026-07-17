@@ -147,6 +147,9 @@ begin
     or to_regprocedure(
       'public.referee_finalize_match_attendance(uuid,text,uuid)'
     ) is null
+    or to_regprocedure(
+      'public.referee_remove_player_check_in(uuid,text,uuid,uuid,integer,text,text)'
+    ) is null
     or to_regprocedure('public.get_my_reliability_status()') is null
     or to_regprocedure(
       'public.submit_reliability_appeal(uuid,text,text)'
@@ -314,8 +317,28 @@ begin
   if position('checked_side_count_to_use >= required_count_to_use' in function_text) = 0
     or position('planned_roster_member' in function_text) = 0
     or position('profile_has_active_play_restriction' in function_text) = 0
+    or position('''provisional'', true' in function_text) = 0
+    or position('settle_reliability_deposit' in function_text) > 0
   then
-    raise exception 'Referee check-in lacks planned-roster independence, eligibility, or the side cap.';
+    raise exception 'Referee check-in lacks provisional safety, eligibility, or the side cap.';
+  end if;
+
+  select pg_get_functiondef(
+    'public.referee_remove_player_check_in(uuid,text,uuid,uuid,integer,text,text)'::regprocedure
+  ) into function_text;
+  if position('CHECK_IN_REMOVED' in function_text) = 0
+    or position('REFEREE_CHECK_IN_REMOVED' in function_text) = 0
+    or position('expected_revision_to_use' in function_text) = 0
+    or position('Check-ins cannot be removed after the match has started.' in function_text) = 0
+  then
+    raise exception 'Referee check-in removal lacks concurrency, lifecycle, or audit safeguards.';
+  end if;
+  if has_function_privilege(
+    'authenticated',
+    'public.referee_remove_player_check_in(uuid,text,uuid,uuid,integer,text,text)',
+    'EXECUTE'
+  ) then
+    raise exception 'Players can execute the referee-only check-in correction RPC.';
   end if;
   if has_function_privilege(
     'authenticated',

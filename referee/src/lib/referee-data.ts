@@ -363,6 +363,7 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     blackAverageSr: null,
     matchAverageSr: null,
     teamSrSpread: null,
+    teamsAssignedAt: null,
     homeClan: normalizeClan(asObject(row.home_clan)),
     awayClan: normalizeClan(asObject(row.away_clan)),
     players: [],

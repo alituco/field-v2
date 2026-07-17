@@ -9,6 +9,7 @@ import {
   parseMatchStoppageInput,
   parseRefereeBulkCheckInInput,
   parseRefereeCheckInInput,
+  parseRefereeRemoveCheckInInput,
   parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
   parseRefereeStartShorthandedInput,
@@ -30,6 +31,7 @@ type ActionBody = {
     | "finish"
     | "report"
     | "check_in_player"
+    | "remove_check_in"
     | "check_in_players"
     | "finalize_attendance"
     | "record_verified_injury"
@@ -97,7 +99,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     switch (body.action) {
       case "start":
-        await startGame(db, gameId, body.durationSeconds, body.participantIds);
+        await startGame(
+          db,
+          gameId,
+          body.durationSeconds,
+          body.participantIds,
+          refereeContext.referee.profileId,
+          refereeContext.referee.role === "admin",
+        );
         break;
       case "pause":
         await pauseGame(db, gameId);
@@ -156,6 +165,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
           profile_id_to_check_in: checkIn.profileId,
         });
         if (error) throw new Error(`Could not check in player: ${error.message}`);
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "remove_check_in": {
+        const correction = parseRefereeRemoveCheckInInput(body);
+        const { data, error } = await db.rpc(
+          "referee_remove_player_check_in",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            profile_id_to_remove: correction.profileId,
+            expected_revision_to_use: correction.expectedRevision,
+            reason_code_to_use: correction.reasonCode,
+            reason_note_to_use: correction.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not remove check-in: ${error.message}`);
+        }
         result = { reliabilityContext: data };
         break;
       }
@@ -345,8 +374,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
 async function startGame(
   db: SupabaseClient,
   gameId: string,
-  durationSeconds = 3600,
+  durationSeconds: number | undefined,
   participantIds: string[] | undefined,
+  actorRefereeId: string,
+  actorIsAdmin: boolean,
 ) {
   if (!Array.isArray(participantIds)) {
     throw new Error("Confirm the players taking part before starting.");
@@ -356,7 +387,62 @@ async function startGame(
   if (selectedIds.length === 0) {
     throw new Error("Select at least one player from each team.");
   }
-  const safeDuration = clamp(Math.round(durationSeconds), 600, 7200);
+  const safeDuration = clamp(Math.round(durationSeconds ?? 3600), 600, 7200);
+
+  const { data: game, error: gameError } = await db
+    .from("open_queue_games")
+    .select("status,starts_at,teams_assigned_at,capacity")
+    .eq("id", gameId)
+    .single();
+  if (gameError || !game) {
+    throw new Error(`Could not load solo game: ${gameError?.message ?? "Game not found."}`);
+  }
+
+  const scheduledStartMs = new Date(String(game.starts_at)).getTime();
+  const isEarlyStart = Number.isFinite(scheduledStartMs) &&
+    Date.now() < scheduledStartMs;
+
+  if (isEarlyStart) {
+    if (!actorIsAdmin) {
+      throw new Error(
+        "This match has not reached its scheduled kickoff. Only an admin can start an early test match.",
+      );
+    }
+
+    const { data: confirmedBookings, error: bookingsError } = await db
+      .from("open_queue_bookings")
+      .select("profile_id")
+      .eq("game_id", gameId)
+      .eq("status", "CONFIRMED");
+    if (bookingsError) {
+      throw new Error(`Could not verify the early-start roster: ${bookingsError.message}`);
+    }
+    const confirmedIds = new Set(
+      (confirmedBookings ?? []).map((booking) => String(booking.profile_id)),
+    );
+    const expectedCount = Number(game.capacity ?? confirmedIds.size);
+    if (
+      confirmedIds.size !== expectedCount ||
+      selectedIds.length !== confirmedIds.size ||
+      selectedIds.some((profileId) => !confirmedIds.has(profileId))
+    ) {
+      throw new Error(
+        `Check in and select all ${expectedCount} booked players before starting this match early.`,
+      );
+    }
+
+    const { error: assignmentError } = await db.rpc(
+      "admin_force_assign_open_queue_teams",
+      {
+        actor_admin_id: actorRefereeId,
+        game_id_to_assign: gameId,
+        reason_to_use: "Admin started this assigned match early from the referee console.",
+      },
+    );
+    if (assignmentError) {
+      throw new Error(`Could not prepare teams for the early start: ${assignmentError.message}`);
+    }
+  }
 
   await assertNoError(
     db.rpc("referee_start_open_queue_game", {

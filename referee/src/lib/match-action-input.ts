@@ -63,6 +63,13 @@ export const SHORTHANDED_REASONS = [
   "OTHER",
 ] as const;
 
+export const CHECK_IN_REMOVAL_REASON_CODES = [
+  "WRONG_PLAYER",
+  "PLAYER_NOT_PRESENT",
+  "OPERATOR_ERROR",
+  "OTHER",
+] as const;
+
 export const SOLO_RELIABILITY_SIDES = ["WHITE", "BLACK"] as const;
 export const CLAN_RELIABILITY_SIDES = ["HOME", "AWAY"] as const;
 
@@ -257,6 +264,33 @@ export function parseRefereeCheckInInput(body: InputRecord) {
       body.profileId,
       "Choose a player from this match to check in.",
     ),
+  };
+}
+
+export function parseRefereeRemoveCheckInInput(body: InputRecord) {
+  const reasonCode = enumValue(
+    body.reasonCode,
+    CHECK_IN_REMOVAL_REASON_CODES,
+    "Choose why this check-in is being removed.",
+  );
+  const note = optionalBoundedText(body.note ?? body.reason, 500);
+  if (reasonCode === "OTHER" && note.length < 5) {
+    throw new Error("Add a short note explaining this attendance correction.");
+  }
+
+  return {
+    profileId: uuidValue(
+      body.profileId,
+      "Choose a checked-in player from this match.",
+    ),
+    expectedRevision: requiredInteger(
+      body.expectedRevision,
+      "Refresh the player list before removing this check-in.",
+      0,
+      10_000,
+    ),
+    reasonCode,
+    note,
   };
 }
 

@@ -197,6 +197,8 @@ function normalizeAttendancePlayer(
       row.is_checked_in,
       checkedInAt !== null || status === "ON_TIME" || status === "LATE",
     ),
+    checkInRevision: integerValue(row.check_in_revision),
+    canRemoveCheckIn: booleanValue(row.can_remove_check_in),
   };
 }
 

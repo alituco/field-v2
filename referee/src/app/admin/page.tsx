@@ -4,6 +4,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
+  AdminGameParticipant,
+  AdminGameParticipants,
+} from "@/lib/admin-game-participants";
+import type {
   BroadcastControlResponse,
   RefereeAssignmentsResponse,
   RefereeFixture,
@@ -331,6 +335,58 @@ export default function AdminPage() {
     }
   }
 
+  async function assignReferee(
+    fixture: RefereeFixture,
+    refereeId: string,
+  ) {
+    setSubmitting(`assign-${fixture.matchKind}-${fixture.id}`);
+    setError(null);
+    try {
+      await fetchJson("/api/referee/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          fixtureId: fixture.id,
+          matchKind: fixture.matchKind,
+          refereeId: refereeId || null,
+        }),
+      });
+      setNotice(refereeId ? "Referee assigned." : "Game is now unassigned.");
+      await loadGames();
+      return true;
+    } catch (assignError) {
+      setError(errorMessage(assignError, "Could not update the referee assignment."));
+      return false;
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function createReferee(input: { displayName: string; phone: string }) {
+    setSubmitting("create-referee");
+    setError(null);
+    try {
+      await fetchJson("/api/referee/referees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          displayName: input.displayName,
+          phone: input.phone,
+          role: "referee",
+          sendOtp: true,
+        }),
+      });
+      setNotice(`Referee account created for ${input.displayName}.`);
+      await loadGames();
+      return true;
+    } catch (createError) {
+      setError(errorMessage(createError, "Could not create the referee account."));
+      return false;
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
   async function runReportAction(
     report: AdminReport,
     action: "TRIAGE" | "INVESTIGATE" | "RESOLVE" | "DISMISS",
@@ -577,7 +633,9 @@ export default function AdminPage() {
               assignments={assignments}
               games={games}
               submitting={submitting}
+              onAssignReferee={assignReferee}
               onCancel={(fixture) => setGameDialog({ kind: "cancel", fixture })}
+              onCreateReferee={createReferee}
               onOverrideScore={(fixture) => setGameDialog({ kind: "score", fixture })}
             />
           ) : section === "reports" ? (
@@ -1179,24 +1237,34 @@ function GamesSection({
   assignments,
   games,
   submitting,
+  onAssignReferee,
   onCancel,
+  onCreateReferee,
   onOverrideScore,
 }: {
   accessToken: string;
   assignments: RefereeAssignmentsResponse;
   games: RefereeFixture[];
   submitting: string | null;
+  onAssignReferee: (fixture: RefereeFixture, refereeId: string) => Promise<boolean>;
   onCancel: (fixture: RefereeFixture) => void;
+  onCreateReferee: (input: { displayName: string; phone: string }) => Promise<boolean>;
   onOverrideScore: (fixture: RefereeFixture) => void;
 }) {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<AdminGamesView>("SCHEDULED");
   const [status, setStatus] = useState("ALL");
   const [kind, setKind] = useState("ALL");
+  const [refereeFilter, setRefereeFilter] = useState("ALL");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [broadcast, setBroadcast] = useState<BroadcastControlResponse | null>(null);
   const [broadcastLoading, setBroadcastLoading] = useState(false);
   const [broadcastError, setBroadcastError] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<AdminGameParticipants | null>(null);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [participantsError, setParticipantsError] = useState<string | null>(null);
+  const [newRefereeName, setNewRefereeName] = useState("");
+  const [newRefereePhone, setNewRefereePhone] = useState("");
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -1207,6 +1275,13 @@ function GamesSection({
         }
         if (status !== "ALL" && game.status !== status) return false;
         if (kind !== "ALL" && game.matchKind !== kind) return false;
+        const assignedId = assignedRefereeId(assignments, game);
+        if (refereeFilter === "UNASSIGNED" && assignedId) return false;
+        if (
+          refereeFilter !== "ALL" &&
+          refereeFilter !== "UNASSIGNED" &&
+          assignedId !== refereeFilter
+        ) return false;
         if (!needle) return true;
         return [
           game.homeClan.name,
@@ -1218,7 +1293,7 @@ function GamesSection({
         ].some((value) => value.toLowerCase().includes(needle));
       })
       .sort(view === "SCHEDULED" ? sortScheduledAdminGames : sortFinalAdminGames);
-  }, [games, kind, query, status, view]);
+  }, [assignments, games, kind, query, refereeFilter, status, view]);
 
   const scheduledCount = games.filter(isScheduledAdminGame).length;
   const finalCount = games.filter(isFinalAdminGame).length;
@@ -1238,6 +1313,34 @@ function GamesSection({
     setBroadcastError(null);
   }, [active?.id, active?.matchKind]);
 
+  useEffect(() => {
+    if (!active) {
+      setParticipants(null);
+      setParticipantsError(null);
+      return;
+    }
+    let cancelled = false;
+    setParticipants(null);
+    setParticipantsError(null);
+    setParticipantsLoading(true);
+    const path = `/api/referee/admin/games/${active.matchKind.toLowerCase()}/${active.id}/players`;
+    void fetchJson<{ participants: AdminGameParticipants }>(path, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    }).then((payload) => {
+      if (!cancelled) setParticipants(payload.participants);
+    }).catch((loadError) => {
+      if (!cancelled) {
+        setParticipantsError(errorMessage(loadError, "Could not load signed-up players."));
+      }
+    }).finally(() => {
+      if (!cancelled) setParticipantsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, active?.id, active?.matchKind]);
+
   async function loadReplay() {
     if (!active) return;
     setBroadcastLoading(true);
@@ -1255,6 +1358,18 @@ function GamesSection({
       setBroadcastError(errorMessage(loadError, "Could not load replay status."));
     } finally {
       setBroadcastLoading(false);
+    }
+  }
+
+  async function submitNewReferee(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const created = await onCreateReferee({
+      displayName: newRefereeName.trim(),
+      phone: newRefereePhone.trim(),
+    });
+    if (created) {
+      setNewRefereeName("");
+      setNewRefereePhone("");
     }
   }
 
@@ -1320,6 +1435,19 @@ function GamesSection({
                 <option value="CANCELLED">Cancelled</option>
               </>
             )}
+          </select>
+          <select
+            aria-label="Filter by referee"
+            onChange={(event) => setRefereeFilter(event.target.value)}
+            value={refereeFilter}
+          >
+            <option value="ALL">All referees</option>
+            <option value="UNASSIGNED">Unassigned</option>
+            {assignments.referees.map((referee) => (
+              <option key={referee.profileId} value={referee.profileId}>
+                {referee.displayName}
+              </option>
+            ))}
           </select>
         </div>
         <div className="admin-table-count">{filtered.length} games</div>
@@ -1393,6 +1521,64 @@ function GamesSection({
             <div><dt>Venue</dt><dd>{active.venue}</dd></div>
             <div><dt>Referee</dt><dd>{assignedRefereeName(assignments, active)}</dd></div>
           </dl>
+
+          {isScheduledAdminGame(active) ? (
+            <div className="admin-detail-section admin-referee-assignment">
+              <div className="admin-detail-section-title">
+                <div><AdminIcon name="referee" /><span>Referee assignment</span></div>
+              </div>
+              <label>
+                <span>Assigned official</span>
+                <select
+                  disabled={submitting !== null || active.status === "LIVE"}
+                  onChange={(event) => void onAssignReferee(active, event.target.value)}
+                  value={assignedRefereeId(assignments, active)}
+                >
+                  <option value="">Unassigned</option>
+                  {assignments.referees.map((referee) => (
+                    <option key={referee.profileId} value={referee.profileId}>
+                      {referee.displayName} · {referee.phone}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {active.status === "LIVE" ? (
+                <p className="admin-detail-hint">Live assignments are locked to avoid an accidental handoff.</p>
+              ) : null}
+              <details className="admin-add-referee">
+                <summary>+ Add a new referee</summary>
+                <form onSubmit={submitNewReferee}>
+                  <input
+                    placeholder="Full name"
+                    required
+                    value={newRefereeName}
+                    onChange={(event) => setNewRefereeName(event.target.value)}
+                  />
+                  <input
+                    inputMode="tel"
+                    placeholder="Phone number"
+                    required
+                    value={newRefereePhone}
+                    onChange={(event) => setNewRefereePhone(event.target.value)}
+                  />
+                  <button
+                    className="admin-secondary-button"
+                    disabled={submitting !== null}
+                    type="submit"
+                  >
+                    {submitting === "create-referee" ? "Creating…" : "Create and send login"}
+                  </button>
+                </form>
+              </details>
+            </div>
+          ) : null}
+
+          <AdminGamePlayersPanel
+            fixture={active}
+            participants={participants}
+            error={participantsError}
+            loading={participantsLoading}
+          />
           {active.status === "CANCELLED" ? (
             <div className="admin-cancellation-note">
               <AdminIcon name="alert" />
@@ -1455,12 +1641,157 @@ function GamesSection({
             </button>
           </div>
           <p className="admin-audit-hint">
-            <AdminIcon name="audit" /> Every admin change requires a reason and is permanently audited.
+            <AdminIcon name="audit" /> Score corrections and cancellations require a reason and are permanently audited.
           </p>
         </aside>
       ) : null}
     </div>
   );
+}
+
+function AdminGamePlayersPanel({
+  fixture,
+  participants,
+  error,
+  loading,
+}: {
+  fixture: RefereeFixture;
+  participants: AdminGameParticipants | null;
+  error: string | null;
+  loading: boolean;
+}) {
+  const actualPlayers = participants?.actualPlayers ?? [];
+  const usingClanActualFallback = participants?.matchKind === "CLAN" &&
+    participants.plannedPlayers.length === 0 && actualPlayers.length > 0;
+  const signedUpPlayers = participants?.matchKind === "SOLO"
+    ? participants.registeredPlayers
+    : usingClanActualFallback
+      ? actualPlayers
+      : participants?.plannedPlayers ?? [];
+  const historyPlayers = participants?.matchKind === "SOLO"
+    ? participants.withdrawnPlayers
+    : participants?.removedPlayers ?? [];
+  const groups = participantGroups(fixture, signedUpPlayers);
+  const signedUpLabel = participants?.matchKind === "SOLO"
+    ? `${participants.counts.registered} / ${participants.capacity} booked`
+    : participants?.matchKind === "CLAN"
+      ? usingClanActualFallback
+        ? `${participants.counts.actual} recorded`
+        : `${participants.counts.plannedHome} home · ${participants.counts.plannedAway} away`
+      : "";
+
+  return (
+    <div className="admin-detail-section admin-game-players">
+      <div className="admin-detail-section-title">
+        <div><AdminIcon name="people" /><span>Signed-up players</span></div>
+        {participants ? <b>{signedUpLabel}</b> : null}
+      </div>
+      {loading ? (
+        <div className="admin-player-loading" aria-label="Loading signed-up players">
+          <i /><i /><i />
+        </div>
+      ) : error ? (
+        <p className="admin-inline-error">{error}</p>
+      ) : !participants || signedUpPlayers.length === 0 ? (
+        <div className="admin-player-empty">
+          <AdminIcon name="people" />
+          <span>
+            <strong>No players confirmed yet</strong>
+            <small>The roster will appear here as bookings or clan selections are confirmed.</small>
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="admin-player-groups">
+            {groups.map((group) => (
+              <section key={group.key}>
+                <header>
+                  <span>{group.emblem}</span>
+                  <strong>{group.label}</strong>
+                  <b>{group.players.length}</b>
+                </header>
+                <div>
+                  {group.players.map((player) => (
+                    <AdminGamePlayerRow key={`${group.key}-${player.profileId}`} player={player} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+          {actualPlayers.length > 0 ? (
+            <p className="admin-player-footnote">
+              <AdminIcon name="check" /> {actualPlayers.length} players checked in or recorded as playing
+            </p>
+          ) : null}
+          {historyPlayers.length > 0 ? (
+            <details className="admin-player-history">
+              <summary>{participants.matchKind === "SOLO" ? "Withdrawn bookings" : "Removed or replaced players"} · {historyPlayers.length}</summary>
+              <div>
+                {historyPlayers.map((player) => (
+                  <AdminGamePlayerRow key={`history-${player.profileId}`} player={player} muted />
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function AdminGamePlayerRow({
+  player,
+  muted = false,
+}: {
+  player: AdminGameParticipant;
+  muted?: boolean;
+}) {
+  return (
+    <div className={`admin-game-player-row ${muted ? "muted" : ""}`}>
+      {player.avatarUrl ? (
+        <img alt="" src={player.avatarUrl} />
+      ) : (
+        <span className="admin-game-player-avatar">{initials(player.displayName)}</span>
+      )}
+      <span>
+        <strong>{player.displayName}</strong>
+        <small>
+          {player.username ? `@${player.username.replace(/^@/, "")} · ` : ""}
+          {player.role ? humanize(player.role) : "Player"}
+        </small>
+      </span>
+      <span className="admin-game-player-badges">
+        {player.checkedInAt ? <b>Checked in</b> : null}
+        {player.played ? <b>Played</b> : null}
+        {player.ratingAtTeamAssignment !== null ? <em>{player.ratingAtTeamAssignment} SR</em> : null}
+      </span>
+    </div>
+  );
+}
+
+function participantGroups(
+  fixture: RefereeFixture,
+  players: AdminGameParticipant[],
+) {
+  const definitions = fixture.matchKind === "SOLO"
+    ? [
+        { key: "WHITE", label: "White team", emblem: "⚪" },
+        { key: "BLACK", label: "Black team", emblem: "⚫" },
+        { key: "UNASSIGNED", label: "Team not assigned", emblem: "○" },
+      ]
+    : [
+        { key: "HOME", label: fixture.homeClan.name, emblem: fixture.homeClan.emblem },
+        { key: "AWAY", label: fixture.awayClan.name, emblem: fixture.awayClan.emblem },
+        { key: "UNASSIGNED", label: "Side not recorded", emblem: "○" },
+      ];
+  return definitions.map((definition) => ({
+    ...definition,
+    players: players.filter((player) =>
+      definition.key === "UNASSIGNED"
+        ? player.side === null
+        : player.side === definition.key
+    ),
+  })).filter((group) => group.players.length > 0);
 }
 
 function ReportsSection({
@@ -2720,13 +3051,21 @@ function assignedRefereeName(
   assignments: RefereeAssignmentsResponse,
   fixture: RefereeFixture,
 ) {
+  const refereeId = assignedRefereeId(assignments, fixture);
+  if (!refereeId) return "Unassigned";
+  return assignments.referees.find(
+    (referee) => referee.profileId === refereeId,
+  )?.displayName ?? "Assigned referee";
+}
+
+function assignedRefereeId(
+  assignments: RefereeAssignmentsResponse,
+  fixture: RefereeFixture,
+) {
   const assignment = assignments.fixtures.find(
     (candidate) => candidate.id === fixture.id && candidate.matchKind === fixture.matchKind,
   );
-  if (!assignment?.assignedRefereeId) return "Unassigned";
-  return assignments.referees.find(
-    (referee) => referee.profileId === assignment.assignedRefereeId,
-  )?.displayName ?? "Assigned referee";
+  return assignment?.assignedRefereeId ?? "";
 }
 
 function displayScore(fixture: RefereeFixture) {

@@ -9,6 +9,7 @@ import {
   parseMatchStoppageInput,
   parseRefereeBulkCheckInInput,
   parseRefereeCheckInInput,
+  parseRefereeRemoveCheckInInput,
   parseRefereeClanForfeitInput,
   parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
@@ -33,6 +34,7 @@ type ActionBody = {
     | "finish"
     | "report"
     | "check_in_player"
+    | "remove_check_in"
     | "check_in_players"
     | "finalize_attendance"
     | "record_verified_injury"
@@ -174,6 +176,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
           profile_id_to_check_in: checkIn.profileId,
         });
         if (error) throw new Error(`Could not check in player: ${error.message}`);
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "remove_check_in": {
+        const correction = parseRefereeRemoveCheckInInput(body);
+        const { data, error } = await db.rpc(
+          "referee_remove_player_check_in",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "CLAN",
+            match_id_to_use: fixtureId,
+            profile_id_to_remove: correction.profileId,
+            expected_revision_to_use: correction.expectedRevision,
+            reason_code_to_use: correction.reasonCode,
+            reason_note_to_use: correction.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not remove check-in: ${error.message}`);
+        }
         result = { reliabilityContext: data };
         break;
       }

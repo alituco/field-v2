@@ -188,6 +188,10 @@ export type ReliabilityAttendancePlayer = {
   outcome: string | null;
   status: ReliabilityAttendanceStatus;
   isCheckedIn: boolean;
+  /** Optimistic token for check -> remove -> re-check races. */
+  checkInRevision: number;
+  /** Decided by the server after match/cutoff/finalization guards. */
+  canRemoveCheckIn: boolean;
 };
 
 export type ReliabilityVerifiedInjury = {
@@ -261,6 +265,8 @@ export type RefereeFixture = {
   blackAverageSr: number | null;
   matchAverageSr: number | null;
   teamSrSpread: number | null;
+  /** Solo teams stay private until the configured pre-kickoff reveal. */
+  teamsAssignedAt: string | null;
   homeClan: Clan;
   awayClan: Clan;
   players: Player[];

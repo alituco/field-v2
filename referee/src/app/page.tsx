@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
@@ -8,7 +8,6 @@ import { normalizePhoneNumber } from "@/lib/phone";
 import { formatPlayerSr } from "@/lib/open-queue-ratings";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
-  AssignableFixture,
   BlueCard,
   BroadcastControlResponse,
   FixtureClock,
@@ -16,17 +15,15 @@ import type {
   ModerationRiskSignal,
   Player,
   ReliabilityAttendancePlayer,
-  RefereeAssignmentsResponse,
   RefereeFixture,
   RefereeFixturesResponse,
-  RefereeListItem,
 } from "@/lib/types";
 
-type Tab = "games" | "assign" | "admin";
 type FixtureActionBody = Record<
   string,
   string | number | boolean | string[] | null | undefined
 >;
+type RefereeMatchView = "match" | "players" | "more";
 
 type Me = RefereeFixturesResponse["me"];
 
@@ -36,28 +33,19 @@ const MAX_MATCH_SECONDS = 3 * 60 * 60;
 export default function RefereePage() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [me, setMe] = useState<Me | null>(null);
-  const [tab, setTab] = useState<Tab>("games");
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [fixtures, setFixtures] = useState<RefereeFixture[]>([]);
-  const [adminFixtures, setAdminFixtures] = useState<RefereeFixture[]>([]);
   const [activeFixtureId, setActiveFixtureId] = useState<string | null>(null);
-  const [assignments, setAssignments] = useState<RefereeAssignmentsResponse>({
-    referees: [],
-    fixtures: [],
-  });
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [isAdminLoading, setIsAdminLoading] = useState(false);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [goalClanId, setGoalClanId] = useState("");
   const [goalPlayerId, setGoalPlayerId] = useState("");
   const [assistPlayerId, setAssistPlayerId] = useState("");
   const [cardClanId, setCardClanId] = useState("");
   const [cardPlayerId, setCardPlayerId] = useState("");
-  const [newRefName, setNewRefName] = useState("");
-  const [newRefPhone, setNewRefPhone] = useState("");
   const loadedSession = useRef(false);
 
   const activeFixture =
@@ -105,59 +93,6 @@ export default function RefereePage() {
     }
   }, [accessToken, authHeaders]);
 
-  const loadAssignments = useCallback(async () => {
-    if (!accessToken || me?.role !== "admin") return;
-
-    try {
-      const response = await fetch("/api/referee/assignments", {
-        headers: authHeaders(),
-        cache: "no-store",
-      });
-      const payload = (await response.json()) as
-        | RefereeAssignmentsResponse
-        | { error: string };
-
-      if (!response.ok || "error" in payload) {
-        throw new Error(
-          "error" in payload ? payload.error : "Could not load assignments.",
-        );
-      }
-
-      setAssignments(payload);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Load failed.");
-    }
-  }, [accessToken, authHeaders, me?.role]);
-
-  const loadAdminFixtures = useCallback(async () => {
-    if (!accessToken || me?.role !== "admin") return;
-    setIsAdminLoading(true);
-    setError(null);
-
-    try {
-      const response = await fetch("/api/referee/fixtures?scope=admin", {
-        headers: authHeaders(),
-        cache: "no-store",
-      });
-      const payload = (await response.json()) as
-        | RefereeFixturesResponse
-        | { error: string };
-
-      if (!response.ok || "error" in payload) {
-        throw new Error(
-          "error" in payload ? payload.error : "Could not load admin games.",
-        );
-      }
-
-      setMe(payload.me);
-      setAdminFixtures(payload.fixtures);
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Load failed.");
-    } finally {
-      setIsAdminLoading(false);
-    }
-  }, [accessToken, authHeaders, me?.role]);
-
   useEffect(() => {
     if (loadedSession.current) return;
     loadedSession.current = true;
@@ -179,19 +114,6 @@ export default function RefereePage() {
   useEffect(() => {
     if (accessToken) void loadGames();
   }, [accessToken, loadGames]);
-
-  useEffect(() => {
-    if (accessToken && me?.role === "admin") {
-      void loadAssignments();
-      void loadAdminFixtures();
-    }
-  }, [accessToken, loadAdminFixtures, loadAssignments, me?.role]);
-
-  useEffect(() => {
-    if (me?.role === "admin" && fixtures.length === 0 && tab === "games") {
-      setTab("admin");
-    }
-  }, [fixtures.length, me?.role, tab]);
 
   useEffect(() => {
     if (!activeFixture) return;
@@ -252,8 +174,6 @@ export default function RefereePage() {
     setAccessToken(null);
     setMe(null);
     setFixtures([]);
-    setAdminFixtures([]);
-    setAssignments({ referees: [], fixtures: [] });
     setOtp("");
     setOtpSent(false);
   }
@@ -266,7 +186,6 @@ export default function RefereePage() {
       activeFixture.id,
       activeFixture.matchKind,
       body,
-      false,
     );
   }
 
@@ -276,23 +195,13 @@ export default function RefereePage() {
       activeFixture.id,
       activeFixture.matchKind,
       body,
-      false,
     );
-  }
-
-  async function runAdminAction(
-    fixtureId: string,
-    body: FixtureActionBody,
-  ) {
-    const fixture = adminFixtures.find((candidate) => candidate.id === fixtureId);
-    await runFixtureAction(fixtureId, fixture?.matchKind ?? "CLAN", body, true);
   }
 
   async function runFixtureAction(
     fixtureId: string,
     matchKind: RefereeFixture["matchKind"],
     body: FixtureActionBody,
-    refreshAdmin: boolean,
   ) {
     const action = String(body.action ?? "action");
     setSubmitting(action);
@@ -312,93 +221,13 @@ export default function RefereePage() {
       });
       const payload = (await response.json()) as { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Action failed.");
-      await Promise.all([
-        loadGames(),
-        refreshAdmin ? loadAdminFixtures() : Promise.resolve(),
-      ]);
+      await loadGames();
       return true;
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : "Action failed.",
       );
       return false;
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  async function assignReferee(
-    fixtureId: string,
-    refereeId: string,
-    matchKind: RefereeFixture["matchKind"],
-  ) {
-    setSubmitting(`assign-${fixtureId}`);
-    setError(null);
-    setAssignments((current) => ({
-      ...current,
-      fixtures: current.fixtures.map((fixture) =>
-        fixture.id === fixtureId && fixture.matchKind === matchKind
-          ? { ...fixture, assignedRefereeId: refereeId || null }
-          : fixture,
-      ),
-    }));
-
-    try {
-      const response = await fetch("/api/referee/assignments", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
-        body: JSON.stringify({
-          fixtureId,
-          refereeId: refereeId || null,
-          matchKind,
-        }),
-      });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Assignment failed.");
-      await Promise.all([loadAssignments(), loadGames(), loadAdminFixtures()]);
-    } catch (assignError) {
-      setError(
-        assignError instanceof Error ? assignError.message : "Assignment failed.",
-      );
-      await loadAssignments();
-    } finally {
-      setSubmitting(null);
-    }
-  }
-
-  async function createReferee(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting("create-referee");
-    setError(null);
-
-    try {
-      const response = await fetch("/api/referee/referees", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
-        body: JSON.stringify({
-          displayName: newRefName,
-          phone: newRefPhone,
-          role: "referee",
-          sendOtp: true,
-        }),
-      });
-      const payload = (await response.json()) as { error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "Could not create referee.");
-      setNewRefName("");
-      setNewRefPhone("");
-      await loadAssignments();
-    } catch (createError) {
-      setError(
-        createError instanceof Error
-          ? createError.message
-          : "Could not create referee.",
-      );
     } finally {
       setSubmitting(null);
     }
@@ -476,97 +305,53 @@ export default function RefereePage() {
   return (
     <main className="app-shell">
       <div className="content">
-        <header className="topbar">
-          <Header
-            title="REFEREE"
-            subtitle={me ? `${me.displayName} · ${me.role}` : "LOADING"}
-          />
-          <div className="topbar-actions">
-            {me?.role === "admin" ? (
-              <a className="ghost-button admin-panel-link" href="/admin">
-                Admin Panel
-              </a>
-            ) : null}
-            <button className="ghost-button" onClick={() => void signOut()} type="button">
-              Logout
-            </button>
+        <header className="referee-topbar">
+          <div className="referee-topbar-title">
+            <span className="referee-brand-mark">F</span>
+            <span>
+              <strong>Match day</strong>
+              <small>{me ? `Signed in as ${me.displayName}` : "Loading your games"}</small>
+            </span>
           </div>
+          <details className="referee-account-menu">
+            <summary aria-label="Open account menu">
+              {initials(me?.displayName ?? "Referee")}
+            </summary>
+            <div>
+              <span>{me?.displayName ?? "Referee"}</span>
+              <small>{me?.role === "admin" ? "Admin and referee" : "Referee"}</small>
+              {me?.role === "admin" ? <a href="/admin">Open admin panel</a> : null}
+              <button onClick={() => void signOut()} type="button">Sign out</button>
+            </div>
+          </details>
         </header>
-
-        {me?.role === "admin" ? (
-          <div className="segmented top-tabs">
-            <button
-              className={`chip-button ${tab === "games" ? "active" : ""}`}
-              onClick={() => setTab("games")}
-              type="button"
-            >
-              My Games
-            </button>
-            <button
-              className={`chip-button ${tab === "assign" ? "active" : ""}`}
-              onClick={() => setTab("assign")}
-              type="button"
-            >
-              Assign
-            </button>
-            <button
-              className={`chip-button ${tab === "admin" ? "active" : ""}`}
-              onClick={() => setTab("admin")}
-              type="button"
-            >
-              Control
-            </button>
-          </div>
-        ) : null}
 
         {error ? <div className="error">{error}</div> : null}
 
-        {tab === "admin" && me?.role === "admin" ? (
-          <AdminControlView
-            assignments={assignments}
-            fixtures={adminFixtures}
-            isLoading={isAdminLoading}
-            submitting={submitting}
-            onRunAction={runAdminAction}
-            onRefresh={() => void Promise.all([loadAdminFixtures(), loadAssignments()])}
-          />
-        ) : tab === "assign" && me?.role === "admin" ? (
-          <AssignView
-            assignments={assignments}
-            newRefName={newRefName}
-            newRefPhone={newRefPhone}
-            submitting={submitting}
-            onNameChange={setNewRefName}
-            onPhoneChange={setNewRefPhone}
-            onCreateReferee={createReferee}
-            onAssign={assignReferee}
-            onRefresh={() => void loadAssignments()}
-          />
-        ) : (
-          <GamesView
-            accessToken={accessToken}
-            activeFixture={activeFixture}
-            fixtures={fixtures}
-            isLoading={isLoading}
-            submitting={submitting}
-            goalClanId={goalClanId}
-            goalPlayerId={goalPlayerId}
-            assistPlayerId={assistPlayerId}
-            cardClanId={cardClanId}
-            cardPlayerId={cardPlayerId}
-            goalPlayers={goalPlayers}
-            cardPlayers={cardPlayers}
-            onSelectFixture={setActiveFixtureId}
-            onGoalClan={setGoalClanId}
-            onGoalPlayer={setGoalPlayerId}
-            onAssistPlayer={setAssistPlayerId}
-            onCardClan={setCardClanId}
-            onCardPlayer={setCardPlayerId}
-            onRunAction={runAction}
-            onSafetyAction={runSafetyAction}
-            onRefresh={() => void loadGames()}
-          />
-        )}
+        <GamesView
+          accessToken={accessToken}
+          activeFixture={activeFixture}
+          fixtures={fixtures}
+          isLoading={isLoading}
+          submitting={submitting}
+          goalClanId={goalClanId}
+          goalPlayerId={goalPlayerId}
+          assistPlayerId={assistPlayerId}
+          cardClanId={cardClanId}
+          cardPlayerId={cardPlayerId}
+          goalPlayers={goalPlayers}
+          cardPlayers={cardPlayers}
+          canAdminister={me?.role === "admin"}
+          onSelectFixture={setActiveFixtureId}
+          onGoalClan={setGoalClanId}
+          onGoalPlayer={setGoalPlayerId}
+          onAssistPlayer={setAssistPlayerId}
+          onCardClan={setCardClanId}
+          onCardPlayer={setCardPlayerId}
+          onRunAction={runAction}
+          onSafetyAction={runSafetyAction}
+          onRefresh={() => void loadGames()}
+        />
       </div>
     </main>
   );
@@ -584,495 +369,6 @@ function Header({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-function AssignView({
-  assignments,
-  newRefName,
-  newRefPhone,
-  submitting,
-  onNameChange,
-  onPhoneChange,
-  onCreateReferee,
-  onAssign,
-  onRefresh,
-}: {
-  assignments: RefereeAssignmentsResponse;
-  newRefName: string;
-  newRefPhone: string;
-  submitting: string | null;
-  onNameChange: (value: string) => void;
-  onPhoneChange: (value: string) => void;
-  onCreateReferee: (event: React.FormEvent<HTMLFormElement>) => void;
-  onAssign: (
-    fixtureId: string,
-    refereeId: string,
-    matchKind: RefereeFixture["matchKind"],
-  ) => void;
-  onRefresh: () => void;
-}) {
-  return (
-    <>
-      <section className="panel">
-        <div className="panel-heading">
-          <h2 className="panel-title">Add Referee</h2>
-        </div>
-        <form className="form-grid" onSubmit={onCreateReferee}>
-          <input
-            className="input"
-            value={newRefName}
-            onChange={(event) => onNameChange(event.target.value)}
-            placeholder="Name"
-          />
-          <input
-            className="input"
-            inputMode="tel"
-            value={newRefPhone}
-            onChange={(event) => onPhoneChange(event.target.value)}
-            placeholder="Phone"
-          />
-          <button
-            className="primary-button"
-            disabled={submitting === "create-referee"}
-            type="submit"
-          >
-            Create + Send OTP
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h2 className="panel-title">Assign Games</h2>
-          <button className="ghost-button" onClick={onRefresh} type="button">
-            Refresh
-          </button>
-        </div>
-        <div className="event-list">
-          {assignments.fixtures.length === 0 ? (
-            <div className="empty">No scheduled games to assign</div>
-          ) : (
-            assignments.fixtures.map((fixture) => (
-              <AssignmentRow
-                fixture={fixture}
-                referees={assignments.referees}
-                key={fixture.id}
-                submitting={submitting === `assign-${fixture.id}`}
-                onAssign={(refereeId) =>
-                  onAssign(fixture.id, refereeId, fixture.matchKind)
-                }
-              />
-            ))
-          )}
-        </div>
-      </section>
-    </>
-  );
-}
-
-function AssignmentRow({
-  fixture,
-  referees,
-  submitting,
-  onAssign,
-}: {
-  fixture: AssignableFixture;
-  referees: RefereeListItem[];
-  submitting: boolean;
-  onAssign: (refereeId: string) => void;
-}) {
-  return (
-    <div className="event-card" style={{ display: "block" }}>
-      <div className="utility-row">
-        <div>
-          <div className="event-title">
-            {fixture.homeClan.tag} vs {fixture.awayClan.tag}
-            {fixture.matchKind === "SOLO" ? " · SOLO" : ""}
-          </div>
-          <div className="event-subtitle">
-            {fixture.matchDate} · {fixture.timeSlot}
-          </div>
-        </div>
-        <span className="event-minute">{fixture.status}</span>
-      </div>
-      <div style={{ height: 10 }} />
-      <select
-        className="select"
-        disabled={submitting}
-        value={fixture.assignedRefereeId ?? ""}
-        onChange={(event) => onAssign(event.target.value)}
-      >
-        <option value="">Unassigned</option>
-        {referees.map((referee) => (
-          <option key={referee.profileId} value={referee.profileId}>
-            {referee.displayName}
-          </option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function AdminControlView({
-  assignments,
-  fixtures,
-  isLoading,
-  submitting,
-  onRunAction,
-  onRefresh,
-}: {
-  assignments: RefereeAssignmentsResponse;
-  fixtures: RefereeFixture[];
-  isLoading: boolean;
-  submitting: string | null;
-  onRunAction: (
-    fixtureId: string,
-    body: FixtureActionBody,
-  ) => Promise<void>;
-  onRefresh: () => void;
-}) {
-  const [statusFilter, setStatusFilter] = useState<"ALL" | RefereeFixture["status"]>(
-    "FINAL",
-  );
-  const [refereeFilter, setRefereeFilter] = useState("ALL");
-  const [dateFromFilter, setDateFromFilter] = useState("");
-  const [dateToFilter, setDateToFilter] = useState("");
-  const [teamFilter, setTeamFilter] = useState("");
-  const [activeFixtureId, setActiveFixtureId] = useState<string | null>(null);
-  const [goalClanId, setGoalClanId] = useState("");
-  const [goalPlayerId, setGoalPlayerId] = useState("");
-  const [assistPlayerId, setAssistPlayerId] = useState("");
-  const [cardClanId, setCardClanId] = useState("");
-  const [cardPlayerId, setCardPlayerId] = useState("");
-
-  const filteredFixtures = useMemo(() => {
-    const teamNeedle = teamFilter.trim().toLowerCase();
-
-    return fixtures.filter((fixture) => {
-      const assignedRefereeId = assignedRefereeFor(assignments, fixture.id);
-      const teamText = [
-        fixture.homeClan.name,
-        fixture.homeClan.tag,
-        fixture.awayClan.name,
-        fixture.awayClan.tag,
-      ]
-        .join(" ")
-        .toLowerCase();
-
-      if (statusFilter !== "ALL" && fixture.status !== statusFilter) return false;
-      if (dateFromFilter && fixture.matchDate < dateFromFilter) return false;
-      if (dateToFilter && fixture.matchDate > dateToFilter) return false;
-      if (teamNeedle && !teamText.includes(teamNeedle)) return false;
-      if (refereeFilter === "UNASSIGNED" && assignedRefereeId) return false;
-      if (
-        refereeFilter !== "ALL" &&
-        refereeFilter !== "UNASSIGNED" &&
-        assignedRefereeId !== refereeFilter
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [
-    assignments,
-    dateFromFilter,
-    dateToFilter,
-    fixtures,
-    refereeFilter,
-    statusFilter,
-    teamFilter,
-  ]);
-
-  const activeFixture =
-    filteredFixtures.find((fixture) => fixture.id === activeFixtureId) ??
-    filteredFixtures[0] ??
-    null;
-
-  useEffect(() => {
-    if (filteredFixtures.length === 0) {
-      if (activeFixtureId !== null) setActiveFixtureId(null);
-      return;
-    }
-
-    if (!activeFixtureId || !filteredFixtures.some((fixture) => fixture.id === activeFixtureId)) {
-      setActiveFixtureId(filteredFixtures[0].id);
-    }
-  }, [activeFixtureId, filteredFixtures]);
-
-  useEffect(() => {
-    if (!activeFixture) return;
-    const defaultClanId = activeFixture.homeClan.id;
-    const firstPlayer = playersForClan(activeFixture, defaultClanId)[0]?.id ?? "";
-
-    setGoalClanId(defaultClanId);
-    setGoalPlayerId(firstPlayer);
-    setAssistPlayerId("");
-    setCardClanId(defaultClanId);
-    setCardPlayerId(firstPlayer);
-  }, [activeFixture]);
-
-  const goalPlayers = activeFixture
-    ? playersForClan(activeFixture, goalClanId || activeFixture.homeClan.id)
-    : [];
-  const cardPlayers = activeFixture
-    ? playersForClan(activeFixture, cardClanId || activeFixture.homeClan.id)
-    : [];
-  const isFinal = activeFixture?.status === "FINAL";
-  const canRecordLive = activeFixture?.status === "LIVE";
-
-  return (
-    <>
-      <section className="panel">
-        <div className="panel-heading">
-          <div>
-            <h2 className="panel-title">Admin Control</h2>
-            <p className="small-text">
-              Review historic games and manage live match records.
-            </p>
-          </div>
-          <button
-            className="ghost-button"
-            disabled={isLoading}
-            onClick={onRefresh}
-            type="button"
-          >
-            Refresh
-          </button>
-        </div>
-
-        <div className="admin-filters">
-          <label>
-            <span className="field-label">Status</span>
-            <select
-              className="select"
-              value={statusFilter}
-              onChange={(event) =>
-                setStatusFilter(event.target.value as "ALL" | RefereeFixture["status"])
-              }
-            >
-              <option value="ALL">All Statuses</option>
-              <option value="FINAL">Final</option>
-              <option value="SCHEDULED">Scheduled</option>
-              <option value="FULL">Full solo games</option>
-              <option value="LIVE">Live</option>
-              <option value="OPEN">Open</option>
-              <option value="CANCELLED">Cancelled</option>
-            </select>
-          </label>
-
-          <label>
-            <span className="field-label">Referee</span>
-            <select
-              className="select"
-              value={refereeFilter}
-              onChange={(event) => setRefereeFilter(event.target.value)}
-            >
-              <option value="ALL">All Referees</option>
-              <option value="UNASSIGNED">Unassigned</option>
-              {assignments.referees.map((referee) => (
-                <option key={referee.profileId} value={referee.profileId}>
-                  {referee.displayName}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span className="field-label">From</span>
-            <input
-              className="input"
-              type="date"
-              value={dateFromFilter}
-              onChange={(event) => setDateFromFilter(event.target.value)}
-            />
-          </label>
-
-          <label>
-            <span className="field-label">To</span>
-            <input
-              className="input"
-              type="date"
-              value={dateToFilter}
-              onChange={(event) => setDateToFilter(event.target.value)}
-            />
-          </label>
-
-          <label>
-            <span className="field-label">Team</span>
-            <input
-              className="input"
-              value={teamFilter}
-              onChange={(event) => setTeamFilter(event.target.value)}
-              placeholder="Clan name or tag"
-            />
-          </label>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-heading">
-          <h2 className="panel-title">Games</h2>
-          <span className="small-text">{filteredFixtures.length} shown</span>
-        </div>
-
-        {filteredFixtures.length === 0 ? (
-          <div className="empty">No games match these filters</div>
-        ) : (
-          <div className="admin-game-list">
-            {filteredFixtures.map((fixture) => (
-              <button
-                className={`admin-game-row ${
-                  activeFixture?.id === fixture.id ? "active" : ""
-                }`}
-                key={fixture.id}
-                onClick={() => setActiveFixtureId(fixture.id)}
-                type="button"
-              >
-                <div>
-                  <div className="event-title">
-                    {fixture.homeClan.tag} vs {fixture.awayClan.tag}
-                    {fixture.matchKind === "SOLO" ? " · SOLO" : ""}
-                  </div>
-                  <div className="event-subtitle">
-                    {fixture.matchDate} · {fixture.timeSlot} ·{" "}
-                    {assignedRefereeName(assignments, fixture.id)}
-                  </div>
-                  {fixture.status === "CANCELLED" && fixture.cancellationReason ? (
-                    <div className="event-subtitle">{fixture.cancellationReason}</div>
-                  ) : null}
-                </div>
-                <div className="event-minute">
-                  {scoreFor(fixture, fixture.homeClan.id)}-
-                  {scoreFor(fixture, fixture.awayClan.id)}
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {activeFixture ? (
-        <>
-          {activeFixture.status === "CANCELLED" ? (
-            <section className="panel">
-              <div className="panel-heading">
-                <h2 className="panel-title">Cancellation</h2>
-                <span className="small-text">
-                  {activeFixture.cancellationCode ?? "LEGACY_OTHER"}
-                </span>
-              </div>
-              <p className="small-text">
-                {activeFixture.cancellationReason ??
-                  "No cancellation reason was recorded."}
-              </p>
-              {activeFixture.cancelledAt ? (
-                <div className="event-subtitle">
-                  Recorded {new Date(activeFixture.cancelledAt).toLocaleString()}
-                </div>
-              ) : null}
-            </section>
-          ) : (
-            <TimerPanel
-              key={activeFixture.id}
-              fixture={activeFixture}
-              submitting={submitting}
-              onRunAction={(body) => onRunAction(activeFixture.id, body)}
-            />
-          )}
-
-          {isFinal ? (
-            <RatedResultLockedPanel />
-          ) : (
-            <ActionPanel
-              title="Goal"
-              fixture={activeFixture}
-              selectedClanId={goalClanId || activeFixture.homeClan.id}
-              selectedPlayerId={goalPlayerId}
-              players={goalPlayers}
-              submitting={submitting}
-              disabled={!canRecordLive}
-              onTeam={(clanId) => {
-                setGoalClanId(clanId);
-                setGoalPlayerId(playersForClan(activeFixture, clanId)[0]?.id ?? "");
-                setAssistPlayerId("");
-              }}
-              onPlayer={setGoalPlayerId}
-              extra={
-                <PlayerSelect
-                  label="Assist"
-                  optional
-                  value={assistPlayerId}
-                  players={goalPlayers.filter((player) => player.id !== goalPlayerId)}
-                  onChange={setAssistPlayerId}
-                />
-              }
-              buttonLabel="Goal"
-              onSubmit={() =>
-                onRunAction(activeFixture.id, {
-                  action: "goal",
-                  clanId: goalClanId || activeFixture.homeClan.id,
-                  profileId: goalPlayerId,
-                  assistProfileId: assistPlayerId || null,
-                })
-              }
-            />
-          )}
-
-          <ActionPanel
-            title="Blue Card"
-            fixture={activeFixture}
-            selectedClanId={cardClanId || activeFixture.homeClan.id}
-            selectedPlayerId={cardPlayerId}
-            players={cardPlayers}
-            submitting={submitting}
-            disabled={activeFixture.status !== "LIVE"}
-            onTeam={(clanId) => {
-              setCardClanId(clanId);
-              setCardPlayerId(playersForClan(activeFixture, clanId)[0]?.id ?? "");
-            }}
-            onPlayer={setCardPlayerId}
-            buttonLabel="Start 2:00"
-            dark
-            onSubmit={() =>
-              onRunAction(activeFixture.id, {
-                action: "blue_card",
-                clanId: cardClanId || activeFixture.homeClan.id,
-                profileId: cardPlayerId,
-              })
-            }
-          />
-
-          <section className="panel">
-            <div className="panel-heading">
-              <h2 className="panel-title">Active Blue Cards</h2>
-            </div>
-            <ActiveBlueCards
-              fixture={activeFixture}
-              cards={activeFixture.blueCards}
-              submitting={submitting}
-              onReturn={(cardId) =>
-                onRunAction(activeFixture.id, {
-                  action: "expire_blue_card",
-                  blueCardId: cardId,
-                })
-              }
-            />
-          </section>
-
-          <section className="panel">
-            <div className="panel-heading">
-              <h2 className="panel-title">Timeline</h2>
-              <button className="ghost-button" onClick={onRefresh} type="button">
-                Refresh
-              </button>
-            </div>
-            <EventList fixture={activeFixture} limit={30} />
-          </section>
-        </>
-      ) : null}
-    </>
-  );
-}
-
 function GamesView({
   accessToken,
   activeFixture,
@@ -1086,6 +382,7 @@ function GamesView({
   cardPlayerId,
   goalPlayers,
   cardPlayers,
+  canAdminister,
   onSelectFixture,
   onGoalClan,
   onGoalPlayer,
@@ -1108,6 +405,7 @@ function GamesView({
   cardPlayerId: string;
   goalPlayers: Player[];
   cardPlayers: Player[];
+  canAdminister: boolean;
   onSelectFixture: (fixtureId: string) => void;
   onGoalClan: (clanId: string) => void;
   onGoalPlayer: (playerId: string) => void;
@@ -1123,26 +421,27 @@ function GamesView({
   const [eventDialog, setEventDialog] = useState<"goal" | "blue-card" | null>(
     null,
   );
+  const [view, setView] = useState<RefereeMatchView>("match");
 
   useEffect(() => {
     setEventDialog(null);
+    setView("match");
   }, [activeFixture?.id]);
 
   if (fixtures.length === 0) {
     return (
-      <section className="panel">
-        <div className="utility-row">
-          <div>
-            <h2 className="panel-title">No Assigned Games</h2>
-            <p className="small-text">Assigned matches will show here.</p>
-          </div>
+      <section className="referee-empty-state">
+        <span className="referee-empty-icon" aria-hidden="true">✓</span>
+        <h2>No match assigned</h2>
+        <p>Your assigned match will appear here. You can safely close this page for now.</p>
+        <div className="referee-empty-actions">
           <button
-            className="ghost-button"
+            className="primary-button"
             disabled={isLoading}
             onClick={onRefresh}
             type="button"
           >
-            Refresh
+            {isLoading ? "Checking…" : "Check again"}
           </button>
         </div>
       </section>
@@ -1155,59 +454,114 @@ function GamesView({
   const activeBlueCards = activeFixture.blueCards.filter(
     (card) => card.status === "ACTIVE",
   );
+  const attendance = activeFixture.reliabilityContext;
+  const highRiskCount = [
+    ...(activeFixture.riskContext?.teams ?? []),
+    ...(activeFixture.riskContext?.players ?? []),
+  ].filter((signal) => signal.level === "HIGH").length;
 
   return (
     <div className="referee-match-console">
-      <div className="fixture-strip">
-        {fixtures.map((fixture) => (
-          <button
-            className={`fixture-card ${
-              fixture.id === activeFixture.id ? "active" : ""
-            }`}
-            key={fixture.id}
-            onClick={() => onSelectFixture(fixture.id)}
-            type="button"
-          >
-            <div className="fixture-meta">
-              <span>
-                {formatMatchDate(fixture.matchDate)} · {fixture.timeSlot}
-              </span>
-              <span className={`fixture-status ${fixture.status.toLowerCase()}`}>
-                {fixture.status}
-              </span>
-            </div>
-            <div className="versus">
-              <TeamPill clan={fixture.homeClan} />
-              <div className="vs-mark">VS</div>
-              <TeamPill clan={fixture.awayClan} alignEnd />
-            </div>
-            <div className="fixture-card-footer">
-              <span>{fixture.matchKind === "SOLO" ? "Solo match" : "Clan match"}</span>
-              <span>{fixture.venue}</span>
-            </div>
-          </button>
-        ))}
-      </div>
-
-      <MatchContextDisclosure
-        key={`match-context-${activeFixture.matchKind}-${activeFixture.id}`}
-        fixture={activeFixture}
-      />
-
-      <AttendancePanel
-        fixture={activeFixture}
-        submitting={submitting}
-        onEvidenceAction={onSafetyAction}
-        onRunAction={onRunAction}
-      />
+      <section className="referee-match-header">
+        <div className="referee-match-header-top">
+          <span>{fixtures.length > 1 ? `Match ${fixtures.indexOf(activeFixture) + 1} of ${fixtures.length}` : "Your assigned match"}</span>
+          <span className={`fixture-status ${activeFixture.status.toLowerCase()}`}>
+            {friendlyFixtureStatus(activeFixture.status)}
+          </span>
+        </div>
+        {fixtures.length > 1 ? (
+          <label className="referee-match-select">
+            <span className="sr-only">Choose assigned match</span>
+            <select
+              value={activeFixture.id}
+              onChange={(event) => onSelectFixture(event.target.value)}
+            >
+              {fixtures.map((fixture) => (
+                <option key={`${fixture.matchKind}-${fixture.id}`} value={fixture.id}>
+                  {fixture.homeClan.tag} vs {fixture.awayClan.tag} · {formatMatchDate(fixture.matchDate)} · {fixture.timeSlot}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          <h1>{activeFixture.homeClan.tag} <span>vs</span> {activeFixture.awayClan.tag}</h1>
+        )}
+        <div className="referee-kickoff-details">
+          <strong>{formatMatchDate(activeFixture.matchDate)} · {activeFixture.timeSlot}</strong>
+          <span>{activeFixture.venue}</span>
+        </div>
+      </section>
 
       <TimerPanel
         compact
+        canAdminister={canAdminister}
         key={`timer-${activeFixture.matchKind}-${activeFixture.id}`}
         fixture={activeFixture}
         submitting={submitting}
         onRunAction={onRunAction}
       />
+
+      <nav className="referee-view-tabs" aria-label="Match tools">
+        <button
+          aria-current={view === "match" ? "page" : undefined}
+          className={view === "match" ? "active" : ""}
+          onClick={() => setView("match")}
+          type="button"
+        >
+          <span aria-hidden="true">●</span>
+          Match
+        </button>
+        <button
+          aria-current={view === "players" ? "page" : undefined}
+          className={view === "players" ? "active" : ""}
+          onClick={() => setView("players")}
+          type="button"
+        >
+          <span aria-hidden="true">✓</span>
+          Players
+          {attendance ? <small>{attendance.checkedInCount}/{attendance.expectedCount}</small> : null}
+        </button>
+        <button
+          aria-current={view === "more" ? "page" : undefined}
+          className={view === "more" ? "active" : ""}
+          onClick={() => setView("more")}
+          type="button"
+        >
+          <span aria-hidden="true">•••</span>
+          More
+          {highRiskCount > 0 ? <small className="alert">{highRiskCount}</small> : null}
+        </button>
+      </nav>
+
+      {view === "match" ? (
+        <div className="referee-view-panel referee-view-match">
+      {highRiskCount > 0 ? (
+        <button className="referee-context-alert" onClick={() => setView("more")} type="button">
+          <span aria-hidden="true">!</span>
+          <span>
+            <strong>Important match context</strong>
+            <small>{highRiskCount} high-priority safety {highRiskCount === 1 ? "signal" : "signals"} · review before kickoff</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+      ) : null}
+      {attendance && !attendance.attendanceFinalized ? (
+        <button
+          className="referee-attendance-glance"
+          onClick={() => setView("players")}
+          type="button"
+        >
+          <span className="referee-attendance-count">
+            <strong>{attendance.checkedInCount}</strong>
+            <small>of {attendance.expectedCount}</small>
+          </span>
+          <span>
+            <strong>{attendance.canFinalizeAttendance ? "Attendance needs finalizing" : "Player check-in"}</strong>
+            <small>{attendance.missingCount} still missing · tap to manage</small>
+          </span>
+          <span aria-hidden="true">›</span>
+        </button>
+      ) : null}
 
       <section className="panel match-action-hub">
         <div className="match-action-heading">
@@ -1282,20 +636,6 @@ function GamesView({
 
       <details className="panel referee-disclosure">
         <summary>
-          <span className="disclosure-icon broadcast" aria-hidden="true">●</span>
-          <span>
-            <strong>Camera and broadcast</strong>
-            <small>Connect or manage the match recording</small>
-          </span>
-          <DisclosureChevron />
-        </summary>
-        <div className="referee-disclosure-body">
-          <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
-        </div>
-      </details>
-
-      <details className="panel referee-disclosure">
-        <summary>
           <span className="disclosure-icon timeline" aria-hidden="true">≡</span>
           <span>
             <strong>Match timeline</strong>
@@ -1322,6 +662,51 @@ function GamesView({
         <div className="result-locked-note">
           <span aria-hidden="true">✓</span>
           Final result saved. Admin corrections remain fully audited.
+        </div>
+      ) : null}
+        </div>
+      ) : null}
+
+      {view === "players" ? (
+        <div className="referee-view-panel referee-view-players">
+          <AttendancePanel
+            fixture={activeFixture}
+            submitting={submitting}
+            onRunAction={onRunAction}
+          />
+        </div>
+      ) : null}
+
+      {view === "more" ? (
+        <div className="referee-view-panel referee-view-more">
+          <MatchContextDisclosure
+            key={`match-context-${activeFixture.matchKind}-${activeFixture.id}`}
+            fixture={activeFixture}
+          />
+
+          {activeFixture.reliabilityContext ? (
+            <section className="panel referee-operations-panel">
+              <RefereeReliabilityEvidencePanel
+                fixture={activeFixture}
+                submitting={submitting}
+                onAction={onSafetyAction}
+              />
+            </section>
+          ) : null}
+
+          <details className="panel referee-disclosure">
+            <summary>
+              <span className="disclosure-icon broadcast" aria-hidden="true">●</span>
+              <span>
+                <strong>Camera and broadcast</strong>
+                <small>Connect or manage the match recording</small>
+              </span>
+              <DisclosureChevron />
+            </summary>
+            <div className="referee-disclosure-body">
+              <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
+            </div>
+          </details>
         </div>
       ) : null}
 
@@ -1361,14 +746,14 @@ function GamesView({
 function AttendancePanel({
   fixture,
   submitting,
-  onEvidenceAction,
   onRunAction,
 }: {
   fixture: RefereeFixture;
   submitting: string | null;
-  onEvidenceAction: (body: FixtureActionBody) => Promise<boolean>;
   onRunAction: (body: FixtureActionBody) => Promise<void>;
 }) {
+  const [playerToRemove, setPlayerToRemove] =
+    useState<ReliabilityAttendancePlayer | null>(null);
   const context = fixture.reliabilityContext;
   if (!context) {
     return (
@@ -1401,6 +786,7 @@ function AttendancePanel({
         : "Check-in closed";
 
   return (
+    <>
     <section className="panel attendance-panel">
       <div className="attendance-heading">
         <div>
@@ -1427,7 +813,7 @@ function AttendancePanel({
         <span><strong>{context.missingCount}</strong> missing</span>
       </div>
 
-      <details className="attendance-roster" open={!context.attendanceFinalized}>
+      <details className="attendance-roster">
         <summary>
           <span>Player list</span>
           <strong>{context.checkedInCount}/{context.expectedCount}</strong>
@@ -1437,6 +823,7 @@ function AttendancePanel({
           {context.players.map((player) => (
             <AttendancePlayerRow
               canCheckIn={context.canCheckIn && !context.attendanceFinalized}
+              canRemoveCheckIn={player.canRemoveCheckIn}
               key={player.profileId}
               player={player}
               submitting={submitting}
@@ -1444,16 +831,11 @@ function AttendancePanel({
                 action: "check_in_player",
                 profileId: player.profileId,
               })}
+              onRemove={() => setPlayerToRemove(player)}
             />
           ))}
         </div>
       </details>
-
-      <RefereeReliabilityEvidencePanel
-        fixture={fixture}
-        submitting={submitting}
-        onAction={onEvidenceAction}
-      />
 
       {!context.attendanceFinalized && context.canFinalizeAttendance ? (
         <div className="attendance-finalize">
@@ -1481,19 +863,40 @@ function AttendancePanel({
         </p>
       )}
     </section>
+    <RemoveCheckInDialog
+      player={playerToRemove}
+      submitting={submitting}
+      onClose={() => setPlayerToRemove(null)}
+      onConfirm={async (reasonCode, note) => {
+        if (!playerToRemove) return;
+        await onRunAction({
+          action: "remove_check_in",
+          profileId: playerToRemove.profileId,
+          expectedRevision: playerToRemove.checkInRevision,
+          reasonCode,
+          note,
+        });
+        setPlayerToRemove(null);
+      }}
+    />
+    </>
   );
 }
 
 function AttendancePlayerRow({
   player,
   canCheckIn,
+  canRemoveCheckIn,
   submitting,
   onCheckIn,
+  onRemove,
 }: {
   player: ReliabilityAttendancePlayer;
   canCheckIn: boolean;
+  canRemoveCheckIn: boolean;
   submitting: string | null;
   onCheckIn: () => Promise<void>;
+  onRemove: () => void;
 }) {
   const label = !player.expectedForMatch && player.status === "MISSING"
     ? "Available"
@@ -1519,9 +922,10 @@ function AttendancePlayerRow({
           ].filter(Boolean).join(" · ") || "Player"}</small>
         </span>
       </div>
-      <span className={`attendance-player-status ${player.status.toLowerCase()}`}>
-        {label}{player.checkedInAt ? ` · ${time}` : ""}
-      </span>
+      <div className="attendance-player-actions">
+        <span className={`attendance-player-status ${player.status.toLowerCase()}`}>
+          {label}{player.checkedInAt ? ` · ${time}` : ""}
+        </span>
       {canRecord ? (
         <button
           className="ghost-button compact-button"
@@ -1531,9 +935,151 @@ function AttendancePlayerRow({
         >
           Check in
         </button>
+      ) : canRemoveCheckIn ? (
+        <button
+          className="attendance-remove-button"
+          disabled={submitting !== null}
+          onClick={onRemove}
+          type="button"
+        >
+          Remove
+        </button>
       ) : !player.isCheckedIn && !player.checkInEligible ? (
         <span className="attendance-player-unavailable">Unavailable</span>
       ) : null}
+      </div>
+    </div>
+  );
+}
+
+type CheckInRemovalReason =
+  | "WRONG_PLAYER"
+  | "PLAYER_NOT_PRESENT"
+  | "OPERATOR_ERROR"
+  | "OTHER";
+
+function RemoveCheckInDialog({
+  player,
+  submitting,
+  onClose,
+  onConfirm,
+}: {
+  player: ReliabilityAttendancePlayer | null;
+  submitting: string | null;
+  onClose: () => void;
+  onConfirm: (reasonCode: CheckInRemovalReason, note: string) => Promise<void>;
+}) {
+  const [reasonCode, setReasonCode] =
+    useState<CheckInRemovalReason>("WRONG_PLAYER");
+  const [note, setNote] = useState("");
+
+  useEffect(() => {
+    if (!player) return;
+    setReasonCode("WRONG_PLAYER");
+    setNote("");
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && submitting === null) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose, player, submitting]);
+
+  if (!player) return null;
+  const requiresNote = reasonCode === "OTHER";
+  const busy = submitting === "remove_check_in";
+
+  return (
+    <div
+      className="safety-modal-backdrop attendance-correction-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        aria-labelledby="remove-check-in-title"
+        aria-modal="true"
+        className="safety-modal attendance-correction-modal"
+        role="dialog"
+      >
+        <button
+          aria-label="Close"
+          className="safety-modal-close"
+          disabled={busy}
+          onClick={onClose}
+          type="button"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void onConfirm(reasonCode, note.trim());
+          }}
+        >
+          <div className="safety-modal-icon danger" aria-hidden="true">↶</div>
+          <span className="safety-modal-eyebrow">Audited attendance correction</span>
+          <h2 id="remove-check-in-title">Remove check-in?</h2>
+          <p className="safety-modal-intro">
+            {player.displayName} will return to Not checked in. The referee,
+            time, reason, and original check-in stay permanently recorded.
+          </p>
+
+          <label>
+            <span className="field-label">Reason</span>
+            <select
+              className="select"
+              disabled={busy}
+              onChange={(event) =>
+                setReasonCode(event.target.value as CheckInRemovalReason)}
+              value={reasonCode}
+            >
+              <option value="WRONG_PLAYER">Wrong player was checked in</option>
+              <option value="PLAYER_NOT_PRESENT">Player has not arrived</option>
+              <option value="OPERATOR_ERROR">Check-in was recorded by mistake</option>
+              <option value="OTHER">Other correction</option>
+            </select>
+          </label>
+          <label>
+            <span className="field-label">
+              Note {requiresNote ? "(required)" : "(optional)"}
+            </span>
+            <textarea
+              className="input textarea"
+              disabled={busy}
+              maxLength={500}
+              onChange={(event) => setNote(event.target.value)}
+              placeholder="Add any useful context for the audit trail"
+              value={note}
+            />
+          </label>
+
+          <div className="attendance-correction-notice">
+            This corrects attendance only. It does not cancel the player&apos;s booking.
+          </div>
+          <div className="safety-modal-actions">
+            <button
+              className="ghost-button"
+              disabled={busy}
+              onClick={onClose}
+              type="button"
+            >
+              Keep check-in
+            </button>
+            <button
+              className="danger-button"
+              disabled={busy || (requiresNote && note.trim().length < 5)}
+              type="submit"
+            >
+              {busy ? "Removing…" : "Remove check-in"}
+            </button>
+          </div>
+        </form>
+      </section>
     </div>
   );
 }
@@ -1857,6 +1403,7 @@ function TimerPanel({
   submitting,
   onRunAction,
   compact = false,
+  canAdminister = false,
 }: {
   fixture: RefereeFixture;
   submitting: string | null;
@@ -1864,6 +1411,7 @@ function TimerPanel({
     body: FixtureActionBody,
   ) => Promise<void>;
   compact?: boolean;
+  canAdminister?: boolean;
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
   const now = useNowMs(status === "RUNNING");
@@ -1876,6 +1424,9 @@ function TimerPanel({
     (fixture.matchKind === "SOLO"
       ? fixture.status === "FULL"
       : fixture.status === "SCHEDULED");
+  const soloTeamsPending = fixture.matchKind === "SOLO" &&
+    fixture.status === "FULL" &&
+    fixture.teamsAssignedAt === null;
   const attendanceEligibleIds = fixture.reliabilityContext &&
       fixture.reliabilityContext.expectedCount > 0
     ? fixture.reliabilityContext.players
@@ -1944,7 +1495,22 @@ function TimerPanel({
       (player) => player.id === profileId,
     )
   ).length;
-  const hasValidLineup = selectedHomeCount > 0 && selectedAwayCount > 0;
+  const hasValidLineup = soloTeamsPending
+    ? canAdminister &&
+      fixture.players.length > 0 &&
+      selectedParticipantIds.length === fixture.players.length
+    : selectedHomeCount > 0 && selectedAwayCount > 0;
+  const startBlockedReason = !isBeforeStart
+    ? fixture.matchKind === "SOLO"
+      ? "This solo game must be full before it can start."
+      : "This fixture is not ready to start."
+    : soloTeamsPending && !canAdminister
+      ? "White and Black teams unlock three hours before kickoff."
+      : !hasValidLineup
+        ? soloTeamsPending && canAdminister
+          ? `Check in all ${fixture.players.length} booked players before an early test start.`
+          : "Check in at least one player from each team before starting."
+        : null;
 
   function setPlayerSelected(profileId: string, selected: boolean) {
     setSelectedParticipantIds((current) =>
@@ -2005,7 +1571,9 @@ function TimerPanel({
               <strong>{isBeforeStart ? "Confirm who is playing" : "Match lineup"}</strong>
               <small>
                 {isBeforeStart
-                  ? `${selectedHomeCount} ${fixture.homeClan.tag} · ${selectedAwayCount} ${fixture.awayClan.tag}`
+                  ? soloTeamsPending
+                    ? `${selectedParticipantIds.length} checked in · teams still hidden`
+                    : `${selectedHomeCount} ${fixture.homeClan.tag} · ${selectedAwayCount} ${fixture.awayClan.tag}`
                   : `${fixture.participantIds.length} players recorded`}
               </small>
             </span>
@@ -2018,6 +1586,7 @@ function TimerPanel({
             }
             editable={isBeforeStart}
             eligibleParticipantIds={attendanceEligibleIds ?? undefined}
+            teamsPending={soloTeamsPending}
             onPlayerSelected={setPlayerSelected}
             onClanSelected={setClanSelected}
           />
@@ -2030,11 +1599,12 @@ function TimerPanel({
           }
           editable={isBeforeStart}
           eligibleParticipantIds={attendanceEligibleIds ?? undefined}
+          teamsPending={soloTeamsPending}
           onPlayerSelected={setPlayerSelected}
           onClanSelected={setClanSelected}
         />
       )}
-      <div className={status === "RUNNING" ? "control-grid" : "control-grid single"}>
+      <div className="control-grid single">
         {isClosed ? (
           <button className="ghost-button" disabled type="button">
             Final
@@ -2070,24 +1640,33 @@ function TimerPanel({
             }
             type="button"
           >
-            {!isBeforeStart && fixture.matchKind === "SOLO"
-              ? "Solo game must be full"
-              : hasValidLineup
-              ? "Start"
-              : "Select players from both teams"}
+            {submitting === "start" ? "Starting…" : "Start game"}
           </button>
         )}
-        {status === "RUNNING" || status === "PAUSED" ? (
-          <button
-            className="danger-button"
-            disabled={submitting !== null}
-            onClick={() => void onRunAction({ action: "finish" })}
-            type="button"
-          >
-            Finish
-          </button>
-        ) : null}
       </div>
+      {!isClosed && status === "NOT_STARTED" && startBlockedReason ? (
+        <p className="timer-start-note">{startBlockedReason}</p>
+      ) : soloTeamsPending && canAdminister ? (
+        <p className="timer-start-note admin-override">
+          Admin test start: all booked players must be checked in. The early team reveal and completion are audited.
+        </p>
+      ) : null}
+      {status === "RUNNING" || status === "PAUSED" ? (
+        <details className="timer-end-disclosure">
+          <summary>End match</summary>
+          <div>
+            <span>Only finish when the game is completely over.</span>
+            <button
+              className="danger-button"
+              disabled={submitting !== null}
+              onClick={() => void onRunAction({ action: "finish" })}
+              type="button"
+            >
+              Finish match
+            </button>
+          </div>
+        </details>
+      ) : null}
       {isClosed && compact ? (
         <details className="clock-editor clock-editor-disclosure">
           <summary>
@@ -2199,6 +1778,7 @@ function LineupPanel({
   participantIds,
   editable,
   eligibleParticipantIds,
+  teamsPending = false,
   onPlayerSelected,
   onClanSelected,
 }: {
@@ -2206,6 +1786,7 @@ function LineupPanel({
   participantIds: string[];
   editable: boolean;
   eligibleParticipantIds?: string[];
+  teamsPending?: boolean;
   onPlayerSelected: (profileId: string, selected: boolean) => void;
   onClanSelected: (clanId: string, selected: boolean) => void;
 }) {
@@ -2214,6 +1795,62 @@ function LineupPanel({
     ? null
     : new Set(eligibleParticipantIds);
   const clans = [fixture.homeClan, fixture.awayClan];
+
+  if (teamsPending) {
+    const shownPlayers = editable
+      ? fixture.players
+      : fixture.players.filter((player) => participantIdSet.has(player.id));
+    return (
+      <div className="lineup-panel lineup-panel-pending">
+        <div className="lineup-heading">
+          <div>
+            <div className="lineup-title">Confirm players</div>
+            <div className="lineup-hint">
+              White and Black are assigned automatically when this test match starts.
+            </div>
+          </div>
+          <span className="lineup-saved pending">Teams hidden</span>
+        </div>
+        <div className="lineup-team pending-team">
+          <div className="lineup-team-heading">
+            <div>
+              <strong>Checked-in players</strong>
+              <span>{participantIds.length} selected</span>
+            </div>
+          </div>
+          <div className="lineup-list">
+            {shownPlayers.map((player) => {
+              const isSelected = participantIdSet.has(player.id);
+              const isEligible = eligibleParticipantIdSet === null ||
+                eligibleParticipantIdSet.has(player.id);
+              return (
+                <label
+                  className={`lineup-player ${isSelected ? "selected" : ""} ${editable ? "editable" : ""} ${!isEligible ? "ineligible" : ""}`}
+                  key={player.id}
+                >
+                  {editable ? (
+                    <input
+                      checked={isSelected}
+                      disabled={!isEligible}
+                      onChange={(event) =>
+                        onPlayerSelected(player.id, event.target.checked)}
+                      type="checkbox"
+                    />
+                  ) : (
+                    <span className="lineup-check" aria-hidden="true">✓</span>
+                  )}
+                  <span>
+                    <strong>{player.displayName}</strong>
+                    <small>{player.role}{!isEligible ? " · Not checked in" : ""}</small>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="lineup-panel">
@@ -2497,66 +2134,6 @@ function MatchEventDialog({
   );
 }
 
-function ActionPanel({
-  title,
-  fixture,
-  selectedClanId,
-  selectedPlayerId,
-  players,
-  submitting,
-  onTeam,
-  onPlayer,
-  onSubmit,
-  buttonLabel,
-  extra,
-  dark = false,
-  disabled = false,
-}: {
-  title: string;
-  fixture: RefereeFixture;
-  selectedClanId: string;
-  selectedPlayerId: string;
-  players: Player[];
-  submitting: string | null;
-  onTeam: (clanId: string) => void;
-  onPlayer: (playerId: string) => void;
-  onSubmit: () => Promise<void>;
-  buttonLabel: string;
-  extra?: React.ReactNode;
-  dark?: boolean;
-  disabled?: boolean;
-}) {
-  return (
-    <section className="panel">
-      <div className="panel-heading">
-        <h2 className="panel-title">{title}</h2>
-      </div>
-      <TeamSegment
-        fixture={fixture}
-        selectedClanId={selectedClanId}
-        onSelect={onTeam}
-      />
-      <div className="form-grid">
-        <PlayerSelect
-          label="Player"
-          value={selectedPlayerId}
-          players={players}
-          onChange={onPlayer}
-        />
-        {extra}
-        <button
-          className={dark ? "dark-button" : "primary-button"}
-          disabled={disabled || !selectedPlayerId || submitting !== null}
-          onClick={() => void onSubmit()}
-          type="button"
-        >
-          {buttonLabel}
-        </button>
-      </div>
-    </section>
-  );
-}
-
 function TeamSegment({
   fixture,
   selectedClanId,
@@ -2721,18 +2298,6 @@ function ActiveBlueCards({
   );
 }
 
-function RatedResultLockedPanel() {
-  return (
-    <section className="panel">
-      <h2 className="panel-title">Rated result locked</h2>
-      <p className="small-text">
-        Goals cannot be added or removed after full time. The final score is now
-        the audit record used for Player SR.
-      </p>
-    </section>
-  );
-}
-
 function EventList({
   fixture,
   limit = 12,
@@ -2827,28 +2392,6 @@ function teamName(fixture: RefereeFixture, clanId: string) {
   return "Team";
 }
 
-function assignedRefereeFor(
-  assignments: RefereeAssignmentsResponse,
-  fixtureId: string,
-) {
-  return (
-    assignments.fixtures.find((fixture) => fixture.id === fixtureId)
-      ?.assignedRefereeId ?? ""
-  );
-}
-
-function assignedRefereeName(
-  assignments: RefereeAssignmentsResponse,
-  fixtureId: string,
-) {
-  const refereeId = assignedRefereeFor(assignments, fixtureId);
-  if (!refereeId) return "Unassigned";
-  return (
-    assignments.referees.find((referee) => referee.profileId === refereeId)
-      ?.displayName ?? "Assigned"
-  );
-}
-
 function DisclosureChevron() {
   return (
     <svg
@@ -2874,6 +2417,23 @@ function formatMatchDate(value: string) {
     month: "short",
     day: "numeric",
   }).format(date);
+}
+
+function friendlyFixtureStatus(status: RefereeFixture["status"]) {
+  switch (status) {
+    case "LIVE":
+      return "Live now";
+    case "FULL":
+      return "Ready";
+    case "SCHEDULED":
+      return "Scheduled";
+    case "FINAL":
+      return "Finished";
+    case "CANCELLED":
+      return "Cancelled";
+    default:
+      return "Open";
+  }
 }
 
 function localDateKey(date: Date) {

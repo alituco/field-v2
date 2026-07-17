@@ -44,6 +44,7 @@ const gameSelect = `
   black_average_sr,
   match_average_sr,
   team_sr_spread,
+  teams_assigned_at,
   cancellation_code,
   cancellation_reason,
   cancelled_at,
@@ -159,6 +160,7 @@ async function hydrateOpenQueueRows(
       blackAverageSr: nullableSr(row.black_average_sr),
       matchAverageSr: nullableSr(row.match_average_sr),
       teamSrSpread: nullableSr(row.team_sr_spread),
+      teamsAssignedAt: nullableString(row.teams_assigned_at),
       homeClan: WHITE,
       awayClan: BLACK,
       players: gamePlayers.map(

@@ -8,6 +8,7 @@ import {
   parseMatchStoppageInput,
   parseRefereeBulkCheckInInput,
   parseRefereeCheckInInput,
+  parseRefereeRemoveCheckInInput,
   parseRefereeClanForfeitInput,
   parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
@@ -250,6 +251,39 @@ test("referee check-ins only accept normalized player ids", () => {
   assert.throws(
     () => parseRefereeBulkCheckInInput({ profileIds: [] }),
     /between 1 and 50/i,
+  );
+});
+
+test("remove check-in corrections require a fresh revision and audited reason", () => {
+  assert.deepEqual(
+    parseRefereeRemoveCheckInInput({
+      profileId: PLAYER_ID,
+      expectedRevision: 3,
+      reasonCode: "wrong_player",
+      note: "Tapped the row below the intended player.",
+    }),
+    {
+      profileId: PLAYER_ID,
+      expectedRevision: 3,
+      reasonCode: "WRONG_PLAYER",
+      note: "Tapped the row below the intended player.",
+    },
+  );
+  assert.throws(
+    () => parseRefereeRemoveCheckInInput({
+      profileId: PLAYER_ID,
+      expectedRevision: 1,
+      reasonCode: "other",
+      note: "",
+    }),
+    /short note/i,
+  );
+  assert.throws(
+    () => parseRefereeRemoveCheckInInput({
+      profileId: PLAYER_ID,
+      reasonCode: "operator_error",
+    }),
+    /refresh the player list/i,
   );
 });
 
