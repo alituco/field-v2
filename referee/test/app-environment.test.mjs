@@ -81,7 +81,7 @@ test("hosted environments require the exact bare Supabase origin", () => {
 
 test("an unknown environment fails closed instead of looking like production", () => {
   assert.match(
-    resolveFieldEnvironment(undefined, undefined).error ?? "",
+    resolveFieldEnvironment("", "").error ?? "",
     /Set NEXT_PUBLIC_APP_ENV/,
   );
 });
