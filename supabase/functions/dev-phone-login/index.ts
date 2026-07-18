@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { isExactFieldStagingSupabaseUrl } from "../_shared/staging_guard.ts";
 
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -35,6 +36,11 @@ Deno.serve(async (request) => {
     return json({ error: "Method not allowed." }, 405);
   }
 
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  if (!isExactFieldStagingSupabaseUrl(supabaseUrl)) {
+    return json({ error: "Dev login is unavailable." }, 404);
+  }
+
   const enabled = Deno.env.get("DEV_OTP_ENABLED") === "true";
   const configuredDevUsers = getConfiguredDevUsers();
   const allowedCode = Deno.env.get("DEV_OTP_CODE") ?? "000000";
@@ -66,11 +72,10 @@ Deno.serve(async (request) => {
     return json({ error: "Invalid verification code." }, 401);
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+  if (!anonKey || !serviceRoleKey) {
     return json({ error: "Missing Supabase function secrets." }, 500);
   }
 

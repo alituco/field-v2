@@ -1,4 +1,6 @@
 *.env
 .env*
 mobile/.env*
+!.env.example
+!mobile/.env.example
 supabase/.temp/

@@ -1403,10 +1403,44 @@ body {
     "Segoe UI", sans-serif;
 }
 
+.field-nonproduction {
+  padding-top: 28px;
+}
+
+.field-environment-ribbon {
+  position: fixed;
+  z-index: 10000;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: grid;
+  height: 28px;
+  place-items: center;
+  background: #d97706;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.field-environment-local {
+  background: #2563eb;
+}
+
 html:has(.broadcast-overlay-root),
 body:has(.broadcast-overlay-root) {
   overflow: hidden;
   background: transparent;
+}
+
+body.field-nonproduction:has(.broadcast-overlay-root) {
+  padding-top: 0;
+}
+
+body:has(.broadcast-overlay-root) > .field-environment-ribbon {
+  display: none;
 }
 
 .broadcast-overlay-root {
@@ -3131,6 +3165,11 @@ button:disabled {
 .admin-status-badge.dismissed { background: #fee2e2; color: #b91c1c; }
 .admin-status-badge.closed,
 .admin-status-badge.duplicate { background: #e2e8f0; color: #475569; }
+.admin-status-badge.waiting,
+.admin-status-badge.contacted { background: #fef3c7; color: #a16207; }
+.admin-status-badge.selected { background: #dbeafe; color: #1d4ed8; }
+.admin-status-badge.onboarded { background: #dcfce7; color: #047857; }
+.admin-status-badge.declined { background: #fee2e2; color: #b91c1c; }
 
 .admin-priority-report-list article {
   display: grid;
@@ -3427,6 +3466,167 @@ button:disabled {
   font-size: 9px;
   font-weight: 850;
   text-transform: uppercase;
+}
+
+.admin-waitlist-card {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.admin-waitlist-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  border-bottom: 1px solid var(--admin-border);
+  padding: 22px;
+}
+
+.admin-waitlist-head h2 {
+  margin-top: 4px;
+  color: var(--admin-navy);
+  font-size: 18px;
+  letter-spacing: -0.025em;
+}
+
+.admin-waitlist-head p {
+  max-width: 640px;
+  margin-top: 7px;
+  color: var(--admin-muted);
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.admin-waitlist-total {
+  display: grid;
+  flex: 0 0 auto;
+  min-width: 118px;
+  border: 1px solid #a7f3d0;
+  border-radius: 11px;
+  padding: 12px 14px;
+  background: var(--admin-green-pale);
+}
+
+.admin-waitlist-total strong {
+  color: var(--admin-green-dark);
+  font-size: 21px;
+  line-height: 1;
+}
+
+.admin-waitlist-total small {
+  margin-top: 6px;
+  color: #047857;
+  font-size: 7px;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.admin-waitlist-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  border-bottom: 1px solid var(--admin-border);
+  background: var(--admin-border);
+}
+
+.admin-waitlist-summary > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 17px;
+  background: #f8fafc;
+}
+
+.admin-waitlist-summary span {
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.admin-waitlist-summary strong {
+  color: var(--admin-navy);
+  font-size: 15px;
+}
+
+.admin-waitlist-controls {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto auto auto;
+  gap: 9px;
+  border-bottom: 1px solid var(--admin-border);
+  padding: 16px;
+}
+
+.admin-waitlist-controls select {
+  min-height: 39px;
+  border: 1px solid var(--admin-border);
+  border-radius: 9px;
+  padding: 0 30px 0 11px;
+  background: #fff;
+  color: #475569;
+  outline: 0;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.admin-waitlist-controls select:focus {
+  border-color: #6ee7b7;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.08);
+}
+
+.admin-waitlist-table-wrap {
+  overflow: auto;
+}
+
+.admin-waitlist-table {
+  min-width: 850px;
+}
+
+.admin-waitlist-table td:nth-child(2) a,
+.admin-waitlist-table td:nth-child(2) small {
+  display: block;
+}
+
+.admin-waitlist-table td:nth-child(2) a {
+  max-width: 220px;
+  overflow: hidden;
+  color: #2563eb;
+  font-size: 9px;
+  line-height: 1.65;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-waitlist-table td:nth-child(2) a:hover {
+  text-decoration: underline;
+}
+
+.admin-waitlist-table td:nth-child(2) small {
+  color: #94a3b8;
+  font-size: 8px;
+}
+
+.admin-waitlist-privacy {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-top: 1px solid var(--admin-border);
+  padding: 13px 17px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 8px;
+  font-weight: 720;
+}
+
+.admin-waitlist-privacy svg {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  color: var(--admin-green);
 }
 
 .admin-game-table-wrap,
@@ -4926,6 +5126,14 @@ button:disabled {
     width: 100%;
     min-width: 0;
   }
+
+  .admin-waitlist-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-waitlist-controls .admin-search-field {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 760px) {
@@ -4973,7 +5181,7 @@ button:disabled {
     left: 10px;
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     min-height: 61px;
     border: 1px solid rgba(255, 255, 255, 0.52);
     border-radius: 18px;
@@ -5060,8 +5268,25 @@ button:disabled {
   }
 
   .admin-games-table,
-  .admin-people-table {
+  .admin-people-table,
+  .admin-waitlist-table {
     min-width: 710px;
+  }
+
+  .admin-waitlist-head {
+    padding: 18px;
+  }
+
+  .admin-waitlist-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-waitlist-controls {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-waitlist-controls .admin-search-field {
+    grid-column: 1 / -1;
   }
 
   .admin-report-list {

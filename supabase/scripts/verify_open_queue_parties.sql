@@ -98,6 +98,7 @@ begin
       role,
       player_rating_at_booking,
       amount_paid_fils,
+      base_amount_fils,
       payment_method,
       payment_status
     ) values (
@@ -109,6 +110,7 @@ begin
         from public.player_ratings rating
         where rating.profile_id = player_ids[slot]
       ), 1200),
+      3000,
       3000,
       'MOCK',
       'PAID'
@@ -278,6 +280,7 @@ begin
       role,
       player_rating_at_booking,
       amount_paid_fils,
+      base_amount_fils,
       payment_method,
       payment_status
     ) values (
@@ -289,6 +292,7 @@ begin
         from public.player_ratings rating
         where rating.profile_id = player_ids[slot]
       ), 1200),
+      3000,
       3000,
       'MOCK',
       'PAID'
@@ -362,9 +366,9 @@ begin
   -- must hide the now-locked invitation and every mutation must fail.
   insert into public.open_queue_bookings (
     game_id, profile_id, role, player_rating_at_booking,
-    amount_paid_fils, payment_method, payment_status
+    amount_paid_fils, base_amount_fils, payment_method, payment_status
   ) values (
-    game_id_to_verify, player_ids[1], 'GK', 1200, 3000, 'MOCK', 'PAID'
+    game_id_to_verify, player_ids[1], 'GK', 1200, 3000, 3000, 'MOCK', 'PAID'
   );
 
   -- Booking cancellation hands leadership to player 2. Choosing to switch
@@ -465,10 +469,10 @@ begin
 
   insert into public.open_queue_bookings (
     game_id, profile_id, role, player_rating_at_booking,
-    amount_paid_fils, payment_method, payment_status
+    amount_paid_fils, base_amount_fils, payment_method, payment_status
   ) values
-    (impossible_game_id, player_ids[1], 'GK', 1200, 3000, 'MOCK', 'PAID'),
-    (impossible_game_id, player_ids[5], 'GK', 1200, 3000, 'MOCK', 'PAID');
+    (impossible_game_id, player_ids[1], 'GK', 1200, 3000, 3000, 'MOCK', 'PAID'),
+    (impossible_game_id, player_ids[5], 'GK', 1200, 3000, 3000, 'MOCK', 'PAID');
 
   perform set_config('request.jwt.claim.sub', player_ids[1]::text, true);
   impossible_party_id := public.create_open_queue_party(impossible_game_id);

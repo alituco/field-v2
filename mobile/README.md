@@ -2,17 +2,29 @@
 
 Flutter app for Field.
 
-## Run
+## Environments
 
-From this directory:
+Field has separate native `staging` and `production` flavors. Local development
+uses the staging flavor so it can never overwrite the production app on a
+device.
+
+From `mobile/`, run one of:
 
 ```sh
-flutter run --dart-define-from-file=.env.mobile
+# Local Supabase (Docker must be running)
+flutter run --flavor staging --dart-define-from-file=.env.local
+
+# Hosted Field Staging
+flutter run --flavor staging --dart-define-from-file=.env.staging
+
+# Field Production
+flutter run --flavor production --dart-define-from-file=.env.production
 ```
 
-The app expects these values in `mobile/.env.mobile`:
+Each environment file uses:
 
 ```sh
+APP_ENV=local # or staging / production
 SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=
 DEV=true
@@ -22,7 +34,30 @@ Use the Supabase publishable key in the app. Never put a secret or service-role
 key in Flutter. Do not pass the repo root `.env` into Flutter builds.
 
 `DEV=true` enables development-only tools such as switching users from the
-Profile screen. Remove it or set it to `false` for production builds.
+Profile screen. It must be `false` in production. The app validates the native
+flavor, environment label, and expected Supabase project before initializing;
+an invalid combination stops on a configuration screen.
+
+Local and staging builds have a visible ribbon. Production has no ribbon.
+
+The legacy `.env.mobile` file is still the developer's hosted-staging source,
+but new commands should use `.env.staging`.
+
+## Local database
+
+From the repository root:
+
+```sh
+supabase start
+supabase db reset
+supabase status
+supabase stop
+```
+
+`supabase db reset` rebuilds the local database from every migration and adds
+only the local historical reliability-policy bootstrap. It never targets a
+hosted project. To add the complete fake users and match history afterward,
+run `./supabase/scripts/seed_local.sh` from the repository root.
 
 ## Test
 
@@ -30,3 +65,6 @@ Profile screen. Remove it or set it to `false` for production builds.
 flutter analyze
 flutter test
 ```
+
+The two iOS schemes are `staging` and `production`. Android uses matching
+product flavors and installs staging as `com.field.field.staging`.

@@ -7,6 +7,16 @@ import type {
   AdminGameParticipant,
   AdminGameParticipants,
 } from "@/lib/admin-game-participants";
+import {
+  filterAdminWaitlist,
+  WAITLIST_INTERESTS,
+  WAITLIST_POSITIONS,
+  WAITLIST_STATUSES,
+  type AdminWaitlistApplicant,
+  type WaitlistInterest,
+  type WaitlistPosition,
+  type WaitlistStatus,
+} from "@/lib/admin-waitlist";
 import type {
   BroadcastControlResponse,
   RefereeAssignmentsResponse,
@@ -23,6 +33,7 @@ type AdminSection =
   | "reliability"
   | "support"
   | "reports"
+  | "waitlist"
   | "people"
   | "audit";
 type AdminGamesView = "SCHEDULED" | "FINAL";
@@ -211,11 +222,17 @@ export default function AdminPage() {
   });
   const [reports, setReports] = useState<AdminReport[]>([]);
   const [supportTickets, setSupportTickets] = useState<AdminSupportTicket[]>([]);
+  const [waitlistApplicants, setWaitlistApplicants] = useState<
+    AdminWaitlistApplicant[]
+  >([]);
   const [activeSupportCount, setActiveSupportCount] = useState(0);
   const [forfeits, setForfeits] = useState<AdminForfeit[]>([]);
   const [subjects, setSubjects] = useState<FlaggedSubject[]>([]);
   const [reportStatus, setReportStatus] = useState("OPEN");
   const [supportStatus, setSupportStatus] = useState("ACTIVE");
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
+  const [waitlistLoaded, setWaitlistLoaded] = useState(false);
+  const [waitlistAttempted, setWaitlistAttempted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [reliabilityRefreshKey, setReliabilityRefreshKey] = useState(0);
@@ -289,6 +306,36 @@ export default function AdminPage() {
       typeof payload.activeCount === "number" ? payload.activeCount : 0,
     );
   }, [accessToken, authHeaders, supportStatus]);
+
+  const loadWaitlist = useCallback(
+    async (quiet = false) => {
+      if (!accessToken) return;
+      setWaitlistAttempted(true);
+      if (quiet) setRefreshing(true);
+      else setWaitlistLoading(true);
+      setError(null);
+      try {
+        const payload = await fetchJson<{
+          applicants?: AdminWaitlistApplicant[];
+        }>("/api/referee/admin/waitlist", {
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+        setWaitlistApplicants(
+          Array.isArray(payload.applicants) ? payload.applicants : [],
+        );
+        setWaitlistLoaded(true);
+      } catch (loadError) {
+        setError(
+          errorMessage(loadError, "Could not load the Season Zero waitlist."),
+        );
+      } finally {
+        setWaitlistLoading(false);
+        if (quiet) setRefreshing(false);
+      }
+    },
+    [accessToken, authHeaders],
+  );
 
   const loadForfeits = useCallback(async () => {
     if (!accessToken) return;
@@ -376,6 +423,32 @@ export default function AdminPage() {
       setError(errorMessage(loadError, "Could not refresh support tickets."));
     });
   }, [accessToken, loadSupportTickets, loading, supportStatus]);
+
+  useEffect(() => {
+    setWaitlistApplicants([]);
+    setWaitlistLoaded(false);
+    setWaitlistAttempted(false);
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (
+      section !== "waitlist" ||
+      !accessToken ||
+      waitlistAttempted ||
+      waitlistLoaded ||
+      waitlistLoading
+    ) {
+      return;
+    }
+    void loadWaitlist();
+  }, [
+    accessToken,
+    loadWaitlist,
+    section,
+    waitlistAttempted,
+    waitlistLoaded,
+    waitlistLoading,
+  ]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -692,6 +765,8 @@ export default function AdminPage() {
               onClick={() => {
                 if (section === "reliability") {
                   setReliabilityRefreshKey((value) => value + 1);
+                } else if (section === "waitlist") {
+                  void loadWaitlist(true);
                 } else {
                   void loadAll(true);
                 }
@@ -803,6 +878,12 @@ export default function AdminPage() {
                 }
               }}
             />
+          ) : section === "waitlist" ? (
+            waitlistLoading && !waitlistLoaded ? (
+              <AdminPageSkeleton />
+            ) : (
+              <WaitlistSection applicants={waitlistApplicants} />
+            )
           ) : section === "people" ? (
             <PeopleSection
               subjects={subjects}
@@ -916,6 +997,7 @@ const adminNavItems: Array<{
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
+  { id: "waitlist", label: "Season Zero waitlist", shortLabel: "Waitlist", icon: "waitlist" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
 ];
@@ -2190,6 +2272,226 @@ function SupportSection({
   );
 }
 
+function WaitlistSection({
+  applicants,
+}: {
+  applicants: AdminWaitlistApplicant[];
+}) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<WaitlistStatus | "ALL">("ALL");
+  const [interest, setInterest] = useState<WaitlistInterest | "ALL">("ALL");
+  const [position, setPosition] = useState<WaitlistPosition | "ALL">("ALL");
+
+  const filtered = useMemo(
+    () =>
+      filterAdminWaitlist(applicants, {
+        query,
+        status,
+        interest,
+        position,
+      }),
+    [applicants, interest, position, query, status],
+  );
+
+  const waitingCount = applicants.filter(
+    (applicant) => applicant.status === "WAITING",
+  ).length;
+  const selectedCount = applicants.filter(
+    (applicant) => applicant.status === "SELECTED",
+  ).length;
+  const onboardedCount = applicants.filter(
+    (applicant) => applicant.status === "ONBOARDED",
+  ).length;
+
+  return (
+    <section className="admin-card admin-waitlist-card">
+      <div className="admin-waitlist-head">
+        <div>
+          <span className="admin-eyebrow">Season Zero pipeline</span>
+          <h2>Waitlist applications</h2>
+          <p>
+            Review private applications collected through field.bh. Contact
+            details stay inside the admin workspace.
+          </p>
+        </div>
+        <span className="admin-waitlist-total">
+          <strong>{applicants.length}</strong>
+          <small>Applications loaded</small>
+        </span>
+      </div>
+
+      <div className="admin-waitlist-summary" aria-label="Waitlist summary">
+        <div>
+          <span>Waiting</span>
+          <strong>{waitingCount}</strong>
+        </div>
+        <div>
+          <span>Selected</span>
+          <strong>{selectedCount}</strong>
+        </div>
+        <div>
+          <span>Onboarded</span>
+          <strong>{onboardedCount}</strong>
+        </div>
+        <div>
+          <span>Other</span>
+          <strong>
+            {Math.max(
+              0,
+              applicants.length -
+                waitingCount -
+                selectedCount -
+                onboardedCount,
+            )}
+          </strong>
+        </div>
+      </div>
+
+      <div className="admin-waitlist-controls">
+        <label className="admin-search-field">
+          <AdminIcon name="search" />
+          <input
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name, email or phone"
+            type="search"
+            value={query}
+          />
+        </label>
+        <select
+          aria-label="Filter waitlist by status"
+          onChange={(event) =>
+            setStatus(event.target.value as WaitlistStatus | "ALL")
+          }
+          value={status}
+        >
+          <option value="ALL">All statuses</option>
+          {WAITLIST_STATUSES.map((value) => (
+            <option key={value} value={value}>
+              {humanize(value)}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filter waitlist by interest"
+          onChange={(event) =>
+            setInterest(event.target.value as WaitlistInterest | "ALL")
+          }
+          value={interest}
+        >
+          <option value="ALL">All interests</option>
+          {WAITLIST_INTERESTS.map((value) => (
+            <option key={value} value={value}>
+              {waitlistInterestLabel(value)}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filter waitlist by position"
+          onChange={(event) =>
+            setPosition(event.target.value as WaitlistPosition | "ALL")
+          }
+          value={position}
+        >
+          <option value="ALL">All positions</option>
+          {WAITLIST_POSITIONS.map((value) => (
+            <option key={value} value={value}>
+              {humanize(value)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="admin-table-count">
+        {filtered.length} of {applicants.length} loaded applications
+      </div>
+
+      {filtered.length === 0 ? (
+        <AdminEmpty
+          detail={
+            applicants.length === 0
+              ? "New Season Zero applications will appear here."
+              : "Try changing the search or filters."
+          }
+          icon="waitlist"
+          title={
+            applicants.length === 0
+              ? "No applications yet"
+              : "No matching applications"
+          }
+        />
+      ) : (
+        <div className="admin-waitlist-table-wrap">
+          <table className="admin-data-table admin-waitlist-table">
+            <thead>
+              <tr>
+                <th>Applicant</th>
+                <th>Contact</th>
+                <th>Player details</th>
+                <th>Interested in</th>
+                <th>Status</th>
+                <th>Applied</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((applicant) => (
+                <tr key={applicant.id}>
+                  <td>
+                    <div className="admin-person-cell">
+                      <div className="admin-subject-avatar small">
+                        {initials(applicant.fullName)}
+                      </div>
+                      <div>
+                        <strong>{applicant.fullName}</strong>
+                        <small>{humanize(applicant.source)}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <a href={`mailto:${applicant.email}`}>
+                      {applicant.email}
+                    </a>
+                    {applicant.phone ? (
+                      <a href={`tel:${applicant.phone}`}>{applicant.phone}</a>
+                    ) : (
+                      <small>Phone not provided</small>
+                    )}
+                  </td>
+                  <td>
+                    <strong>
+                      {applicant.age !== null
+                        ? `Age ${applicant.age}`
+                        : "Age not recorded"}
+                    </strong>
+                    <small>
+                      {applicant.preferredPosition
+                        ? humanize(applicant.preferredPosition)
+                        : "No preferred position"}
+                    </small>
+                  </td>
+                  <td>{waitlistInterestLabel(applicant.interest)}</td>
+                  <td>
+                    <StatusBadge status={applicant.status} />
+                  </td>
+                  <td>
+                    <strong>{formatDateTime(applicant.createdAt)}</strong>
+                    <small>{relativeTime(applicant.createdAt)}</small>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="admin-waitlist-privacy">
+        <AdminIcon name="lock" />
+        This table contains private application data. Use it only for Season
+        Zero selection and player contact.
+      </p>
+    </section>
+  );
+}
+
 function ReportsSection({
   forfeits,
   reports,
@@ -3215,7 +3517,7 @@ function AdminPageSkeleton() {
 }
 
 type AdminIconName =
-  | "overview" | "games" | "policy" | "support" | "reports" | "people" | "audit" | "referee"
+  | "overview" | "games" | "policy" | "support" | "reports" | "waitlist" | "people" | "audit" | "referee"
   | "logout" | "refresh" | "alert" | "check" | "arrow" | "search"
   | "replay" | "external" | "edit" | "cancel" | "lock" | "dismiss"
   | "close" | "live" | "shield";
@@ -3227,6 +3529,7 @@ function AdminIcon({ name }: { name: AdminIconName }) {
     policy: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="M8 9h8M8 13h5M8 17h3" /></>,
     support: <><path d="M4 13v-2a8 8 0 0 1 16 0v2" /><path d="M4 13H3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2v-6H4ZM20 13h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2v-6h1ZM19 19c0 2-2 3-5 3" /></>,
     reports: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 11h6M9 15h6" /></>,
+    waitlist: <><path d="M9 5h10v16H5V9" /><path d="M9 3v6H3M9 3 3 9M9 13h6M9 17h6" /></>,
     people: <><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 20v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
     audit: <><path d="M12 22a10 10 0 1 0-10-10" /><path d="M2 4v6h6M12 6v6l4 2" /></>,
     referee: <><path d="M4 5h16v14H4z" /><path d="m8 9 3 3-3 3M13 15h3" /></>,
@@ -3513,6 +3816,7 @@ function sectionTitle(section: AdminSection) {
     reliability: "Reliability policy",
     support: "Player support",
     reports: "Reports inbox",
+    waitlist: "Season Zero waitlist",
     people: "Players & clans",
     audit: "Audit log",
   }[section];
@@ -3525,6 +3829,7 @@ function sectionSubtitle(section: AdminSection) {
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",
+    waitlist: "Review the players and clan leaders asking to join the private pilot.",
     people: "Understand patterns before taking proportionate action.",
     audit: "A permanent trail of sensitive admin decisions.",
   }[section];
@@ -3681,6 +3986,14 @@ function humanize(value: string) {
     .toLowerCase()
     .replace(/[_-]+/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function waitlistInterestLabel(value: WaitlistInterest) {
+  return {
+    SOLO_PLAYER: "Solo player",
+    CLAN_PLAYER: "Clan player",
+    CLAN_LEADER: "Clan leader",
+  }[value];
 }
 
 function initials(value: string) {
