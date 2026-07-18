@@ -637,6 +637,7 @@ class _QueueGameCard extends StatelessWidget {
     final badge = _AvailabilityBadge(availability: availability, role: role);
 
     return Container(
+      key: ValueKey('open-queue-game-${game.id}-${role.code.toLowerCase()}'),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -788,6 +789,9 @@ class _QueueGameCard extends StatelessWidget {
                 width: backup ? 152 : 94,
                 height: 42,
                 child: FilledButton(
+                  key: ValueKey(
+                    'open-queue-join-${game.id}-${role.code.toLowerCase()}',
+                  ),
                   onPressed: onJoin,
                   style: FilledButton.styleFrom(
                     backgroundColor: availability.strong

@@ -186,6 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
     ];
 
     return Scaffold(
+      key: const ValueKey('home-screen'),
       extendBody: true,
       backgroundColor: fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),

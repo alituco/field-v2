@@ -283,6 +283,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
       header: FieldPageHeader(
         title: 'Fixtures',
         rightAction: HeaderActionButton(
+          key: const ValueKey('fixtures-play-action'),
           icon: Icons.sports_soccer_rounded,
           label: 'Play',
           tone: HeaderActionTone.blue,

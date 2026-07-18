@@ -23,6 +23,7 @@ void main() {
       daysFromToday: 0,
       confirmedCount: 8,
       staleAssignment: true,
+      teamAssignmentDue: false,
       venue: '[SCHEDULE SEED] Solo Future 5',
     );
 
@@ -1049,6 +1050,7 @@ OpenQueueGame _game({
   required int daysFromToday,
   required int confirmedCount,
   bool staleAssignment = false,
+  bool? teamAssignmentDue,
   String venue = 'TFA, Saar',
   Duration? startsIn,
 }) {
@@ -1063,6 +1065,11 @@ OpenQueueGame _game({
   final startsAt = startsIn == null
       ? bahrainStart.subtract(const Duration(hours: 3))
       : DateTime.now().add(startsIn);
+  final teamAssignmentAt = switch (teamAssignmentDue) {
+    true => DateTime.now().subtract(const Duration(days: 1)),
+    false => DateTime.now().add(const Duration(days: 1)),
+    null => startsAt.subtract(const Duration(hours: 3)),
+  };
   final hasAssignmentMetadata = confirmedCount == 12 || staleAssignment;
   return OpenQueueGame(
     id: 'game-$daysFromToday-$confirmedCount',
@@ -1081,7 +1088,7 @@ OpenQueueGame _game({
     matchAverageSr: hasAssignmentMetadata ? 1200 : null,
     teamSrSpread: hasAssignmentMetadata ? 0 : null,
     teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
-    teamAssignmentAt: startsAt.subtract(const Duration(hours: 3)),
+    teamAssignmentAt: teamAssignmentAt,
     partyLockAt: startsAt.subtract(const Duration(hours: 3)),
     teamAssignmentLeadMinutes: 180,
     partyLockLeadMinutes: 180,

@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "test": "node --test test/*.test.mjs",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -16,6 +17,7 @@
     "react-dom": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",

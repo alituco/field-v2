@@ -30,6 +30,11 @@ build fails closed.
   wallet refund, and `FULL` to `OPEN`
 - fake-data seeding from an empty local database
 - rollback-only reliability, moderation, support, and clan-forfeit contracts
+- a protected hosted-staging Android journey covering onboarding, solo booking,
+  party invitations, cancellation, reports, and support
+- a protected hosted-staging referee/admin browser journey covering attendance
+  correction, full check-in, kickoff, a goal, full-time, and the moderation and
+  support inboxes
 
 The five verification jobs contain placeholders only and cannot read or
 modify a hosted database. Only the conditional, protected `deploy-staging`
@@ -59,10 +64,22 @@ It:
 5. runs a read-only hosted health/schema smoke;
 6. proves private waitlist and policy tables return explicit authorization
    failures to anonymous users;
-7. records a successful GitHub `staging` deployment for production promotion.
+7. creates a uniquely tagged, isolated E2E account and match fixture;
+8. runs the player journey on an Android emulator;
+9. runs referee and admin workflows against a local production build connected
+   to hosted staging;
+10. verifies the resulting database state and removes mutable test fixtures;
+11. records a successful GitHub `staging` deployment for production promotion.
 
-It never resets or seeds hosted staging. The daily **Staging smoke** repeats
-the non-mutating hosted check at 05:15 UTC.
+It never resets hosted staging or touches ordinary staging users and games.
+E2E records are tagged with the run id. Mutable records are cleaned after every
+run; immutable attendance, wallet, reliability, and match audit facts remain
+tagged when database policy correctly prevents their deletion. Runs upload only
+test logs, failure screenshots, Playwright reports/traces, and the local
+referee server log for seven days. The fixture manifest, credentials, and
+generated password are never uploaded.
+
+The daily **Staging smoke** repeats the non-mutating hosted check at 05:15 UTC.
 
 `supabase/config.toml` is local-development configuration. Hosted Auth,
 network, and provider settings are managed in each Supabase dashboard; a
@@ -115,6 +132,8 @@ GitHub environment `staging`:
 - one required reviewer before deployment credentials are released
 - secret `SUPABASE_ACCESS_TOKEN`
 - secret `SUPABASE_DB_PASSWORD` for Field Staging
+- secret `SUPABASE_SERVICE_ROLE_KEY` for Field Staging, used only by the
+  protected E2E fixture/verifier and the local referee server
 
 GitHub environment `production`:
 
@@ -127,8 +146,9 @@ GitHub environment `production`:
 
 The Supabase access token is an account-level credential. Generate it under
 Supabase account access tokens and store it only in the two protected GitHub
-environments. Service-role keys are deliberately not stored in this
-repository's Actions settings.
+environments. The staging service-role key is required for isolated hosted E2E
+setup and server-side referee routes. Keep it only in the protected `staging`
+environment; do not add the production service-role key to this CI workflow.
 
 Runtime secrets such as Cloudflare credentials, webhook secrets, and staging
 OTP configuration belong in each Supabase project's Edge Function secrets.
@@ -149,8 +169,9 @@ pushes/deletion, require pull requests, and require these checks:
 2. Open a pull request into `staging`.
 3. Merge only after all five CI jobs pass.
 4. Approve the protected staging deployment.
-5. Wait for the staging deployment and smoke test.
-6. Test the staging app and admin/referee experience.
+5. Wait for the staging deployment, Android journey, and referee/admin browser
+   journey to pass.
+6. Review the seven-day failure artifacts when the protected E2E gate fails.
 7. Promote the tested staging tree into `prod` through review.
 8. Wait for CI on the resulting `prod` commit.
 9. Dispatch production. The workflow accepts a different merge SHA only when

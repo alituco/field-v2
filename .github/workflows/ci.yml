@@ -225,6 +225,8 @@ jobs:
           set -euo pipefail
           bash -n .github/scripts/deploy-supabase.sh
           node --check .github/scripts/smoke-supabase.mjs
+          grep -q "deploy_function dev-phone-login --no-verify-jwt" \
+            .github/scripts/deploy-supabase.sh
           grep -q "Hosted schema has no published reliability policy" \
             .github/scripts/verify-hosted-schema.sql
           if SUPABASE_ACCESS_TOKEN=dummy SUPABASE_DB_PASSWORD=dummy \
@@ -245,7 +247,8 @@ jobs:
           deno check supabase/functions/*/index.ts "${script_files[@]}"
           deno test \
             supabase/functions/_shared/staging_guard_test.ts \
-            supabase/scripts/_shared/environment_guard_test.ts
+            supabase/scripts/_shared/environment_guard_test.ts \
+            supabase/scripts/e2e/_shared_test.ts
 
       - name: Replay migrations on a fresh local Supabase stack
         run: >-
@@ -321,7 +324,7 @@ jobs:
           done
 
   deploy-staging:
-    name: Deploy and smoke-test staging
+    name: Deploy and end-to-end test staging
     needs:
       - flutter
       - flutter-ios
@@ -330,7 +333,7 @@ jobs:
       - database
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 75
     permissions:
       contents: read
       deployments: write
@@ -342,6 +345,11 @@ jobs:
       SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
       FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+      E2E_BOOTSTRAP_PHONE: "+97338883672"
+      E2E_DEV_OTP_CODE: "000000"
+      E2E_ONBOARDING_PHONE: "+97339009100"
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
 
     steps:
       - name: Check out repository
@@ -352,6 +360,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF" != "refs/heads/staging" ]]; then
@@ -370,7 +379,7 @@ jobs:
             echo "::error::The configured project refs are not Field Staging and Field Production."
             exit 1
           fi
-          if [[ -z "$SUPABASE_ACCESS_TOKEN" || -z "$SUPABASE_DB_PASSWORD" || -z "$SUPABASE_PUBLISHABLE_KEY" ]]; then
+          if [[ -z "$SUPABASE_ACCESS_TOKEN" || -z "$SUPABASE_DB_PASSWORD" || -z "$SUPABASE_PUBLISHABLE_KEY" || -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
             echo "::error::The staging GitHub environment is missing Supabase credentials."
             exit 1
           fi
@@ -389,6 +398,223 @@ jobs:
 
       - name: Smoke-test hosted staging
         run: node .github/scripts/smoke-supabase.mjs
+
+      - name: Set up Java for Android E2E
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter for Android E2E
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Set up Node.js for referee E2E
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Set up Deno for E2E fixtures
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Prepare isolated staging E2E run
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          {
+            echo "E2E_RUN_ID=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "E2E_TEST_PASSWORD=$password"
+            echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-manifest.json"
+          } >>"$GITHUB_ENV"
+          mkdir -p \
+            "$GITHUB_WORKSPACE/mobile/build/e2e-artifacts" \
+            "$GITHUB_WORKSPACE/referee/e2e-artifacts"
+
+      - name: Install staging E2E dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd mobile && flutter pub get)
+          (cd referee && npm ci)
+
+      - name: Install Playwright Chromium
+        working-directory: referee
+        run: npx playwright install --with-deps chromium
+
+      - name: Create isolated staging E2E fixtures
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: >-
+          deno run
+          --allow-env
+          --allow-net
+          --allow-write
+          supabase/scripts/e2e/setup_staging.ts
+
+      - name: Export non-secret E2E fixture identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$E2E_MANIFEST_PATH"
+          {
+            echo "E2E_MAIN_PHONE=$(jq -r '.accounts.main.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_PARTY_TARGET_PHONE=$(jq -r '.accounts.partyTarget.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_PARTY_TARGET_PROFILE_ID=$(jq -r '.accounts.partyTarget.profileId' "$E2E_MANIFEST_PATH")"
+            echo "E2E_ADMIN_PHONE=$(jq -r '.accounts.admin.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_MATCH_GAME_ID=$(jq -r '.games.match.id' "$E2E_MANIFEST_PATH")"
+            echo "E2E_CANCELLATION_GAME_ID=$(jq -r '.games.cancellation.id' "$E2E_MANIFEST_PATH")"
+            echo "E2E_REPORT_DETAILS=$(jq -r '.markers.reportDetails' "$E2E_MANIFEST_PATH")"
+            echo "E2E_SUPPORT_DETAILS=$(jq -r '.markers.supportDetails' "$E2E_MANIFEST_PATH")"
+          } >>"$GITHUB_ENV"
+
+      - name: Verify prepared staging E2E fixtures
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: >-
+          deno run
+          --allow-env
+          --allow-net
+          --allow-read
+          supabase/scripts/e2e/verify_staging.ts
+          --phase=prepared
+
+      - name: Enable KVM for the Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run staging player journey on Android
+        uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-boot-timeout: 900
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -no-snapshot
+            -noaudio
+            -no-boot-anim
+            -camera-back none
+          script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh"
+
+      - name: Build staging referee app
+        working-directory: referee
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_APP_ENV: staging
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ci-placeholder
+          CLOUDFLARE_STREAM_API_TOKEN: ci-placeholder-not-a-secret
+          CLOUDFLARE_STREAM_CUSTOMER_CODE: customer-ci-placeholder.example
+          BROADCAST_AGENT_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_OVERLAY_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_DEVICE_KEY: ci-main-pitch
+          BROADCAST_DEVICE_NAME: CI Main Pitch
+        run: npm run build
+
+      - name: Start staging referee app
+        shell: bash
+        working-directory: referee
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_APP_ENV: staging
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ci-placeholder
+          CLOUDFLARE_STREAM_API_TOKEN: ci-placeholder-not-a-secret
+          CLOUDFLARE_STREAM_CUSTOMER_CODE: customer-ci-placeholder.example
+          BROADCAST_AGENT_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_OVERLAY_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_DEVICE_KEY: ci-main-pitch
+          BROADCAST_DEVICE_NAME: CI Main Pitch
+        run: |
+          set -euo pipefail
+          nohup npm start -- --hostname 127.0.0.1 --port 3000 \
+            >e2e-artifacts/referee-server.log 2>&1 &
+          echo "$!" >"$RUNNER_TEMP/field-referee-e2e.pid"
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error \
+              "$PLAYWRIGHT_BASE_URL" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The referee E2E server did not become ready."
+          exit 1
+
+      - name: Run referee and admin browser journey
+        working-directory: referee
+        run: npm run test:e2e
+
+      - name: Verify staging E2E outcomes
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: >-
+          deno run
+          --allow-env
+          --allow-net
+          --allow-read
+          supabase/scripts/e2e/verify_staging.ts
+          --phase=complete
+
+      - name: Clean up mutable staging E2E fixtures
+        if: always()
+        shell: bash
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${E2E_MANIFEST_PATH:-}" || ! -s "$E2E_MANIFEST_PATH" ]]; then
+            echo "No E2E manifest was created; cleanup is not required."
+            exit 0
+          fi
+          deno run \
+            --allow-env \
+            --allow-net \
+            --allow-read \
+            supabase/scripts/e2e/cleanup_staging.ts
+
+      - name: Stop staging referee app
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s "$RUNNER_TEMP/field-referee-e2e.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/field-referee-e2e.pid")" || true
+          fi
+
+      - name: Upload staging E2E failure diagnostics
+        if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            mobile/build/e2e-artifacts/
+            referee/e2e-artifacts/
+            referee/playwright-report/
+            referee/test-results/
 
       - name: Record successful staging deployment
         shell: bash
@@ -420,7 +646,7 @@ jobs:
             jq -n \
               '{
                 state: "success",
-                description: "Migrations, functions, and hosted smoke passed",
+                description: "Migrations, smoke, Android, referee, and admin E2E passed",
                 environment: "staging",
                 auto_inactive: false
               }'

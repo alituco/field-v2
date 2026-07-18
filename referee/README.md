@@ -31,6 +31,20 @@ npm run dev -- -p 3001
 
 Open `http://localhost:3001` on the referee phone or simulator browser.
 
+## Test
+
+```sh
+npm run typecheck
+npm test
+npm run test:e2e -- --list
+```
+
+The Playwright journey under `e2e/` runs against the local production build
+connected to Field Staging. GitHub Actions creates its isolated manifest,
+executes the referee/admin workflow, verifies Postgres afterward, and cleans
+mutable test state. It is guarded for the exact Field Staging project and must
+not be pointed at production.
+
 ## Current Flow
 
 - Referee signs in with phone OTP.
