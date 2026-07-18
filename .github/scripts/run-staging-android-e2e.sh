@@ -80,6 +80,7 @@ run_flutter_integration_test() {
   local watchdog="$2"
   local target="$3"
   local package_name="com.field.field.staging"
+  local test_status
 
   adb wait-for-device
   adb uninstall "$package_name" >/dev/null 2>&1 || true
@@ -94,7 +95,6 @@ run_flutter_integration_test() {
       "$watchdog" \
       flutter test "$target" "${common_flutter_args[@]}"
   ) 2>&1 | tee "$artifact_dir/$label-flutter-integration.log"
-  local test_status
   test_status="${PIPESTATUS[0]}"
 
   if [[ "$test_status" -eq 124 || "$test_status" -eq 137 ]]; then
