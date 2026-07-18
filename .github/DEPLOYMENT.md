@@ -112,6 +112,7 @@ Repository variables:
 GitHub environment `staging`:
 
 - deployment branch restricted to `staging`
+- one required reviewer before deployment credentials are released
 - secret `SUPABASE_ACCESS_TOKEN`
 - secret `SUPABASE_DB_PASSWORD` for Field Staging
 
@@ -133,8 +134,8 @@ Runtime secrets such as Cloudflare credentials, webhook secrets, and staging
 OTP configuration belong in each Supabase project's Edge Function secrets.
 
 The repository default branch is `prod`; `staging` shares the real project
-history. After the first workflow run, protect both branches, block force
-pushes/deletion, and require these checks:
+history. Repository settings protect both branches, block force
+pushes/deletion, require pull requests, and require these checks:
 
 - `Flutter Android, analyze, and test`
 - `Flutter iOS flavor builds`
@@ -147,11 +148,12 @@ pushes/deletion, and require these checks:
 1. Branch from `staging`.
 2. Open a pull request into `staging`.
 3. Merge only after all five CI jobs pass.
-4. Wait for the staging deployment and smoke test.
-5. Test the staging app and admin/referee experience.
-6. Promote the tested staging tree into `prod` through review.
-7. Wait for CI on the resulting `prod` commit.
-8. Dispatch production. The workflow accepts a different merge SHA only when
+4. Approve the protected staging deployment.
+5. Wait for the staging deployment and smoke test.
+6. Test the staging app and admin/referee experience.
+7. Promote the tested staging tree into `prod` through review.
+8. Wait for CI on the resulting `prod` commit.
+9. Dispatch production. The workflow accepts a different merge SHA only when
    its complete Git tree is identical to the successfully deployed staging
    tree.
 
