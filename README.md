@@ -43,8 +43,11 @@ guard. It also shows a permanent LOCAL or STAGING ribbon and refuses an
 unknown environment.
 
 CI replays every migration from zero and runs a real Open Queue lifecycle
-against disposable local Supabase. Hosted staging is then smoke-tested without
-mutating its scenarios.
+against disposable local Supabase. After a staging deploy, the protected
+workflow creates uniquely tagged test accounts and games, runs the Android
+player journey plus referee/admin browser journey, verifies the resulting
+database state, and cleans all mutable test state. Production promotion remains
+blocked unless that complete staging E2E gate succeeds.
 
 See [mobile/README.md](mobile/README.md) for app commands and
 [.github/DEPLOYMENT.md](.github/DEPLOYMENT.md) for CI/CD setup, required

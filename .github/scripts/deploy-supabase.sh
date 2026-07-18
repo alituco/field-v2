@@ -97,7 +97,10 @@ if [[ "$target" == "staging" ]]; then
   deploy_function profile-goal-clip
 
   # These functions deliberately never deploy to production.
-  deploy_function dev-phone-login
+  # This endpoint creates the staging-only bootstrap session, so no user JWT
+  # exists yet. Its own exact-project, allow-listed phone, code, and expiry
+  # checks are the authentication boundary.
+  deploy_function dev-phone-login --no-verify-jwt
   deploy_function dev-switch-user --no-verify-jwt
 elif [[ "${DEPLOY_RECORDING_FUNCTIONS:-false}" == "true" ]]; then
   # Production recording stays opt-in until its separate Cloudflare secrets

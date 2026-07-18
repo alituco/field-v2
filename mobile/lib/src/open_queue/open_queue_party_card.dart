@@ -1342,6 +1342,7 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
                   ),
                 ),
                 IconButton(
+                  key: const ValueKey('party-invite-sheet-close'),
                   onPressed: () => Navigator.of(context).pop(),
                   icon: const Icon(Icons.close_rounded),
                 ),

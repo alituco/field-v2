@@ -413,6 +413,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (widget.onSignOut != null) ...[
                 const SizedBox(width: 8),
                 _HeaderIconButton(
+                  key: const ValueKey('profile-sign-out'),
                   icon: Icons.logout_rounded,
                   tooltip: 'Sign out',
                   isLoading: widget.isSigningOut,
@@ -1908,6 +1909,7 @@ class _SectionCard extends StatelessWidget {
 
 class _HeaderIconButton extends StatelessWidget {
   const _HeaderIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onPressed,

@@ -344,6 +344,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
                   ),
                   const SizedBox(height: 11),
                   FilledButton.icon(
+                    key: const ValueKey('open-queue-see-matching-games'),
                     onPressed: _loading || _error != null ? null : _continue,
                     style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(56),
@@ -899,6 +900,7 @@ class _RoleButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
+      key: ValueKey('open-queue-main-role-${role.code.toLowerCase()}'),
       color: selected ? fieldEmerald500 : Colors.white,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(

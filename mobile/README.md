@@ -66,5 +66,11 @@ flutter analyze
 flutter test
 ```
 
+The hosted Android journey lives in
+`integration_test/staging_player_journey_test.dart`. CI provisions its isolated
+accounts and games, supplies per-run `--dart-define` values, and runs it only
+inside the protected staging deployment. Do not point it at production or run
+it without the matching fixture manifest.
+
 The two iOS schemes are `staging` and `production`. Android uses matching
 product flavors and installs staging as `com.field.field.staging`.

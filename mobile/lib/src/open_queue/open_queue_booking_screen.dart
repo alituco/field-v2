@@ -576,6 +576,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               ),
               const SizedBox(height: 18),
               FilledButton.icon(
+                key: const ValueKey('booking-go-home'),
                 onPressed: _goHome,
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(54),
@@ -592,6 +593,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               ),
               const SizedBox(height: 10),
               OutlinedButton(
+                key: const ValueKey('booking-cancel'),
                 onPressed: _cancelling ? null : _cancel,
                 style: OutlinedButton.styleFrom(
                   minimumSize: const Size.fromHeight(50),

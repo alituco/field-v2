@@ -394,6 +394,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
             ],
             const SizedBox(height: 18),
             FilledButton(
+              key: const ValueKey('open-queue-confirm-payment'),
               onPressed: _processing || _costPreview == null ? null : _pay,
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(56),
@@ -731,6 +732,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
                 if (widget.onContinue != null) ...[
                   const SizedBox(height: 15),
                   FilledButton.icon(
+                    key: const ValueKey('open-queue-continue-to-checkout'),
                     onPressed: widget.onContinue,
                     style: FilledButton.styleFrom(
                       minimumSize: const Size.fromHeight(56),
