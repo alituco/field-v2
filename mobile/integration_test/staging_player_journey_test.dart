@@ -198,8 +198,9 @@ Future<void> _verifyFixedOtpLogin(
     find.byKey(const ValueKey('auth-country-picker')),
   );
   await pumpUntilFound(tester, find.text('Bahrain'));
+  await tester.pump(const Duration(milliseconds: 450));
   await tester.tap(find.text('Bahrain').last);
-  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 350));
 
   await tester.enterText(
     find.byKey(const ValueKey('auth-phone-field')),
