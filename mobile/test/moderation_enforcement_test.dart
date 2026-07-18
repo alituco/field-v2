@@ -112,12 +112,9 @@ void main() {
       find.byKey(const Key('restricted-account-support-sheet')),
       findsOneWidget,
     );
-    expect(
-      find.byKey(const Key('restricted-account-copy-details')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('support-details')), findsOneWidget);
 
-    await tester.tap(find.text('Close'));
+    await tester.tap(find.byKey(const ValueKey('contact-support-close')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byKey(const Key('restricted-account-sign-out')),

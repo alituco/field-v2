@@ -143,11 +143,8 @@ void main() {
       FilledButton,
       'Continue to Test Checkout',
     );
-    await tester.scrollUntilVisible(
-      checkoutButton,
-      220,
-      scrollable: find.byType(Scrollable).first,
-    );
+    await tester.ensureVisible(checkoutButton);
+    await tester.pump();
     await tester.pump();
     await tester.tap(checkoutButton);
     await tester.pumpAndSettle();
@@ -171,6 +168,53 @@ void main() {
 
     expect(find.text('HOME PAGE'), findsOneWidget);
     expect(find.byType(Scaffold), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('checkout requires reconfirmation when the exact total changes', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final repository = _ChangingCostOpenQueueRepository();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueReviewScreen(
+          repository: repository,
+          game: _booking().game,
+          role: OpenQueueRole.defender,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final checkoutButton = find.widgetWithText(
+      FilledButton,
+      'Continue to Test Checkout',
+    );
+    await _bringAboveFloatingNav(tester, checkoutButton);
+    await tester.tap(checkoutButton);
+    await tester.pumpAndSettle();
+
+    final initialBookButton = find.widgetWithText(
+      FilledButton,
+      'Book Test Spot · 3 BHD',
+    );
+    await _bringAboveFloatingNav(tester, initialBookButton);
+    await tester.tap(initialBookButton);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Your booking terms changed. Review the updated total and deposit, then confirm again.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Book Test Spot · 4 BHD'), findsOneWidget);
+    expect(repository.bookCalls, 0);
     expect(tester.takeException(), isNull);
   });
 
@@ -241,7 +285,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('confirmed booking explains the three-hour kit reveal', (
+  testWidgets('confirmed booking renders the server policy kit cutoff', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -253,22 +297,28 @@ void main() {
       MaterialApp(
         home: OpenQueueBookingScreen(
           repository: _FakeOpenQueueRepository(),
-          booking: _booking(fullBeforeCutoff: true),
+          booking: _booking(fullBeforeCutoff: true, assignmentLeadMinutes: 90),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
     expect(find.text('MATCH CONFIRMED'), findsOneWidget);
-    expect(find.text('Assigned 3 hours before kickoff'), findsOneWidget);
+    expect(
+      find.text('Assigned 1 hour 30 minutes before kickoff'),
+      findsOneWidget,
+    );
     expect(
       find.byKey(const ValueKey('kit-assignment-scheduled')),
       findsOneWidget,
     );
-    expect(find.text('ASSIGNED 3 HOURS BEFORE KICKOFF'), findsOneWidget);
+    expect(
+      find.text('ASSIGNED 1 HOUR 30 MINUTES BEFORE KICKOFF'),
+      findsOneWidget,
+    );
     expect(
       find.textContaining(
-        'Teams and kits are finalized 3 hours before kickoff',
+        'Teams and kits are finalized 1 hour 30 minutes before kickoff',
       ),
       findsOneWidget,
     );
@@ -355,6 +405,13 @@ void main() {
         refundPercent: 50,
         refundAmountFils: 1500,
         refundCutoffAt: DateTime.now().add(const Duration(days: 1)),
+        outcomeCode: 'CANCELLED_LATE',
+        strikeDelta: 1,
+        refundBps: 5000,
+        refundDestination: 'FIELD_WALLET',
+        depositForfeited: true,
+        explanation:
+            'This booking is inside the late-cancellation policy window.',
       ),
     );
 
@@ -378,7 +435,16 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('Cancel your spot?'), findsOneWidget);
-    expect(find.text('50% refund · 1.500 BHD refund'), findsOneWidget);
+    expect(find.text('LATE CANCELLATION'), findsOneWidget);
+    expect(
+      find.text(
+        '50% to your Field wallet\n'
+        '1.500 BHD to Field wallet\n'
+        '+1 reliability strike\n'
+        'Reliability deposit forfeited',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Keep my spot'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
@@ -414,7 +480,7 @@ void main() {
     expect(find.textContaining('up to 4 confirmed players'), findsOneWidget);
     expect(find.textContaining('assigned to the same team'), findsOneWidget);
     expect(
-      find.text('Parties and teams lock 3 hours before kickoff.'),
+      find.text('Party changes close 3 hours before kickoff.'),
       findsOneWidget,
     );
 
@@ -429,7 +495,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('party creation closes three hours before kickoff', (
+  testWidgets('party creation shows the server policy lock cutoff', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(390, 844);
@@ -437,7 +503,7 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final repository = _PartyOpenQueueRepository(
-      _emptyPartyContext(canUseParties: false),
+      _emptyPartyContext(canUseParties: false, partyLockLeadMinutes: 75),
     );
 
     await tester.pumpWidget(
@@ -456,7 +522,7 @@ void main() {
     );
     expect(
       find.text(
-        'Parties close 3 hours before kickoff so teams and kits can be finalized.',
+        'Parties close 1 hour 15 minutes before kickoff so teams and kits can be finalized.',
       ),
       findsOneWidget,
     );
@@ -748,7 +814,9 @@ void main() {
     expect(find.text('Party changes closed'), findsOneWidget);
     expect(find.text('Party locked for this match'), findsOneWidget);
     expect(
-      find.textContaining('Party changes close 3 hours before kickoff.'),
+      find.text(
+        'Party changes close 3 hours before kickoff. Your confirmed group stays together, but no one can be invited, removed, or leave now.',
+      ),
       findsOneWidget,
     );
 
@@ -789,6 +857,7 @@ OpenQueueBooking _booking({
   bool staleAssignment = false,
   bool fullBeforeCutoff = false,
   String assignedTeam = openQueueWhiteTeamId,
+  int assignmentLeadMinutes = 180,
 }) {
   final hasAssignmentMetadata = assigned || staleAssignment;
   final isFull = assigned || fullBeforeCutoff;
@@ -817,6 +886,13 @@ OpenQueueBooking _booking({
     matchAverageSr: hasAssignmentMetadata ? 1210 : null,
     teamSrSpread: hasAssignmentMetadata ? 2 : null,
     teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
+    teamAssignmentAt: startsAt.subtract(
+      Duration(minutes: assignmentLeadMinutes),
+    ),
+    partyLockAt: startsAt.subtract(const Duration(hours: 3)),
+    teamAssignmentLeadMinutes: assignmentLeadMinutes,
+    partyLockLeadMinutes: 180,
+    maxPartySize: 4,
   );
   return OpenQueueBooking(
     id: 'booking-1',
@@ -880,6 +956,43 @@ class _FakeOpenQueueRepository implements OpenQueueRepository {
         refundAmountFils: 0,
         refundCutoffAt: DateTime.now(),
       );
+}
+
+class _ChangingCostOpenQueueRepository extends _FakeOpenQueueRepository
+    implements OpenQueueBookingCostPreviewRepository {
+  int previewCalls = 0;
+  int bookCalls = 0;
+
+  @override
+  Future<OpenQueueBookingCostPreview> previewBookingCost({
+    required String gameId,
+    required OpenQueueRole role,
+  }) async {
+    previewCalls += 1;
+    final totalFils = previewCalls >= 3 ? 4000 : 3000;
+    return OpenQueueBookingCostPreview(
+      currency: 'BHD',
+      standardMatchFeeFils: totalFils,
+      replacementDiscountBps: 0,
+      discountAmountFils: 0,
+      matchFeeFils: totalFils,
+      reliabilityDepositRequired: false,
+      reliabilityDepositBps: 0,
+      reliabilityDepositFils: 0,
+      totalFils: totalFils,
+      policyVersionId: 'policy-1',
+    );
+  }
+
+  @override
+  Future<OpenQueueBooking> bookGame({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    required String paymentMethod,
+  }) async {
+    bookCalls += 1;
+    return _booking();
+  }
 }
 
 class _PartyOpenQueueRepository extends _FakeOpenQueueRepository
@@ -959,12 +1072,17 @@ class _PartyOpenQueueRepository extends _FakeOpenQueueRepository
   }
 }
 
-OpenQueuePartyContext _emptyPartyContext({bool canUseParties = true}) {
+OpenQueuePartyContext _emptyPartyContext({
+  bool canUseParties = true,
+  int partyLockLeadMinutes = 180,
+}) {
   return OpenQueuePartyContext(
     gameId: 'game-1',
     gameStatus: 'OPEN',
     canUseParties: canUseParties,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: partyLockLeadMinutes,
     receivedInvites: const [],
     eligiblePlayers: const [
       OpenQueuePartyPlayer(
@@ -985,6 +1103,8 @@ OpenQueuePartyContext _invitedPartyContext() {
     gameStatus: 'OPEN',
     canUseParties: true,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
     receivedInvites: [
       OpenQueuePartyInvite(
         membershipId: 'membership-incoming',
@@ -1022,6 +1142,8 @@ OpenQueuePartyContext _ownedPartyContext({
     gameStatus: 'OPEN',
     canUseParties: canUseParties,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
     myParty: OpenQueueParty(
       id: 'party-1',
       ownerProfileId: 'profile-1',
@@ -1069,6 +1191,8 @@ OpenQueuePartyContext _partySwitchInviteContext() {
     gameStatus: 'OPEN',
     canUseParties: true,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
     myParty: OpenQueueParty(
       id: 'party-current',
       ownerProfileId: 'player-dana',
@@ -1106,6 +1230,8 @@ OpenQueuePartyContext _joinedPartyContext() {
     gameStatus: 'OPEN',
     canUseParties: true,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
     myParty: OpenQueueParty(
       id: 'party-noor',
       ownerProfileId: 'player-noor',

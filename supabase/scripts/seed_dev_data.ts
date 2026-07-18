@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type AdminClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -454,6 +455,17 @@ assertUniqueFixtureSlots(fakeFixtures);
 assertUpcomingFixtureLimits(fakeFixtures);
 
 const supabaseUrl = requireEnv("SUPABASE_URL");
+const seedTarget = assertSafeDevDataTarget(
+  supabaseUrl,
+  "development data seed",
+);
+if (seedTarget.environment !== "local") {
+  throw new Error(
+    "Refusing development data seed: the full fixture history seed is " +
+      "local-only. Rebuild local Supabase with `supabase db reset` first; " +
+      "use targeted, non-destructive verification scripts for hosted staging.",
+  );
+}
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const seedPassword = requireEnv("DEV_SEED_PASSWORD");
 
@@ -464,6 +476,8 @@ if (seedPassword.length < 6) {
 const admin = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 }) as AdminClient;
+
+await assertCleanLocalSeedTarget(admin);
 
 const usersByPhone = new Map<string, string>();
 
@@ -479,13 +493,13 @@ for (const fakeUser of fakeUsers) {
 }
 
 await upsertProfiles(admin, usersByPhone);
-await removeSeedOwnedRows(admin, [...usersByPhone.values()]);
 const clanIdsByTag = await seedClans(admin, usersByPhone);
 await seedExistingClanMembers(
   admin,
   usersByPhone,
   clanIdsByTag,
   generatedSeed.existingClanMembersByTag,
+  seedTarget.environment === "local",
 );
 await seedJoinRequests(
   admin,
@@ -507,6 +521,7 @@ await seedFixtureMatchControl(
   usersByPhone,
   fixtureIdsByKey,
 );
+await finalizeSeededFixtures(admin, usersByPhone, fixtureIdsByKey);
 await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
 await seedProfileDetails(admin, usersByPhone, clanIdsByTag);
 await seedFollows(admin, usersByPhone);
@@ -1278,102 +1293,24 @@ async function upsertProfiles(
   }
 }
 
-async function removeSeedOwnedRows(admin: AdminClient, userIds: string[]) {
-  const clanTags = fakeClans.map((clan) => clan.tag);
-  const seedClanIds = await loadSeedClanIds(admin, userIds, clanTags);
+async function assertCleanLocalSeedTarget(admin: AdminClient) {
+  const seedTags = [...new Set([...fakeClans.map((clan) => clan.tag), "TTR"])];
+  const { data, error } = await admin
+    .from("clans")
+    .select("tag")
+    .in("tag", seedTags)
+    .limit(1);
 
-  await assertNoError(
-    admin.from("profile_follows").delete().in("follower_id", userIds),
-    "delete seed follows",
-  );
-  await assertNoError(
-    admin.from("profile_follows").delete().in("following_id", userIds),
-    "delete seed fans",
-  );
-  await assertNoError(
-    admin.from("profile_highlights").delete().in("profile_id", userIds),
-    "delete seed highlights",
-  );
-  await assertNoError(
-    admin.from("profile_career_entries").delete().in("profile_id", userIds),
-    "delete seed career entries",
-  );
-  await assertNoError(
-    admin.from("clan_join_requests").delete().in("profile_id", userIds),
-    "delete seed join requests",
-  );
-  await assertNoError(
-    admin.from("fixtures").delete().in("created_by", userIds),
-    "delete seed-created fixtures",
-  );
-  if (seedClanIds.length > 0) {
-    await assertNoError(
-      admin.from("fixtures").delete().in("home_clan_id", seedClanIds),
-      "delete seed home fixtures",
-    );
-    await assertNoError(
-      admin.from("fixtures").delete().in("away_clan_id", seedClanIds),
-      "delete seed away fixtures",
+  if (error) {
+    throw new Error(`check local seed target: ${error.message}`);
+  }
+  if ((data ?? []).length > 0) {
+    throw new Error(
+      "Refusing development data seed: seeded clan data already exists. " +
+        "Rated fixtures and reliability history are immutable by design. " +
+        "Run `supabase db reset`, then run this seed exactly once.",
     );
   }
-  await assertNoError(
-    admin.from("fixture_scorers").delete().in("profile_id", userIds),
-    "delete seed scorer rows",
-  );
-  await assertNoError(
-    admin.from("fixture_scorers").delete().in("assist_profile_id", userIds),
-    "delete seed assist rows",
-  );
-  await assertNoError(
-    admin.from("clan_members").delete().in("profile_id", userIds),
-    "delete seed member rows",
-  );
-  await assertNoError(
-    admin.from("clans").delete().in("tag", clanTags),
-    "delete seed clan tags",
-  );
-  await assertNoError(
-    admin.from("clans").delete().in("created_by", userIds),
-    "delete clans owned by seeded users",
-  );
-}
-
-async function loadSeedClanIds(
-  admin: AdminClient,
-  userIds: string[],
-  clanTags: string[],
-) {
-  const ids = new Set<string>();
-
-  const { data: clansByTag, error: tagError } = await admin
-    .from("clans")
-    .select("id")
-    .in("tag", clanTags);
-
-  if (tagError) {
-    throw new Error(`load seed clans by tag: ${tagError.message}`);
-  }
-
-  for (const row of clansByTag ?? []) {
-    const id = (row as { id?: string }).id;
-    if (id) ids.add(id);
-  }
-
-  const { data: clansByOwner, error: ownerError } = await admin
-    .from("clans")
-    .select("id")
-    .in("created_by", userIds);
-
-  if (ownerError) {
-    throw new Error(`load seed clans by owner: ${ownerError.message}`);
-  }
-
-  for (const row of clansByOwner ?? []) {
-    const id = (row as { id?: string }).id;
-    if (id) ids.add(id);
-  }
-
-  return [...ids];
 }
 
 async function seedClans(
@@ -1437,26 +1374,65 @@ async function seedExistingClanMembers(
   userIdsByPhone: Map<string, string>,
   clanIdsByTag: Map<string, string>,
   memberPhonesByTag: Record<string, string[]>,
+  createMissingLocalClans: boolean,
 ) {
   for (const [tag, memberPhones] of Object.entries(memberPhonesByTag)) {
-    const { data: clan, error } = await admin
+    const { data: existingClan, error } = await admin
       .from("clans")
       .select("id")
       .eq("tag", tag)
-      .single();
+      .maybeSingle();
 
     if (error) {
       throw new Error(`load existing clan ${tag}: ${error.message}`);
     }
 
-    const clanId = (clan as { id?: string }).id;
+    let clan = existingClan as { id?: string } | null;
+    let createdLocally = false;
+    if (!clan && createMissingLocalClans && tag === "TTR") {
+      const ownerId = requireUserId(userIdsByPhone, memberPhones[0]);
+      const { data: createdClan, error: createError } = await admin
+        .from("clans")
+        .insert({
+          name: "Tempe Tempuras",
+          tag,
+          motto: "Fast feet, crisp football.",
+          emblem: "\u{1F42C}",
+          theme_id: "electric",
+          pattern_id: "solid",
+          skill_rating: 1500,
+          wins: 0,
+          losses: 0,
+          region: "bahrain",
+          created_by: ownerId,
+        })
+        .select("id")
+        .single();
+      if (createError) {
+        throw new Error(
+          `create local-only clan ${tag}: ${createError.message}`,
+        );
+      }
+      clan = createdClan as { id?: string };
+      createdLocally = true;
+    }
+
+    if (!clan) {
+      throw new Error(
+        `load existing clan ${tag}: no clan exists. Local Supabase can ` +
+          "create its disposable TTR fixture, but hosted staging must keep " +
+          "the real clan.",
+      );
+    }
+
+    const clanId = clan.id;
     if (!clanId) throw new Error(`Could not read existing clan id for ${tag}.`);
     clanIdsByTag.set(tag, clanId);
 
-    const rows = memberPhones.map((phone) => ({
+    const rows = memberPhones.map((phone, index) => ({
       clan_id: clanId,
       profile_id: requireUserId(userIdsByPhone, phone),
-      role: "member",
+      role: createdLocally && index === 0 ? "owner" : "member",
       left_at: null,
       removed_by: null,
       removal_reason: null,
@@ -1620,7 +1596,10 @@ async function seedFixtures(
     const { data, error } = await admin
       .from("fixtures")
       .insert({
-        status: fixture.status,
+        // Goals and match-control rows must exist before a match becomes
+        // FINAL. Finalizing through the normal referee RPC applies the same
+        // immutable SR/attendance path used by the app.
+        status: fixture.status === "FINAL" ? "SCHEDULED" : fixture.status,
         home_clan_id: requireClanId(clanIdsByTag, fixture.homeTag),
         away_clan_id: fixture.awayTag
           ? requireClanId(clanIdsByTag, fixture.awayTag)
@@ -1629,13 +1608,19 @@ async function seedFixtures(
         day: fixture.day,
         time_slot: fixture.timeSlot,
         match_date: fixture.matchDate,
-        home_score: fixture.homeScore ?? null,
-        away_score: fixture.awayScore ?? null,
-        winner_clan_id: winnerTag
+        home_score: fixture.status === "FINAL"
+          ? null
+          : fixture.homeScore ?? null,
+        away_score: fixture.status === "FINAL"
+          ? null
+          : fixture.awayScore ?? null,
+        winner_clan_id: fixture.status === "FINAL"
+          ? null
+          : winnerTag
           ? requireClanId(clanIdsByTag, winnerTag)
           : null,
-        home_sr_change: homeSrChange,
-        away_sr_change: awaySrChange,
+        home_sr_change: fixture.status === "FINAL" ? null : homeSrChange,
+        away_sr_change: fixture.status === "FINAL" ? null : awaySrChange,
         video_url: fixture.videoUrl ?? null,
         created_by: homePayerId,
         home_paid_by: homePayerId,
@@ -1660,6 +1645,189 @@ async function seedFixtures(
   }
 
   return fixtureIdsByKey;
+}
+
+async function finalizeSeededFixtures(
+  admin: AdminClient,
+  userIdsByPhone: Map<string, string>,
+  fixtureIdsByKey: Map<string, string>,
+) {
+  const refereePhone = fakeUsers[0]?.phone;
+  if (!refereePhone) throw new Error("No seeded referee candidate exists.");
+  const refereeId = requireUserId(userIdsByPhone, refereePhone);
+
+  await assertNoError(
+    admin.from("referee_profiles").upsert({
+      profile_id: refereeId,
+      display_name: "Local Seed Referee",
+      phone: refereePhone,
+      role: "referee",
+      is_active: true,
+    }, {
+      onConflict: "profile_id",
+    }),
+    "upsert local seed referee",
+  );
+
+  for (
+    const fixture of fakeFixtures
+      .filter((candidate) => candidate.status === "FINAL")
+      .sort((first, second) =>
+        `${first.matchDate}:${first.timeSlot}`.localeCompare(
+          `${second.matchDate}:${second.timeSlot}`,
+        )
+      )
+  ) {
+    const fixtureId = requireFixtureId(fixtureIdsByKey, fixture);
+
+    await assertNoError(
+      admin.from("fixture_referee_assignments").upsert({
+        fixture_id: fixtureId,
+        referee_id: refereeId,
+        assigned_by: refereeId,
+      }, {
+        onConflict: "fixture_id",
+      }),
+      `assign local seed referee for ${fixtureKey(fixture)}`,
+    );
+
+    const { error: attendanceError } = await admin.rpc(
+      "ensure_match_attendance_records",
+      {
+        match_kind_to_use: "CLAN",
+        match_id_to_use: fixtureId,
+      },
+    );
+    if (attendanceError) {
+      throw new Error(
+        `initialize attendance for ${fixtureKey(fixture)}: ` +
+          attendanceError.message,
+      );
+    }
+
+    const { error: rosterError } = await admin.rpc(
+      "initialize_fixture_reliability_roster",
+      {
+        fixture_id_to_initialize: fixtureId,
+      },
+    );
+    if (rosterError) {
+      throw new Error(
+        `initialize roster for ${fixtureKey(fixture)}: ${rosterError.message}`,
+      );
+    }
+
+    const { data: attendanceData, error: attendanceLoadError } = await admin
+      .from("match_attendance_records")
+      .select("id,profile_id,clan_id,check_in_deadline_at")
+      .eq("fixture_id", fixtureId)
+      .eq("expected_for_match", true)
+      .is("outcome", null)
+      .order("profile_id");
+    if (attendanceLoadError) {
+      throw new Error(
+        `load attendance for ${fixtureKey(fixture)}: ` +
+          attendanceLoadError.message,
+      );
+    }
+
+    const attendanceRows = (attendanceData ?? []) as {
+      id: string;
+      profile_id: string;
+      clan_id: string | null;
+      check_in_deadline_at: string;
+    }[];
+    const participantIds = attendanceRows.map((row) => row.profile_id);
+    const representedClans = new Set(
+      attendanceRows.map((row) => row.clan_id).filter(Boolean),
+    );
+    if (participantIds.length === 0 || representedClans.size !== 2) {
+      throw new Error(
+        `Historical fixture ${fixtureKey(fixture)} needs checked-in players ` +
+          "from both clans.",
+      );
+    }
+
+    for (const attendance of attendanceRows) {
+      const checkInAt = new Date(
+        new Date(attendance.check_in_deadline_at).getTime() - 60_000,
+      ).toISOString();
+      await assertNoError(
+        admin.from("match_attendance_records").update({
+          checked_in_at: checkInAt,
+          checked_in_by: refereeId,
+          consequence_snapshot: {
+            local_seed: true,
+            provisional_check_in: {
+              checked_in_at: checkInAt,
+              referee_authoritative: true,
+              historical_seed: true,
+            },
+          },
+        }).eq("id", attendance.id),
+        `backdate attendance for ${fixtureKey(fixture)}`,
+      );
+      await assertNoError(
+        admin.from("attendance_events").insert({
+          attendance_id: attendance.id,
+          event_type: "CHECKED_IN",
+          actor_referee_id: refereeId,
+          event_at: checkInAt,
+          detail: {
+            local_seed: true,
+            referee_authoritative: true,
+            historical_seed: true,
+          },
+          idempotency_key: `local-seed-check-in:${attendance.id}`,
+        }),
+        `audit attendance for ${fixtureKey(fixture)}`,
+      );
+    }
+
+    const { error: startError } = await admin.rpc(
+      "referee_start_fixture_atomic",
+      {
+        fixture_id_to_start: fixtureId,
+        participant_ids_to_use: participantIds,
+        duration_seconds_to_use: 3600,
+      },
+    );
+    if (startError) {
+      throw new Error(
+        `start seeded fixture ${fixtureKey(fixture)}: ${startError.message}`,
+      );
+    }
+
+    await assertNoError(
+      admin.from("fixture_clock_states").update({
+        status: "ENDED",
+        started_at: null,
+        accumulated_seconds: 3600,
+        duration_seconds: 3600,
+      }).eq("fixture_id", fixtureId),
+      `stop seeded fixture clock ${fixtureKey(fixture)}`,
+    );
+
+    const { error } = await admin.rpc("referee_finish_fixture_atomic", {
+      fixture_id_to_complete: fixtureId,
+    });
+    if (error) {
+      throw new Error(
+        `finalize seeded fixture ${fixtureKey(fixture)}: ${error.message}`,
+      );
+    }
+
+    await assertNoError(
+      admin.from("fixture_events").update({
+        minute: 60,
+        second: 0,
+        occurred_at: fixtureTimestamp(fixture, 60, 0),
+      })
+        .eq("fixture_id", fixtureId)
+        .eq("event_type", "MATCH_ENDED"),
+      `restore historical end time for ${fixtureKey(fixture)}`,
+    );
+  }
 }
 
 async function seedFixtureScorers(
@@ -1824,6 +1992,7 @@ function fixtureEventRow(
   second: number,
   values: Record<string, unknown> = {},
 ) {
+  const occurredAt = fixtureTimestamp(fixture, minute, second);
   return {
     fixture_id: fixtureId,
     event_type: eventType,
@@ -1834,7 +2003,8 @@ function fixtureEventRow(
     minute,
     second,
     note: "",
-    created_at: fixtureTimestamp(fixture, minute, second),
+    occurred_at: occurredAt,
+    created_at: occurredAt,
     ...values,
   };
 }

@@ -84,6 +84,12 @@ void main() {
       'match_average_sr': 1235.15,
       'team_sr_spread': 4.9,
       'teams_assigned_at': '2026-07-13T12:00:00Z',
+      'policy_version_id': 'policy-v2',
+      'team_assignment_at': '2026-07-14T16:00:00Z',
+      'party_lock_at': '2026-07-14T15:30:00Z',
+      'team_assignment_lead_minutes': 90,
+      'party_lock_lead_minutes': 120,
+      'max_party_size': 3,
     });
 
     expect(game.status, 'FINAL');
@@ -98,6 +104,10 @@ void main() {
     expect(game.matchAverageSr, 1235);
     expect(game.teamSrSpread, 5);
     expect(game.teamsAssignedAt, isNotNull);
+    expect(game.policyVersionId, 'policy-v2');
+    expect(game.teamAssignmentLeadLabel, '1 hour 30 minutes before kickoff');
+    expect(game.partyLockLeadLabel, '2 hours before kickoff');
+    expect(game.maxPartySize, 3);
     expect(game.bahrainStartsAt.weekday, DateTime.tuesday);
     expect(game.timeLabel, '8:30 PM–9:30 PM');
   });
@@ -177,6 +187,8 @@ void main() {
         'starts_at': '2026-07-17T17:30:00Z',
         'venue': 'TFA, Saar',
         'status': 'OPEN',
+        'party_lock_at': '2026-07-17T14:30:00Z',
+        'policy_version_id': 'policy-v2',
       },
     });
 
@@ -187,6 +199,8 @@ void main() {
     expect(notification.venue, 'TFA, Saar');
     expect(notification.gameStatus, 'OPEN');
     expect(notification.gameStartsAt, isNotNull);
+    expect(notification.partyLockAt, isNotNull);
+    expect(notification.policyVersionId, 'policy-v2');
     expect(notification.isRead, isFalse);
   });
 
@@ -216,6 +230,30 @@ void main() {
     expect(player.currentPartyId, 'party-two');
     expect(player.isCurrentPartyOwner, isTrue);
     expect(player.currentPartySize, 3);
+  });
+
+  test('party context parses its snapshotted server policy', () {
+    final context = OpenQueuePartyContext.fromJson({
+      'game_id': 'policy-game',
+      'game_status': 'FULL',
+      'can_use_parties': true,
+      'policy_version_id': 'policy-v2',
+      'server_now': '2026-07-16T12:00:00Z',
+      'team_assignment_at': '2026-07-17T16:00:00Z',
+      'party_lock_at': '2026-07-17T15:15:00Z',
+      'team_assignment_lead_minutes': 90,
+      'party_lock_lead_minutes': 135,
+      'max_party_size': 3,
+      'received_invites': const [],
+      'eligible_players': const [],
+    });
+
+    expect(context.policyVersionId, 'policy-v2');
+    expect(context.maxPartySize, 3);
+    expect(context.teamAssignmentAt, isNotNull);
+    expect(context.partyLockAt, isNotNull);
+    expect(context.teamAssignmentLeadLabel, '1 hour 30 minutes before kickoff');
+    expect(context.partyLockLeadLabel, '2 hours 15 minutes before kickoff');
   });
 
   test('solo match detail maps teams, clock, goals, and replay data', () {

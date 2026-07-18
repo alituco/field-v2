@@ -21,7 +21,11 @@ class OpenQueueKitIndicator extends StatelessWidget {
       return const SizedBox.shrink();
     }
     if (!booking.game.isTeamAssignmentDue) {
-      return _ScheduledOpenQueueKitIndicator(compact: compact, inline: inline);
+      return _ScheduledOpenQueueKitIndicator(
+        compact: compact,
+        inline: inline,
+        assignmentLeadLabel: booking.game.teamAssignmentLeadLabel,
+      );
     }
 
     final team = booking.assignedTeam;
@@ -169,16 +173,18 @@ class _ScheduledOpenQueueKitIndicator extends StatelessWidget {
   const _ScheduledOpenQueueKitIndicator({
     required this.compact,
     required this.inline,
+    required this.assignmentLeadLabel,
   });
 
   final bool compact;
   final bool inline;
+  final String assignmentLeadLabel;
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
-      label: 'Match kit assigned three hours before kickoff',
+      label: 'Match kit assigned $assignmentLeadLabel',
       child: Container(
         key: const ValueKey('kit-assignment-scheduled'),
         width: double.infinity,
@@ -211,12 +217,12 @@ class _ScheduledOpenQueueKitIndicator extends StatelessWidget {
               ),
             ),
             SizedBox(width: compact || inline ? 9 : 11),
-            const Expanded(
+            Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
+                  const Text(
                     'YOUR KIT',
                     style: TextStyle(
                       color: fieldGray500,
@@ -225,11 +231,11 @@ class _ScheduledOpenQueueKitIndicator extends StatelessWidget {
                       letterSpacing: 1,
                     ),
                   ),
-                  SizedBox(height: 2),
+                  const SizedBox(height: 2),
                   Text(
-                    'ASSIGNED 3 HOURS BEFORE KICKOFF',
+                    'ASSIGNED ${assignmentLeadLabel.toUpperCase()}',
                     maxLines: 2,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: fieldGray700,
                       fontSize: 11,
                       height: 1.1,

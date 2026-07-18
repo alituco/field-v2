@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type SourceType = "CLAN" | "SOLO";
 // deno-lint-ignore no-explicit-any
@@ -10,6 +11,7 @@ type FunctionResult = {
 };
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "profile match-clip verification");
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");

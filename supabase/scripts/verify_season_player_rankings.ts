@@ -2,6 +2,7 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type ProfileRow = { id: string; phone: string };
 type RankingRow = {
@@ -16,6 +17,7 @@ type RankingRow = {
 };
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "season player-ranking verification");
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");

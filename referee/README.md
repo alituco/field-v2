@@ -8,12 +8,18 @@ including the match clock, goals, assists, blue cards, and livestream.
 Create `referee/.env.local`:
 
 ```sh
+NEXT_PUBLIC_APP_ENV=staging
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-publishable-key
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
 The service-role key is used only by Next.js API routes. Do not expose it as a `NEXT_PUBLIC_` value.
+
+Use `NEXT_PUBLIC_APP_ENV=local`, `staging`, or `production`. Local and staging
+show a permanent environment ribbon; production does not. The app refuses an
+explicit staging/production environment when the Supabase project does not
+match the guarded Field project.
 
 ## Run
 

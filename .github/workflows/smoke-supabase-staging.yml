@@ -1,0 +1,31 @@
+name: Staging smoke
+
+on:
+  schedule:
+    - cron: "15 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: supabase-staging-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Hosted staging API
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      FIELD_ENVIRONMENT: staging
+      SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Verify staging API and core schema
+        run: node .github/scripts/smoke-supabase.mjs

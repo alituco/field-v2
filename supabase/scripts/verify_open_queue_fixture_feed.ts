@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type FeedRow = {
   id: string;
@@ -38,6 +39,7 @@ type BookingRow = {
 };
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "Open Queue fixture-feed verification");
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");

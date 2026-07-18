@@ -32,6 +32,7 @@ const assignmentFixtureSelect = `
     skill_rating
   )
 `;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export async function GET(request: NextRequest) {
   const context = await requireReferee(request);
@@ -55,7 +56,7 @@ export async function GET(request: NextRequest) {
       context.db
         .from("fixtures")
         .select(assignmentFixtureSelect)
-        .in("status", ["SCHEDULED", "LIVE"])
+        .in("status", ["OPEN", "SCHEDULED", "LIVE", "FINAL", "CANCELLED"])
         .not("away_clan_id", "is", null)
         .order("match_date")
         .order("time_slot"),
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
       context.db
         .from("open_queue_games")
         .select("id,status,venue,starts_at,ends_at,timezone")
-        .in("status", ["FULL", "LIVE"])
+        .in("status", ["OPEN", "FULL", "LIVE", "FINAL", "CANCELLED"])
         .order("starts_at"),
       context.db
         .from("open_queue_referee_assignments")
@@ -140,11 +141,30 @@ export async function POST(request: NextRequest) {
       matchKind?: "CLAN" | "SOLO";
     };
     const fixtureId = requireValue(body.fixtureId, "Missing fixture.");
+    if (!UUID.test(fixtureId)) throw new Error("Choose a valid game.");
+    if (body.matchKind !== "CLAN" && body.matchKind !== "SOLO") {
+      throw new Error("Game type must be clan or solo.");
+    }
     const isSolo = body.matchKind === "SOLO";
     const assignmentTable = isSolo
       ? "open_queue_referee_assignments"
       : "fixture_referee_assignments";
     const idColumn = isSolo ? "game_id" : "fixture_id";
+    const gameTable = isSolo ? "open_queue_games" : "fixtures";
+    const { data: game, error: gameError } = await context.db
+      .from(gameTable)
+      .select("id,status")
+      .eq("id", fixtureId)
+      .maybeSingle();
+    if (gameError) throw gameError;
+    if (!game) throw new Error("Game not found.");
+    if (!isAssignableStatus(String(game.status), isSolo)) {
+      throw new Error(
+        String(game.status) === "LIVE"
+          ? "A live referee assignment is locked."
+          : "Only upcoming games can be assigned.",
+      );
+    }
 
     if (!body.refereeId) {
       const { error } = await context.db
@@ -155,6 +175,16 @@ export async function POST(request: NextRequest) {
       if (error) throw error;
       return NextResponse.json({ ok: true });
     }
+
+    if (!UUID.test(body.refereeId)) throw new Error("Choose a valid referee.");
+    const { data: referee, error: refereeError } = await context.db
+      .from("referee_profiles")
+      .select("profile_id")
+      .eq("profile_id", body.refereeId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (refereeError) throw refereeError;
+    if (!referee) throw new Error("That referee is not active.");
 
     const { error } = await context.db
       .from(assignmentTable)
@@ -268,4 +298,10 @@ function asObject(value: unknown): Record<string, unknown> {
 function requireValue(value: string | undefined, message: string) {
   if (!value) throw new Error(message);
   return value;
+}
+
+function isAssignableStatus(status: string, isSolo: boolean) {
+  return isSolo
+    ? status === "OPEN" || status === "FULL"
+    : status === "OPEN" || status === "SCHEDULED";
 }

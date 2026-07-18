@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type Clan = {
   id: string;
@@ -38,6 +39,7 @@ const VENUES = [
 ];
 
 const supabaseUrl = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(supabaseUrl, "future fixture seed");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const requestedCount = parseRequestedCount(Deno.args[0]);
 const today = dateOnly(new Date());

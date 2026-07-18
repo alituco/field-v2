@@ -1628,6 +1628,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
                   else
                     _PendingHomeKitSummary(
                       assignmentDue: game.isTeamAssignmentDue,
+                      assignmentLeadLabel: game.teamAssignmentLeadLabel,
                     ),
                   const Spacer(),
                   Text(
@@ -1649,9 +1650,13 @@ class _ConfirmedQueueHero extends StatelessWidget {
 }
 
 class _PendingHomeKitSummary extends StatelessWidget {
-  const _PendingHomeKitSummary({required this.assignmentDue});
+  const _PendingHomeKitSummary({
+    required this.assignmentDue,
+    required this.assignmentLeadLabel,
+  });
 
   final bool assignmentDue;
+  final String assignmentLeadLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1698,7 +1703,7 @@ class _PendingHomeKitSummary extends StatelessWidget {
                 Text(
                   assignmentDue
                       ? 'Assigned when match is full'
-                      : 'Assigned 3 hours before kickoff',
+                      : 'Assigned $assignmentLeadLabel',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(

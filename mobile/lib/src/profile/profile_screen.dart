@@ -15,6 +15,10 @@ import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_repository.dart';
+import '../reliability/reliability_repository.dart';
+import '../reliability/reliability_status_card.dart';
+import '../support/contact_support_sheet.dart';
+import '../support/support_repository.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'profile.dart';
@@ -30,6 +34,8 @@ class ProfileScreen extends StatefulWidget {
     this.fixtureRepository,
     this.openQueueRepository,
     this.moderationRepository,
+    this.reliabilityRepository,
+    this.supportRepository,
     this.profileId,
     this.devModeEnabled = false,
     this.onSwitchUser,
@@ -42,6 +48,8 @@ class ProfileScreen extends StatefulWidget {
   final FixtureRepository? fixtureRepository;
   final OpenQueueRepository? openQueueRepository;
   final ModerationRepository? moderationRepository;
+  final ReliabilityRepository? reliabilityRepository;
+  final SupportRepository? supportRepository;
   final String? profileId;
   final bool devModeEnabled;
   final Future<void> Function(String profileId)? onSwitchUser;
@@ -58,6 +66,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final FixtureRepository _fixtureRepository;
   late final OpenQueueRepository _openQueueRepository;
   late final ModerationRepository _moderationRepository;
+  late final SupportRepository _supportRepository;
   PlayerProfile? _latestProfile;
   String? _openingGameId;
   bool _isOpeningClan = false;
@@ -87,6 +96,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         widget.openQueueRepository ?? SupabaseOpenQueueRepository();
     _moderationRepository =
         widget.moderationRepository ?? SupabaseModerationRepository();
+    _supportRepository =
+        widget.supportRepository ?? SupabaseSupportRepository();
     _profileFuture = _loadProfile();
   }
 
@@ -352,6 +363,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _openSupport() async {
+    final receipt = await showContactSupportSheet(
+      context: context,
+      repository: _supportRepository,
+      requestContext: const {'entry_point': 'profile'},
+    );
+    if (!mounted || receipt == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Request sent · reference ${receipt.shortReference}'),
+      ),
+    );
+  }
+
   void _handleViewedProfileAction(_ViewedProfileAction action) {
     switch (action) {
       case _ViewedProfileAction.share:
@@ -471,6 +496,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                 ],
+                if (_isCurrentProfile &&
+                    widget.reliabilityRepository != null) ...[
+                  const SizedBox(height: 16),
+                  ReliabilityStatusCard(
+                    repository: widget.reliabilityRepository!,
+                  ),
+                ],
                 if (_isCurrentProfile || profile.highlights.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _HighlightsCard(
@@ -486,6 +518,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     openingMatchId: _openingGameId,
                     onOpenGame: _openPreviousGame,
                   ),
+                ],
+                if (_isCurrentProfile) ...[
+                  const SizedBox(height: 16),
+                  _ProfileSupportCard(onTap: _openSupport),
                 ],
               ],
             ),
@@ -1768,6 +1804,90 @@ class _ProfileCard extends StatelessWidget {
         ],
       ),
       child: child,
+    );
+  }
+}
+
+class _ProfileSupportCard extends StatelessWidget {
+  const _ProfileSupportCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileCard(
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(24),
+        child: InkWell(
+          key: const ValueKey('profile-support-action'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(24),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            child: Row(
+              children: [
+                _SupportIcon(),
+                SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Help & support',
+                        style: TextStyle(
+                          color: fieldGray900,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: 3),
+                      Text(
+                        'Report an app, booking, payment, match, account, or safety issue',
+                        style: TextStyle(
+                          color: fieldGray500,
+                          fontSize: 12,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: fieldGray400,
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportIcon extends StatelessWidget {
+  const _SupportIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: fieldEmerald50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: fieldEmerald100),
+      ),
+      child: const SizedBox.square(
+        dimension: 44,
+        child: Icon(
+          Icons.support_agent_rounded,
+          color: fieldEmerald700,
+          size: 23,
+        ),
+      ),
     );
   }
 }

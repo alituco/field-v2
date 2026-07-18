@@ -141,6 +141,7 @@ begin
     role,
     player_rating_at_booking,
     amount_paid_fils,
+    base_amount_fils,
     payment_method,
     payment_status
   )
@@ -154,6 +155,7 @@ begin
       else 'ATT'
     end,
     1200,
+    3000,
     3000,
     'MOCK',
     'PAID'
@@ -229,6 +231,7 @@ begin
     role,
     player_rating_at_booking,
     amount_paid_fils,
+    base_amount_fils,
     payment_method,
     payment_status
   )
@@ -242,6 +245,7 @@ begin
       else 'ATT'
     end,
     1200,
+    3000,
     3000,
     'MOCK',
     'PAID'
