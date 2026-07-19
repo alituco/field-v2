@@ -389,6 +389,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return FieldHeaderOverlay(
+      key: const ValueKey('profile-screen'),
       header: FieldPageHeader(
         title: 'Profile',
         showBack: !_isCurrentProfile,
@@ -435,11 +436,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         future: _profileFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
-            return const _ProfileLoadingView();
+            return const _ProfileLoadingView(key: ValueKey('profile-loading'));
           }
 
           if (snapshot.hasError || !snapshot.hasData) {
             return _ProfileErrorView(
+              key: const ValueKey('profile-error'),
               message: userFacingError(
                 snapshot.error,
                 fallback: 'We could not load this profile. Try again.',
@@ -458,6 +460,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: fieldEmerald600,
             onRefresh: _refresh,
             child: ListView(
+              key: const ValueKey('profile-content'),
               physics: const AlwaysScrollableScrollPhysics(),
               padding: fieldHeaderAwarePadding(
                 context,
@@ -2223,7 +2226,7 @@ class _ProfileClanLoadError extends StatelessWidget {
 }
 
 class _ProfileLoadingView extends StatelessWidget {
-  const _ProfileLoadingView();
+  const _ProfileLoadingView({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -2342,7 +2345,11 @@ class _ProfileLoadingView extends StatelessWidget {
 }
 
 class _ProfileErrorView extends StatelessWidget {
-  const _ProfileErrorView({required this.message, required this.onRetry});
+  const _ProfileErrorView({
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
 
   final String message;
   final VoidCallback onRetry;

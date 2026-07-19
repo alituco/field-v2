@@ -70,6 +70,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const ValueKey('profile-screen')), findsOneWidget);
+    expect(find.byKey(const ValueKey('profile-content')), findsOneWidget);
     final supportAction = find.byKey(const ValueKey('profile-support-action'));
     await tester.scrollUntilVisible(
       supportAction,
