@@ -514,7 +514,7 @@ jobs:
           api-level: 34
           target: google_apis
           arch: x86_64
-          emulator-build: 14472402
+          emulator-build: 13610412 # 35.6.11; stable AMD/Linux renderer support
           profile: pixel_2
           cores: 2
           ram-size: 2048M
