@@ -285,6 +285,13 @@ Future<void> _switchToProfile(
       const ValueKey('auth-name-field'),
     ),
   };
+  if (expected == _SignedInDestination.home) {
+    await pumpUntilFound(
+      tester,
+      find.byKey(ValueKey(profileId)),
+      reason: 'AuthGate did not mount Home for the $label account.',
+    );
+  }
   await pumpUntilFound(
     tester,
     destination,
