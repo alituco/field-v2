@@ -527,7 +527,7 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: >-
             -no-window
-            -gpu software
+            -gpu swiftshader_indirect
             -feature -Vulkan
             -no-snapshot
             -noaudio
