@@ -184,8 +184,7 @@ Future<void> tapWhenVisible(
   String? reason,
 }) async {
   await pumpUntilFound(tester, finder, timeout: timeout, reason: reason);
-  await tester.ensureVisible(finder);
-  await tester.pump(const Duration(milliseconds: 200));
+  await _centerInScrollable(tester, finder);
   await tester.tap(finder);
   await tester.pump();
 }
@@ -200,8 +199,7 @@ Future<void> scrollUntilFound(
   var resetToStart = false;
   for (var attempt = 0; attempt <= maxScrolls; attempt++) {
     if (finder.evaluate().isNotEmpty) {
-      await tester.ensureVisible(finder);
-      await tester.pump(const Duration(milliseconds: 200));
+      await _centerInScrollable(tester, finder);
       return;
     }
     final scrollables = find.byType(Scrollable);
@@ -242,6 +240,16 @@ Future<void> scrollUntilFound(
     await tester.pump(const Duration(milliseconds: 220));
   }
   throw TestFailure(reason ?? 'Could not scroll to the expected widget.');
+}
+
+Future<void> _centerInScrollable(WidgetTester tester, Finder finder) async {
+  final element = finder.first.evaluate().first;
+  await Scrollable.ensureVisible(
+    element,
+    alignment: 0.5,
+    duration: const Duration(milliseconds: 120),
+  );
+  await tester.pump(const Duration(milliseconds: 180));
 }
 
 Future<void> tapAfterScroll(
