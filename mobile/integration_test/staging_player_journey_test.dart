@@ -258,7 +258,8 @@ Future<void> _completeOnboarding(WidgetTester tester) async {
     'E2E Onboarding',
   );
   await tester.pump();
-  await tapWhenVisible(tester, find.byKey(const ValueKey('auth-save-name')));
+  await tester.testTextInput.receiveAction(TextInputAction.done);
+  await tester.pump();
   await pumpUntilFound(
     tester,
     find.byKey(const ValueKey('date-of-birth-selector')),
