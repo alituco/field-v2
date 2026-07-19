@@ -98,10 +98,12 @@ test("referee runs the match and admin sees player-created requests", async ({
     name: "Finish match",
     exact: true,
   }).click();
-  await expect(page.getByText(
+  await expect(page.locator(".fixture-status")).toHaveText("Finished", {
+    timeout: 30_000,
+  });
+  await expect(page.locator(".result-locked-note")).toContainText(
     "Final result saved. Admin corrections remain fully audited.",
-    { exact: true },
-  )).toBeVisible();
+  );
 
   await expectAdminApiMarkers(
     page,
