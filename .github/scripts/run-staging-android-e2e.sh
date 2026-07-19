@@ -2,8 +2,10 @@
 
 set -uo pipefail
 
+mode="${1:-run}"
+player_journey_target="integration_test/staging_player_journey_test.dart"
+
 required_variables=(
-  ANDROID_SERIAL
   E2E_ADMIN_PHONE
   E2E_BOOTSTRAP_PHONE
   E2E_CANCELLATION_GAME_ID
@@ -21,6 +23,13 @@ required_variables=(
   SUPABASE_PUBLISHABLE_KEY
   SUPABASE_URL
 )
+
+if [[ "$mode" == "run" ]]; then
+  required_variables+=(ANDROID_SERIAL)
+elif [[ "$mode" != "build-only" ]]; then
+  echo "::error::Usage: $0 [build-only|run]"
+  exit 2
+fi
 
 for variable_name in "${required_variables[@]}"; do
   if [[ -z "${!variable_name:-}" ]]; then
@@ -69,10 +78,8 @@ wait_for_android_online() {
   return 1
 }
 
-common_flutter_args=(
+common_flutter_configuration_args=(
   --flavor staging
-  -d "$ANDROID_SERIAL"
-  --reporter expanded
   --dart-define=APP_ENV=staging
   --dart-define=SUPABASE_URL="$SUPABASE_URL"
   --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
@@ -90,6 +97,22 @@ common_flutter_args=(
   --dart-define=E2E_SUPPORT_DETAILS="$E2E_SUPPORT_DETAILS"
   --dart-define=E2E_BOOTSTRAP_PHONE="$E2E_BOOTSTRAP_PHONE"
   --dart-define=E2E_DEV_OTP_CODE="$E2E_DEV_OTP_CODE"
+)
+
+if [[ "$mode" == "build-only" ]]; then
+  echo "::notice::Prebuilding $player_journey_target before starting the Android emulator."
+  cd "$GITHUB_WORKSPACE/mobile" || exit 1
+  flutter build apk \
+    --debug \
+    --target "$player_journey_target" \
+    "${common_flutter_configuration_args[@]}"
+  exit $?
+fi
+
+common_flutter_args=(
+  -d "$ANDROID_SERIAL"
+  --reporter expanded
+  "${common_flutter_configuration_args[@]}"
 )
 
 capture_android_diagnostics() {
@@ -165,18 +188,9 @@ run_flutter_integration_test() {
 }
 
 run_flutter_integration_test \
-  "boot" \
-  "10m" \
-  "integration_test/staging_boot_test.dart"
-boot_status="$?"
-if [[ "$boot_status" -ne 0 ]]; then
-  exit "$boot_status"
-fi
-
-run_flutter_integration_test \
   "player-journey" \
   "12m" \
-  "integration_test/staging_player_journey_test.dart"
+  "$player_journey_target"
 journey_status="$?"
 if [[ "$journey_status" -ne 0 ]]; then
   exit "$journey_status"

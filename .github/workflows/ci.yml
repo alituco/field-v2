@@ -494,6 +494,10 @@ jobs:
           supabase/scripts/e2e/verify_staging.ts
           --phase=prepared
 
+      - name: Prebuild staging player journey
+        timeout-minutes: 15
+        run: bash .github/scripts/run-staging-android-e2e.sh build-only
+
       - name: Enable KVM for the Android emulator
         shell: bash
         run: |
