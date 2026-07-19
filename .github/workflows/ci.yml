@@ -510,6 +510,7 @@ jobs:
           api-level: 34
           target: google_apis
           arch: x86_64
+          emulator-build: 14472402
           profile: pixel_2
           cores: 2
           ram-size: 2048M
@@ -523,6 +524,9 @@ jobs:
             -no-snapshot
             -noaudio
             -no-boot-anim
+            -no-metrics
+            -feature
+            -Vulkan
             -camera-back none
           script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh"
 
