@@ -115,6 +115,13 @@ capture_android_diagnostics() {
   df -h >"$artifact_dir/$label-host-disk.txt" 2>&1 || true
   ps -eo pid,ppid,%cpu,%mem,rss,stat,comm,args \
     >"$artifact_dir/$label-host-processes.txt" 2>&1 || true
+  timeout 10s sudo dmesg --ctime \
+    >"$artifact_dir/$label-host-kernel.txt" 2>&1 || true
+  for crash_file in /tmp/android-runner/emu-crash-*.db; do
+    if [[ -f "$crash_file" ]]; then
+      cp "$crash_file" "$artifact_dir/$label-$(basename "$crash_file")" || true
+    fi
+  done
   echo "::endgroup::"
 }
 
