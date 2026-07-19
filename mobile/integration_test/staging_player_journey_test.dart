@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:field/main.dart' as app;
 import 'package:field/src/moderation/moderation_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
@@ -19,17 +21,19 @@ void main() {
   testWidgets('hosted staging player journey', (tester) async {
     final config = StagingE2EConfig.fromEnvironment()..validate();
 
+    _logStage('launch app and verify signed-out state');
     await app.main();
     await _ensureSignedOut(tester);
 
+    _logStage('verify fixed OTP login');
     await _verifyFixedOtpLogin(tester, config);
-    await _ensureSignedOut(tester);
-
-    await _signInWithPassword(
+    _logStage('complete onboarding');
+    await _switchToProfile(
       tester,
-      phone: config.onboardingPhone,
-      password: config.password,
+      profileId: config.onboardingProfileId,
+      label: 'onboarding player',
       expected: _SignedInDestination.onboarding,
+      resetOnboardingMetadata: true,
     );
     await _completeOnboarding(tester);
     expect(
@@ -40,21 +44,22 @@ void main() {
       Supabase.instance.client.auth.currentUser?.userMetadata?['date_of_birth'],
       isNotNull,
     );
-    await _ensureSignedOut(tester);
 
     final repository = SupabaseOpenQueueRepository();
-    await _signInWithPassword(
+    _logStage('verify seeded party-target booking');
+    await _switchToProfile(
       tester,
-      phone: config.partyTargetPhone,
-      password: config.password,
+      profileId: config.partyTargetProfileId,
+      label: 'party target',
     );
     expect(
       _currentUserId(),
       config.partyTargetProfileId,
       reason: 'The party-target phone did not open its fixture profile.',
     );
-    final partyTargetBooking = await repository.getMyUpcomingBookingForGame(
-      config.matchGameId,
+    final partyTargetBooking = await _boundedRemoteStep(
+      'load party-target booking',
+      repository.getMyUpcomingBookingForGame(config.matchGameId),
     );
     expect(
       partyTargetBooking,
@@ -62,12 +67,12 @@ void main() {
       reason:
           'The staging fixture must pre-book the party target into the E2E match.',
     );
-    await _ensureSignedOut(tester);
 
-    await _signInWithPassword(
+    _logStage('book the main player and send a party invite');
+    await _switchToProfile(
       tester,
-      phone: config.mainPhone,
-      password: config.password,
+      profileId: config.mainProfileId,
+      label: 'main player',
     );
     final mainId = _currentUserId();
     final matchGame = await _gameById(repository, config.matchGameId);
@@ -79,8 +84,9 @@ void main() {
       game: matchGame,
       role: OpenQueueRole.defender,
     );
-    final matchBooking = await repository.getMyUpcomingBookingForGame(
-      matchGame.id,
+    final matchBooking = await _boundedRemoteStep(
+      'load newly created main-player booking',
+      repository.getMyUpcomingBookingForGame(matchGame.id),
     );
     expect(matchBooking, isNotNull);
 
@@ -95,19 +101,19 @@ void main() {
       reason: 'The new match booking did not appear on Home.',
     );
 
-    await _ensureSignedOut(tester);
-    await _signInWithPassword(
+    _logStage('accept the party invite as its recipient');
+    await _switchToProfile(
       tester,
-      phone: config.partyTargetPhone,
-      password: config.password,
+      profileId: config.partyTargetProfileId,
+      label: 'party target',
     );
     await _acceptPartyInvite(tester, matchGame.id);
 
-    await _ensureSignedOut(tester);
-    await _signInWithPassword(
+    _logStage('submit support and moderation reports');
+    await _switchToProfile(
       tester,
-      phone: config.mainPhone,
-      password: config.password,
+      profileId: config.mainProfileId,
+      label: 'main player',
     );
     expect(_currentUserId(), mainId);
     await _submitSupportRequest(
@@ -121,6 +127,7 @@ void main() {
       details: config.reportDetails,
     );
 
+    _logStage('book and cancel the isolated cancellation game');
     final cancellationGame = await _gameById(
       repository,
       config.cancellationGameId,
@@ -134,19 +141,24 @@ void main() {
       game: cancellationGame,
       role: OpenQueueRole.attacker,
     );
-    final cancellationBooking = await repository.getMyUpcomingBookingForGame(
-      cancellationGame.id,
+    final cancellationBooking = await _boundedRemoteStep(
+      'load cancellation-game booking',
+      repository.getMyUpcomingBookingForGame(cancellationGame.id),
     );
     expect(cancellationBooking, isNotNull);
     await _cancelCurrentBooking(tester);
 
-    final cancelledBooking = await Supabase.instance.client
-        .from('open_queue_bookings')
-        .select(
-          'status, cancelled_at, refund_bps, refund_percent, refund_amount_fils',
-        )
-        .eq('id', cancellationBooking!.id)
-        .single();
+    final cancelledBooking = await _boundedRemoteStep(
+      'verify cancelled booking persistence',
+      Supabase.instance.client
+          .from('open_queue_bookings')
+          .select(
+            'status, cancelled_at, refund_bps, refund_percent, '
+            'refund_amount_fils',
+          )
+          .eq('id', cancellationBooking!.id)
+          .single(),
+    );
     expect(cancelledBooking['status'], 'CANCELLED');
     expect(cancelledBooking['cancelled_at'], isNotNull);
     expect(cancelledBooking['refund_bps'], isNotNull);
@@ -165,11 +177,15 @@ void main() {
     expect(preservedMatch.status, 'FULL');
     expect(preservedMatch.confirmedCount, 12);
     expect(
-      await repository.getMyUpcomingBookingForGame(config.matchGameId),
+      await _boundedRemoteStep(
+        'verify preserved full-match booking',
+        repository.getMyUpcomingBookingForGame(config.matchGameId),
+      ),
       isNotNull,
       reason:
           'The full E2E match must remain intact for the referee/admin phase.',
     );
+    _logStage('player journey complete');
   }, timeout: const Timeout(Duration(minutes: 8)));
 }
 
@@ -225,17 +241,49 @@ Future<void> _verifyFixedOtpLogin(
   );
 }
 
-Future<void> _signInWithPassword(
+Future<void> _switchToProfile(
   WidgetTester tester, {
-  required String phone,
-  required String password,
+  required String profileId,
+  required String label,
   _SignedInDestination expected = _SignedInDestination.home,
+  bool resetOnboardingMetadata = false,
 }) async {
-  final response = await Supabase.instance.client.auth.signInWithPassword(
-    phone: phone,
-    password: password,
+  final client = Supabase.instance.client;
+  final currentSession = client.auth.currentSession;
+  if (currentSession == null) {
+    throw TestFailure('Cannot switch to $label without a staging session.');
+  }
+
+  final response = await _boundedRemoteStep(
+    'request session for $label',
+    client.functions.invoke(
+      'dev-switch-user',
+      headers: {'Authorization': 'Bearer ${currentSession.accessToken}'},
+      body: {
+        'profile_id': profileId,
+        if (resetOnboardingMetadata) 'reset_onboarding_metadata': true,
+      },
+    ),
   );
-  expect(response.session, isNotNull, reason: 'Could not sign in $phone.');
+  final data = response.data;
+  if (data is! Map) {
+    throw TestFailure('The staging switch for $label returned invalid data.');
+  }
+  final accessToken = data['access_token'];
+  final refreshToken = data['refresh_token'];
+  if (accessToken is! String || refreshToken is! String) {
+    throw TestFailure('The staging switch for $label returned no session.');
+  }
+
+  await _boundedRemoteStep(
+    'activate session for $label',
+    client.auth.setSession(refreshToken, accessToken: accessToken),
+  );
+  expect(
+    client.auth.currentUser?.id,
+    profileId,
+    reason: 'The staging switch did not activate the $label account.',
+  );
 
   final destination = switch (expected) {
     _SignedInDestination.home => find.byKey(const ValueKey('home-screen')),
@@ -247,9 +295,28 @@ Future<void> _signInWithPassword(
     tester,
     destination,
     reason: expected == _SignedInDestination.home
-        ? '$phone did not reach Home.'
-        : '$phone was not reset to the start of onboarding.',
+        ? 'The $label account did not reach Home.'
+        : 'The $label account was not reset to the start of onboarding.',
   );
+}
+
+Future<T> _boundedRemoteStep<T>(
+  String label,
+  Future<T> operation, {
+  Duration timeout = const Duration(seconds: 45),
+}) async {
+  debugPrint('[FIELD_E2E] START $label');
+  try {
+    final result = await operation.timeout(timeout);
+    debugPrint('[FIELD_E2E] PASS $label');
+    return result;
+  } on TimeoutException {
+    throw TestFailure('$label timed out after ${timeout.inSeconds} seconds.');
+  }
+}
+
+void _logStage(String label) {
+  debugPrint('[FIELD_E2E] STAGE $label');
 }
 
 Future<void> _completeOnboarding(WidgetTester tester) async {
@@ -286,7 +353,10 @@ Future<OpenQueueGame> _gameById(
   SupabaseOpenQueueRepository repository,
   String gameId,
 ) async {
-  final games = await repository.listGames();
+  final games = await _boundedRemoteStep(
+    'load solo-game feed for $gameId',
+    repository.listGames(),
+  );
   try {
     return games.firstWhere((game) => game.id == gameId);
   } on StateError {

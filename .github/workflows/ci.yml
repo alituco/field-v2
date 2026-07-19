@@ -474,9 +474,11 @@ jobs:
           test -s "$E2E_MANIFEST_PATH"
           {
             echo "E2E_MAIN_PHONE=$(jq -r '.accounts.main.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_MAIN_PROFILE_ID=$(jq -r '.accounts.main.profileId' "$E2E_MANIFEST_PATH")"
             echo "E2E_PARTY_TARGET_PHONE=$(jq -r '.accounts.partyTarget.phone' "$E2E_MANIFEST_PATH")"
             echo "E2E_PARTY_TARGET_PROFILE_ID=$(jq -r '.accounts.partyTarget.profileId' "$E2E_MANIFEST_PATH")"
             echo "E2E_ADMIN_PHONE=$(jq -r '.accounts.admin.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_ONBOARDING_PROFILE_ID=$(jq -r '.accounts.onboarding.profileId' "$E2E_MANIFEST_PATH")"
             echo "E2E_MATCH_GAME_ID=$(jq -r '.games.match.id' "$E2E_MANIFEST_PATH")"
             echo "E2E_CANCELLATION_GAME_ID=$(jq -r '.games.cancellation.id' "$E2E_MANIFEST_PATH")"
             echo "E2E_REPORT_DETAILS=$(jq -r '.markers.reportDetails' "$E2E_MANIFEST_PATH")"
