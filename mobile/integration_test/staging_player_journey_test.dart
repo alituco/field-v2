@@ -511,6 +511,23 @@ Future<void> _submitSupportRequest(
     find.byKey(const ValueKey('field-bottom-nav-item-4')),
   );
 
+  await pumpUntilFound(
+    tester,
+    find.byKey(const ValueKey('profile-screen')),
+    reason: 'The Profile tab did not become active.',
+  );
+  final profileContent = find.byKey(const ValueKey('profile-content'));
+  final profileError = find.byKey(const ValueKey('profile-error'));
+  await pumpUntilAny(
+    tester,
+    [profileContent, profileError],
+    timeout: const Duration(seconds: 45),
+    reason: 'Profile did not finish loading.',
+  );
+  if (profileError.evaluate().isNotEmpty) {
+    throw TestFailure('Profile returned its load-error state.');
+  }
+
   await scrollUntilFound(
     tester,
     find.byKey(const ValueKey('profile-support-action')),
