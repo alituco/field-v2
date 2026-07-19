@@ -595,7 +595,12 @@ Future<void> _tapEnabledFilledButton(
   Duration timeout = const Duration(seconds: 35),
   String? reason,
 }) async {
-  await pumpUntilFound(tester, finder, timeout: timeout, reason: reason);
+  await scrollUntilFound(
+    tester,
+    finder,
+    maxScrolls: 60,
+    reason: reason,
+  );
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     final button = tester.widget<FilledButton>(finder);

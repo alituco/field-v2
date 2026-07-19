@@ -205,7 +205,30 @@ Future<void> scrollUntilFound(
     }
     final scrollables = find.byType(Scrollable);
     if (scrollables.evaluate().isEmpty) break;
-    await tester.drag(scrollables.last, Offset(0, -delta));
+
+    Finder? scrollTarget;
+    final candidateCount = scrollables.evaluate().length;
+    for (var index = candidateCount - 1; index >= 0; index--) {
+      final candidate = scrollables.at(index);
+      final state = tester.state<ScrollableState>(candidate);
+      final position = state.position;
+      if (position.axis == Axis.vertical &&
+          position.pixels < position.maxScrollExtent - 0.5) {
+        scrollTarget = candidate;
+        break;
+      }
+    }
+    if (scrollTarget == null) {
+      // Lists can still be loading their first page. Pump without dragging a
+      // zero-range PageView/Scrollable, then inspect the layout again.
+      await tester.pump(const Duration(milliseconds: 220));
+      continue;
+    }
+    await tester.drag(
+      scrollTarget,
+      Offset(0, -delta),
+      warnIfMissed: false,
+    );
     await tester.pump(const Duration(milliseconds: 220));
   }
   throw TestFailure(reason ?? 'Could not scroll to the expected widget.');
