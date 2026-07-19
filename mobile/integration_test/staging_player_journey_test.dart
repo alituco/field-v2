@@ -114,7 +114,9 @@ void main() {
       label: 'main player',
     );
     expect(_currentUserId(), mainId);
+    _logStage('submit support request from Profile');
     await _submitSupportRequest(tester, details: config.supportDetails);
+    _logStage('submit moderation report for another player');
     await _submitModerationReport(
       tester,
       subjectId: config.partyTargetProfileId,
@@ -509,10 +511,10 @@ Future<void> _submitSupportRequest(
     find.byKey(const ValueKey('field-bottom-nav-item-4')),
   );
 
-  await pumpUntilFound(
+  await scrollUntilFound(
     tester,
     find.byKey(const ValueKey('profile-support-action')),
-    timeout: const Duration(seconds: 35),
+    maxScrolls: 60,
     reason: 'Profile did not expose Help & support.',
   );
   await tapAfterScroll(
