@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { createClient } from "npm:@supabase/supabase-js@2.86.0";
 import { isExactFieldStagingSupabaseUrl } from "../_shared/staging_guard.ts";
 
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
