@@ -47,6 +47,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final ReliabilityRepository _reliabilityRepository =
       SupabaseReliabilityRepository();
   int _selectedIndex = 0;
+  int _homeActivationTick = 0;
   int _clansActivationTick = 0;
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
@@ -105,6 +106,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _selectTab(int index) {
     setState(() {
+      if (index == 0) {
+        _homeActivationTick++;
+      }
       if (index == 2) {
         _clansActivationTick++;
       }
@@ -142,6 +146,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final pages = [
       DashboardHome(
+        activationTick: _homeActivationTick,
         profileRepository: _profileRepository,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,

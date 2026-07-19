@@ -111,6 +111,27 @@ void main() {
     },
   );
 
+  testWidgets('reactivating Home reloads a newly created solo booking', (
+    tester,
+  ) async {
+    final game = _game(daysFromToday: 2, confirmedCount: 7);
+    final repository = _FakeOpenQueueRepository(null);
+
+    await _pumpHome(tester, openQueueRepository: repository, activationTick: 0);
+    expect(
+      find.byKey(ValueKey('home-solo-booking-booking-${game.id}')),
+      findsNothing,
+    );
+
+    repository.booking = _bookingFor(game);
+    await _pumpHome(tester, openQueueRepository: repository, activationTick: 1);
+
+    expect(
+      find.byKey(ValueKey('home-solo-booking-booking-${game.id}')),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('confirmed home booking never guesses a missing kit color', (
     tester,
   ) async {
@@ -915,6 +936,7 @@ Future<void> _pumpDashboard(
 
 Future<void> _pumpHome(
   WidgetTester tester, {
+  int activationTick = 0,
   PlayerProfile profile = _defaultProfile,
   OpenQueueBooking? booking,
   List<OpenQueueGame> soloGames = const [],
@@ -931,6 +953,7 @@ Future<void> _pumpHome(
     MaterialApp(
       home: Scaffold(
         body: DashboardHome(
+          activationTick: activationTick,
           profileRepository: _FakeProfileRepository(profile),
           clanRepository: _FakeClanRepository(
             clans: clans,
@@ -1289,7 +1312,7 @@ class _FakeOpenQueueRepository
         OpenQueueRepository,
         OpenQueuePartyRepository,
         OpenQueueBookingLookupRepository {
-  const _FakeOpenQueueRepository(
+  _FakeOpenQueueRepository(
     this.booking, {
     this.fixtureGames = const [],
     this.matchDetails = const {},
@@ -1297,7 +1320,7 @@ class _FakeOpenQueueRepository
     this.additionalBookings = const [],
   });
 
-  final OpenQueueBooking? booking;
+  OpenQueueBooking? booking;
   final List<OpenQueueGame> fixtureGames;
   final Map<String, OpenQueueMatchDetail> matchDetails;
   final OpenQueuePartyContext? partyContext;

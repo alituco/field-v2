@@ -26,6 +26,7 @@ import '../profile/profile_repository.dart';
 class DashboardHome extends StatefulWidget {
   const DashboardHome({
     super.key,
+    this.activationTick = 0,
     required this.profileRepository,
     required this.clanRepository,
     required this.fixtureRepository,
@@ -38,6 +39,7 @@ class DashboardHome extends StatefulWidget {
     required this.onNavigateTab,
   });
 
+  final int activationTick;
   final ProfileRepository profileRepository;
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
@@ -80,6 +82,14 @@ class _DashboardHomeState extends State<DashboardHome> {
     super.initState();
     _watchPartyNotifications();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activationTick != widget.activationTick) {
+      unawaited(_load());
+    }
   }
 
   @override
