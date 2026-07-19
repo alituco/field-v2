@@ -550,7 +550,7 @@ Future<void> _submitSupportRequest(
     find.byKey(const ValueKey('support-details')),
     details,
   );
-  tester.testTextInput.hide();
+  FocusManager.instance.primaryFocus?.unfocus();
   await tester.pump();
   await _tapEnabledFilledButton(
     tester,
@@ -614,7 +614,7 @@ Future<void> _submitModerationReport(
     find.byKey(const ValueKey('moderation-report-details')),
     details,
   );
-  tester.testTextInput.hide();
+  FocusManager.instance.primaryFocus?.unfocus();
   await tester.pump();
   await _tapEnabledFilledButton(
     tester,
