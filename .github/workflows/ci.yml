@@ -518,7 +518,6 @@ jobs:
           # neither required nor useful here.
           target: aosp_atd
           arch: x86_64
-          emulator-build: 13610412 # 35.6.11; stable AMD/Linux renderer support
           profile: pixel_2
           cores: 2
           ram-size: 2048M
@@ -528,7 +527,8 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: >-
             -no-window
-            -gpu off
+            -gpu software
+            -feature -Vulkan
             -no-snapshot
             -noaudio
             -no-boot-anim
