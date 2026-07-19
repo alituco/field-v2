@@ -5,6 +5,11 @@ set -uo pipefail
 mode="${1:-run}"
 player_journey_target="integration_test/staging_player_journey_test.dart"
 
+# Android integration tests run beside an emulator on a 16 GB GitHub runner.
+# Keep compilation in one short-lived Gradle process instead of leaving large
+# Gradle and Kotlin daemons resident while the app journey is running.
+export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.daemon=false"
+
 required_variables=(
   E2E_ADMIN_PHONE
   E2E_BOOTSTRAP_PHONE
@@ -138,11 +143,31 @@ capture_android_diagnostics() {
   df -h >"$artifact_dir/$label-host-disk.txt" 2>&1 || true
   ps -eo pid,ppid,%cpu,%mem,rss,stat,comm,args \
     >"$artifact_dir/$label-host-processes.txt" 2>&1 || true
+  if [[ -d /sys/fs/cgroup ]]; then
+    {
+      for cgroup_file in \
+        /sys/fs/cgroup/memory.current \
+        /sys/fs/cgroup/memory.max \
+        /sys/fs/cgroup/memory.events \
+        /sys/fs/cgroup/memory.events.local \
+        /sys/fs/cgroup/memory.stat; do
+        if [[ -r "$cgroup_file" ]]; then
+          echo "### $cgroup_file"
+          cat "$cgroup_file"
+        fi
+      done
+    } >"$artifact_dir/$label-host-cgroup-memory.txt" 2>&1 || true
+  fi
   timeout 10s sudo dmesg --ctime \
     >"$artifact_dir/$label-host-kernel.txt" 2>&1 || true
-  for crash_file in /tmp/android-runner/emu-crash-*.db; do
-    if [[ -f "$crash_file" ]]; then
-      cp "$crash_file" "$artifact_dir/$label-$(basename "$crash_file")" || true
+  for crash_path in /tmp/android-runner/emu-crash-*.db; do
+    if [[ -d "$crash_path" ]]; then
+      tar -czf \
+        "$artifact_dir/$label-$(basename "$crash_path").tar.gz" \
+        -C "$(dirname "$crash_path")" \
+        "$(basename "$crash_path")" || true
+    elif [[ -f "$crash_path" ]]; then
+      cp "$crash_path" "$artifact_dir/$label-$(basename "$crash_path")" || true
     fi
   done
   echo "::endgroup::"
