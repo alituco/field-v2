@@ -6,8 +6,6 @@ import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
-import 'package:field/src/support/support.dart';
-import 'package:field/src/support/support_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -116,11 +114,7 @@ void main() {
       label: 'main player',
     );
     expect(_currentUserId(), mainId);
-    await _submitSupportRequest(
-      tester,
-      details: config.supportDetails,
-      runId: config.runId,
-    );
+    await _submitSupportRequest(tester, details: config.supportDetails);
     await _submitModerationReport(
       tester,
       subjectId: config.partyTargetProfileId,
@@ -502,23 +496,11 @@ Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
 Future<void> _submitSupportRequest(
   WidgetTester tester, {
   required String details,
-  required String runId,
 }) async {
-  final routeFuture =
-      Navigator.of(
-        tester.element(find.byKey(const ValueKey('home-screen'))),
-      ).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => ProfileScreen(
-            profileRepository: SupabaseProfileRepository(),
-            supportRepository: _TaggedSupportRepository(
-              delegate: SupabaseSupportRepository(),
-              runId: runId,
-            ),
-          ),
-        ),
-      );
-  await tester.pump();
+  await tapWhenVisible(
+    tester,
+    find.byKey(const ValueKey('field-bottom-nav-item-4')),
+  );
 
   await pumpUntilFound(
     tester,
@@ -555,9 +537,10 @@ Future<void> _submitSupportRequest(
   );
   await pumpUntilFound(tester, find.textContaining('Request sent · reference'));
 
-  Navigator.of(tester.element(find.byType(ProfileScreen).last)).pop();
-  await tester.pump();
-  await routeFuture;
+  await tapWhenVisible(
+    tester,
+    find.byKey(const ValueKey('field-bottom-nav-item-0')),
+  );
   await pumpUntilFound(tester, find.byKey(const ValueKey('home-screen')));
 }
 
@@ -571,10 +554,12 @@ Future<void> _submitModerationReport(
         tester.element(find.byKey(const ValueKey('home-screen'))),
       ).push<void>(
         MaterialPageRoute<void>(
-          builder: (_) => ProfileScreen(
-            profileId: subjectId,
-            profileRepository: SupabaseProfileRepository(),
-            moderationRepository: SupabaseModerationRepository(),
+          builder: (_) => Scaffold(
+            body: ProfileScreen(
+              profileId: subjectId,
+              profileRepository: SupabaseProfileRepository(),
+              moderationRepository: SupabaseModerationRepository(),
+            ),
           ),
         ),
       );
@@ -679,23 +664,4 @@ String _currentUserId() {
     throw TestFailure('The staging session has no authenticated user.');
   }
   return id;
-}
-
-class _TaggedSupportRepository implements SupportRepository {
-  const _TaggedSupportRepository({required this.delegate, required this.runId});
-
-  final SupportRepository delegate;
-  final String runId;
-
-  @override
-  Future<SupportRequestReceipt> submitRequest(SupportRequestDraft request) {
-    return delegate.submitRequest(
-      SupportRequestDraft(
-        category: request.category,
-        details: request.details,
-        clientRequestId: request.clientRequestId,
-        context: {...request.context, 'field_e2e': true, 'e2e_run_id': runId},
-      ),
-    );
-  }
 }
