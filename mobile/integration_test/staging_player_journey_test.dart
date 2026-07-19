@@ -371,25 +371,15 @@ Future<void> _createAndSendPartyInvite(
   WidgetTester tester, {
   required String inviteeId,
 }) async {
-  await scrollUntilFound(
-    tester,
-    find.byKey(const ValueKey('create-open-queue-party')),
-    maxScrolls: 60,
-    reason: 'Party controls did not finish loading for the new booking.',
-  );
-  await tapAfterScroll(
+  await _tapEnabledFilledButton(
     tester,
     find.byKey(const ValueKey('create-open-queue-party')),
     reason: 'A newly booked player could not create a party.',
   );
-  await pumpUntilFound(
+  await _tapEnabledFilledButton(
     tester,
     find.byKey(const ValueKey('invite-open-queue-party-player')),
     reason: 'The party did not expose its invite action.',
-  );
-  await tapWhenVisible(
-    tester,
-    find.byKey(const ValueKey('invite-open-queue-party-player')),
   );
   final inviteAction = find.byKey(ValueKey('invite-party-player-$inviteeId'));
   await scrollUntilFound(
