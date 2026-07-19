@@ -197,6 +197,7 @@ Future<void> scrollUntilFound(
   double delta = 420,
   String? reason,
 }) async {
+  var resetToStart = false;
   for (var attempt = 0; attempt <= maxScrolls; attempt++) {
     if (finder.evaluate().isNotEmpty) {
       await tester.ensureVisible(finder);
@@ -213,7 +214,8 @@ Future<void> scrollUntilFound(
       final state = tester.state<ScrollableState>(candidate);
       final position = state.position;
       if (position.axis == Axis.vertical &&
-          position.pixels < position.maxScrollExtent - 0.5) {
+          (position.pixels > position.minScrollExtent + 0.5 ||
+              position.pixels < position.maxScrollExtent - 0.5)) {
         scrollTarget = candidate;
         break;
       }
@@ -224,11 +226,19 @@ Future<void> scrollUntilFound(
       await tester.pump(const Duration(milliseconds: 220));
       continue;
     }
-    await tester.drag(
-      scrollTarget,
-      Offset(0, -delta),
-      warnIfMissed: false,
-    );
+    final position = tester.state<ScrollableState>(scrollTarget).position;
+    if (!resetToStart && position.pixels > position.minScrollExtent + 0.5) {
+      // A prior action may have left a lazy ListView below a target that is
+      // no longer built. Start one deterministic top-to-bottom scan so this
+      // helper can find content in either direction.
+      position.jumpTo(position.minScrollExtent);
+      resetToStart = true;
+      await tester.pump(const Duration(milliseconds: 220));
+      continue;
+    }
+    resetToStart = true;
+    if (position.pixels >= position.maxScrollExtent - 0.5) break;
+    await tester.drag(scrollTarget, Offset(0, -delta), warnIfMissed: false);
     await tester.pump(const Duration(milliseconds: 220));
   }
   throw TestFailure(reason ?? 'Could not scroll to the expected widget.');

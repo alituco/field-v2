@@ -359,6 +359,11 @@ Future<void> _bookGameThroughUi(
     find.byKey(const ValueKey('booking-player-status-card')),
     reason: 'Booking did not reach its confirmation details.',
   );
+  await scrollUntilFound(
+    tester,
+    find.text(game.venue),
+    reason: 'The booking details did not show the booked venue.',
+  );
   expect(find.text(game.venue), findsWidgets);
 }
 
@@ -366,10 +371,10 @@ Future<void> _createAndSendPartyInvite(
   WidgetTester tester, {
   required String inviteeId,
 }) async {
-  await pumpUntilFound(
+  await scrollUntilFound(
     tester,
     find.byKey(const ValueKey('create-open-queue-party')),
-    timeout: const Duration(seconds: 35),
+    maxScrolls: 60,
     reason: 'Party controls did not finish loading for the new booking.',
   );
   await tapAfterScroll(
@@ -595,12 +600,7 @@ Future<void> _tapEnabledFilledButton(
   Duration timeout = const Duration(seconds: 35),
   String? reason,
 }) async {
-  await scrollUntilFound(
-    tester,
-    finder,
-    maxScrolls: 60,
-    reason: reason,
-  );
+  await scrollUntilFound(tester, finder, maxScrolls: 60, reason: reason);
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
     final button = tester.widget<FilledButton>(finder);
