@@ -320,8 +320,10 @@ Future<void> _bookGameThroughUi(
     tester,
     find.byKey(ValueKey('open-queue-main-role-$roleSlug')),
   );
-  await tester.tap(find.byKey(ValueKey('open-queue-main-role-$roleSlug')));
-  await tester.pump();
+  await tapWhenVisible(
+    tester,
+    find.byKey(ValueKey('open-queue-main-role-$roleSlug')),
+  );
   await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('open-queue-see-matching-games')),
