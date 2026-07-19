@@ -512,7 +512,11 @@ jobs:
         uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: 34
-          target: google_apis
+          # ATD images are purpose-built for headless automated tests and use
+          # substantially fewer runner resources than the full Google APIs
+          # image. This journey only talks to Supabase, so Play services are
+          # neither required nor useful here.
+          target: aosp_atd
           arch: x86_64
           emulator-build: 13610412 # 35.6.11; stable AMD/Linux renderer support
           profile: pixel_2
@@ -524,13 +528,11 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: >-
             -no-window
-            -gpu swiftshader_indirect
+            -gpu off
             -no-snapshot
             -noaudio
             -no-boot-anim
             -no-metrics
-            -feature
-            -Vulkan
             -camera-back none
           script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh"
 
