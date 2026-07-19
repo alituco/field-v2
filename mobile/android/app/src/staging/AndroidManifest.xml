@@ -1,0 +1,13 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!--
+          GitHub's headless Android emulator uses a software OpenGL renderer.
+          Keep the staging-only E2E build on Flutter's stable Skia/OpenGL path
+          so Impeller cannot exercise the emulator's Vulkan/ANGLE backends.
+          Production builds continue to use Flutter's default renderer.
+        -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
+    </application>
+</manifest>
