@@ -4,10 +4,12 @@ import 'package:flutter_test/flutter_test.dart';
 class StagingE2EConfig {
   const StagingE2EConfig({
     required this.mainPhone,
+    required this.mainProfileId,
     required this.partyTargetPhone,
     required this.partyTargetProfileId,
     required this.adminPhone,
     required this.onboardingPhone,
+    required this.onboardingProfileId,
     required this.password,
     required this.runId,
     required this.matchGameId,
@@ -20,12 +22,16 @@ class StagingE2EConfig {
 
   factory StagingE2EConfig.fromEnvironment() {
     const mainPhone = String.fromEnvironment('E2E_MAIN_PHONE');
+    const mainProfileId = String.fromEnvironment('E2E_MAIN_PROFILE_ID');
     const partyTargetPhone = String.fromEnvironment('E2E_PARTY_TARGET_PHONE');
     const partyTargetProfileId = String.fromEnvironment(
       'E2E_PARTY_TARGET_PROFILE_ID',
     );
     const adminPhone = String.fromEnvironment('E2E_ADMIN_PHONE');
     const onboardingPhone = String.fromEnvironment('E2E_ONBOARDING_PHONE');
+    const onboardingProfileId = String.fromEnvironment(
+      'E2E_ONBOARDING_PROFILE_ID',
+    );
     const password = String.fromEnvironment('E2E_TEST_PASSWORD');
     const runId = String.fromEnvironment('E2E_RUN_ID');
     const matchGameId = String.fromEnvironment('E2E_MATCH_GAME_ID');
@@ -45,10 +51,12 @@ class StagingE2EConfig {
 
     return StagingE2EConfig(
       mainPhone: mainPhone,
+      mainProfileId: mainProfileId,
       partyTargetPhone: partyTargetPhone,
       partyTargetProfileId: partyTargetProfileId,
       adminPhone: adminPhone,
       onboardingPhone: onboardingPhone,
+      onboardingProfileId: onboardingProfileId,
       password: password,
       runId: runId,
       matchGameId: matchGameId,
@@ -61,10 +69,12 @@ class StagingE2EConfig {
   }
 
   final String mainPhone;
+  final String mainProfileId;
   final String partyTargetPhone;
   final String partyTargetProfileId;
   final String adminPhone;
   final String onboardingPhone;
+  final String onboardingProfileId;
   final String password;
   final String runId;
   final String matchGameId;
@@ -77,10 +87,12 @@ class StagingE2EConfig {
   void validate() {
     final missing = <String>[
       if (mainPhone.trim().isEmpty) 'E2E_MAIN_PHONE',
+      if (mainProfileId.trim().isEmpty) 'E2E_MAIN_PROFILE_ID',
       if (partyTargetPhone.trim().isEmpty) 'E2E_PARTY_TARGET_PHONE',
       if (partyTargetProfileId.trim().isEmpty) 'E2E_PARTY_TARGET_PROFILE_ID',
       if (adminPhone.trim().isEmpty) 'E2E_ADMIN_PHONE',
       if (onboardingPhone.trim().isEmpty) 'E2E_ONBOARDING_PHONE',
+      if (onboardingProfileId.trim().isEmpty) 'E2E_ONBOARDING_PROFILE_ID',
       if (password.isEmpty) 'E2E_TEST_PASSWORD',
       if (runId.trim().isEmpty) 'E2E_RUN_ID',
       if (matchGameId.trim().isEmpty) 'E2E_MATCH_GAME_ID',

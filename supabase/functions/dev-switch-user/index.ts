@@ -12,6 +12,7 @@ const corsHeaders = {
 
 type JsonBody = {
   profile_id?: unknown;
+  reset_onboarding_metadata?: unknown;
 };
 
 Deno.serve(async (request) => {
@@ -98,13 +99,27 @@ Deno.serve(async (request) => {
     }
 
     const target = targetData.user;
-    const userMetadata = {
-      ...target.user_metadata,
-      display_name: profile.display_name,
-      name: profile.display_name,
-      date_of_birth: profile.date_of_birth ??
-        target.user_metadata?.date_of_birth ?? null,
-    };
+    const resetOnboardingMetadata = body.reset_onboarding_metadata === true;
+    if (resetOnboardingMetadata && profile.date_of_birth !== null) {
+      return json(
+        { error: "Only an incomplete onboarding account can be reset." },
+        400,
+      );
+    }
+    const userMetadata = resetOnboardingMetadata
+      ? {
+        ...target.user_metadata,
+        display_name: null,
+        name: null,
+        date_of_birth: null,
+      }
+      : {
+        ...target.user_metadata,
+        display_name: profile.display_name,
+        name: profile.display_name,
+        date_of_birth: profile.date_of_birth ??
+          target.user_metadata?.date_of_birth ?? null,
+      };
     const session = target.email
       ? await createEmailSession({
         admin,
