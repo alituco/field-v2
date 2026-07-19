@@ -256,12 +256,15 @@ Future<void> scrollUntilFound(
 
 Future<void> _centerInScrollable(WidgetTester tester, Finder finder) async {
   final element = finder.first.evaluate().first;
+  // Integration tests drive Flutter frames manually. Awaiting an animated
+  // ensureVisible before pumping a frame deadlocks whenever scrolling is
+  // actually required, so center the target synchronously instead.
   await Scrollable.ensureVisible(
     element,
     alignment: 0.5,
-    duration: const Duration(milliseconds: 120),
+    duration: Duration.zero,
   );
-  await tester.pump(const Duration(milliseconds: 180));
+  await tester.pump();
 }
 
 Future<void> tapAfterScroll(
