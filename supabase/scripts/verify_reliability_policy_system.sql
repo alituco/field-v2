@@ -315,12 +315,20 @@ begin
     raise exception 'Referee check-in still rejects early arrivals.';
   end if;
   if position('checked_side_count_to_use >= required_count_to_use' in function_text) = 0
+    or position('required_count_to_use := 10;' in function_text) = 0
     or position('planned_roster_member' in function_text) = 0
     or position('profile_has_active_play_restriction' in function_text) = 0
     or position('''provisional'', true' in function_text) = 0
     or position('settle_reliability_deposit' in function_text) > 0
   then
     raise exception 'Referee check-in lacks provisional safety, eligibility, or the side cap.';
+  end if;
+
+  select pg_get_functiondef(
+    'public.get_match_reliability_context(text,uuid)'::regprocedure
+  ) into function_text;
+  if position(') < 10' in function_text) = 0 then
+    raise exception 'Clan check-in eligibility does not allow the ten-player matchday squad.';
   end if;
 
   select pg_get_functiondef(
