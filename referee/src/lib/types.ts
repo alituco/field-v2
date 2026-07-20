@@ -178,7 +178,7 @@ export type ReliabilityAttendancePlayer = {
   displayName: string;
   /** Planned by the team and therefore individually liable for a no-show. */
   expectedForMatch: boolean;
-  /** Server-authoritative eligibility, including the seven-player side cap. */
+  /** Server-authoritative eligibility, including the ten-player clan squad cap. */
   checkInEligible: boolean;
   teamId: string | null;
   teamName: string | null;
