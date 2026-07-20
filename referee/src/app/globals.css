@@ -3338,6 +3338,27 @@ button:disabled {
   overflow: hidden;
 }
 
+.admin-games-browser-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--admin-border);
+  padding: 16px;
+  background: #fff;
+}
+
+.admin-games-browser-head h2 {
+  margin-top: 3px;
+  color: var(--admin-navy);
+  font-size: 17px;
+  letter-spacing: -0.025em;
+}
+
+.admin-games-browser-head .admin-primary-button {
+  flex: 0 0 auto;
+}
+
 .admin-game-view-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3400,10 +3421,17 @@ button:disabled {
 .admin-table-toolbar,
 .admin-report-filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) auto auto;
   gap: 9px;
   border-bottom: 1px solid var(--admin-border);
   padding: 16px;
+}
+
+.admin-table-toolbar {
+  grid-template-columns: minmax(220px, 1fr) repeat(3, auto);
+}
+
+.admin-report-filters {
+  grid-template-columns: minmax(220px, 1fr) auto;
 }
 
 .admin-search-field {
@@ -4019,6 +4047,21 @@ button:disabled {
 
 .admin-detail-actions button {
   flex: 1;
+}
+
+.admin-remove-empty-game {
+  width: 100%;
+  margin-top: 8px;
+  padding: 7px;
+  color: #b91c1c;
+  font-size: 8px;
+  font-weight: 850;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.admin-remove-empty-game:disabled {
+  opacity: 0.45;
 }
 
 .admin-primary-button,
@@ -4669,6 +4712,12 @@ button:disabled {
   text-align: right;
 }
 
+.admin-solo-game-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .admin-score-inputs {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
@@ -5248,6 +5297,16 @@ button:disabled {
     display: block;
   }
 
+  .admin-games-browser-head {
+    align-items: flex-start;
+    padding: 14px;
+  }
+
+  .admin-games-browser-head .admin-primary-button {
+    min-height: 36px;
+    padding-inline: 10px;
+  }
+
   .admin-game-detail,
   .admin-report-detail {
     margin-top: 13px;
@@ -5260,6 +5319,11 @@ button:disabled {
 
   .admin-table-toolbar .admin-search-field {
     grid-column: 1 / -1;
+  }
+
+  .admin-solo-game-fields {
+    grid-template-columns: 1fr;
+    gap: 0;
   }
 
   .admin-game-table-wrap,

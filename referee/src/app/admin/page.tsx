@@ -186,6 +186,11 @@ type GameDialog =
   | { kind: "score"; fixture: RefereeFixture }
   | null;
 
+type SoloGameDialog =
+  | { kind: "create" }
+  | { kind: "remove"; fixture: RefereeFixture }
+  | null;
+
 type ReportDialog =
   | { report: AdminReport; action: "RESOLVE" | "DISMISS" }
   | null;
@@ -240,6 +245,7 @@ export default function AdminPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [gameDialog, setGameDialog] = useState<GameDialog>(null);
+  const [soloGameDialog, setSoloGameDialog] = useState<SoloGameDialog>(null);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
   const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
@@ -476,6 +482,49 @@ export default function AdminPage() {
       await Promise.all([loadGames(), loadOverview()]);
     } catch (actionError) {
       setError(errorMessage(actionError, "Game action failed."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function createSoloGame(input: {
+    venue: string;
+    matchDate: string;
+    priceBhd: string;
+    ageLabel: string;
+  }) {
+    setSubmitting("create-solo-game");
+    setError(null);
+    try {
+      await fetchJson("/api/referee/admin/solo-games", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(input),
+      });
+      setSoloGameDialog(null);
+      setNotice("Solo game created and opened for bookings.");
+      await Promise.all([loadGames(), loadOverview()]);
+    } catch (actionError) {
+      setError(errorMessage(actionError, "Could not create the solo game."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function removeSoloGame(fixture: RefereeFixture, reason: string) {
+    setSubmitting("remove-solo-game");
+    setError(null);
+    try {
+      await fetchJson(`/api/referee/admin/solo-games/${fixture.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ reason }),
+      });
+      setSoloGameDialog(null);
+      setNotice("Empty solo game removed. The admin action remains audited.");
+      await Promise.all([loadGames(), loadOverview()]);
+    } catch (actionError) {
+      setError(errorMessage(actionError, "Could not remove the solo game."));
     } finally {
       setSubmitting(null);
     }
@@ -827,8 +876,12 @@ export default function AdminPage() {
               submitting={submitting}
               onAssignReferee={assignReferee}
               onCancel={(fixture) => setGameDialog({ kind: "cancel", fixture })}
+              onCreateSoloGame={() => setSoloGameDialog({ kind: "create" })}
               onCreateReferee={createReferee}
               onOverrideScore={(fixture) => setGameDialog({ kind: "score", fixture })}
+              onRemoveSoloGame={(fixture) =>
+                setSoloGameDialog({ kind: "remove", fixture })
+              }
             />
           ) : section === "reports" ? (
             <ReportsSection
@@ -911,6 +964,15 @@ export default function AdminPage() {
           onSubmit={(body, successMessage) =>
             void runGameAction(gameDialog.fixture, body, successMessage)
           }
+        />
+      ) : null}
+      {soloGameDialog ? (
+        <SoloGameManagementDialog
+          dialog={soloGameDialog}
+          submitting={submitting !== null}
+          onClose={() => setSoloGameDialog(null)}
+          onCreate={(input) => void createSoloGame(input)}
+          onRemove={(fixture, reason) => void removeSoloGame(fixture, reason)}
         />
       ) : null}
       {reportDialog ? (
@@ -1473,8 +1535,10 @@ function GamesSection({
   submitting,
   onAssignReferee,
   onCancel,
+  onCreateSoloGame,
   onCreateReferee,
   onOverrideScore,
+  onRemoveSoloGame,
 }: {
   accessToken: string;
   assignments: RefereeAssignmentsResponse;
@@ -1482,8 +1546,10 @@ function GamesSection({
   submitting: string | null;
   onAssignReferee: (fixture: RefereeFixture, refereeId: string) => Promise<boolean>;
   onCancel: (fixture: RefereeFixture) => void;
+  onCreateSoloGame: () => void;
   onCreateReferee: (input: { displayName: string; phone: string }) => Promise<boolean>;
   onOverrideScore: (fixture: RefereeFixture) => void;
+  onRemoveSoloGame: (fixture: RefereeFixture) => void;
 }) {
   const [query, setQuery] = useState("");
   const [view, setView] = useState<AdminGamesView>("SCHEDULED");
@@ -1610,6 +1676,20 @@ function GamesSection({
   return (
     <div className="admin-games-layout">
       <section className="admin-card admin-games-browser">
+        <div className="admin-games-browser-head">
+          <div>
+            <span className="admin-eyebrow">Match operations</span>
+            <h2>Games</h2>
+          </div>
+          <button
+            className="admin-primary-button"
+            disabled={submitting !== null}
+            onClick={onCreateSoloGame}
+            type="button"
+          >
+            <span aria-hidden="true">＋</span> Create solo game
+          </button>
+        </div>
         <div className="admin-game-view-tabs" role="tablist" aria-label="Game timing">
           <button
             aria-selected={view === "SCHEDULED"}
@@ -1874,8 +1954,18 @@ function GamesSection({
               <AdminIcon name="cancel" /> Cancel game
             </button>
           </div>
+          {active.matchKind === "SOLO" && active.status === "OPEN" ? (
+            <button
+              className="admin-remove-empty-game"
+              disabled={submitting !== null}
+              onClick={() => onRemoveSoloGame(active)}
+              type="button"
+            >
+              Remove empty game
+            </button>
+          ) : null}
           <p className="admin-audit-hint">
-            <AdminIcon name="audit" /> Score corrections and cancellations require a reason and are permanently audited.
+            <AdminIcon name="audit" /> Creation, removal, score corrections and cancellations are permanently audited.
           </p>
         </aside>
       ) : null}
@@ -2821,6 +2911,165 @@ function AuditSection({ audit }: { audit: AuditItem[] }) {
         </div>
       )}
     </section>
+  );
+}
+
+function SoloGameManagementDialog({
+  dialog,
+  submitting,
+  onClose,
+  onCreate,
+  onRemove,
+}: {
+  dialog: NonNullable<SoloGameDialog>;
+  submitting: boolean;
+  onClose: () => void;
+  onCreate: (input: {
+    venue: string;
+    matchDate: string;
+    priceBhd: string;
+    ageLabel: string;
+  }) => void;
+  onRemove: (fixture: RefereeFixture, reason: string) => void;
+}) {
+  const [venue, setVenue] = useState("TFA, Saar");
+  const [matchDate, setMatchDate] = useState(nextSoloMatchDate());
+  const [priceBhd, setPriceBhd] = useState("3.000");
+  const [ageLabel, setAgeLabel] = useState("16+");
+  const [reason, setReason] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const creating = dialog.kind === "create";
+  const createReady =
+    venue.trim().length >= 2 &&
+    matchDate.length === 10 &&
+    /^\d{1,3}(?:\.\d{1,3})?$/.test(priceBhd.trim()) &&
+    ageLabel.trim().length >= 2;
+  const removeReady =
+    reason.trim().length >= 8 &&
+    confirmation.trim().toUpperCase() === "REMOVE";
+
+  return (
+    <AdminModal onClose={onClose}>
+      <div className={`admin-modal-icon ${creating ? "good" : "danger"}`}>
+        <AdminIcon name={creating ? "games" : "cancel"} />
+      </div>
+      <span className="admin-eyebrow">
+        {creating ? "Open Queue schedule" : "Permanent audit record"}
+      </span>
+      <h2>{creating ? "Create a solo game" : "Remove this empty game?"}</h2>
+      {creating ? (
+        <>
+          <p className="admin-modal-lead">
+            The game opens for player bookings as soon as it is created.
+          </p>
+          <div className="admin-modal-warning">
+            Solo Queue has a permanent slot: Tuesday or Friday · 8:30–9:30 PM Bahrain time.
+          </div>
+          <label className="admin-modal-field">
+            <span>Venue</span>
+            <input
+              maxLength={80}
+              onChange={(event) => setVenue(event.target.value)}
+              placeholder="TFA, Saar"
+              value={venue}
+            />
+          </label>
+          <div className="admin-solo-game-fields">
+            <label className="admin-modal-field">
+              <span>Match date</span>
+              <input
+                onChange={(event) => setMatchDate(event.target.value)}
+                type="date"
+                value={matchDate}
+              />
+              <small>Tuesday or Friday</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Price (BHD)</span>
+              <input
+                inputMode="decimal"
+                onChange={(event) => setPriceBhd(event.target.value)}
+                placeholder="3.000"
+                value={priceBhd}
+              />
+              <small>Up to 3 decimals</small>
+            </label>
+          </div>
+          <label className="admin-modal-field">
+            <span>Age label</span>
+            <input
+              maxLength={40}
+              onChange={(event) => setAgeLabel(event.target.value)}
+              placeholder="16+"
+              value={ageLabel}
+            />
+          </label>
+        </>
+      ) : (
+        <>
+          <p className="admin-modal-lead">
+            {dialog.fixture.homeClan.tag} vs {dialog.fixture.awayClan.tag} ·{" "}
+            {formatAdminDate(dialog.fixture.matchDate)}
+          </p>
+          <div className="admin-modal-warning danger">
+            Removal is only allowed while this future game is open and has no booking or matchday history.
+            If anyone has joined, cancel the game instead so refunds and player records are preserved.
+          </div>
+          <label className="admin-modal-field">
+            <span>Reason for removal</span>
+            <textarea
+              maxLength={1000}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why was this empty game created by mistake?"
+              rows={4}
+              value={reason}
+            />
+            <small>{reason.trim().length}/8 minimum</small>
+          </label>
+          <label className="admin-modal-field">
+            <span>Type REMOVE to confirm</span>
+            <input
+              onChange={(event) => setConfirmation(event.target.value)}
+              placeholder="REMOVE"
+              value={confirmation}
+            />
+          </label>
+        </>
+      )}
+      <div className="admin-modal-actions">
+        <button
+          className="admin-secondary-button"
+          disabled={submitting}
+          onClick={onClose}
+          type="button"
+        >
+          Go back
+        </button>
+        <button
+          className={creating ? "admin-primary-button" : "admin-danger-solid"}
+          disabled={submitting || (creating ? !createReady : !removeReady)}
+          onClick={() => {
+            if (creating) {
+              onCreate({
+                venue: venue.trim(),
+                matchDate,
+                priceBhd: priceBhd.trim(),
+                ageLabel: ageLabel.trim(),
+              });
+            } else {
+              onRemove(dialog.fixture, reason.trim());
+            }
+          }}
+          type="button"
+        >
+          {submitting
+            ? "Saving…"
+            : creating
+              ? "Create and open game"
+              : "Remove empty game"}
+        </button>
+      </div>
+    </AdminModal>
   );
 }
 
@@ -4003,6 +4252,32 @@ function initials(value: string) {
 
 function truncate(value: string, limit: number) {
   return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+}
+
+function nextSoloMatchDate() {
+  const now = new Date();
+  const bahrainCalendar = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const candidate = new Date(Date.UTC(
+    bahrainCalendar.getUTCFullYear(),
+    bahrainCalendar.getUTCMonth(),
+    bahrainCalendar.getUTCDate(),
+  ));
+
+  for (let offset = 0; offset < 14; offset += 1) {
+    const weekday = candidate.getUTCDay();
+    const value = [
+      candidate.getUTCFullYear(),
+      String(candidate.getUTCMonth() + 1).padStart(2, "0"),
+      String(candidate.getUTCDate()).padStart(2, "0"),
+    ].join("-");
+    const kickoff = new Date(`${value}T20:30:00+03:00`);
+    if ((weekday === 2 || weekday === 5) && kickoff.getTime() > now.getTime()) {
+      return value;
+    }
+    candidate.setUTCDate(candidate.getUTCDate() + 1);
+  }
+
+  return "";
 }
 
 function formatAdminDate(value: string) {
