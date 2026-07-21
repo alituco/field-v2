@@ -544,21 +544,36 @@ class _PlayerRatingRow extends StatelessWidget {
                   ),
                 ),
               ),
-              CircleAvatar(
-                radius: 21,
-                backgroundColor: fieldGray100,
-                backgroundImage: player.avatarUrl?.trim().isNotEmpty == true
-                    ? NetworkImage(player.avatarUrl!)
-                    : null,
-                child: player.avatarUrl?.trim().isNotEmpty == true
-                    ? null
-                    : Text(
-                        player.initials,
-                        style: const TextStyle(
-                          color: fieldGray600,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+              SizedBox(
+                width: 47,
+                height: 48,
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    CircleAvatar(
+                      radius: 21,
+                      backgroundColor: fieldGray100,
+                      backgroundImage:
+                          player.avatarUrl?.trim().isNotEmpty == true
+                          ? NetworkImage(player.avatarUrl!)
+                          : null,
+                      child: player.avatarUrl?.trim().isNotEmpty == true
+                          ? null
+                          : Text(
+                              player.initials,
+                              style: const TextStyle(
+                                color: fieldGray600,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: -1,
+                      child: DivisionCrest(division: player.division, size: 24),
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(width: 11),
               Expanded(
@@ -592,7 +607,7 @@ class _PlayerRatingRow extends StatelessWidget {
                       ],
                     ),
                     Text(
-                      '${player.tierLabel} · ${player.matchesPlayed} season games',
+                      '${player.divisionLabel} · ${player.matchesPlayed} season games',
                       style: const TextStyle(
                         color: fieldGray400,
                         fontSize: 10,
@@ -1290,7 +1305,7 @@ class _ClanRankRow extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(width: 8),
-                        TierLabelBadge(rank: clan.rank, small: true),
+                        DivisionLabelBadge(division: clan.rank, small: true),
                       ],
                     ),
                   ],

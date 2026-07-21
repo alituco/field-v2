@@ -1,17 +1,20 @@
-import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_party.dart';
+import 'package:field/src/ranking/rating_division.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('Player Rating tiers use independent rating thresholds', () {
-    expect(playerRatingTier(0), 'Bronze III');
-    expect(playerRatingTier(799), 'Bronze I');
-    expect(playerRatingTier(800), 'Silver III');
-    expect(playerRatingTier(1200), 'Gold III');
-    expect(playerRatingTier(1600), 'Platinum III');
-    expect(playerRatingTier(2000), 'Diamond III');
-    expect(playerRatingTier(2600), 'Diamond I');
+  test('Player Rating uses the shared five-division thresholds', () {
+    expect(ratingDivisionLabel(0), 'Division 5');
+    expect(ratingDivisionLabel(999), 'Division 5');
+    expect(ratingDivisionLabel(1000), 'Division 4');
+    expect(ratingDivisionLabel(1299), 'Division 4');
+    expect(ratingDivisionLabel(1300), 'Division 3');
+    expect(ratingDivisionLabel(1599), 'Division 3');
+    expect(ratingDivisionLabel(1600), 'Division 2');
+    expect(ratingDivisionLabel(1799), 'Division 2');
+    expect(ratingDivisionLabel(1800), 'Division 1');
+    expect(ratingDivisionLabel(2600), 'Division 1');
   });
 
   test(

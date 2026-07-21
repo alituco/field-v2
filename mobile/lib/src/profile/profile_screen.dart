@@ -9,7 +9,6 @@ import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
-import '../leaderboard/leaderboard.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
@@ -899,7 +898,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  '${playerRatingTier(rating.skillRating)} · ${rating.recordLabel} · ${rating.matchesPlayed} rated games',
+                  '${ratingDivisionLabel(rating.skillRating)} · ${rating.recordLabel} · ${rating.matchesPlayed} rated games',
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(

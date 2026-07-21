@@ -771,7 +771,7 @@ class _ClanHero extends StatelessWidget {
                         ),
                       ),
                     ),
-                    TierBadge(rank: rank),
+                    DivisionCrest(division: rank, size: 52),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -1264,18 +1264,11 @@ class _RatingPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final rank = clan.rank;
-    final bounds = _divisionBounds(rank);
-    final maxLabel = rank.tier == ClanTier.champion
-        ? 'MAX'
-        : (bounds.max + 1).toString();
-    final progress = rank.tier == ClanTier.champion
-        ? 1.0
-        : ((clan.skillRating - bounds.min) / (bounds.max + 1 - bounds.min))
-              .clamp(0, 1)
-              .toDouble();
-    final srToNext = rank.tier == ClanTier.champion
+    final maxLabel = rank.nextDivisionRating?.toString() ?? 'MAX';
+    final progress = rank.progressFor(clan.skillRating);
+    final srToNext = rank.nextDivisionRating == null
         ? null
-        : (bounds.max + 1) - clan.skillRating;
+        : rank.nextDivisionRating! - clan.skillRating;
 
     return _Panel(
       child: Column(
@@ -1299,7 +1292,7 @@ class _RatingPanel extends StatelessWidget {
                             ),
                           ),
                         ),
-                        TierLabelBadge(rank: rank, small: true),
+                        DivisionLabelBadge(division: rank, small: true),
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -1316,7 +1309,7 @@ class _RatingPanel extends StatelessWidget {
                             ),
                           TextSpan(
                             text: srToNext == null
-                                ? 'Champion — Max Tier'
+                                ? 'Division 1 — Top Division'
                                 : ' to next division',
                           ),
                         ],
@@ -1342,7 +1335,7 @@ class _RatingPanel extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              TierBadge(rank: rank, small: true),
+              DivisionCrest(division: rank, size: 36),
             ],
           ),
           const SizedBox(height: 18),
@@ -1350,7 +1343,7 @@ class _RatingPanel extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                bounds.min.toString(),
+                rank.minimumRating.toString(),
                 style: const TextStyle(
                   color: fieldGray400,
                   fontSize: 12,
@@ -1390,13 +1383,7 @@ class _RatingPanel extends StatelessWidget {
                     },
                     child: DecoratedBox(
                       decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            tierStartColor(rank.tier),
-                            tierMiddleColor(rank.tier),
-                            tierEndColor(rank.tier),
-                          ],
-                        ),
+                        gradient: LinearGradient(colors: [...rank.colors]),
                       ),
                       child: const SizedBox.expand(),
                     ),
@@ -3229,30 +3216,6 @@ class _DashedBorderPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _DashedBorderPainter oldDelegate) => false;
-}
-
-class _DivisionBounds {
-  const _DivisionBounds({required this.min, required this.max});
-
-  final int min;
-  final int max;
-}
-
-_DivisionBounds _divisionBounds(ClanRank rank) {
-  final tierMin = switch (rank.tier) {
-    ClanTier.silver => 0,
-    ClanTier.gold => 900,
-    ClanTier.diamond => 1800,
-    ClanTier.champion => 2700,
-  };
-  if (rank.division == null) {
-    return _DivisionBounds(min: tierMin, max: 5000);
-  }
-  final index = 3 - rank.division!;
-  return _DivisionBounds(
-    min: tierMin + (index * 300),
-    max: tierMin + ((index + 1) * 300) - 1,
-  );
 }
 
 class _ClanDetailData {

@@ -1,4 +1,5 @@
 import type { QueueRole, QueueMatch, QueueBooking } from './types';
+import { formatRank, getRankFromRating } from './constants/tiers';
 
 /* ------------------------------------------------------------------ *
  * Roles & formation
@@ -208,29 +209,11 @@ export function needCount(role: QueueRole): number {
 }
 
 /* ------------------------------------------------------------------ *
- * Player Rating display (independent of Clan divisions)
+ * Player Rating display — shared with the clan division ladder
  * ------------------------------------------------------------------ */
 
-const PLAYER_TIERS = [
-  { name: 'Bronze', min: 0 },
-  { name: 'Silver', min: 800 },
-  { name: 'Gold', min: 1200 },
-  { name: 'Platinum', min: 1600 },
-  { name: 'Diamond', min: 2000 },
-];
-
-/** e.g. 1528 → "Gold I". Uses three sub-divisions (III → I) within each tier. */
-export function playerTierLabel(rating: number): string {
-  let idx = 0;
-  for (let i = 0; i < PLAYER_TIERS.length; i++) {
-    if (rating >= PLAYER_TIERS[i].min) idx = i;
-  }
-  const tier = PLAYER_TIERS[idx];
-  const next = PLAYER_TIERS[idx + 1]?.min ?? tier.min + 600;
-  const span = (next - tier.min) / 3;
-  const sub = Math.min(2, Math.floor((rating - tier.min) / span)); // 0,1,2
-  const roman = ['III', 'II', 'I'][sub];
-  return `${tier.name} ${roman}`;
+export function playerDivisionLabel(rating: number): string {
+  return formatRank(getRankFromRating(rating));
 }
 
 /* ------------------------------------------------------------------ *

@@ -676,22 +676,9 @@ class _PlayerRatingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final value = rating?.skillRating ?? 1200;
     final ratingChange = rating?.lastChange ?? 0;
-    final tier = playerRatingTier(value);
-    final next = playerRatingNextTierTarget(value);
-    final isMaxTier = value >= next;
-    final progressStart = next == 800
-        ? 0
-        : next == 1200
-        ? 800
-        : next == 1600
-        ? 1200
-        : next == 2000
-        ? 1600
-        : 2000;
-    final progress = ((value - progressStart) / (next - progressStart)).clamp(
-      0.0,
-      1.0,
-    );
+    final division = divisionFromRating(value);
+    final next = division.nextDivisionRating;
+    final progress = division.progressFor(value);
     final gamesNeeded =
         rating?.gamesNeededToRank ?? minimumPlayerLeaderboardMatches;
     final rankLabel = rating?.isRanked == true
@@ -773,26 +760,9 @@ class _PlayerRatingCard extends StatelessWidget {
                           ),
                         ),
                         Positioned(
-                          right: -2,
-                          bottom: 0,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: fieldGray900,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              tier.toUpperCase(),
-                              style: const TextStyle(
-                                color: Color(0xFFFCD34D),
-                                fontSize: 7,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
+                          right: -5,
+                          bottom: -5,
+                          child: DivisionCrest(division: division, size: 32),
                         ),
                       ],
                     ),
@@ -891,22 +861,27 @@ class _PlayerRatingCard extends StatelessWidget {
               Row(
                 children: [
                   Text(
-                    tier,
+                    division.label,
                     style: const TextStyle(
                       color: fieldGray400,
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const Spacer(),
-                  Text(
-                    isMaxTier
-                        ? 'Max tier'
-                        : 'Next tier · ${next - value} to go',
-                    style: const TextStyle(
-                      color: fieldGray400,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      next == null
+                          ? 'Top division'
+                          : '${next - value} SR to next division',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        color: fieldGray400,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ],
@@ -917,7 +892,7 @@ class _PlayerRatingCard extends StatelessWidget {
                 child: LinearProgressIndicator(
                   minHeight: 6,
                   value: progress,
-                  color: const Color(0xFFF59E0B),
+                  color: division.colors[1],
                   backgroundColor: fieldGray100,
                 ),
               ),
