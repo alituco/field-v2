@@ -35,6 +35,8 @@ build fails closed.
 - a protected hosted-staging referee/admin browser journey covering attendance
   correction, full check-in, kickoff, a goal, full-time, and the moderation and
   support inboxes
+- a signed staging iOS build uploaded to TestFlight after every successful
+  hosted-staging deployment and E2E run
 
 The five verification jobs contain placeholders only and cannot read or
 modify a hosted database. Only the conditional, protected `deploy-staging`
@@ -70,6 +72,9 @@ It:
    to hosted staging;
 10. verifies the resulting database state and removes mutable test fixtures;
 11. records a successful GitHub `staging` deployment for production promotion.
+12. builds Field Staging with Xcode 26, signs it for App Store distribution,
+    and uploads it to App Store Connect for the `admins` internal TestFlight
+    group.
 
 It never resets hosted staging or touches ordinary staging users and games.
 E2E records are tagged with the run id. Mutable records are cleaned after every
@@ -134,6 +139,17 @@ GitHub environment `staging`:
 - secret `SUPABASE_DB_PASSWORD` for Field Staging
 - secret `SUPABASE_SERVICE_ROLE_KEY` for Field Staging, used only by the
   protected E2E fixture/verifier and the local referee server
+- variable `APPLE_TEAM_ID=69B646V2WM`
+- variable `IOS_STAGING_BUNDLE_ID=com.alialtaraif.field.staging`
+- variable `TESTFLIGHT_INTERNAL_GROUP=admins`
+- secret `SUPABASE_PUBLISHABLE_KEY` for the staging app build
+- secrets `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_KEY_ID`, and
+  `APP_STORE_CONNECT_PRIVATE_KEY` for the App Store Connect team API key
+- secrets `IOS_DISTRIBUTION_CERTIFICATE_BASE64` and
+  `IOS_DISTRIBUTION_CERTIFICATE_PASSWORD` for the exported Apple Distribution
+  identity
+- secret `IOS_STAGING_PROVISIONING_PROFILE_BASE64` for the manual
+  `Field Staging App Store` provisioning profile
 
 GitHub environment `production`:
 
@@ -171,10 +187,13 @@ pushes/deletion, require pull requests, and require these checks:
 4. Approve the protected staging deployment.
 5. Wait for the staging deployment, Android journey, and referee/admin browser
    journey to pass.
-6. Review the seven-day failure artifacts when the protected E2E gate fails.
-7. Promote the tested staging tree into `prod` through review.
-8. Wait for CI on the resulting `prod` commit.
-9. Dispatch production. The workflow accepts a different merge SHA only when
+6. Wait for App Store Connect to process the automatically uploaded staging
+   build. Members of the `admins` internal group receive it through TestFlight.
+7. Review the seven-day failure artifacts when the protected E2E or TestFlight
+   gate fails.
+8. Promote the tested staging tree into `prod` through review.
+9. Wait for CI on the resulting `prod` commit.
+10. Dispatch production. The workflow accepts a different merge SHA only when
    its complete Git tree is identical to the successfully deployed staging
    tree.
 
