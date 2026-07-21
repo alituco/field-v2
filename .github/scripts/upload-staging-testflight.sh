@@ -208,12 +208,6 @@ flutter build ios \
     -destination 'generic/platform=iOS' \
     -archivePath "$archive_path" \
     archive \
-    DEVELOPMENT_TEAM="$expected_team_id" \
-    PRODUCT_BUNDLE_IDENTIFIER="$expected_bundle_id" \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY='Apple Distribution' \
-    PROVISIONING_PROFILE_SPECIFIER="$profile_name" \
-    INFOPLIST_KEY_ITSAppUsesNonExemptEncryption=NO \
     2>&1 | tee "$artifact_path/archive.log"
 )
 
