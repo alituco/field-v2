@@ -164,7 +164,7 @@ class FixtureClan {
   final String region;
   final int? regionRank;
 
-  ClanRank get rank => rankFromRating(skillRating);
+  RatingDivision get rank => divisionFromRating(skillRating);
 
   ClanTheme get theme => clanThemeById(themeId);
 

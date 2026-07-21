@@ -573,7 +573,7 @@ class _MyClanPanel extends StatelessWidget {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.end,
                                       children: [
-                                        TierBadge(rank: rank),
+                                        DivisionCrest(division: rank, size: 52),
                                         const SizedBox(height: 10),
                                         _MyClanRoleBadge(
                                           role: membership.role,
@@ -758,7 +758,7 @@ class _MyClanRatingStrip extends StatelessWidget {
   const _MyClanRatingStrip({required this.clan, required this.rank});
 
   final Clan clan;
-  final ClanRank rank;
+  final RatingDivision rank;
 
   @override
   Widget build(BuildContext context) {
@@ -842,7 +842,7 @@ class _MyClanRatingStrip extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 8),
-                TierLabelBadge(rank: rank, small: true),
+                DivisionLabelBadge(division: rank, small: true),
               ],
             ),
           ),

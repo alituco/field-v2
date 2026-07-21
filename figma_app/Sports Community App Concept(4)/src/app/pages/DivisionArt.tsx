@@ -8,10 +8,10 @@ import { motion } from 'motion/react';
 const order: Division[] = [5, 4, 3, 2, 1];
 
 const METAL_LABEL: Record<Division, string> = {
-  5: 'Bronze',
-  4: 'Steel',
-  3: 'Silver',
-  2: 'Gold',
+  5: 'Entry',
+  4: 'Rising',
+  3: 'Competitive',
+  2: 'Advanced',
   1: 'Elite',
 };
 

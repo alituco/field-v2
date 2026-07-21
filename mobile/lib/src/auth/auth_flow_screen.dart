@@ -734,7 +734,7 @@ class _WelcomeStep extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Form your clan. Challenge rivals. Climb the ladder from Silver to Champion.',
+                'Form your clan. Challenge rivals. Climb from Division 5 to Division 1.',
                 style: TextStyle(
                   color: Color(0xCCD1FAE5),
                   fontSize: 18,

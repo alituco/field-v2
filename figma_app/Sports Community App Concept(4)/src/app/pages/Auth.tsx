@@ -157,7 +157,7 @@ function Welcome({ onStart }: { onStart: () => void }) {
           transition={{ delay: 0.22, type: 'spring', stiffness: 140, damping: 16 }}
           className="mt-4 text-lg text-emerald-100/80 max-w-sm leading-relaxed"
         >
-          Form your clan. Challenge rivals. Climb the ladder from Silver to Champion.
+          Form your clan. Challenge rivals. Climb from Division 5 to Division 1.
         </motion.p>
       </div>
 
