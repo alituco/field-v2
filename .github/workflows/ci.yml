@@ -226,6 +226,7 @@ jobs:
           bash -n .github/scripts/configure-staging-e2e-auth.sh
           bash -n .github/scripts/deploy-supabase.sh
           bash -n .github/scripts/run-staging-android-e2e.sh
+          bash -n .github/scripts/upload-staging-testflight.sh
           node --check .github/scripts/smoke-supabase.mjs
           grep -q "deploy_function dev-phone-login --no-verify-jwt" \
             .github/scripts/deploy-supabase.sh
@@ -679,3 +680,65 @@ jobs:
             --method POST \
             "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
             --input - <<<"$status_payload" >/dev/null
+
+  upload-testflight-staging:
+    name: Upload staging build to TestFlight
+    needs: deploy-staging
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.deploy-staging.result == 'success'
+    runs-on: macos-26
+    timeout-minutes: 45
+    environment:
+      name: staging
+    env:
+      FIELD_ENVIRONMENT: staging
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_STAGING_BUNDLE_ID: ${{ vars.IOS_STAGING_BUNDLE_ID }}
+      TESTFLIGHT_INTERNAL_GROUP: ${{ vars.TESTFLIGHT_INTERNAL_GROUP }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Require Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / {split($2, version, "."); print version[1]}')"
+          if [[ -z "$xcode_major" || "$xcode_major" -lt 26 ]]; then
+            echo "::error::TestFlight uploads require Xcode 26 or newer."
+            exit 1
+          fi
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Build, sign, and upload Field Staging
+        shell: bash
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_STAGING_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_STAGING_PROVISIONING_PROFILE_BASE64 }}
+        run: .github/scripts/upload-staging-testflight.sh
+
+      - name: Upload TestFlight failure diagnostics
+        if: failure() || cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-testflight-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: mobile/build/testflight-artifacts/
