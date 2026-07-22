@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   loadAdminGameReserves,
   loadAdminReserveCandidates,
-  type AdminGameReserveSide,
 } from "@/lib/admin-game-reserves";
 import {
   adminOnly,
@@ -25,20 +24,12 @@ export async function GET(request: NextRequest, route: RouteContext) {
   if (denied) return denied;
   const parsed = await parseRoute(route);
   if (parsed instanceof NextResponse) return parsed;
-  const side = parseSide(parsed.matchKind, request.nextUrl.searchParams.get("side"));
-  if (!side) {
-    return NextResponse.json(
-      { error: parsed.matchKind === "SOLO" ? "Choose White or Black." : "Choose Home or Away." },
-      { status: 400, headers: PRIVATE_NO_STORE },
-    );
-  }
   try {
     return NextResponse.json({
       candidates: await loadAdminReserveCandidates(
         context.db,
         parsed.matchKind,
         parsed.gameId,
-        side,
         request.nextUrl.searchParams.get("query") ?? "",
       ),
     }, { headers: PRIVATE_NO_STORE });
@@ -56,11 +47,10 @@ export async function POST(request: NextRequest, route: RouteContext) {
   if (parsed instanceof NextResponse) return parsed;
   const body = await jsonBody(request);
   const profileId = stringValue(body?.profileId);
-  const side = parseSide(parsed.matchKind, body?.side);
   const note = stringValue(body?.note);
-  if (!UUID.test(profileId) || !side || note.length < 3 || note.length > 500) {
+  if (!UUID.test(profileId) || note.length < 3 || note.length > 500) {
     return NextResponse.json(
-      { error: "Choose an eligible player, side, and a short assignment note." },
+      { error: "Choose an eligible player and add a short assignment note." },
       { status: 400, headers: PRIVATE_NO_STORE },
     );
   }
@@ -69,7 +59,6 @@ export async function POST(request: NextRequest, route: RouteContext) {
     match_kind_to_use: parsed.matchKind,
     match_id_to_use: parsed.gameId,
     profile_id_to_use: profileId,
-    side_to_use: side,
     note_to_use: note,
   });
   if (error) return mutationFailure(error.message);
@@ -131,15 +120,6 @@ async function parseRoute(route: RouteContext) {
     );
   }
   return { matchKind, gameId } as const;
-}
-
-function parseSide(
-  matchKind: "SOLO" | "CLAN",
-  value: unknown,
-): AdminGameReserveSide | null {
-  const side = stringValue(value).toUpperCase();
-  if (matchKind === "SOLO") return side === "WHITE" || side === "BLACK" ? side : null;
-  return side === "HOME" || side === "AWAY" ? side : null;
 }
 
 async function jsonBody(request: NextRequest) {

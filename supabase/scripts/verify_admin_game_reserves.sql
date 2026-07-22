@@ -18,7 +18,7 @@ begin
   end if;
 
   if to_regprocedure(
-    'public.admin_assign_match_reserve(uuid,text,uuid,uuid,text,text)'
+    'public.admin_assign_match_reserve(uuid,text,uuid,uuid,text)'
   ) is null then
     raise exception 'Missing audited reserve assignment RPC.';
   end if;
@@ -28,10 +28,16 @@ begin
     raise exception 'Missing audited reserve removal RPC.';
   end if;
 
-  if to_regclass('public.match_reserve_active_fixture_side_idx') is null
-    or to_regclass('public.match_reserve_active_solo_side_idx') is null
+  if to_regclass('public.match_reserve_one_active_fixture_idx') is null
+    or to_regclass('public.match_reserve_one_active_solo_idx') is null
   then
-    raise exception 'Each match side must be limited to one active reserve.';
+    raise exception 'Each game must be limited to one active reserve.';
+  end if;
+
+  if to_regprocedure(
+    'public.admin_report_game_player(uuid,text,uuid,uuid,text,text,text,integer)'
+  ) is null then
+    raise exception 'Missing audited game-player report and strike RPC.';
   end if;
 
   select count(*) into authenticated_privileges
