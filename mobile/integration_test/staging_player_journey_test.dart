@@ -4,6 +4,7 @@ import 'package:field/main.dart' as app;
 import 'package:field/src/moderation/moderation_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
+import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
 import 'package:flutter/material.dart';
@@ -416,6 +417,11 @@ Future<void> _bookGameThroughUi(
     tester,
     joinAction,
     reason: 'The ${role.label} booking action never became available.',
+  );
+  await pumpUntilFound(
+    tester,
+    find.byType(OpenQueueReviewScreen),
+    reason: 'Joining the game did not open its booking review.',
   );
   await _tapEnabledFilledButton(
     tester,
