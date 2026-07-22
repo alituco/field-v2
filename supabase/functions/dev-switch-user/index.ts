@@ -93,15 +93,14 @@ Deno.serve(async (request) => {
       return json({ error: "That app user could not be found." }, 404);
     }
 
-    const { data: targetData, error: targetError } =
-      await retryTransientAuthFailure(() =>
-        admin.auth.admin.getUserById(body.profile_id as string)
-      );
-    if (targetError || !targetData.user) {
+    const target = await findAuthUserById(
+      admin,
+      body.profile_id,
+    );
+    if (!target) {
       return json({ error: "That user does not have an auth account." }, 404);
     }
 
-    const target = targetData.user;
     const resetOnboardingMetadata = body.reset_onboarding_metadata === true;
     if (resetOnboardingMetadata && profile.date_of_birth !== null) {
       return json(
@@ -196,6 +195,22 @@ async function createEmailSession({
   return data.session;
 }
 
+async function findAuthUserById(
+  admin: SupabaseAnyClient,
+  userId: string,
+) {
+  try {
+    return await retryTransientAuthFailure(async () => {
+      const { data, error } = await admin.auth.admin.getUserById(userId);
+      if (error) throw error;
+      return data.user ?? null;
+    });
+  } catch (error) {
+    if (isMissingAuthUser(error)) return null;
+    throw error;
+  }
+}
+
 async function createPhoneSession({
   admin,
   authClient,
@@ -280,6 +295,12 @@ function isSigningKeyCacheMiss(error: unknown) {
   const message = toErrorMessage(error);
   return message.includes("unrecognized JWT kid") &&
     message.includes("token is unverifiable");
+}
+
+function isMissingAuthUser(error: unknown) {
+  const message = toErrorMessage(error).toLowerCase();
+  return message.includes("user not found") ||
+    message.includes("user does not exist");
 }
 
 function toErrorMessage(error: unknown) {
