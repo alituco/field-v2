@@ -317,6 +317,7 @@ jobs:
                   set role = 'admin', is_active = true"
 
           for verifier in \
+            supabase/scripts/verify_admin_game_reserves.sql \
             supabase/scripts/verify_clan_forfeit_workflow.sql \
             supabase/scripts/verify_moderation_system.sql \
             supabase/scripts/verify_support_ticket_system.sql

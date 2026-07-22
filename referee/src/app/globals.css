@@ -3702,6 +3702,11 @@ button:disabled {
   background: #f0fdf9;
 }
 
+.admin-games-table tbody tr:focus-visible {
+  outline: 2px solid #10b981;
+  outline-offset: -2px;
+}
+
 .admin-games-table tbody tr.active td:first-child {
   box-shadow: inset 3px 0 #10b981;
 }
@@ -3800,6 +3805,29 @@ button:disabled {
 .admin-game-detail-head h2 span {
   color: #94a3b8;
   font-weight: 550;
+}
+
+.admin-open-game-overview {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  border: 1px solid #a7e7d3;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #effcf8;
+  color: #08795c;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 880;
+  cursor: pointer;
+}
+
+.admin-open-game-overview svg {
+  width: 14px;
+  height: 14px;
 }
 
 .admin-detail-score {
