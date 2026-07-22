@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const twoDays = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+  const twoWeeks = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
   const staleProcessing = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
   const [
@@ -39,6 +39,8 @@ export async function GET(request: NextRequest) {
     soloResult,
     fixtureAssignmentsResult,
     soloAssignmentsResult,
+    fixtureReservesResult,
+    soloReservesResult,
     fixtureBroadcastResult,
     soloBroadcastResult,
     auditResult,
@@ -77,17 +79,21 @@ export async function GET(request: NextRequest) {
     context.db
       .from("fixtures")
       .select("id,match_date,time_slot,venue,status")
-      .in("status", ["OPEN", "SCHEDULED", "LIVE"])
+      .in("status", ["OPEN", "SCHEDULED"])
       .gte("match_date", dateOnly(now))
-      .lte("match_date", dateOnly(twoDays)),
+      .lte("match_date", dateOnly(twoWeeks)),
     context.db
       .from("open_queue_games")
       .select("id,starts_at,venue,status")
-      .in("status", ["OPEN", "FULL", "LIVE"])
+      .in("status", ["OPEN", "FULL"])
       .gte("starts_at", nowIso)
-      .lte("starts_at", twoDays.toISOString()),
+      .lte("starts_at", twoWeeks.toISOString()),
     context.db.from("fixture_referee_assignments").select("fixture_id"),
     context.db.from("open_queue_referee_assignments").select("game_id"),
+    context.db.from("match_reserve_assignments").select("fixture_id")
+      .eq("status", "ACTIVE").not("fixture_id", "is", null),
+    context.db.from("match_reserve_assignments").select("open_queue_game_id")
+      .eq("status", "ACTIVE").not("open_queue_game_id", "is", null),
     context.db
       .from("fixture_broadcasts")
       .select("fixture_id,status,error_message,updated_at")
@@ -114,6 +120,8 @@ export async function GET(request: NextRequest) {
     soloResult,
     fixtureAssignmentsResult,
     soloAssignmentsResult,
+    fixtureReservesResult,
+    soloReservesResult,
     fixtureBroadcastResult,
     soloBroadcastResult,
     auditResult,
@@ -142,11 +150,23 @@ export async function GET(request: NextRequest) {
   const assignedSolo = new Set(
     rows(soloAssignmentsResult.data).map((row) => String(row.game_id)),
   );
+  const reservedFixtures = new Set(
+    rows(fixtureReservesResult.data).map((row) => String(row.fixture_id)),
+  );
+  const reservedSolo = new Set(
+    rows(soloReservesResult.data).map((row) => String(row.open_queue_game_id)),
+  );
   const unassignedFixtures = rows(fixtureResult.data).filter(
     (row) => !assignedFixtures.has(String(row.id)),
   );
   const unassignedSolo = rows(soloResult.data).filter(
     (row) => !assignedSolo.has(String(row.id)),
+  );
+  const fixturesWithoutReserve = rows(fixtureResult.data).filter(
+    (row) => !reservedFixtures.has(String(row.id)),
+  );
+  const soloWithoutReserve = rows(soloResult.data).filter(
+    (row) => !reservedSolo.has(String(row.id)),
   );
   const broadcastCandidates: Array<Row & { matchKind: "CLAN" | "SOLO" }> = [
     ...rows(fixtureBroadcastResult.data).map(
@@ -201,21 +221,53 @@ export async function GET(request: NextRequest) {
       detail: `${String(stoppage.reason_code).replaceAll("_", " ")}${stoppage.note ? ` · ${stoppage.note}` : ""}`,
       createdAt: stoppage.created_at,
     })),
-    ...unassignedFixtures.slice(0, 8).map((fixture) => ({
+    ...unassignedFixtures.map((fixture) => ({
       id: `fixture-${fixture.id}`,
-      kind: "GAME_UNASSIGNED",
+      kind: "GAME_MISSING_REFEREE",
       severity: fixture.status === "LIVE" ? "CRITICAL" : "HIGH",
       title: "Clan game has no referee",
       detail: `${fixture.match_date} · ${fixture.time_slot} · ${fixture.venue}`,
       createdAt: null,
+      matchKind: "CLAN",
+      gameId: String(fixture.id),
+      resolution: "ASSIGN_REFEREE",
+      dismissible: false,
     })),
-    ...unassignedSolo.slice(0, 8).map((game) => ({
+    ...unassignedSolo.map((game) => ({
       id: `solo-${game.id}`,
-      kind: "GAME_UNASSIGNED",
+      kind: "GAME_MISSING_REFEREE",
       severity: game.status === "LIVE" ? "CRITICAL" : "HIGH",
       title: "Solo game has no referee",
       detail: `${new Date(String(game.starts_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })} · ${game.venue}`,
       createdAt: null,
+      matchKind: "SOLO",
+      gameId: String(game.id),
+      resolution: "ASSIGN_REFEREE",
+      dismissible: false,
+    })),
+    ...fixturesWithoutReserve.map((fixture) => ({
+      id: `fixture-reserve-${fixture.id}`,
+      kind: "GAME_MISSING_RESERVE",
+      severity: fixture.status === "LIVE" ? "CRITICAL" : "HIGH",
+      title: "Clan game has no reserve player",
+      detail: `${fixture.match_date} · ${fixture.time_slot} · ${fixture.venue}`,
+      createdAt: null,
+      matchKind: "CLAN",
+      gameId: String(fixture.id),
+      resolution: "ASSIGN_RESERVE",
+      dismissible: false,
+    })),
+    ...soloWithoutReserve.map((game) => ({
+      id: `solo-reserve-${game.id}`,
+      kind: "GAME_MISSING_RESERVE",
+      severity: game.status === "LIVE" ? "CRITICAL" : "HIGH",
+      title: "Solo game has no reserve player",
+      detail: `${new Date(String(game.starts_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })} · ${game.venue}`,
+      createdAt: null,
+      matchKind: "SOLO",
+      gameId: String(game.id),
+      resolution: "ASSIGN_RESERVE",
+      dismissible: false,
     })),
     ...broadcastProblems.slice(0, 8).map((broadcast) => ({
       id: `broadcast-${broadcast.matchKind}-${broadcast.fixture_id ?? broadcast.game_id}`,
@@ -225,7 +277,7 @@ export async function GET(request: NextRequest) {
       detail: String(broadcast.error_message ?? `${broadcast.matchKind} recording needs attention.`),
       createdAt: broadcast.updated_at,
     })),
-  ].slice(0, 30);
+  ];
 
   const auditRows = rows(auditResult.data);
   const actorIds = [...new Set(auditRows.map((row) => String(row.actor_referee_id)))];
@@ -246,7 +298,7 @@ export async function GET(request: NextRequest) {
   );
 
   const operationalAttention = forfeits.length + standaloneStoppages.length + unassignedFixtures.length +
-    unassignedSolo.length + broadcastProblems.length;
+    unassignedSolo.length + fixturesWithoutReserve.length + soloWithoutReserve.length + broadcastProblems.length;
   return NextResponse.json({
     metrics: {
       openReports: reportsResult.count ?? reports.length,

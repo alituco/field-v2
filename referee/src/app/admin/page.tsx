@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -54,6 +55,10 @@ type AttentionItem = {
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   kind: string;
   createdAt: string | null;
+  matchKind: "SOLO" | "CLAN" | null;
+  gameId: string | null;
+  resolution: string | null;
+  dismissible: boolean;
 };
 
 type AuditItem = {
@@ -410,6 +415,11 @@ export default function AdminPage() {
       setSessionChecked(true);
     });
     return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("section");
+    if (requested === "games") setSection("games");
   }, []);
 
   useEffect(() => {
@@ -1150,6 +1160,7 @@ function OverviewSection({
   forfeits: AdminForfeit[];
   onNavigate: (section: AdminSection) => void;
 }) {
+  const router = useRouter();
   const now = Date.now();
   const upcoming = games
     .filter((game) =>
@@ -1215,15 +1226,26 @@ function OverviewSection({
           ) : (
             <div className="admin-attention-list">
               {overview.attention.slice(0, 7).map((item) => (
-                <article key={item.id}>
+                <article className={item.gameId ? "actionable" : ""} key={item.id}>
                   <span className={`admin-severity-dot ${item.severity.toLowerCase()}`} />
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.detail}</p>
+                    {!item.dismissible ? <small className="admin-required-resolution">Assignment required · cannot dismiss</small> : null}
                   </div>
                   <div className="admin-attention-meta">
                     <span>{humanize(item.kind)}</span>
                     <time>{relativeTime(item.createdAt)}</time>
+                    {item.gameId && item.matchKind ? (
+                      <button
+                        onClick={() => router.push(`/admin/games/${item.matchKind!.toLowerCase()}/${item.gameId}`)}
+                        type="button"
+                      >
+                        Resolve or cancel →
+                      </button>
+                    ) : item.kind === "REPORT" || item.kind.includes("STOPPAGE") || item.kind.includes("FORFEIT") ? (
+                      <button onClick={() => onNavigate("reports")} type="button">Review →</button>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -1551,6 +1573,7 @@ function GamesSection({
   onOverrideScore: (fixture: RefereeFixture) => void;
   onRemoveSoloGame: (fixture: RefereeFixture) => void;
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<AdminGamesView>("SCHEDULED");
   const [status, setStatus] = useState("ALL");
@@ -1565,6 +1588,19 @@ function GamesSection({
   const [participantsError, setParticipantsError] = useState<string | null>(null);
   const [newRefereeName, setNewRefereeName] = useState("");
   const [newRefereePhone, setNewRefereePhone] = useState("");
+
+  useEffect(() => {
+    const requestedGameId = new URLSearchParams(window.location.search).get("gameId");
+    if (!requestedGameId) return;
+    const requested = games.find((game) => game.id === requestedGameId);
+    if (!requested) return;
+    setView(isFinalAdminGame(requested) ? "FINAL" : "SCHEDULED");
+    setStatus("ALL");
+    setKind("ALL");
+    setRefereeFilter("ALL");
+    setQuery("");
+    setActiveId(`${requested.matchKind}-${requested.id}`);
+  }, [games]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -1787,7 +1823,14 @@ function GamesSection({
                     <tr
                       className={active && key === `${active.matchKind}-${active.id}` ? "active" : ""}
                       key={key}
-                      onClick={() => setActiveId(key)}
+                      onClick={() => router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`);
+                        }
+                      }}
+                      tabIndex={0}
                     >
                       <td>
                         <div className="admin-match-cell">
@@ -1824,6 +1867,13 @@ function GamesSection({
             </div>
             <StatusBadge status={active.status} />
           </div>
+          <button
+            className="admin-open-game-overview"
+            onClick={() => router.push(`/admin/games/${active.matchKind.toLowerCase()}/${active.id}`)}
+            type="button"
+          >
+            Open full game overview <AdminIcon name="arrow" />
+          </button>
           <div className="admin-detail-score">
             <div><span>{active.homeClan.emblem}</span><strong>{active.homeClan.tag}</strong></div>
             <b>{displayScore(active)}</b>
@@ -3877,6 +3927,7 @@ function normalizeOverview(
 }
 
 function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
+  const rawMatchKind = stringFrom(row.matchKind ?? row.match_kind)?.toUpperCase();
   return {
     id: stringFrom(row.id) ?? `attention-${index}`,
     title: stringFrom(row.title ?? row.label) ?? "Admin review needed",
@@ -3884,6 +3935,10 @@ function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
     severity: enumValue(row.severity ?? row.priority, ["LOW", "MEDIUM", "HIGH", "CRITICAL"], "MEDIUM"),
     kind: stringFrom(row.kind ?? row.type ?? row.category) ?? "OPERATIONS",
     createdAt: stringFrom(row.createdAt ?? row.created_at ?? row.occurredAt ?? row.occurred_at),
+    matchKind: rawMatchKind === "SOLO" || rawMatchKind === "CLAN" ? rawMatchKind : null,
+    gameId: stringFrom(row.gameId ?? row.game_id ?? row.fixtureId ?? row.fixture_id),
+    resolution: stringFrom(row.resolution),
+    dismissible: row.dismissible !== false,
   };
 }
 
