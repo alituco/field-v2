@@ -1,8 +1,8 @@
 import {
   createAdminClient,
   E2E_DEFAULT_BIRTH_DATE,
-  getAuthUser,
   isTerminalGameStatus,
+  listAuthUsers,
   loadManifestConfig,
   logStep,
   unwrapRpcRow,
@@ -209,17 +209,28 @@ async function restoreAccountBaselines(): Promise<void> {
     manifest.accounts.onboarding,
     manifest.accounts.admin,
   ];
-
-  for (const account of accounts) {
-    const existing = await getAuthUser(
+  const authUsersById = new Map<
+    string,
+    Awaited<ReturnType<typeof listAuthUsers>>[number]
+  >();
+  for (let page = 1; page <= 20; page += 1) {
+    const users = await listAuthUsers(
       config.supabaseUrl,
       config.serviceRoleKey,
-      account.profileId,
-    ).catch((error) => {
+      page,
+      1000,
+    );
+    for (const user of users) authUsersById.set(user.id, user);
+    if (users.length < 1000) break;
+  }
+
+  for (const account of accounts) {
+    const existing = authUsersById.get(account.profileId);
+    if (!existing) {
       throw new Error(
-        `load auth baseline ${account.profileId}: ${String(error)}`,
+        `load auth baseline ${account.profileId}: user missing`,
       );
-    });
+    }
 
     await updateAuthUser(
       config.supabaseUrl,

@@ -249,7 +249,7 @@ async function authAdminRequest(
   const url = `${supabaseUrl.replace(/\/$/, "")}/auth/v1/admin/${path}`;
   let lastMessage = "Auth Admin request failed.";
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
     const response = await fetch(url, {
       ...init,
       headers: {
@@ -272,10 +272,15 @@ async function authAdminRequest(
     if (response.ok) return payload;
 
     lastMessage = authErrorMessage(payload, response.status);
-    const signingKeyCacheMiss = response.status >= 500 &&
-      lastMessage.includes("unrecognized JWT kid");
-    if (!signingKeyCacheMiss || attempt === 3) break;
-    await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+    // Supabase Auth can report a transient signing-key cache miss as either a
+    // 5xx or a 401. Retry only that exact failure; ordinary authorization
+    // errors must still fail immediately.
+    const signingKeyCacheMiss = lastMessage.includes("unrecognized JWT kid") &&
+      lastMessage.includes("token is unverifiable");
+    if (!signingKeyCacheMiss || attempt === 5) break;
+    await new Promise((resolve) =>
+      setTimeout(resolve, 1000 * 2 ** (attempt - 1))
+    );
   }
 
   throw new Error(lastMessage);
