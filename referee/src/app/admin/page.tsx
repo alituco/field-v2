@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -410,6 +411,11 @@ export default function AdminPage() {
       setSessionChecked(true);
     });
     return () => listener.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("section");
+    if (requested === "games") setSection("games");
   }, []);
 
   useEffect(() => {
@@ -1551,6 +1557,7 @@ function GamesSection({
   onOverrideScore: (fixture: RefereeFixture) => void;
   onRemoveSoloGame: (fixture: RefereeFixture) => void;
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<AdminGamesView>("SCHEDULED");
   const [status, setStatus] = useState("ALL");
@@ -1787,7 +1794,14 @@ function GamesSection({
                     <tr
                       className={active && key === `${active.matchKind}-${active.id}` ? "active" : ""}
                       key={key}
-                      onClick={() => setActiveId(key)}
+                      onClick={() => router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`);
+                        }
+                      }}
+                      tabIndex={0}
                     >
                       <td>
                         <div className="admin-match-cell">
@@ -1824,6 +1838,13 @@ function GamesSection({
             </div>
             <StatusBadge status={active.status} />
           </div>
+          <button
+            className="admin-open-game-overview"
+            onClick={() => router.push(`/admin/games/${active.matchKind.toLowerCase()}/${active.id}`)}
+            type="button"
+          >
+            Open full game overview <AdminIcon name="arrow" />
+          </button>
           <div className="admin-detail-score">
             <div><span>{active.homeClan.emblem}</span><strong>{active.homeClan.tag}</strong></div>
             <b>{displayScore(active)}</b>
