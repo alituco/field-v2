@@ -92,6 +92,7 @@ if (Deno.args.includes("--dry-run")) {
 }
 
 const admin = createAdminClient(config.supabaseUrl, config.serviceRoleKey);
+const authUsersByPhone = await loadAuthUsersByPhone();
 const selectedMainIndex = selectRotatingIndex(
   config.runId,
   PLAYER_DEFINITIONS.length,
@@ -365,7 +366,8 @@ async function ensureAccount(
     clearAuthOnboarding?: boolean;
   },
 ): Promise<E2EAccount> {
-  let user = await findUserByPhone(client, input.phone);
+  const normalizedPhone = input.phone.replace(/\D/g, "");
+  let user = authUsersByPhone.get(normalizedPhone) ?? null;
   const { data: usernameOwner, error: usernameOwnerError } = await client
     .from("profiles")
     .select("id,display_name,username")
@@ -466,6 +468,7 @@ async function ensureAccount(
   if (profileError) {
     throw new Error(`upsert profile ${input.phone}: ${profileError.message}`);
   }
+  authUsersByPhone.set(normalizedPhone, user);
 
   return {
     profileId: user.id,
@@ -475,11 +478,8 @@ async function ensureAccount(
   };
 }
 
-async function findUserByPhone(
-  client: AdminClient,
-  phone: string,
-): Promise<User | null> {
-  const digits = phone.replace(/\D/g, "");
+async function loadAuthUsersByPhone(): Promise<Map<string, User>> {
+  const usersByPhone = new Map<string, User>();
   for (let page = 1; page <= 20; page += 1) {
     const users = await listAuthUsers(
       config.supabaseUrl,
@@ -489,13 +489,13 @@ async function findUserByPhone(
     ).catch((error) => {
       throw new Error(`list auth users: ${errorMessage(error)}`);
     });
-    const match = users.find((candidate) =>
-      (candidate.phone ?? "").replace(/\D/g, "") === digits
-    );
-    if (match) return match;
+    for (const user of users) {
+      const phone = (user.phone ?? "").replace(/\D/g, "");
+      if (phone.length > 0) usersByPhone.set(phone, user);
+    }
     if (users.length < 1000) break;
   }
-  return null;
+  return usersByPhone;
 }
 
 async function closeStaleTransientState(
