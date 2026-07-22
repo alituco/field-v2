@@ -93,8 +93,10 @@ Deno.serve(async (request) => {
       return json({ error: "That app user could not be found." }, 404);
     }
 
-    const { data: targetData, error: targetError } = await admin.auth.admin
-      .getUserById(body.profile_id);
+    const { data: targetData, error: targetError } =
+      await retryTransientAuthFailure(() =>
+        admin.auth.admin.getUserById(body.profile_id as string)
+      );
     if (targetError || !targetData.user) {
       return json({ error: "That user does not have an auth account." }, 404);
     }
@@ -121,21 +123,23 @@ Deno.serve(async (request) => {
         date_of_birth: profile.date_of_birth ??
           target.user_metadata?.date_of_birth ?? null,
       };
-    const session = target.email
-      ? await createEmailSession({
-        admin,
-        authClient,
-        userId: target.id,
-        email: target.email,
-        userMetadata,
-      })
-      : await createPhoneSession({
-        admin,
-        authClient,
-        userId: target.id,
-        phone: target.phone,
-        userMetadata,
-      });
+    const session = await retryTransientAuthFailure(() =>
+      target.email
+        ? createEmailSession({
+          admin,
+          authClient,
+          userId: target.id,
+          email: target.email,
+          userMetadata,
+        })
+        : createPhoneSession({
+          admin,
+          authClient,
+          userId: target.id,
+          phone: target.phone,
+          userMetadata,
+        })
+    );
 
     if (!session) {
       throw new Error("Could not create the selected dev session.");
@@ -247,6 +251,35 @@ function normalizePhoneDigits(phone: string) {
 
 function unique(values: string[]) {
   return [...new Set(values.filter(Boolean))];
+}
+
+async function retryTransientAuthFailure<T>(action: () => Promise<T>) {
+  const delaysMs = [1000, 2000, 4000, 8000];
+
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!isSigningKeyCacheMiss(error) || attempt === delaysMs.length) {
+        throw error;
+      }
+
+      console.warn(
+        `Supabase Auth signing-key cache miss; retrying dev switch (${
+          attempt + 1
+        }/${delaysMs.length}).`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
+  }
+
+  throw new Error("Could not switch dev users.");
+}
+
+function isSigningKeyCacheMiss(error: unknown) {
+  const message = toErrorMessage(error);
+  return message.includes("unrecognized JWT kid") &&
+    message.includes("token is unverifiable");
 }
 
 function toErrorMessage(error: unknown) {
