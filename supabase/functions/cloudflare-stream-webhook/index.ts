@@ -30,7 +30,8 @@ Deno.serve(async (request) => {
 
   const webhookSecret = Deno.env.get("CLOUDFLARE_STREAM_WEBHOOK_SECRET");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceRoleKey = Deno.env.get("FIELD_SUPABASE_SECRET_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!webhookSecret || !supabaseUrl || !serviceRoleKey) {
     return json({ error: "Stream webhook is not configured." }, 500);
   }

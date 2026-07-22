@@ -73,7 +73,8 @@ Deno.serve(async (request) => {
   }
 
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceRoleKey = Deno.env.get("FIELD_SUPABASE_SECRET_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
   if (!anonKey || !serviceRoleKey) {
     return json({ error: "Missing Supabase function secrets." }, 500);
