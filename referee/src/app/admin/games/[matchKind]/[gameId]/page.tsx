@@ -2,13 +2,12 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import type { AdminGameDetail } from "@/lib/admin-game-detail";
 import type { AdminGameParticipant } from "@/lib/admin-game-participants";
 import type {
   AdminGameReserve,
-  AdminGameReserveSide,
   AdminReserveCandidate,
 } from "@/lib/admin-game-reserves";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -29,8 +28,10 @@ export default function AdminGameDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [reserveSide, setReserveSide] = useState<AdminGameReserveSide | null>(null);
+  const [addingReserve, setAddingReserve] = useState(false);
   const [removeReserve, setRemoveReserve] = useState<AdminGameReserve | null>(null);
+  const [playerAction, setPlayerAction] = useState<AdminGameParticipant | null>(null);
+  const [cancelGame, setCancelGame] = useState(false);
 
   const load = useCallback(async (quiet = false) => {
     if (!accessToken || !gameId || !["SOLO", "CLAN"].includes(matchKind)) return;
@@ -103,7 +104,7 @@ export default function AdminGameDetailPage() {
   }
 
   const fixture = detail.fixture;
-  const sides = reserveSides(fixture);
+  const activeReserve = detail.reserves.active[0];
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
@@ -139,35 +140,28 @@ export default function AdminGameDetailPage() {
       <section className={styles.metrics}>
         <Metric label="Confirmed players" value={confirmedCount(detail)} detail={capacityLabel(detail)} />
         <Metric label="Checked in / played" value={String(detail.participants.actualPlayers.length)} detail="Official match record" />
-        <Metric label="Reserves assigned" value={`${detail.reserves.active.length} / 2`} detail="One standby per side" />
+        <Metric label="Reserve player" value={`${detail.reserves.active.length} / 1`} detail="One game-wide standby" />
         <Metric label="Reports" value={String(detail.reports.length)} detail={detail.reports.length ? "Needs awareness" : "No match reports"} tone={detail.reports.length ? "warning" : "good"} />
       </section>
 
       <div className={styles.grid}>
         <div className={styles.mainColumn}>
           <section className={styles.card}>
-            <SectionHead eyebrow="MATCHDAY COVER" title="Reserve players" detail="A reserve is standby-only. Assigning one does not charge them, place them in the official six, or change rating eligibility." />
+            <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the official six, or change rating eligibility." />
             <div className={styles.reserveGrid}>
-              {sides.map((side) => {
-                const reserve = detail.reserves.active.find((item) => item.side === side.id);
-                return (
-                  <ReserveSlot
-                    key={side.id}
-                    label={side.label}
-                    reserve={reserve}
-                    locked={!canManageReserves(fixture.status)}
-                    onAdd={() => setReserveSide(side.id)}
-                    onRemove={() => reserve && setRemoveReserve(reserve)}
-                  />
-                );
-              })}
+              <ReserveSlot
+                reserve={activeReserve}
+                locked={!canManageReserves(fixture.status)}
+                onAdd={() => setAddingReserve(true)}
+                onRemove={() => activeReserve && setRemoveReserve(activeReserve)}
+              />
             </div>
             {detail.reserves.history.length ? (
               <details className={styles.history}>
                 <summary>Previous reserve assignments · {detail.reserves.history.length}</summary>
                 {detail.reserves.history.map((reserve) => (
                   <div key={reserve.id}>
-                    <span>{reserve.displayName} · {sideLabel(fixture, reserve.side)}</span>
+                    <span>{reserve.displayName} · Game reserve</span>
                     <small>{reserve.removalReason} · {formatDateTime(reserve.removedAt)}</small>
                   </div>
                 ))}
@@ -177,7 +171,7 @@ export default function AdminGameDetailPage() {
 
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />
-            <ParticipantGroups detail={detail} />
+            <ParticipantGroups detail={detail} onPlayerAction={setPlayerAction} />
           </section>
 
           <section className={styles.card}>
@@ -199,6 +193,24 @@ export default function AdminGameDetailPage() {
             {fixture.cancellationReason ? (
               <div className={styles.cancellation}><strong>{fixture.cancellationCode ?? "Cancelled"}</strong><p>{fixture.cancellationReason}</p></div>
             ) : null}
+          </section>
+
+          <section className={styles.card}>
+            <SectionHead eyebrow="ADMIN CONTROLS" title="Resolve game issues" detail="Every action requires a reason and is permanently audited." />
+            <div className={styles.adminActions}>
+              <Link className={styles.secondaryButton} href={`/admin?section=games&gameId=${fixture.id}`}>
+                {detail.assignedReferee ? "Change referee" : "Assign referee"}
+              </Link>
+              <button
+                className={styles.dangerButton}
+                disabled={!canCancelGame(fixture.status)}
+                onClick={() => setCancelGame(true)}
+                type="button"
+              >
+                Cancel game
+              </button>
+            </div>
+            <p className={styles.actionHint}>Admin cancellation gives every payer a 100% Field Wallet refund, including held reliability deposits.</p>
           </section>
 
           <section className={styles.card}>
@@ -227,15 +239,39 @@ export default function AdminGameDetailPage() {
         </aside>
       </div>
 
-      {reserveSide ? (
+      {addingReserve ? (
         <AddReserveDialog
           accessToken={accessToken}
           detail={detail}
-          side={reserveSide}
-          onClose={() => setReserveSide(null)}
+          onClose={() => setAddingReserve(false)}
           onSaved={async (savedNotice) => {
-            setReserveSide(null);
+            setAddingReserve(false);
             setNotice(savedNotice);
+            await load(true);
+          }}
+        />
+      ) : null}
+      {playerAction ? (
+        <PlayerActionDialog
+          accessToken={accessToken}
+          detail={detail}
+          player={playerAction}
+          onClose={() => setPlayerAction(null)}
+          onSaved={async (savedNotice) => {
+            setPlayerAction(null);
+            setNotice(savedNotice);
+            await load(true);
+          }}
+        />
+      ) : null}
+      {cancelGame ? (
+        <CancelGameDialog
+          accessToken={accessToken}
+          detail={detail}
+          onClose={() => setCancelGame(false)}
+          onSaved={async () => {
+            setCancelGame(false);
+            setNotice("Game cancelled. Full refunds and deposit returns were recorded in the audit trail.");
             await load(true);
           }}
         />
@@ -257,10 +293,9 @@ export default function AdminGameDetailPage() {
   );
 }
 
-function AddReserveDialog({ accessToken, detail, side, onClose, onSaved }: {
+function AddReserveDialog({ accessToken, detail, onClose, onSaved }: {
   accessToken: string;
   detail: AdminGameDetail;
-  side: AdminGameReserveSide;
   onClose: () => void;
   onSaved: (notice: string) => Promise<void>;
 }) {
@@ -277,7 +312,7 @@ function AddReserveDialog({ accessToken, detail, side, onClose, onSaved }: {
     const timer = window.setTimeout(() => {
       setLoading(true);
       setError(null);
-      const params = new URLSearchParams({ side, query });
+      const params = new URLSearchParams({ query });
       void fetchJson<{ candidates: AdminReserveCandidate[] }>(
         `/api/referee/admin/games/${fixture.matchKind.toLowerCase()}/${fixture.id}/reserves?${params}`,
         { headers: auth(accessToken), cache: "no-store" },
@@ -286,7 +321,7 @@ function AddReserveDialog({ accessToken, detail, side, onClose, onSaved }: {
         .finally(() => setLoading(false));
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [accessToken, fixture.id, fixture.matchKind, query, side]);
+  }, [accessToken, fixture.id, fixture.matchKind, query]);
 
   async function submit() {
     if (!selected || note.trim().length < 3) return;
@@ -297,10 +332,10 @@ function AddReserveDialog({ accessToken, detail, side, onClose, onSaved }: {
         {
           method: "POST",
           headers: { ...auth(accessToken), "Content-Type": "application/json" },
-          body: JSON.stringify({ profileId: selected.profileId, side, note }),
+          body: JSON.stringify({ profileId: selected.profileId, note }),
         },
       );
-      await onSaved(`${selected.displayName} assigned as ${sideLabel(fixture, side)} reserve.`);
+      await onSaved(`${selected.displayName} assigned as the game reserve.`);
     } catch (saveError) {
       setError(message(saveError, "Could not assign this reserve."));
       setSaving(false);
@@ -310,8 +345,8 @@ function AddReserveDialog({ accessToken, detail, side, onClose, onSaved }: {
   return (
     <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section aria-modal="true" className={styles.modal} role="dialog">
-        <header><div><span>ADD RESERVE</span><h2>{sideLabel(fixture, side)}</h2></div><button onClick={onClose}>×</button></header>
-        <p className={styles.modalIntro}>Choose one standby player. They remain outside the official roster until match operations explicitly replace someone.</p>
+        <header><div><span>ADD RESERVE</span><h2>Game-wide standby</h2></div><button onClick={onClose}>×</button></header>
+        <p className={styles.modalIntro}>Search every player on Field. Confirmed participants are excluded because the reserve must remain outside the official roster.</p>
         <label className={styles.search}><span>Search players</span><input autoFocus placeholder="Name or username" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
         <div className={styles.candidates}>
           {loading ? <p>Searching players…</p> : candidates.length === 0 ? <p>No matching players found.</p> : candidates.map((candidate) => (
@@ -373,8 +408,108 @@ function RemoveReserveDialog({ accessToken, detail, reserve, onClose, onSaved }:
   );
 }
 
-function ReserveSlot({ label, reserve, locked, onAdd, onRemove }: {
-  label: string;
+function PlayerActionDialog({ accessToken, detail, player, onClose, onSaved }: {
+  accessToken: string;
+  detail: AdminGameDetail;
+  player: AdminGameParticipant;
+  onClose: () => void;
+  onSaved: (notice: string) => Promise<void>;
+}) {
+  const [category, setCategory] = useState("DANGEROUS_PLAY");
+  const [priority, setPriority] = useState("HIGH");
+  const [strikeCount, setStrikeCount] = useState(0);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit() {
+    setSaving(true); setError(null);
+    try {
+      await fetchJson(
+        `/api/referee/admin/games/${detail.fixture.matchKind.toLowerCase()}/${detail.fixture.id}/players/action`,
+        {
+          method: "POST",
+          headers: { ...auth(accessToken), "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profileId: player.profileId,
+            category,
+            priority,
+            details: reason.trim(),
+            strikeCount,
+          }),
+        },
+      );
+      await onSaved(strikeCount > 0
+        ? `${player.displayName} was reported and received ${strikeCount} reliability strike${strikeCount === 1 ? "" : "s"}.`
+        : `${player.displayName} was reported for admin review.`);
+    } catch (submitError) {
+      setError(message(submitError, "Could not record this player action."));
+      setSaving(false);
+    }
+  }
+  return (
+    <div className={styles.modalBackdrop} role="presentation">
+      <section aria-modal="true" className={styles.modal} role="dialog">
+        <header><div><span>PLAYER ACTION</span><h2>{player.displayName}</h2></div><button onClick={onClose}>×</button></header>
+        <p className={styles.modalIntro}>Create a permanent match-linked report. Reliability strikes affect the player’s active strike total and may immediately trigger configured restrictions.</p>
+        <div className={styles.formGrid}>
+          <label><span>Report reason</span><select value={category} onChange={(event) => setCategory(event.target.value)}>{REPORT_CATEGORIES.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></label>
+          <label><span>Priority</span><select value={priority} onChange={(event) => setPriority(event.target.value)}>{["NORMAL", "HIGH", "URGENT"].map((item) => <option key={item}>{humanize(item)}</option>)}</select></label>
+        </div>
+        <label><span>Reliability strikes</span><select value={strikeCount} onChange={(event) => setStrikeCount(Number(event.target.value))}><option value={0}>Report only · no strikes</option><option value={1}>1 strike</option><option value={2}>2 strikes</option><option value={3}>3 strikes</option></select></label>
+        {strikeCount > 0 ? <div className={styles.modalWarning}><strong>This has an immediate player consequence</strong><p>The player is notified. If this crosses a policy threshold, booking restrictions or suspensions are applied automatically.</p></div> : null}
+        <label><span>What happened?</span><textarea autoFocus maxLength={2000} placeholder="Record the evidence and reason for this decision…" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+        <footer><button className={styles.cancelButton} disabled={saving} onClick={onClose}>Close</button><button className={strikeCount > 0 ? styles.dangerButton : styles.primaryButton} disabled={saving || reason.trim().length < 10} onClick={() => void submit()}>{saving ? "Recording…" : strikeCount > 0 ? `Report + issue ${strikeCount} strike${strikeCount === 1 ? "" : "s"}` : "Submit report"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function CancelGameDialog({ accessToken, detail, onClose, onSaved }: {
+  accessToken: string;
+  detail: AdminGameDetail;
+  onClose: () => void;
+  onSaved: () => Promise<void>;
+}) {
+  const [reasonCode, setReasonCode] = useState("ADMIN_DECISION");
+  const [reason, setReason] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit() {
+    setSaving(true); setError(null);
+    const fixture = detail.fixture;
+    const path = fixture.matchKind === "SOLO"
+      ? `/api/referee/open-queue-games/${fixture.id}/action`
+      : `/api/referee/fixtures/${fixture.id}/action`;
+    try {
+      await fetchJson(path, {
+        method: "POST",
+        headers: { ...auth(accessToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", reasonCode, reason: reason.trim() }),
+      });
+      await onSaved();
+    } catch (submitError) {
+      setError(message(submitError, "Could not cancel this game."));
+      setSaving(false);
+    }
+  }
+  return (
+    <div className={styles.modalBackdrop} role="presentation">
+      <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
+        <header><div><span>ADMIN CANCELLATION</span><h2>Cancel this game?</h2></div><button onClick={onClose}>×</button></header>
+        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers through Field Wallet.</p></div>
+        <label><span>Cancellation category</span><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>{CANCELLATION_REASONS.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></label>
+        <label><span>Reason</span><textarea maxLength={1000} placeholder="Why is Field cancelling this game?" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        <label><span>Type CANCEL to confirm</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+        <footer><button className={styles.cancelButton} disabled={saving} onClick={onClose}>Keep game</button><button className={styles.dangerButton} disabled={saving || reason.trim().length < 8 || confirmation.trim().toUpperCase() !== "CANCEL"} onClick={() => void submit()}>{saving ? "Cancelling…" : "Cancel and refund everyone"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function ReserveSlot({ reserve, locked, onAdd, onRemove }: {
   reserve?: AdminGameReserve;
   locked: boolean;
   onAdd: () => void;
@@ -382,7 +517,7 @@ function ReserveSlot({ label, reserve, locked, onAdd, onRemove }: {
 }) {
   return (
     <article className={`${styles.reserveSlot} ${reserve ? styles.filledReserve : ""}`}>
-      <div className={styles.reserveLabel}><span>{label}</span><b>{reserve ? "ASSIGNED" : "OPEN SLOT"}</b></div>
+      <div className={styles.reserveLabel}><span>Game reserve</span><b>{reserve ? "ASSIGNED" : "OPEN SLOT"}</b></div>
       {reserve ? (
         <>
           <div className={styles.reservePlayer}><Avatar name={reserve.displayName} url={reserve.avatarUrl} /><span><strong>{reserve.displayName}</strong><small>{reserve.username ? `@${reserve.username.replace(/^@/, "")}` : "Player"}</small></span></div>
@@ -403,7 +538,10 @@ function ReserveSlot({ label, reserve, locked, onAdd, onRemove }: {
   );
 }
 
-function ParticipantGroups({ detail }: { detail: AdminGameDetail }) {
+function ParticipantGroups({ detail, onPlayerAction }: {
+  detail: AdminGameDetail;
+  onPlayerAction: (player: AdminGameParticipant) => void;
+}) {
   const fixture = detail.fixture;
   const participants = detail.participants;
   const active = participants.matchKind === "SOLO"
@@ -419,15 +557,15 @@ function ParticipantGroups({ detail }: { detail: AdminGameDetail }) {
       {definitions.map((definition) => {
         const players = active.filter((player) => player.side === definition.side);
         if (!players.length) return null;
-        return <section key={definition.name}><header><strong>{definition.name}</strong><span>{players.length}</span></header>{players.map((player) => <PlayerRow key={player.profileId} player={player} />)}</section>;
+        return <section key={definition.name}><header><strong>{definition.name}</strong><span>{players.length}</span></header>{players.map((player) => <PlayerRow key={player.profileId} player={player} onAction={() => onPlayerAction(player)} />)}</section>;
       })}
       {!active.length ? <div className={styles.emptyList}>No confirmed players yet.</div> : null}
     </div>
   );
 }
 
-function PlayerRow({ player }: { player: AdminGameParticipant }) {
-  return <div className={styles.playerRow}><Avatar name={player.displayName} url={player.avatarUrl} /><span><strong>{player.displayName}</strong><small>{player.username ? `@${player.username.replace(/^@/, "")} · ` : ""}{player.role ? humanize(player.role) : "Player"}</small></span><div>{player.checkedInAt ? <b>Checked in</b> : null}{player.ratingAtTeamAssignment !== null ? <em>{player.ratingAtTeamAssignment} SR</em> : null}</div></div>;
+function PlayerRow({ player, onAction }: { player: AdminGameParticipant; onAction: () => void }) {
+  return <div className={styles.playerRow}><Avatar name={player.displayName} url={player.avatarUrl} /><span><strong>{player.displayName}</strong><small>{player.username ? `@${player.username.replace(/^@/, "")} · ` : ""}{player.role ? humanize(player.role) : "Player"}</small></span><div>{player.checkedInAt ? <b>Checked in</b> : null}{player.ratingAtTeamAssignment !== null ? <em>{player.ratingAtTeamAssignment} SR</em> : null}<button className={styles.playerAction} onClick={onAction} type="button">Report / strikes</button></div></div>;
 }
 
 function MatchTimeline({ fixture }: { fixture: RefereeFixture }) {
@@ -480,19 +618,8 @@ function GameDetailSkeleton() {
   return <main className={styles.skeleton}><header /><section /><div><i /><i /><i /><i /></div></main>;
 }
 
-function reserveSides(fixture: RefereeFixture): Array<{ id: AdminGameReserveSide; label: string }> {
-  return fixture.matchKind === "SOLO"
-    ? [{ id: "WHITE", label: "White team reserve" }, { id: "BLACK", label: "Black team reserve" }]
-    : [{ id: "HOME", label: `${fixture.homeClan.name} reserve` }, { id: "AWAY", label: `${fixture.awayClan.name} reserve` }];
-}
-
-function sideLabel(fixture: RefereeFixture, side: AdminGameReserveSide) {
-  if (side === "WHITE") return "White team";
-  if (side === "BLACK") return "Black team";
-  return side === "HOME" ? fixture.homeClan.name : fixture.awayClan.name;
-}
-
 function canManageReserves(status: string) { return ["OPEN", "FULL", "SCHEDULED"].includes(status); }
+function canCancelGame(status: string) { return !["FINAL", "CANCELLED"].includes(status); }
 
 function confirmedCount(detail: AdminGameDetail) {
   return String(detail.participants.matchKind === "SOLO" ? detail.participants.counts.registered : detail.participants.counts.planned);
@@ -527,3 +654,14 @@ function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((pa
 function formatDate(value: string) { const date = new Date(`${value}T12:00:00Z`); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-BH", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bahrain" }).format(date); }
 function formatDateTime(value: string | null) { if (!value) return "Unknown time"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-BH", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Bahrain" }).format(date); }
 function message(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
+
+const REPORT_CATEGORIES = [
+  "HARASSMENT", "THREATS_OR_VIOLENCE", "DISCRIMINATION", "DANGEROUS_PLAY",
+  "CHEATING", "NO_SHOW_OR_MATCH_MANIPULATION", "INAPPROPRIATE_CONTENT",
+  "SAFETY_OR_VENUE", "SCORE_OR_RESULT", "REFEREE_ABUSE", "OTHER",
+] as const;
+
+const CANCELLATION_REASONS = [
+  "WEATHER_OR_VENUE", "SAFETY", "NO_REFEREE", "INSUFFICIENT_PLAYERS",
+  "TECHNICAL", "ADMIN_DECISION", "OTHER",
+] as const;

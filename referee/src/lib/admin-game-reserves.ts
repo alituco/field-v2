@@ -1,7 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export type AdminGameReserveSide = "HOME" | "AWAY" | "WHITE" | "BLACK";
-
 export type AdminGameReserve = {
   id: string;
   matchKind: "SOLO" | "CLAN";
@@ -9,7 +7,7 @@ export type AdminGameReserve = {
   displayName: string;
   username: string | null;
   avatarUrl: string | null;
-  side: AdminGameReserveSide;
+  side: "HOME" | "AWAY" | "WHITE" | "BLACK" | null;
   status: "ACTIVE" | "REMOVED";
   note: string;
   addedByName: string;
@@ -81,35 +79,31 @@ export async function loadAdminReserveCandidates(
   db: SupabaseClient,
   matchKind: "SOLO" | "CLAN",
   matchId: string,
-  side: AdminGameReserveSide,
   search: string,
 ): Promise<AdminReserveCandidate[]> {
   const normalizedSearch = search.trim().slice(0, 80);
-  let allowedIds: string[] | null = null;
   let participantIds: string[] = [];
 
   if (matchKind === "CLAN") {
     const { data: fixture, error: fixtureError } = await db
       .from("fixtures")
-      .select("home_clan_id,away_clan_id")
+      .select("id")
       .eq("id", matchId)
       .maybeSingle();
-    if (fixtureError) throw new Error(`Could not load fixture clans: ${fixtureError.message}`);
+    if (fixtureError) throw new Error(`Could not load fixture: ${fixtureError.message}`);
     if (!fixture) throw new Error("Clan fixture not found.");
-    const clanId = side === "HOME"
-      ? String(fixture.home_clan_id ?? "")
-      : String(fixture.away_clan_id ?? "");
-    if (!clanId) return [];
-    const [membersResult, rosterResult] = await Promise.all([
-      db.from("clan_members").select("profile_id")
-        .eq("clan_id", clanId).is("left_at", null),
+    const [rosterResult, appearanceResult] = await Promise.all([
       db.from("fixture_reliability_roster_history").select("profile_id")
         .eq("fixture_id", matchId).eq("status", "CONFIRMED"),
+      db.from("fixture_player_appearances").select("profile_id")
+        .eq("fixture_id", matchId).eq("played", true),
     ]);
-    if (membersResult.error) throw new Error(`Could not load clan members: ${membersResult.error.message}`);
     if (rosterResult.error) throw new Error(`Could not load confirmed roster: ${rosterResult.error.message}`);
-    allowedIds = rows(membersResult.data).map((row) => String(row.profile_id));
-    participantIds = rows(rosterResult.data).map((row) => String(row.profile_id));
+    if (appearanceResult.error) throw new Error(`Could not load recorded players: ${appearanceResult.error.message}`);
+    participantIds = [...new Set([
+      ...rows(rosterResult.data).map((row) => String(row.profile_id)),
+      ...rows(appearanceResult.data).map((row) => String(row.profile_id)),
+    ])];
   } else {
     const { data, error } = await db.from("open_queue_bookings")
       .select("profile_id")
@@ -119,8 +113,7 @@ export async function loadAdminReserveCandidates(
     participantIds = rows(data).map((row) => String(row.profile_id));
   }
 
-  if (allowedIds !== null && allowedIds.length === 0) return [];
-  const profiles = await searchProfiles(db, normalizedSearch, allowedIds);
+  const profiles = await searchProfiles(db, normalizedSearch);
   const { active } = await loadAdminGameReserves(db, matchKind, matchId);
   const activeReserveIds = new Set(active.map((reserve) => reserve.profileId));
   const participantSet = new Set(participantIds);
@@ -148,12 +141,10 @@ export async function loadAdminReserveCandidates(
 async function searchProfiles(
   db: SupabaseClient,
   search: string,
-  allowedIds: string[] | null,
 ): Promise<Row[]> {
   const select = "id,display_name,username,avatar_url,player_ratings(skill_rating)";
   const build = () => {
     let query = db.from("profiles").select(select).order("display_name").limit(20);
-    if (allowedIds !== null) query = query.in("id", allowedIds);
     return query;
   };
   if (!search) {
@@ -185,7 +176,7 @@ function normalizeReserve(row: Row): AdminGameReserve {
     displayName: text(profile.display_name, "Player"),
     username: nullableText(profile.username),
     avatarUrl: nullableText(profile.avatar_url),
-    side: normalizeSide(row.side),
+    side: nullableSide(row.side),
     status: row.status === "REMOVED" ? "REMOVED" : "ACTIVE",
     note: text(row.note),
     addedByName: text(addedBy.display_name, "Administrator"),
@@ -196,10 +187,10 @@ function normalizeReserve(row: Row): AdminGameReserve {
   };
 }
 
-function normalizeSide(value: unknown): AdminGameReserveSide {
-  return value === "HOME" || value === "AWAY" || value === "BLACK"
+function nullableSide(value: unknown): AdminGameReserve["side"] {
+  return value === "HOME" || value === "AWAY" || value === "WHITE" || value === "BLACK"
     ? value
-    : "WHITE";
+    : null;
 }
 
 function ratingFrom(value: unknown) {

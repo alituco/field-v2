@@ -3047,6 +3047,30 @@ button:disabled {
   display: block;
 }
 
+.admin-required-resolution {
+  display: inline-block;
+  margin-top: 5px;
+  border-radius: 999px;
+  padding: 3px 7px;
+  background: #fff4df;
+  color: #9a5a06;
+  font-size: 8px;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+
+.admin-attention-meta button {
+  margin-top: 7px;
+  border: 0;
+  background: transparent;
+  color: var(--admin-green);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
 .admin-attention-meta span {
   color: #64748b;
   font-size: 8px;

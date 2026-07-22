@@ -55,6 +55,10 @@ type AttentionItem = {
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   kind: string;
   createdAt: string | null;
+  matchKind: "SOLO" | "CLAN" | null;
+  gameId: string | null;
+  resolution: string | null;
+  dismissible: boolean;
 };
 
 type AuditItem = {
@@ -1156,6 +1160,7 @@ function OverviewSection({
   forfeits: AdminForfeit[];
   onNavigate: (section: AdminSection) => void;
 }) {
+  const router = useRouter();
   const now = Date.now();
   const upcoming = games
     .filter((game) =>
@@ -1221,15 +1226,26 @@ function OverviewSection({
           ) : (
             <div className="admin-attention-list">
               {overview.attention.slice(0, 7).map((item) => (
-                <article key={item.id}>
+                <article className={item.gameId ? "actionable" : ""} key={item.id}>
                   <span className={`admin-severity-dot ${item.severity.toLowerCase()}`} />
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.detail}</p>
+                    {!item.dismissible ? <small className="admin-required-resolution">Assignment required · cannot dismiss</small> : null}
                   </div>
                   <div className="admin-attention-meta">
                     <span>{humanize(item.kind)}</span>
                     <time>{relativeTime(item.createdAt)}</time>
+                    {item.gameId && item.matchKind ? (
+                      <button
+                        onClick={() => router.push(`/admin/games/${item.matchKind!.toLowerCase()}/${item.gameId}`)}
+                        type="button"
+                      >
+                        Resolve or cancel →
+                      </button>
+                    ) : item.kind === "REPORT" || item.kind.includes("STOPPAGE") || item.kind.includes("FORFEIT") ? (
+                      <button onClick={() => onNavigate("reports")} type="button">Review →</button>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -1572,6 +1588,19 @@ function GamesSection({
   const [participantsError, setParticipantsError] = useState<string | null>(null);
   const [newRefereeName, setNewRefereeName] = useState("");
   const [newRefereePhone, setNewRefereePhone] = useState("");
+
+  useEffect(() => {
+    const requestedGameId = new URLSearchParams(window.location.search).get("gameId");
+    if (!requestedGameId) return;
+    const requested = games.find((game) => game.id === requestedGameId);
+    if (!requested) return;
+    setView(isFinalAdminGame(requested) ? "FINAL" : "SCHEDULED");
+    setStatus("ALL");
+    setKind("ALL");
+    setRefereeFilter("ALL");
+    setQuery("");
+    setActiveId(`${requested.matchKind}-${requested.id}`);
+  }, [games]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -3898,6 +3927,7 @@ function normalizeOverview(
 }
 
 function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
+  const rawMatchKind = stringFrom(row.matchKind ?? row.match_kind)?.toUpperCase();
   return {
     id: stringFrom(row.id) ?? `attention-${index}`,
     title: stringFrom(row.title ?? row.label) ?? "Admin review needed",
@@ -3905,6 +3935,10 @@ function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
     severity: enumValue(row.severity ?? row.priority, ["LOW", "MEDIUM", "HIGH", "CRITICAL"], "MEDIUM"),
     kind: stringFrom(row.kind ?? row.type ?? row.category) ?? "OPERATIONS",
     createdAt: stringFrom(row.createdAt ?? row.created_at ?? row.occurredAt ?? row.occurred_at),
+    matchKind: rawMatchKind === "SOLO" || rawMatchKind === "CLAN" ? rawMatchKind : null,
+    gameId: stringFrom(row.gameId ?? row.game_id ?? row.fixtureId ?? row.fixture_id),
+    resolution: stringFrom(row.resolution),
+    dismissible: row.dismissible !== false,
   };
 }
 
