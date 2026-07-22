@@ -3485,6 +3485,348 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.admin-games-head-actions,
+.admin-display-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-display-switch {
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  padding: 3px;
+  background: #f1f5f9;
+}
+
+.admin-display-switch button {
+  border: 0;
+  border-radius: 7px;
+  padding: 8px 11px;
+  background: transparent;
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.admin-display-switch button.active {
+  background: #fff;
+  color: var(--admin-navy);
+  box-shadow: 0 1px 4px rgb(15 23 42 / 10%);
+}
+
+.admin-calendar {
+  padding: 16px;
+  background: #fff;
+}
+
+.admin-calendar > header {
+  display: grid;
+  grid-template-columns: 36px 1fr 36px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.admin-calendar > header button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--admin-border);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--admin-navy);
+  font-weight: 900;
+}
+
+.admin-calendar > header div {
+  display: grid;
+  gap: 2px;
+  text-align: center;
+}
+
+.admin-calendar > header strong {
+  color: var(--admin-navy);
+  font-size: 14px;
+}
+
+.admin-calendar > header small {
+  color: #94a3b8;
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.admin-calendar-weekdays,
+.admin-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.admin-calendar-weekdays span {
+  padding: 7px;
+  color: #94a3b8;
+  font-size: 8px;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.admin-calendar-grid {
+  overflow: hidden;
+  border: 1px solid var(--admin-border);
+  border-radius: 12px;
+  background: var(--admin-border);
+  gap: 1px;
+}
+
+.admin-calendar-grid > section {
+  min-height: 92px;
+  padding: 7px;
+  background: #fff;
+}
+
+.admin-calendar-grid > section.outside {
+  background: #f8fafc;
+}
+
+.admin-calendar-grid time {
+  display: block;
+  margin-bottom: 5px;
+  color: #475569;
+  font-size: 8px;
+  font-weight: 900;
+}
+
+.admin-calendar-grid .outside time {
+  color: #cbd5e1;
+}
+
+.admin-calendar-game {
+  display: grid;
+  width: 100%;
+  gap: 2px;
+  overflow: hidden;
+  margin-top: 4px;
+  border: 0;
+  border-left: 3px solid #10b981;
+  border-radius: 5px;
+  padding: 5px;
+  background: #ecfdf5;
+  color: #065f46;
+  text-align: left;
+}
+
+.admin-calendar-game.solo {
+  border-left-color: #2563eb;
+  background: #eff6ff;
+  color: #1e40af;
+}
+
+.admin-calendar-game span,
+.admin-calendar-game small {
+  overflow: hidden;
+  font-size: 6px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-calendar-game strong {
+  overflow: hidden;
+  font-size: 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-staff-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.7fr) minmax(520px, 1.3fr);
+  align-items: start;
+  gap: 20px;
+}
+
+.admin-staff-create,
+.admin-staff-directory {
+  padding: 20px;
+}
+
+.admin-staff-create h2,
+.admin-staff-directory h2 {
+  margin-top: 4px;
+  color: var(--admin-navy);
+  font-size: 18px;
+}
+
+.admin-staff-create > p {
+  margin: 8px 0 18px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.admin-staff-create form,
+.admin-staff-create form > label {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-staff-create form {
+  gap: 15px;
+}
+
+.admin-staff-create label > span,
+.admin-staff-create legend {
+  color: #475569;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.admin-staff-create input {
+  width: 100%;
+  border: 1px solid var(--admin-border);
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+  color: var(--admin-navy);
+  font: inherit;
+  font-size: 11px;
+}
+
+.admin-staff-create label small {
+  color: #94a3b8;
+  font-size: 8px;
+}
+
+.admin-staff-create fieldset {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 0;
+  padding: 0;
+}
+
+.admin-staff-create legend {
+  margin-bottom: 8px;
+}
+
+.admin-staff-create fieldset button {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid var(--admin-border);
+  border-radius: 11px;
+  padding: 11px;
+  background: #fff;
+  color: #64748b;
+  text-align: left;
+}
+
+.admin-staff-create fieldset button.active {
+  border-color: #10b981;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.admin-staff-create fieldset svg,
+.admin-staff-warning svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.admin-staff-create fieldset button span {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-staff-create fieldset strong {
+  font-size: 10px;
+}
+
+.admin-staff-create fieldset small {
+  font-size: 7px;
+  line-height: 1.35;
+}
+
+.admin-staff-warning {
+  display: flex;
+  gap: 9px;
+  border-radius: 10px;
+  padding: 11px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.admin-staff-warning span {
+  display: grid;
+  gap: 2px;
+}
+
+.admin-staff-directory > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--admin-border);
+  padding-bottom: 15px;
+}
+
+.admin-staff-directory > header > b {
+  border-radius: 999px;
+  padding: 7px 10px;
+  background: #ecfdf5;
+  color: #047857;
+  font-size: 8px;
+  text-transform: uppercase;
+}
+
+.admin-staff-list article {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #eef2f7;
+  padding: 14px 0;
+}
+
+.admin-staff-list article > div {
+  display: grid;
+  gap: 3px;
+}
+
+.admin-staff-list article strong {
+  color: var(--admin-navy);
+  font-size: 11px;
+}
+
+.admin-staff-list article small {
+  color: #94a3b8;
+  font-size: 8px;
+}
+
+.admin-staff-role {
+  border-radius: 999px;
+  padding: 6px 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 7px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-staff-role.admin {
+  background: #f3e8ff;
+  color: #7e22ce;
+}
+
+.admin-clickable-row {
+  cursor: pointer;
+}
+
+.admin-clickable-row:focus-visible {
+  outline: 2px solid var(--admin-green);
+  outline-offset: -2px;
+}
+
 .admin-game-view-tabs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5308,7 +5650,8 @@ button:disabled {
   .admin-overview-grid,
   .admin-overview-grid.lower,
   .admin-games-layout,
-  .admin-reports-layout {
+  .admin-reports-layout,
+  .admin-staff-layout {
     grid-template-columns: 1fr;
   }
 
@@ -5384,7 +5727,7 @@ button:disabled {
     left: 10px;
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(8, minmax(0, 1fr));
+    grid-template-columns: repeat(9, minmax(0, 1fr));
     min-height: 61px;
     border: 1px solid rgba(255, 255, 255, 0.52);
     border-radius: 18px;
@@ -5452,8 +5795,13 @@ button:disabled {
   }
 
   .admin-games-browser-head {
-    align-items: flex-start;
+    align-items: stretch;
+    flex-direction: column;
     padding: 14px;
+  }
+
+  .admin-games-head-actions {
+    justify-content: space-between;
   }
 
   .admin-games-browser-head .admin-primary-button {
@@ -5483,6 +5831,35 @@ button:disabled {
   .admin-game-table-wrap,
   .admin-people-table-wrap {
     overflow-x: auto;
+  }
+
+  .admin-calendar {
+    overflow-x: auto;
+  }
+
+  .admin-calendar > header,
+  .admin-calendar-weekdays,
+  .admin-calendar-grid {
+    min-width: 650px;
+  }
+
+  .admin-staff-layout {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .admin-staff-create,
+  .admin-staff-directory {
+    padding: 17px;
+  }
+
+  .admin-staff-list article {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .admin-staff-list article > .admin-clear-status,
+  .admin-staff-list article > .admin-action-status {
+    grid-column: 2 / -1;
   }
 
   .admin-games-table,
@@ -5590,6 +5967,10 @@ button:disabled {
 
   .admin-reported-subject > button {
     grid-column: 1 / -1;
+  }
+
+  .admin-staff-create fieldset {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -36,8 +36,10 @@ type AdminSection =
   | "reports"
   | "waitlist"
   | "people"
+  | "staff"
   | "audit";
 type AdminGamesView = "SCHEDULED" | "FINAL";
+type AdminGamesDisplay = "LIST" | "CALENDAR";
 type JsonRecord = Record<string, unknown>;
 
 type OverviewMetric = {
@@ -178,6 +180,16 @@ type FlaggedSubject = {
   lastReportedAt: string | null;
 };
 
+type AdminStaffMember = {
+  profileId: string;
+  displayName: string;
+  phone: string;
+  role: "admin" | "referee";
+  isActive: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 type ModerationActionType =
   | "WARNING"
   | "PLAY_SUSPENSION"
@@ -238,6 +250,7 @@ export default function AdminPage() {
   const [activeSupportCount, setActiveSupportCount] = useState(0);
   const [forfeits, setForfeits] = useState<AdminForfeit[]>([]);
   const [subjects, setSubjects] = useState<FlaggedSubject[]>([]);
+  const [staff, setStaff] = useState<AdminStaffMember[]>([]);
   const [reportStatus, setReportStatus] = useState("OPEN");
   const [supportStatus, setSupportStatus] = useState("ACTIVE");
   const [waitlistLoading, setWaitlistLoading] = useState(false);
@@ -366,6 +379,15 @@ export default function AdminPage() {
     setSubjects(normalizeSubjects(payload));
   }, [accessToken, authHeaders]);
 
+  const loadStaff = useCallback(async () => {
+    if (!accessToken) return;
+    const payload = await fetchJson<{ staff?: AdminStaffMember[] }>(
+      "/api/referee/referees",
+      { headers: authHeaders(), cache: "no-store" },
+    );
+    setStaff(Array.isArray(payload.staff) ? payload.staff : []);
+  }, [accessToken, authHeaders]);
+
   const loadAll = useCallback(
     async (quiet = false) => {
       if (!accessToken) return;
@@ -380,6 +402,7 @@ export default function AdminPage() {
           loadReports(),
           loadSubjects(),
           loadForfeits(),
+          loadStaff(),
         ]);
         const failure = results.find(
           (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -400,6 +423,7 @@ export default function AdminPage() {
       loadReports,
       loadSubjects,
       loadSupportTickets,
+      loadStaff,
     ],
   );
 
@@ -419,7 +443,9 @@ export default function AdminPage() {
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("section");
-    if (requested === "games") setSection("games");
+    if (adminNavItems.some((item) => item.id === requested)) {
+      setSection(requested as AdminSection);
+    }
   }, []);
 
   useEffect(() => {
@@ -571,7 +597,7 @@ export default function AdminPage() {
     setSubmitting("create-referee");
     setError(null);
     try {
-      await fetchJson("/api/referee/referees", {
+      const result = await fetchJson<{ warning?: string | null }>("/api/referee/referees", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
@@ -581,11 +607,35 @@ export default function AdminPage() {
           sendOtp: true,
         }),
       });
-      setNotice(`Referee account created for ${input.displayName}.`);
-      await loadGames();
+      setNotice(result.warning ?? `Referee account created for ${input.displayName}.`);
+      await Promise.all([loadGames(), loadStaff()]);
       return true;
     } catch (createError) {
       setError(errorMessage(createError, "Could not create the referee account."));
+      return false;
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function createStaff(input: {
+    displayName: string;
+    phone: string;
+    role: "admin" | "referee";
+  }) {
+    setSubmitting("create-staff");
+    setError(null);
+    try {
+      const result = await fetchJson<{ warning?: string | null }>("/api/referee/referees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ ...input, sendOtp: true }),
+      });
+      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} account created and a login code was requested.`);
+      await Promise.all([loadStaff(), loadGames()]);
+      return true;
+    } catch (createError) {
+      setError(errorMessage(createError, "Could not create the staff account."));
       return false;
     } finally {
       setSubmitting(null);
@@ -953,6 +1003,12 @@ export default function AdminPage() {
               onModerate={setModerationSubject}
               onRevoke={(subject, action) => setRevokeDialog({ subject, action })}
             />
+          ) : section === "staff" ? (
+            <StaffSection
+              staff={staff}
+              submitting={submitting}
+              onCreate={createStaff}
+            />
           ) : section === "reliability" ? (
             <ReliabilitySection
               accessToken={accessToken}
@@ -1071,6 +1127,7 @@ const adminNavItems: Array<{
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
   { id: "waitlist", label: "Season Zero waitlist", shortLabel: "Waitlist", icon: "waitlist" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
+  { id: "staff", label: "Admins & referees", shortLabel: "Staff", icon: "referee" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
 ];
 
@@ -1576,6 +1633,11 @@ function GamesSection({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [view, setView] = useState<AdminGamesView>("SCHEDULED");
+  const [display, setDisplay] = useState<AdminGamesDisplay>("LIST");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  });
   const [status, setStatus] = useState("ALL");
   const [kind, setKind] = useState("ALL");
   const [refereeFilter, setRefereeFilter] = useState("ALL");
@@ -1717,14 +1779,27 @@ function GamesSection({
             <span className="admin-eyebrow">Match operations</span>
             <h2>Games</h2>
           </div>
-          <button
-            className="admin-primary-button"
-            disabled={submitting !== null}
-            onClick={onCreateSoloGame}
-            type="button"
-          >
-            <span aria-hidden="true">＋</span> Create solo game
-          </button>
+          <div className="admin-games-head-actions">
+            <div className="admin-display-switch" aria-label="Games display" role="group">
+              <button className={display === "LIST" ? "active" : ""} onClick={() => setDisplay("LIST")} type="button">List</button>
+              <button className={display === "CALENDAR" ? "active" : ""} onClick={() => {
+                setDisplay("CALENDAR");
+                const closest = filtered[0]?.matchDate;
+                if (closest) {
+                  const [year, month] = closest.split("-").map(Number);
+                  if (year && month) setCalendarMonth(new Date(Date.UTC(year, month - 1, 1)));
+                }
+              }} type="button">Calendar</button>
+            </div>
+            <button
+              className="admin-primary-button"
+              disabled={submitting !== null}
+              onClick={onCreateSoloGame}
+              type="button"
+            >
+              <span aria-hidden="true">＋</span> Create solo game
+            </button>
+          </div>
         </div>
         <div className="admin-game-view-tabs" role="tablist" aria-label="Game timing">
           <button
@@ -1803,6 +1878,14 @@ function GamesSection({
         <div className="admin-table-count">{filtered.length} games</div>
         {filtered.length === 0 ? (
           <AdminEmpty icon="games" title="No matching games" detail="Try a different status or search." />
+        ) : display === "CALENDAR" ? (
+          <AdminGamesCalendar
+            assignments={assignments}
+            games={filtered}
+            month={calendarMonth}
+            onMonth={setCalendarMonth}
+            onOpen={(game) => router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`)}
+          />
         ) : (
           <div className="admin-game-table-wrap">
             <table className="admin-data-table admin-games-table">
@@ -2019,6 +2102,87 @@ function GamesSection({
           </p>
         </aside>
       ) : null}
+    </div>
+  );
+}
+
+function AdminGamesCalendar({
+  assignments,
+  games,
+  month,
+  onMonth,
+  onOpen,
+}: {
+  assignments: RefereeAssignmentsResponse;
+  games: RefereeFixture[];
+  month: Date;
+  onMonth: (month: Date) => void;
+  onOpen: (game: RefereeFixture) => void;
+}) {
+  const year = month.getUTCFullYear();
+  const monthIndex = month.getUTCMonth();
+  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
+  const mondayOffset = (firstDay.getUTCDay() + 6) % 7;
+  const gridStart = new Date(firstDay);
+  gridStart.setUTCDate(firstDay.getUTCDate() - mondayOffset);
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setUTCDate(gridStart.getUTCDate() + index);
+    return date;
+  });
+  const gamesByDay = new Map<string, RefereeFixture[]>();
+  for (const game of games) {
+    const bucket = gamesByDay.get(game.matchDate) ?? [];
+    bucket.push(game);
+    gamesByDay.set(game.matchDate, bucket);
+  }
+  const monthLabel = new Intl.DateTimeFormat("en-BH", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(month);
+
+  function shiftMonth(delta: number) {
+    onMonth(new Date(Date.UTC(year, monthIndex + delta, 1)));
+  }
+
+  return (
+    <div className="admin-calendar">
+      <header>
+        <button aria-label="Previous month" onClick={() => shiftMonth(-1)} type="button">←</button>
+        <div><strong>{monthLabel}</strong><small>{games.length} filtered games</small></div>
+        <button aria-label="Next month" onClick={() => shiftMonth(1)} type="button">→</button>
+      </header>
+      <div className="admin-calendar-weekdays">
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}
+      </div>
+      <div className="admin-calendar-grid">
+        {days.map((date) => {
+          const key = date.toISOString().slice(0, 10);
+          const dayGames = gamesByDay.get(key) ?? [];
+          const outside = date.getUTCMonth() !== monthIndex;
+          return (
+            <section className={outside ? "outside" : ""} key={key}>
+              <time dateTime={key}>{date.getUTCDate()}</time>
+              <div>
+                {dayGames.map((game) => (
+                  <button
+                    className={`admin-calendar-game ${game.matchKind.toLowerCase()}`}
+                    key={`${game.matchKind}-${game.id}`}
+                    onClick={() => onOpen(game)}
+                    title={`${game.homeClan.name} vs ${game.awayClan.name}`}
+                    type="button"
+                  >
+                    <span>{game.timeSlot}</span>
+                    <strong>{game.homeClan.tag} vs {game.awayClan.tag}</strong>
+                    <small>{assignedRefereeName(assignments, game)}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -2818,6 +2982,132 @@ function ReportsSection({
   );
 }
 
+function StaffSection({
+  staff,
+  submitting,
+  onCreate,
+}: {
+  staff: AdminStaffMember[];
+  submitting: string | null;
+  onCreate: (input: {
+    displayName: string;
+    phone: string;
+    role: "admin" | "referee";
+  }) => Promise<boolean>;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [role, setRole] = useState<"admin" | "referee">("referee");
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const created = await onCreate({
+      displayName: displayName.trim(),
+      phone: phone.trim(),
+      role,
+    });
+    if (created) {
+      setDisplayName("");
+      setPhone("");
+      setRole("referee");
+    }
+  }
+
+  return (
+    <div className="admin-staff-layout">
+      <section className="admin-card admin-staff-create">
+        <span className="admin-eyebrow">Controlled access</span>
+        <h2>Add an admin or referee</h2>
+        <p>
+          Register their phone number, create their Field account, and send the
+          first one-time login code in one step.
+        </p>
+        <form onSubmit={(event) => void submit(event)}>
+          <label>
+            <span>Full name</span>
+            <input
+              autoComplete="name"
+              maxLength={80}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Mohamed Ali"
+              required
+              value={displayName}
+            />
+          </label>
+          <label>
+            <span>Phone number</span>
+            <input
+              autoComplete="tel"
+              inputMode="tel"
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="+973 3XXX XXXX"
+              required
+              value={phone}
+            />
+            <small>This exact number becomes their login identity.</small>
+          </label>
+          <fieldset>
+            <legend>Access level</legend>
+            <button
+              className={role === "referee" ? "active" : ""}
+              onClick={() => setRole("referee")}
+              type="button"
+            >
+              <AdminIcon name="referee" />
+              <span><strong>Referee</strong><small>Assigned games and matchday controls</small></span>
+            </button>
+            <button
+              className={role === "admin" ? "active" : ""}
+              onClick={() => setRole("admin")}
+              type="button"
+            >
+              <AdminIcon name="shield" />
+              <span><strong>Admin</strong><small>Full operations and moderation access</small></span>
+            </button>
+          </fieldset>
+          <div className="admin-staff-warning">
+            <AdminIcon name="lock" />
+            <span><strong>Admin access is sensitive.</strong> Only grant it to people who should see private reports and change official records.</span>
+          </div>
+          <button
+            className="admin-primary-button"
+            disabled={submitting !== null || displayName.trim().length < 2 || phone.trim().length < 8}
+            type="submit"
+          >
+            {submitting === "create-staff" ? "Creating account…" : `Create ${role} account`}
+          </button>
+        </form>
+      </section>
+
+      <section className="admin-card admin-staff-directory">
+        <header>
+          <div><span className="admin-eyebrow">Access directory</span><h2>Registered staff</h2></div>
+          <b>{staff.filter((member) => member.isActive).length} active</b>
+        </header>
+        {staff.length === 0 ? (
+          <AdminEmpty icon="referee" title="No staff accounts found" detail="Create the first referee or administrator." />
+        ) : (
+          <div className="admin-staff-list">
+            {staff.map((member) => (
+              <article key={member.profileId}>
+                <span className="admin-subject-avatar small">{initials(member.displayName)}</span>
+                <div>
+                  <strong>{member.displayName}</strong>
+                  <small>{member.phone} · Added {member.createdAt ? formatAdminDate(member.createdAt) : "date unavailable"}</small>
+                </div>
+                <span className={`admin-staff-role ${member.role}`}>{member.role}</span>
+                <span className={member.isActive ? "admin-clear-status" : "admin-action-status"}>
+                  {member.isActive ? <><i /> Active</> : "Inactive"}
+                </span>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function PeopleSection({
   subjects,
   onModerate,
@@ -2827,6 +3117,7 @@ function PeopleSection({
   onModerate: (subject: FlaggedSubject) => void;
   onRevoke: (subject: FlaggedSubject, action: ActiveModerationAction) => void;
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [type, setType] = useState("ALL");
   const filtered = subjects.filter((subject) => {
@@ -2875,7 +3166,18 @@ function PeopleSection({
             </thead>
             <tbody>
               {filtered.map((subject, index) => (
-                <tr key={`${subject.subjectType}-${subject.subjectId}`}>
+                <tr
+                  className="admin-clickable-row"
+                  key={`${subject.subjectType}-${subject.subjectId}`}
+                  onClick={() => router.push(`/admin/people/${subject.subjectType.toLowerCase()}/${subject.subjectId}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      router.push(`/admin/people/${subject.subjectType.toLowerCase()}/${subject.subjectId}`);
+                    }
+                  }}
+                  tabIndex={0}
+                >
                   <td>
                     <div className="admin-person-cell">
                       <span className="admin-rank">#{index + 1}</span>
@@ -2911,14 +3213,20 @@ function PeopleSection({
                       {subject.activeActions[0] ? (
                         <button
                           className="admin-row-revoke"
-                          onClick={() => onRevoke(subject, subject.activeActions[0])}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRevoke(subject, subject.activeActions[0]);
+                          }}
                           type="button"
                         >
                           Revoke
                         </button>
                       ) : null}
-                      <button className="admin-row-action" onClick={() => onModerate(subject)} type="button">
-                        Review <AdminIcon name="arrow" />
+                      <button className="admin-row-action" onClick={(event) => {
+                        event.stopPropagation();
+                        router.push(`/admin/people/${subject.subjectType.toLowerCase()}/${subject.subjectId}`);
+                      }} type="button">
+                        Full record <AdminIcon name="arrow" />
                       </button>
                     </div>
                   </td>
@@ -4122,6 +4430,7 @@ function sectionTitle(section: AdminSection) {
     reports: "Reports inbox",
     waitlist: "Season Zero waitlist",
     people: "Players & clans",
+    staff: "Admins & referees",
     audit: "Audit log",
   }[section];
 }
@@ -4135,6 +4444,7 @@ function sectionSubtitle(section: AdminSection) {
     reports: "Triage player reports privately and consistently.",
     waitlist: "Review the players and clan leaders asking to join the private pilot.",
     people: "Understand patterns before taking proportionate action.",
+    staff: "Register trusted phone numbers and control who can operate Field.",
     audit: "A permanent trail of sensitive admin decisions.",
   }[section];
 }

@@ -11,7 +11,12 @@ import type {
   AdminReserveCandidate,
 } from "@/lib/admin-game-reserves";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
-import type { BroadcastControlResponse, FixtureEvent, RefereeFixture } from "@/lib/types";
+import type {
+  BroadcastControlResponse,
+  FixtureEvent,
+  RefereeAssignmentsResponse,
+  RefereeFixture,
+} from "@/lib/types";
 
 import styles from "./game-detail.module.css";
 
@@ -31,6 +36,8 @@ export default function AdminGameDetailPage() {
   const [addingReserve, setAddingReserve] = useState(false);
   const [removeReserve, setRemoveReserve] = useState<AdminGameReserve | null>(null);
   const [playerAction, setPlayerAction] = useState<AdminGameParticipant | null>(null);
+  const [clanActionId, setClanActionId] = useState<string | null>(null);
+  const [assignReferee, setAssignReferee] = useState(false);
   const [cancelGame, setCancelGame] = useState(false);
 
   const load = useCallback(async (quiet = false) => {
@@ -122,12 +129,12 @@ export default function AdminGameDetailPage() {
           <Status status={fixture.status} />
         </div>
         <div className={styles.scoreboard}>
-          <Team clan={fixture.homeClan} />
+          <Team clan={fixture.homeClan} detail={detail} side="home" />
           <div className={styles.score}>
             <strong>{score(fixture)}</strong>
             <span>{fixture.status === "FINAL" ? "FINAL SCORE" : fixture.status === "LIVE" ? "LIVE" : "VS"}</span>
           </div>
-          <Team clan={fixture.awayClan} align="right" />
+          <Team clan={fixture.awayClan} detail={detail} side="away" align="right" />
         </div>
         <div className={styles.heroFacts}>
           <Fact label="Date" value={formatDate(fixture.matchDate)} />
@@ -186,8 +193,19 @@ export default function AdminGameDetailPage() {
             <dl className={styles.detailList}>
               <div><dt>Game ID</dt><dd>{fixture.id.slice(0, 8)}</dd></div>
               <div><dt>Clock</dt><dd>{fixture.clock ? humanize(fixture.clock.status) : "Not started"}</dd></div>
-              <div><dt>Average SR</dt><dd>{fixture.matchAverageSr ?? "Not available"}</dd></div>
-              <div><dt>Team spread</dt><dd>{fixture.teamSrSpread === null ? "Not available" : `${fixture.teamSrSpread} SR`}</dd></div>
+              {detail.ratingSummary.kind === "CLAN" ? (
+                <>
+                  <div><dt>{fixture.homeClan.tag} clan SR</dt><dd>{detail.ratingSummary.home.skillRating} · Bahrain #{detail.ratingSummary.home.bahrainRank ?? "—"}</dd></div>
+                  <div><dt>{fixture.awayClan.tag} clan SR</dt><dd>{detail.ratingSummary.away.skillRating} · Bahrain #{detail.ratingSummary.away.bahrainRank ?? "—"}</dd></div>
+                </>
+              ) : (
+                <>
+                  <div><dt>White team average</dt><dd>{detail.ratingSummary.whiteAverageSr ?? "Not assigned"}</dd></div>
+                  <div><dt>Black team average</dt><dd>{detail.ratingSummary.blackAverageSr ?? "Not assigned"}</dd></div>
+                  <div><dt>Match average SR</dt><dd>{detail.ratingSummary.matchAverageSr ?? "Not available"}</dd></div>
+                  <div><dt>Team spread</dt><dd>{detail.ratingSummary.teamSrSpread === null ? "Not available" : `${detail.ratingSummary.teamSrSpread} SR`}</dd></div>
+                </>
+              )}
               <div><dt>Referee phone</dt><dd>{detail.assignedReferee?.phone ?? "—"}</dd></div>
             </dl>
             {fixture.cancellationReason ? (
@@ -198,9 +216,24 @@ export default function AdminGameDetailPage() {
           <section className={styles.card}>
             <SectionHead eyebrow="ADMIN CONTROLS" title="Resolve game issues" detail="Every action requires a reason and is permanently audited." />
             <div className={styles.adminActions}>
-              <Link className={styles.secondaryButton} href={`/admin?section=games&gameId=${fixture.id}`}>
+              <button
+                className={styles.secondaryButton}
+                disabled={!canAssignReferee(fixture.status)}
+                onClick={() => setAssignReferee(true)}
+                type="button"
+              >
                 {detail.assignedReferee ? "Change referee" : "Assign referee"}
-              </Link>
+              </button>
+              {fixture.matchKind === "CLAN" ? (
+                <div className={styles.clanActions}>
+                  <button onClick={() => setClanActionId(fixture.homeClan.id)} type="button">
+                    Report {fixture.homeClan.tag}
+                  </button>
+                  <button onClick={() => setClanActionId(fixture.awayClan.id)} type="button">
+                    Report {fixture.awayClan.tag}
+                  </button>
+                </div>
+              ) : null}
               <button
                 className={styles.dangerButton}
                 disabled={!canCancelGame(fixture.status)}
@@ -264,6 +297,31 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
+      {assignReferee ? (
+        <AssignRefereeDialog
+          accessToken={accessToken}
+          detail={detail}
+          onClose={() => setAssignReferee(false)}
+          onSaved={async (savedNotice) => {
+            setAssignReferee(false);
+            setNotice(savedNotice);
+            await load(true);
+          }}
+        />
+      ) : null}
+      {clanActionId ? (
+        <ClanActionDialog
+          accessToken={accessToken}
+          clan={clanActionId === fixture.homeClan.id ? fixture.homeClan : fixture.awayClan}
+          detail={detail}
+          onClose={() => setClanActionId(null)}
+          onSaved={async (savedNotice) => {
+            setClanActionId(null);
+            setNotice(savedNotice);
+            await load(true);
+          }}
+        />
+      ) : null}
       {cancelGame ? (
         <CancelGameDialog
           accessToken={accessToken}
@@ -290,6 +348,122 @@ export default function AdminGameDetailPage() {
         />
       ) : null}
     </main>
+  );
+}
+
+function AssignRefereeDialog({ accessToken, detail, onClose, onSaved }: {
+  accessToken: string;
+  detail: AdminGameDetail;
+  onClose: () => void;
+  onSaved: (notice: string) => Promise<void>;
+}) {
+  const [referees, setReferees] = useState<RefereeAssignmentsResponse["referees"]>([]);
+  const [selectedId, setSelectedId] = useState(detail.assignedReferee?.profileId ?? "");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void fetchJson<RefereeAssignmentsResponse>("/api/referee/assignments", {
+      headers: auth(accessToken),
+      cache: "no-store",
+    }).then((payload) => setReferees(payload.referees))
+      .catch((loadError) => setError(message(loadError, "Could not load active referees.")))
+      .finally(() => setLoading(false));
+  }, [accessToken]);
+
+  async function save() {
+    setSaving(true); setError(null);
+    try {
+      await fetchJson("/api/referee/assignments", {
+        method: "POST",
+        headers: { ...auth(accessToken), "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fixtureId: detail.fixture.id,
+          matchKind: detail.fixture.matchKind,
+          refereeId: selectedId || null,
+        }),
+      });
+      const selected = referees.find((referee) => referee.profileId === selectedId);
+      await onSaved(selected
+        ? `${selected.displayName} is now assigned to this game.`
+        : "The referee assignment was removed.");
+    } catch (saveError) {
+      setError(message(saveError, "Could not update the referee assignment."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
+        <header><div><span>MATCH OFFICIAL</span><h2>Assign referee</h2></div><button onClick={onClose}>×</button></header>
+        <p className={styles.modalIntro}>Choose the official for this game without leaving its operations page. Only active referee and admin accounts appear here.</p>
+        <label>
+          <span>Assigned official</span>
+          <select autoFocus disabled={loading} onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
+            <option value="">No referee assigned</option>
+            {referees.map((referee) => (
+              <option key={referee.profileId} value={referee.profileId}>
+                {referee.displayName} · {referee.phone} · {humanize(referee.role)}
+              </option>
+            ))}
+          </select>
+        </label>
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+        <footer><button className={styles.cancelButton} disabled={saving} onClick={onClose}>Close</button><button className={styles.primaryButton} disabled={loading || saving || selectedId === (detail.assignedReferee?.profileId ?? "")} onClick={() => void save()}>{saving ? "Saving…" : "Save assignment"}</button></footer>
+      </section>
+    </div>
+  );
+}
+
+function ClanActionDialog({ accessToken, clan, detail, onClose, onSaved }: {
+  accessToken: string;
+  clan: RefereeFixture["homeClan"];
+  detail: AdminGameDetail;
+  onClose: () => void;
+  onSaved: (notice: string) => Promise<void>;
+}) {
+  const [category, setCategory] = useState("NO_SHOW_OR_MATCH_MANIPULATION");
+  const [priority, setPriority] = useState("HIGH");
+  const [strikeCount, setStrikeCount] = useState(0);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setSaving(true); setError(null);
+    try {
+      await fetchJson(`/api/referee/admin/games/clan/${detail.fixture.id}/clans/action`, {
+        method: "POST",
+        headers: { ...auth(accessToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ clanId: clan.id, category, priority, details: reason.trim(), strikeCount }),
+      });
+      await onSaved(strikeCount
+        ? `${clan.name} was reported and received ${strikeCount} clan reliability strike${strikeCount === 1 ? "" : "s"}.`
+        : `${clan.name} was reported for admin review.`);
+    } catch (submitError) {
+      setError(message(submitError, "Could not record this clan action."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={styles.modalBackdrop} role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section aria-modal="true" className={styles.modal} role="dialog">
+        <header><div><span>CLAN ACTION</span><h2>{clan.emblem} {clan.name}</h2></div><button onClick={onClose}>×</button></header>
+        <p className={styles.modalIntro}>Create a permanent report against the whole clan. Clan strikes affect its reliability standing and can trigger the configured deposit or scheduling restrictions.</p>
+        <div className={styles.formGrid}>
+          <label><span>Report reason</span><select value={category} onChange={(event) => setCategory(event.target.value)}>{REPORT_CATEGORIES.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></label>
+          <label><span>Priority</span><select value={priority} onChange={(event) => setPriority(event.target.value)}>{["NORMAL", "HIGH", "URGENT"].map((item) => <option key={item}>{humanize(item)}</option>)}</select></label>
+        </div>
+        <label><span>Clan reliability strikes</span><select value={strikeCount} onChange={(event) => setStrikeCount(Number(event.target.value))}><option value={0}>Report only · no strikes</option><option value={1}>1 clan strike</option><option value={2}>2 clan strikes</option><option value={3}>3 clan strikes</option></select></label>
+        {strikeCount > 0 ? <div className={styles.modalWarning}><strong>This applies to the whole clan</strong><p>Clan leaders are notified, and configured reliability restrictions may activate immediately.</p></div> : null}
+        <label><span>Evidence and reason</span><textarea autoFocus maxLength={2000} placeholder="Explain what happened and why the entire clan is accountable…" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+        <footer><button className={styles.cancelButton} disabled={saving} onClick={onClose}>Close</button><button className={strikeCount ? styles.dangerButton : styles.primaryButton} disabled={saving || reason.trim().length < 10} onClick={() => void submit()}>{saving ? "Recording…" : strikeCount ? `Report + issue ${strikeCount} strike${strikeCount === 1 ? "" : "s"}` : "Submit report"}</button></footer>
+      </section>
+    </div>
   );
 }
 
@@ -592,8 +766,17 @@ function AuditList({ detail }: { detail: AdminGameDetail }) {
   return <div className={styles.auditList}>{detail.audit.map((item) => <article key={item.id}><i /><span><strong>{humanize(item.action)}</strong><small>{item.actorName} · {formatDateTime(item.createdAt)}</small>{item.reason ? <p>{item.reason}</p> : null}</span></article>)}</div>;
 }
 
-function Team({ clan, align }: { clan: RefereeFixture["homeClan"]; align?: "right" }) {
-  return <div className={`${styles.team} ${align ? styles.alignRight : ""}`}><span>{clan.emblem}</span><div><strong>{clan.name}</strong><small>{clan.tag} · {clan.skillRating} SR</small></div></div>;
+function Team({ clan, detail, side, align }: {
+  clan: RefereeFixture["homeClan"];
+  detail: AdminGameDetail;
+  side: "home" | "away";
+  align?: "right";
+}) {
+  const summary = detail.ratingSummary;
+  const meta = summary.kind === "CLAN"
+    ? `${side === "home" ? summary.home.skillRating : summary.away.skillRating} CLAN SR · BAHRAIN #${side === "home" ? summary.home.bahrainRank ?? "—" : summary.away.bahrainRank ?? "—"}`
+    : `${side === "home" ? summary.whiteAverageSr ?? "—" : summary.blackAverageSr ?? "—"} AVG PLAYER SR`;
+  return <div className={`${styles.team} ${align ? styles.alignRight : ""}`}><span>{clan.emblem}</span><div><strong>{clan.name}</strong><small>{meta}</small></div></div>;
 }
 
 function Fact({ label, value, warning }: { label: string; value: string; warning?: boolean }) {
@@ -619,6 +802,7 @@ function GameDetailSkeleton() {
 }
 
 function canManageReserves(status: string) { return ["OPEN", "FULL", "SCHEDULED"].includes(status); }
+function canAssignReferee(status: string) { return ["OPEN", "FULL", "SCHEDULED"].includes(status); }
 function canCancelGame(status: string) { return !["FINAL", "CANCELLED"].includes(status); }
 
 function confirmedCount(detail: AdminGameDetail) {
