@@ -212,7 +212,12 @@ Future<void> scrollUntilFound(
   for (var attempt = 0; attempt <= maxScrolls; attempt++) {
     if (finder.evaluate().isNotEmpty) {
       await _centerInScrollable(tester, finder);
-      return;
+      // Centering pumps a frame. Async booking/party refreshes can rebuild a
+      // lazy list during that frame and briefly remove the element that was
+      // just found. Only return once the target still exists after centering;
+      // otherwise continue the bounded scan and resolve the rebuilt widget.
+      if (finder.evaluate().isNotEmpty) return;
+      continue;
     }
     final scrollables = find.byType(Scrollable);
     if (scrollables.evaluate().isEmpty) break;
@@ -286,6 +291,10 @@ Future<void> tapAfterScroll(
     maxScrolls: maxScrolls,
     reason: reason,
   );
-  await tester.tap(finder);
+  // Capture the resolved target geometry synchronously. This avoids a second
+  // finder evaluation between scrolling and the tap when an async page
+  // refresh replaces the same keyed control.
+  final center = tester.getCenter(finder.first);
+  await tester.tapAt(center);
   await tester.pump();
 }
