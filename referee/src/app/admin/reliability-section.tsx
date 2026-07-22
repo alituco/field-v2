@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 
 import type {
   AdminReliabilityAppealQueueItem,
@@ -38,7 +38,7 @@ type AppealReviewDecision = "UPHOLD" | "OVERTURN";
 type FieldSpec = {
   path: string;
   label: string;
-  hint?: string;
+  hint: string;
   kind: "number" | "bps" | "toggle";
   unit?: string;
   minimum?: number;
@@ -50,6 +50,49 @@ type FieldSection = {
   title: string;
   detail: string;
   fields: FieldSpec[];
+};
+
+const FIELD_TOOLTIPS: Record<string, string> = {
+  "attendance.checkInOpenLeadMinutes": "How long before kickoff the app begins reminding players to arrive. Referees can still check players in earlier.",
+  "attendance.checkInLeadMinutes": "Players checked in after this point are recorded as late. The referee remains able to check them in.",
+  "attendance.noShowGraceMinutes": "A missing player becomes a no-show this many minutes after kickoff.",
+  "attendance.strikeLifetimeDays": "How long a reliability strike remains active before it expires.",
+  "attendance.appealWindowHours": "How long a player or clan has to appeal an attendance decision.",
+  "solo.teamAssignmentLeadMinutes": "How long before kickoff Field assigns teams and tells confirmed players which kit to wear.",
+  "solo.partyLockLeadMinutes": "How long before kickoff players can no longer create, join, or switch parties.",
+  "solo.releaseFutureBookingsRefundBps": "Refund given when a Field-issued restriction releases the player's unrelated future bookings.",
+  "solo.highestCrossedOnly": "If one incident crosses several strike thresholds, apply only the strongest newly reached consequence.",
+  "solo.outcomes.onTime.strikes": "Reliability strikes applied after an on-time appearance. Normally zero.",
+  "solo.outcomes.onTime.refundBps": "Booking-fee refund after an on-time appearance. This does not control returning a reliability deposit.",
+  "solo.outcomes.late.strikes": "Reliability strikes applied when the referee checks a player in after the deadline.",
+  "solo.outcomes.late.refundBps": "Booking-fee refund for a late arrival.",
+  "solo.outcomes.noShow.strikes": "Reliability strikes applied when the player is still missing after the grace period.",
+  "solo.outcomes.noShow.refundBps": "Booking-fee refund for a no-show.",
+  "solo.outcomes.fieldCancelled.refundBps": "Booking-fee refund when Field or the venue cancels the match.",
+  "solo.reliabilityDeposit.activeStrikeThreshold": "Players at or above this number of active strikes must pay the reliability deposit.",
+  "solo.reliabilityDeposit.depositBps": "Extra refundable deposit charged as a percentage of the booking fee.",
+  "replacement.postCheckInDeadlineMarketplaceEnabled": "Whether a new player may still claim an open place after the normal check-in deadline.",
+  "replacement.originalPlayerReclaimUntilMinutesAfterKickoff": "Latest time the original player may reclaim a place temporarily held by a reserve.",
+  "replacement.reserveActivationMinutesAfterKickoff": "Time after kickoff when a checked-in reserve permanently takes the open place.",
+  "replacement.maxPartySize": "Largest group that may request to stay together in a solo match.",
+  "sr.latePositiveMultiplierBps": "Percentage of a normal SR gain awarded to a player who arrived late.",
+  "sr.lateNegativeMultiplierBps": "Percentage of a normal SR loss applied to a player who arrived late.",
+  "sr.shorthandedQualifyingActualMinutes": "A team must actually play short-handed for at least this long before SR protection applies.",
+  "sr.protectedLosingOnTimeMultiplierBps": "Percentage of normal negative SR applied to on-time players who lose while qualifying as short-handed.",
+  "sr.protectedWinnerMultiplierBps": "Percentage of normal positive SR awarded to the opposing team when it beats a protected short-handed side.",
+  "sr.disadvantagedWinnerMultiplierBps": "Percentage of normal positive SR awarded when the short-handed team still wins.",
+  "sr.latePlayerGetsTeamProtection": "Whether the late player also receives the SR protection granted to their on-time teammates.",
+  "injury.halfMatchThresholdBps": "Percentage of the match that separates an early injury from an injury after meaningful participation.",
+  "injury.completedLossMultiplierBps": "Percentage of normal negative SR applied after the player has passed the participation threshold.",
+  "injury.incompleteLosingMultiplierBps": "Percentage of normal negative SR applied when a verified injury happens before the threshold.",
+  "injury.incompleteWinningMultiplierBps": "Percentage of normal positive SR applied when a verified injury happens before the threshold.",
+  "injury.incompleteRefundBps": "Booking-fee refund for a referee-verified injury before the participation threshold.",
+  "clan.minimumOnTimeWithoutClanStrike": "Minimum clan players who must be checked in by the deadline to avoid a clan strike.",
+  "clan.minimumAtKickoffWithoutForfeit": "Minimum clan players required at kickoff for the match to continue without a forfeit.",
+  "clan.partialAttendanceStrikes": "Clan strikes applied when too few players are on time but enough arrive to play.",
+  "clan.forfeitStrikes": "Clan strikes applied when the clan has fewer than the minimum required players at kickoff.",
+  "clan.entireClanNoShowStrikes": "Clan strikes applied when nobody from the clan attends.",
+  "clan.forfeitScore": "Goals awarded to the opponent when an official clan forfeit is confirmed.",
 };
 
 const FIELD_SECTIONS: FieldSection[] = [
@@ -74,32 +117,6 @@ const FIELD_SECTIONS: FieldSection[] = [
       numberField("solo.partyLockLeadMinutes", "Lock parties", "min before", 0, 10_080),
       bpsField("solo.releaseFutureBookingsRefundBps", "Released booking refund", "%", 100),
       toggleField("solo.highestCrossedOnly", "Apply only the highest newly crossed sanction", "Prevents stacked restrictions when one incident crosses multiple thresholds."),
-    ],
-  },
-  {
-    id: "solo-cancellations",
-    title: "Solo cancellation bands",
-    detail: "The full-refund cutoff must stay earlier than the partial-refund cutoff.",
-    fields: [
-      numberField("solo.cancellations.early.minimumHoursBeforeKickoff", "Early · starts at", "hours before", 0, 8_760),
-      numberField("solo.cancellations.early.strikes", "Early · strikes", "strikes", 0, 20),
-      bpsField("solo.cancellations.early.refundBps", "Early · refund", "%", 100),
-      toggleField("solo.cancellations.early.advertise", "Early · publish replacement offer"),
-      bpsField("solo.cancellations.early.discountBps", "Early · replacement discount", "%", 100),
-      toggleField("solo.cancellations.early.notify", "Early · notify players"),
-      numberField("solo.cancellations.late.minimumHoursBeforeKickoff", "Late · starts at", "hours before", 0, 8_760),
-      numberField("solo.cancellations.late.strikes", "Late · strikes", "strikes", 0, 20),
-      bpsField("solo.cancellations.late.refundBps", "Late · refund", "%", 100),
-      toggleField("solo.cancellations.late.advertise", "Late · publish replacement offer"),
-      bpsField("solo.cancellations.late.discountBps", "Late · replacement discount", "%", 100),
-      toggleField("solo.cancellations.late.notify", "Late · notify players"),
-      numberField("solo.cancellations.veryLate.strikes", "Very late · strikes", "strikes", 0, 20),
-      bpsField("solo.cancellations.veryLate.refundBps", "Very late · refund", "%", 100),
-      toggleField("solo.cancellations.veryLate.advertise", "Very late · publish replacement offer"),
-      bpsField("solo.cancellations.veryLate.discountBps", "Very late · replacement discount", "%", 100),
-      toggleField("solo.cancellations.veryLate.notify", "Very late · notify players"),
-      numberField("solo.cancellations.afterKickoff.strikes", "After kickoff · strikes", "strikes", 0, 20),
-      bpsField("solo.cancellations.afterKickoff.refundBps", "After kickoff · refund", "%", 100),
     ],
   },
   {
@@ -158,7 +175,7 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "clan-attendance",
     title: "Clan attendance",
-    detail: "The product is seeded for seven-a-side. Individual player outcomes still apply separately.",
+    detail: "Clan matches are six-a-side. Individual player outcomes still apply separately.",
     fields: [
       numberField("clan.minimumOnTimeWithoutClanStrike", "Minimum on time without clan strike", "players", 1, 20),
       numberField("clan.minimumAtKickoffWithoutForfeit", "Minimum at kickoff without forfeit", "players", 1, 20),
@@ -166,26 +183,6 @@ const FIELD_SECTIONS: FieldSection[] = [
       numberField("clan.forfeitStrikes", "Below minimum at kickoff · clan strikes", "strikes", 0, 20),
       numberField("clan.entireClanNoShowStrikes", "Entire clan no-show · strikes", "strikes", 0, 20),
       numberField("clan.forfeitScore", "Forfeit winning score", "goals", 0, 99),
-    ],
-  },
-  {
-    id: "clan-cancellations",
-    title: "Clan cancellation and deposit",
-    detail: "Server-calculated Field Wallet refunds, clan strikes, and refundable reliability deposits. Every checkout snapshots the policy for that kickoff date.",
-    fields: [
-      numberField("clan.cancellations.early.minimumHoursBeforeKickoff", "Early · starts at", "hours before", 0, 8_760),
-      numberField("clan.cancellations.early.strikes", "Early · clan strikes", "strikes", 0, 20),
-      bpsField("clan.cancellations.early.refundBps", "Early · fee refund", "%", 100),
-      numberField("clan.cancellations.late.minimumHoursBeforeKickoff", "Late · starts at", "hours before", 0, 8_760),
-      numberField("clan.cancellations.late.strikes", "Late · clan strikes", "strikes", 0, 20),
-      bpsField("clan.cancellations.late.refundBps", "Late · fee refund", "%", 100),
-      numberField("clan.cancellations.veryLate.strikes", "Very late · clan strikes", "strikes", 0, 20),
-      bpsField("clan.cancellations.veryLate.refundBps", "Very late · fee refund", "%", 100),
-      numberField("clan.cancellations.afterKickoff.strikes", "After kickoff · clan strikes", "strikes", 0, 20),
-      bpsField("clan.cancellations.afterKickoff.refundBps", "After kickoff · fee refund", "%", 100),
-      toggleField("clan.cancellations.afterKickoff.forfeit", "After-kickoff cancellation creates an official forfeit", "When enabled, the opponent receives the configured forfeit score and the match is sent to the audit trail."),
-      numberField("clan.reliabilityDeposit.activeStrikeThreshold", "Clan deposit starts at", "active strikes", 1, 20),
-      bpsField("clan.reliabilityDeposit.depositBps", "Clan reliability deposit", "%", 100),
     ],
   },
 ];
@@ -523,14 +520,31 @@ export function ReliabilitySection({
               </section>
 
               {FIELD_SECTIONS.map((section, index) => (
-                <PolicyFields
-                  config={editor}
-                  issues={validation}
-                  key={section.id}
-                  onChange={changeValue}
-                  open={index < 2}
-                  section={section}
-                />
+                <Fragment key={section.id}>
+                  <PolicyFields
+                    config={editor}
+                    issues={validation}
+                    onChange={changeValue}
+                    open={index === 0}
+                    section={section}
+                  />
+                  {section.id === "solo-structure" ? (
+                    <CancellationRulesCard
+                      config={editor}
+                      issues={validation}
+                      onChange={changeValue}
+                      owner="solo"
+                    />
+                  ) : null}
+                  {section.id === "clan-attendance" ? (
+                    <CancellationRulesCard
+                      config={editor}
+                      issues={validation}
+                      onChange={changeValue}
+                      owner="clan"
+                    />
+                  ) : null}
+                </Fragment>
               ))}
 
               <ReservePlanCard
@@ -832,7 +846,7 @@ function PolicyFields({
     >
       <summary>
         <div><span>{section.title}</span><small>{section.detail}</small></div>
-        <b>{section.fields.length} controls</b>
+        <b>Review settings</b>
         <i>⌄</i>
       </summary>
       <div className={styles.fieldGrid}>
@@ -842,7 +856,12 @@ function PolicyFields({
           if (field.kind === "toggle") {
             return (
               <label className={`${styles.toggleField} ${issue ? styles.fieldInvalid : ""}`} key={field.path}>
-                <span><strong>{field.label}</strong>{field.hint ? <small>{field.hint}</small> : null}</span>
+                <span>
+                  <span className={styles.labelWithHelp}>
+                    <strong>{field.label}</strong>
+                    <InfoTooltip text={field.hint} />
+                  </span>
+                </span>
                 <input
                   checked={value === true}
                   onChange={(event) => onChange(field.path, event.target.checked)}
@@ -855,7 +874,10 @@ function PolicyFields({
           const displayValue = field.kind === "bps" ? bpsToPercent(Number(value)) : Number(value);
           return (
             <label className={`${styles.numberField} ${issue ? styles.fieldInvalid : ""}`} key={field.path}>
-              <span>{field.label}</span>
+              <span className={styles.labelWithHelp}>
+                <strong>{field.label}</strong>
+                <InfoTooltip text={field.hint} />
+              </span>
               <div>
                 <input
                   max={field.maximum}
@@ -872,7 +894,6 @@ function PolicyFields({
                 />
                 <em>{field.unit}</em>
               </div>
-              {field.hint ? <small>{field.hint}</small> : null}
               {issue ? <small className={styles.fieldError}>{issue.message}</small> : null}
             </label>
           );
@@ -881,6 +902,284 @@ function PolicyFields({
       {sectionIssues.length > 0 ? <span className={styles.visuallyHidden}>{sectionIssues.length} invalid settings</span> : null}
     </details>
   );
+}
+
+type CancellationOwner = "solo" | "clan";
+type CancellationBand = "early" | "late" | "veryLate" | "afterKickoff";
+
+function CancellationRulesCard({ owner, config, issues, onChange }: {
+  owner: CancellationOwner;
+  config: ReliabilityPolicyConfig;
+  issues: ReturnType<typeof validateReliabilityPolicyConfig>;
+  onChange: (path: string, value: unknown) => void;
+}) {
+  const prefix = `${owner}.cancellations`;
+  const earlyHours = Number(getAtPath(config, `${prefix}.early.minimumHoursBeforeKickoff`));
+  const lateHours = Number(getAtPath(config, `${prefix}.late.minimumHoursBeforeKickoff`));
+  const bands: Array<{ id: CancellationBand; title: string; explanation: string }> = [
+    {
+      id: "early",
+      title: `${earlyHours} hours or more before kickoff`,
+      explanation: "The player or clan gives enough notice for Field to refill the place.",
+    },
+    {
+      id: "late",
+      title: `${lateHours} to under ${earlyHours} hours before kickoff`,
+      explanation: "There is limited time to find a replacement.",
+    },
+    {
+      id: "veryLate",
+      title: `Less than ${lateHours} hours before kickoff`,
+      explanation: "The cancellation happens close to match time.",
+    },
+    {
+      id: "afterKickoff",
+      title: "After kickoff",
+      explanation: "The match has already started or the player has become a no-show.",
+    },
+  ];
+  const relevantIssues = issues.filter((issue) =>
+    issue.path.startsWith(prefix) ||
+    (owner === "clan" && issue.path.startsWith("clan.reliabilityDeposit")),
+  );
+
+  return (
+    <details className={`admin-card ${styles.policyGroup} ${styles.cancellationGroup}`}>
+      <summary>
+        <div>
+          <span>{owner === "solo" ? "Solo cancellation rules" : "Clan cancellation rules"}</span>
+          <small>
+            {cancellationSummary(config, owner, "early")} · {cancellationSummary(config, owner, "late")} · {cancellationSummary(config, owner, "veryLate")}
+          </small>
+        </div>
+        <b>4 notice windows</b>
+        <i>⌄</i>
+      </summary>
+      <div className={styles.cancellationBody}>
+        <div className={styles.cancellationIntro}>
+          <strong>What happens when someone cancels?</strong>
+          <p>Each row is a complete rule: when the cancellation happens, how much is refunded, and how many reliability strikes are added.</p>
+        </div>
+        <div className={styles.cancellationRows}>
+          {bands.map((band) => {
+            const bandPath = `${prefix}.${band.id}`;
+            const strikesPath = `${bandPath}.strikes`;
+            const refundPath = `${bandPath}.refundBps`;
+            const strikes = Number(getAtPath(config, strikesPath));
+            const refund = bpsToPercent(Number(getAtPath(config, refundPath)));
+            const isNoPenalty = strikes === 0 && refund === 100;
+            return (
+              <article className={styles.cancellationRow} key={band.id}>
+                <header>
+                  <div>
+                    <span className={styles.windowLabel}>Cancellation notice</span>
+                    <h3>{band.title}</h3>
+                    <p>{band.explanation}</p>
+                  </div>
+                  <div className={styles.consequenceSummary}>
+                    {isNoPenalty ? <em className={styles.noPenalty}>No penalty</em> : null}
+                    <strong>{strikeSummary(strikes)}</strong>
+                    <strong>{refundSummary(refund)}</strong>
+                  </div>
+                </header>
+                <div className={styles.ruleControls}>
+                  {band.id === "early" || band.id === "late" ? (
+                    <CompactPolicyNumber
+                      issue={issues.find((candidate) => candidate.path === `${bandPath}.minimumHoursBeforeKickoff`)}
+                      label="Notice boundary"
+                      maximum={8_760}
+                      onChange={(value) => onChange(`${bandPath}.minimumHoursBeforeKickoff`, value)}
+                      tooltip={band.id === "early"
+                        ? "Cancellations made at least this many hours before kickoff use the first, most generous rule."
+                        : "Cancellations made from this point until the earlier boundary use the partial-notice rule."}
+                      unit="hours before"
+                      value={Number(getAtPath(config, `${bandPath}.minimumHoursBeforeKickoff`))}
+                    />
+                  ) : null}
+                  <CompactPolicyNumber
+                    issue={issues.find((candidate) => candidate.path === strikesPath)}
+                    label={owner === "clan" ? "Clan strikes" : "Player strikes"}
+                    maximum={20}
+                    onChange={(value) => onChange(strikesPath, value)}
+                    tooltip="Reliability strikes added when this cancellation rule applies. Set this to 0 for no reliability punishment."
+                    unit="strikes"
+                    value={strikes}
+                  />
+                  <CompactPolicyNumber
+                    issue={issues.find((candidate) => candidate.path === refundPath)}
+                    kind="bps"
+                    label="Fee refunded"
+                    maximum={100}
+                    onChange={(value) => onChange(refundPath, value)}
+                    tooltip="Percentage of the original booking fee returned to the Field Wallet. 100% means a full fee refund."
+                    unit="%"
+                    value={Number(getAtPath(config, refundPath))}
+                  />
+                  {owner === "clan" && band.id === "afterKickoff" ? (
+                    <CompactPolicyToggle
+                      checked={getAtPath(config, `${bandPath}.forfeit`) === true}
+                      label="Record an official forfeit"
+                      onChange={(checked) => onChange(`${bandPath}.forfeit`, checked)}
+                      tooltip={`When enabled, the opponent is provisionally awarded a ${config.clan.forfeitScore}–0 result for admin review.`}
+                    />
+                  ) : null}
+                </div>
+                {owner === "solo" && band.id !== "afterKickoff" ? (
+                  <details className={styles.replacementOptions}>
+                    <summary>Replacement options <span>Show advanced settings</span></summary>
+                    <div>
+                      <CompactPolicyToggle
+                        checked={getAtPath(config, `${bandPath}.advertise`) === true}
+                        label="Offer the opened place"
+                        onChange={(checked) => onChange(`${bandPath}.advertise`, checked)}
+                        tooltip="Immediately make the cancelled place available to eligible players."
+                      />
+                      <CompactPolicyNumber
+                        kind="bps"
+                        label="Replacement discount"
+                        maximum={100}
+                        onChange={(value) => onChange(`${bandPath}.discountBps`, value)}
+                        tooltip="Discount applied only to the replacement player who takes this newly opened place."
+                        unit="%"
+                        value={Number(getAtPath(config, `${bandPath}.discountBps`))}
+                      />
+                      <CompactPolicyToggle
+                        checked={getAtPath(config, `${bandPath}.notify`) === true}
+                        label="Notify eligible players"
+                        onChange={(checked) => onChange(`${bandPath}.notify`, checked)}
+                        tooltip="Send eligible players a notification that this place is available."
+                      />
+                    </div>
+                  </details>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+        {owner === "clan" ? (
+          <section className={styles.depositPanel}>
+            <div>
+              <strong>Clan reliability deposit</strong>
+              <p>Only clans with enough active strikes pay this refundable deposit.</p>
+            </div>
+            <CompactPolicyNumber
+              label="Deposit begins at"
+              maximum={20}
+              minimum={1}
+              onChange={(value) => onChange("clan.reliabilityDeposit.activeStrikeThreshold", value)}
+              tooltip="Minimum number of active clan strikes that triggers an added reliability deposit at checkout."
+              unit="active strikes"
+              value={config.clan.reliabilityDeposit.activeStrikeThreshold}
+            />
+            <CompactPolicyNumber
+              kind="bps"
+              label="Deposit amount"
+              maximum={100}
+              onChange={(value) => onChange("clan.reliabilityDeposit.depositBps", value)}
+              tooltip="Refundable deposit charged as a percentage of the clan booking fee."
+              unit="%"
+              value={config.clan.reliabilityDeposit.depositBps}
+            />
+          </section>
+        ) : null}
+        {relevantIssues.length > 0 ? (
+          <div className={styles.ruleIssues} role="alert">
+            {relevantIssues.map((issue) => <span key={`${issue.path}-${issue.message}`}>{issue.message}</span>)}
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function CompactPolicyNumber({
+  label,
+  tooltip,
+  unit,
+  value,
+  onChange,
+  issue,
+  kind = "number",
+  minimum = 0,
+  maximum,
+}: {
+  label: string;
+  tooltip: string;
+  unit: string;
+  value: number;
+  onChange: (value: number) => void;
+  issue?: { message: string };
+  kind?: "number" | "bps";
+  minimum?: number;
+  maximum: number;
+}) {
+  const displayValue = kind === "bps" ? bpsToPercent(value) : value;
+  return (
+    <label className={`${styles.compactPolicyField} ${issue ? styles.fieldInvalid : ""}`}>
+      <span className={styles.labelWithHelp}><strong>{label}</strong><InfoTooltip text={tooltip} /></span>
+      <div>
+        <input
+          max={maximum}
+          min={minimum}
+          onChange={(event) => {
+            const next = event.target.valueAsNumber;
+            if (Number.isFinite(next)) onChange(kind === "bps" ? percentToBps(next) : next);
+          }}
+          step={kind === "bps" ? 0.01 : 1}
+          type="number"
+          value={displayValue}
+        />
+        <em>{unit}</em>
+      </div>
+      {issue ? <small className={styles.fieldError}>{issue.message}</small> : null}
+    </label>
+  );
+}
+
+function CompactPolicyToggle({ label, tooltip, checked, onChange }: {
+  label: string;
+  tooltip: string;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={`${styles.toggleField} ${styles.compactPolicyToggle}`}>
+      <span className={styles.labelWithHelp}><strong>{label}</strong><InfoTooltip text={tooltip} /></span>
+      <input checked={checked} onChange={(event) => onChange(event.target.checked)} type="checkbox" />
+      <i />
+    </label>
+  );
+}
+
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span aria-label={`Help: ${text}`} className={styles.infoTooltip} tabIndex={0}>
+      ?
+      <span role="tooltip">{text}</span>
+    </span>
+  );
+}
+
+function cancellationSummary(
+  config: ReliabilityPolicyConfig,
+  owner: CancellationOwner,
+  band: Exclude<CancellationBand, "afterKickoff">,
+) {
+  const rule = config[owner].cancellations[band];
+  const strikes = rule.strikes;
+  const refund = bpsToPercent(rule.refundBps);
+  const label = band === "early" ? "Most notice" : band === "late" ? "Limited notice" : "Last minute";
+  return `${label}: ${strikeSummary(strikes).toLowerCase()}, ${refundSummary(refund).toLowerCase()}`;
+}
+
+function strikeSummary(strikes: number) {
+  return strikes === 0 ? "No strikes" : `${strikes} strike${strikes === 1 ? "" : "s"}`;
+}
+
+function refundSummary(refund: number) {
+  if (refund === 100) return "Full fee refund";
+  if (refund === 0) return "No fee refund";
+  return `${refund}% fee refund`;
 }
 
 function SanctionsCard({ owner, sanctions, onChange }: {
@@ -1035,8 +1334,8 @@ function LockedReliabilityRulesCard({ config }: {
     <details className={`admin-card ${styles.policyGroup}`}>
       <summary><div><span>Locked product and safety rules</span><small>Shown honestly here, but not presented as live controls.</small></div><b>Not editable</b><i>⌄</i></summary>
       <div className={styles.choiceGroups}>
-        <div className={styles.lockedRule}><span>Solo format</span><strong>{config.solo.playersPerSide} players per side</strong><small>The current game inventory and position capacities are built for 6-a-side.</small></div>
-        <div className={styles.lockedRule}><span>Clan format</span><strong>{config.clan.playersPerSide} players per side</strong><small>Clan scheduling, roster confirmation, and formation views are built for 7-a-side.</small></div>
+        <div className={styles.lockedRule}><span>Solo format</span><strong>{config.solo.playersPerSide}-a-side</strong><small>Six players per team, including the goalkeeper.</small></div>
+        <div className={styles.lockedRule}><span>Clan format</span><strong>{config.clan.playersPerSide}-a-side</strong><small>Six players per team, including the goalkeeper. Matchday squads may still include substitutes.</small></div>
         <div className={styles.lockedRule}><span>Field cancellation</span><strong>Zero strikes</strong><small>A venue or Field cancellation never becomes a player reliability penalty.</small></div>
         <div className={styles.lockedRule}><span>Verified injury</span><strong>Assigned referee · zero strikes</strong><small>Evidence authority and no-strike treatment are safety invariants, not penalty knobs.</small></div>
       </div>
@@ -1268,13 +1567,34 @@ function ReliabilitySkeleton() {
 }
 
 function numberField(path: string, label: string, unit: string, minimum: number, maximum: number): FieldSpec {
-  return { path, label, kind: "number", unit, minimum, maximum };
+  return {
+    path,
+    label,
+    hint: FIELD_TOOLTIPS[path] ?? `Controls ${label.toLowerCase()} for matches governed by this policy.`,
+    kind: "number",
+    unit,
+    minimum,
+    maximum,
+  };
 }
 function bpsField(path: string, label: string, unit: string, maximum: number): FieldSpec {
-  return { path, label, kind: "bps", unit, minimum: 0, maximum };
+  return {
+    path,
+    label,
+    hint: FIELD_TOOLTIPS[path] ?? `Controls ${label.toLowerCase()} as a percentage of the normal amount.`,
+    kind: "bps",
+    unit,
+    minimum: 0,
+    maximum,
+  };
 }
 function toggleField(path: string, label: string, hint?: string): FieldSpec {
-  return { path, label, hint, kind: "toggle" };
+  return {
+    path,
+    label,
+    hint: hint ?? FIELD_TOOLTIPS[path] ?? `Turns ${label.toLowerCase()} on or off for this policy.`,
+    kind: "toggle",
+  };
 }
 
 function newDraftDialog(sourceVersionId: string | null, summary = "", effectiveDate = tomorrowInBahrain()) {

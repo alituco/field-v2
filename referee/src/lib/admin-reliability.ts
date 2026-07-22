@@ -1,8 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  normalizeReliabilityPolicyDraftConfig,
   parseReliabilityPolicyConfig,
   resolveReliabilityPolicyAt,
+  validReliabilityRevision,
   type ReliabilityPolicyState,
   type ReliabilityPolicyVersion,
 } from "./reliability-policy";
@@ -73,7 +75,8 @@ export async function loadAdminReliabilityPolicies(
     ]),
   );
 
-  const versions = policyRows.map((row) => normalizePolicyVersion(row, actors));
+  const versions = policyRows.map((row) =>
+    normalizeAdminReliabilityPolicyVersion(row, actors));
   const published = versions
     .filter((version) => version.state === "PUBLISHED")
     .sort((left, right) =>
@@ -210,7 +213,7 @@ async function loadReliabilityQueues(db: SupabaseClient): Promise<{
   return result;
 }
 
-function normalizePolicyVersion(
+export function normalizeAdminReliabilityPolicyVersion(
   row: Row,
   actors: Map<string, string>,
 ): ReliabilityPolicyVersion {
@@ -220,10 +223,14 @@ function normalizePolicyVersion(
   }
   const createdBy = nullableString(row.created_by);
   const publishedBy = nullableString(row.published_by);
-  const config = parseReliabilityPolicyConfig(row.config);
+  const config = state === "DRAFT"
+    ? normalizeReliabilityPolicyDraftConfig(row.config)
+    : parseReliabilityPolicyConfig(row.config, {
+      allowLegacyClanSevenSide: true,
+    });
   const effectiveFrom = requiredDate(row.effective_from, "effective date");
   const createdAt = requiredDate(row.created_at, "created date");
-  const updatedAt = requiredDate(row.updated_at, "updated date");
+  const updatedAt = requiredRevision(row.updated_at);
   const publishedAt = row.published_at == null
     ? null
     : requiredDate(row.published_at, "published date");
@@ -266,6 +273,14 @@ function requiredDate(value: unknown, label: string) {
   const parsed = Date.parse(String(value ?? ""));
   if (!Number.isFinite(parsed)) throw new Error(`Reliability policy has an invalid ${label}.`);
   return new Date(parsed).toISOString();
+}
+
+function requiredRevision(value: unknown) {
+  const revision = validReliabilityRevision(value);
+  if (!revision) {
+    throw new Error("Reliability policy has an invalid updated date.");
+  }
+  return revision;
 }
 
 function humanize(value: string) {

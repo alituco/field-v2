@@ -3,6 +3,7 @@ begin;
 do $verify$
 declare
   seeded_config jsonb;
+  supported_config jsonb;
   function_text text;
   result_signature text;
   published_count integer;
@@ -21,16 +22,21 @@ begin
   if (seeded_config #>> '{attendance,checkInOpenLeadMinutes}')::integer <> 120 then
     raise exception 'The initial check-in opening lead must be 120 minutes.';
   end if;
-  if not public.reliability_policy_release_controls_are_valid(seeded_config) then
-    raise exception 'The initial policy violates a release-locked structural control.';
+  supported_config := jsonb_set(
+    jsonb_set(seeded_config, '{solo,playersPerSide}', '6'::jsonb),
+    '{clan,playersPerSide}',
+    '6'::jsonb
+  );
+  if not public.reliability_policy_release_controls_are_valid(supported_config) then
+    raise exception 'The current six-a-side format violates a release-locked structural control.';
   end if;
   if public.reliability_policy_release_controls_are_valid(
-    jsonb_set(seeded_config, '{solo,playersPerSide}', '7'::jsonb)
+    jsonb_set(supported_config, '{solo,playersPerSide}', '7'::jsonb)
   ) or public.reliability_policy_release_controls_are_valid(
-    jsonb_set(seeded_config, '{clan,playersPerSide}', '6'::jsonb)
+    jsonb_set(supported_config, '{clan,playersPerSide}', '7'::jsonb)
   ) or public.reliability_policy_release_controls_are_valid(
     jsonb_set(
-      seeded_config,
+      supported_config,
       '{appeals,routineTrafficAutomaticallyExcused}',
       'true'::jsonb
     )
@@ -39,13 +45,13 @@ begin
   end if;
   if not public.reliability_policy_release_controls_are_valid(
     jsonb_set(
-      seeded_config,
+      supported_config,
       '{clan,cancellations,late,refundBps}',
       '6000'::jsonb
     )
   ) or not public.reliability_policy_release_controls_are_valid(
     jsonb_set(
-      seeded_config,
+      supported_config,
       '{clan,reliabilityDeposit,depositBps}',
       '2500'::jsonb
     )
@@ -56,7 +62,7 @@ begin
     jsonb_set(
       jsonb_set(
         jsonb_set(
-          seeded_config,
+          supported_config,
           '{replacement,originalPlayerReclaimUntilMinutesAfterKickoff}',
           '8'::jsonb
         ),
