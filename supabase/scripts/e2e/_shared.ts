@@ -1,6 +1,7 @@
 import {
   createClient,
   type SupabaseClient,
+  type User,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 
 import {
@@ -183,6 +184,123 @@ export function createAdminClient(
       persistSession: false,
     },
   }) as AdminClient;
+}
+
+export async function listAuthUsers(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  page: number,
+  perPage: number,
+): Promise<User[]> {
+  const payload = await authAdminRequest(
+    supabaseUrl,
+    serviceRoleKey,
+    `users?page=${page}&per_page=${perPage}`,
+  );
+  if (!isRecord(payload) || !Array.isArray(payload.users)) {
+    throw new Error("Auth Admin list-users response was malformed.");
+  }
+  return payload.users as User[];
+}
+
+export async function getAuthUser(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+): Promise<User> {
+  return authUserFromPayload(
+    await authAdminRequest(supabaseUrl, serviceRoleKey, `users/${userId}`),
+  );
+}
+
+export async function createAuthUser(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  attributes: Record<string, unknown>,
+): Promise<User> {
+  return authUserFromPayload(
+    await authAdminRequest(supabaseUrl, serviceRoleKey, "users", {
+      method: "POST",
+      body: JSON.stringify(attributes),
+    }),
+  );
+}
+
+export async function updateAuthUser(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  userId: string,
+  attributes: Record<string, unknown>,
+): Promise<User> {
+  return authUserFromPayload(
+    await authAdminRequest(supabaseUrl, serviceRoleKey, `users/${userId}`, {
+      method: "PUT",
+      body: JSON.stringify(attributes),
+    }),
+  );
+}
+
+async function authAdminRequest(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  path: string,
+  init: RequestInit = {},
+): Promise<unknown> {
+  const url = `${supabaseUrl.replace(/\/$/, "")}/auth/v1/admin/${path}`;
+  let lastMessage = "Auth Admin request failed.";
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        apikey: serviceRoleKey,
+        authorization: `Bearer ${serviceRoleKey}`,
+        "content-type": "application/json",
+        ...init.headers,
+      },
+    });
+    const text = await response.text();
+    let payload: unknown = null;
+    if (text.length > 0) {
+      try {
+        payload = JSON.parse(text);
+      } catch {
+        payload = text;
+      }
+    }
+
+    if (response.ok) return payload;
+
+    lastMessage = authErrorMessage(payload, response.status);
+    const signingKeyCacheMiss = response.status >= 500 &&
+      lastMessage.includes("unrecognized JWT kid");
+    if (!signingKeyCacheMiss || attempt === 3) break;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+  }
+
+  throw new Error(lastMessage);
+}
+
+function authUserFromPayload(payload: unknown): User {
+  if (!isRecord(payload)) {
+    throw new Error("Auth Admin user response was malformed.");
+  }
+  const candidate = isRecord(payload.user) ? payload.user : payload;
+  if (typeof candidate.id !== "string") {
+    throw new Error("Auth Admin user response did not include an id.");
+  }
+  return candidate as unknown as User;
+}
+
+function authErrorMessage(payload: unknown, status: number): string {
+  if (isRecord(payload)) {
+    for (const key of ["msg", "message", "error_description", "error"]) {
+      if (typeof payload[key] === "string" && payload[key].length > 0) {
+        return payload[key];
+      }
+    }
+  }
+  return `Auth Admin request failed with HTTP ${status}.`;
 }
 
 export async function writeManifest(

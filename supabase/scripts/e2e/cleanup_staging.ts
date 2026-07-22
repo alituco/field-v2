@@ -1,10 +1,12 @@
 import {
   createAdminClient,
   E2E_DEFAULT_BIRTH_DATE,
+  getAuthUser,
   isTerminalGameStatus,
   loadManifestConfig,
   logStep,
   unwrapRpcRow,
+  updateAuthUser,
 } from "./_shared.ts";
 
 if (Deno.args.includes("--help")) {
@@ -209,21 +211,23 @@ async function restoreAccountBaselines(): Promise<void> {
   ];
 
   for (const account of accounts) {
-    const { data: existing, error: readError } = await admin.auth.admin
-      .getUserById(account.profileId);
-    if (readError || !existing.user) {
+    const existing = await getAuthUser(
+      config.supabaseUrl,
+      config.serviceRoleKey,
+      account.profileId,
+    ).catch((error) => {
       throw new Error(
-        `load auth baseline ${account.profileId}: ${
-          readError?.message ?? "user missing"
-        }`,
+        `load auth baseline ${account.profileId}: ${String(error)}`,
       );
-    }
+    });
 
-    const { error: authError } = await admin.auth.admin.updateUserById(
+    await updateAuthUser(
+      config.supabaseUrl,
+      config.serviceRoleKey,
       account.profileId,
       {
         user_metadata: {
-          ...existing.user.user_metadata,
+          ...existing.user_metadata,
           display_name: account.displayName,
           name: account.displayName,
           date_of_birth: E2E_DEFAULT_BIRTH_DATE,
@@ -234,12 +238,11 @@ async function restoreAccountBaselines(): Promise<void> {
             : "player",
         },
       },
-    );
-    if (authError) {
+    ).catch((error) => {
       throw new Error(
-        `restore auth baseline ${account.profileId}: ${authError.message}`,
+        `restore auth baseline ${account.profileId}: ${String(error)}`,
       );
-    }
+    });
 
     const { error: profileError } = await admin.from("profiles").update({
       display_name: account.displayName,
