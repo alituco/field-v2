@@ -1443,6 +1443,108 @@ body:has(.broadcast-overlay-root) > .field-environment-ribbon {
   display: none;
 }
 
+.pwa-install-prompt {
+  position: fixed;
+  z-index: 9999;
+  right: 16px;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  width: min(460px, calc(100vw - 32px));
+  gap: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 18px;
+  padding: 13px;
+  background: rgba(11, 21, 18, 0.96);
+  color: #fff;
+  box-shadow: 0 20px 55px rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(18px);
+}
+
+.field-nonproduction .pwa-install-prompt {
+  bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+.pwa-install-prompt img {
+  border-radius: 12px;
+}
+
+.pwa-install-prompt span,
+.pwa-install-prompt strong,
+.pwa-install-prompt p {
+  display: block;
+}
+
+.pwa-install-prompt span {
+  margin-bottom: 2px;
+  color: #fbbf24;
+  font-size: 8px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+}
+
+.pwa-install-prompt strong {
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pwa-install-prompt p {
+  margin: 3px 0 0;
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.pwa-install-actions {
+  display: grid;
+  gap: 5px;
+}
+
+.pwa-install-actions button {
+  min-width: 65px;
+  min-height: 30px;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.pwa-install-primary {
+  background: #20d89b;
+  color: #07130f;
+}
+
+.pwa-install-dismiss {
+  background: rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+@media (max-width: 520px) {
+  .pwa-install-prompt {
+    right: 10px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    grid-template-columns: 44px minmax(0, 1fr);
+    width: calc(100vw - 20px);
+    padding: 12px;
+  }
+
+  .pwa-install-prompt img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .pwa-install-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pwa-install-actions button:only-child {
+    grid-column: 2;
+  }
+}
+
 .broadcast-overlay-root {
   position: fixed;
   inset: 0;

@@ -743,3 +743,37 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: mobile/build/testflight-artifacts/
+
+  deploy-referee-staging:
+    name: Deploy Field Ops staging PWA
+    needs: deploy-staging
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.deploy-staging.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: https://ops-staging.field.bh
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Deploy and verify Field Ops Staging
+        id: deploy
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: .github/scripts/deploy-referee-staging.sh
