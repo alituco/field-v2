@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Field Ops Staging</title>
+  <rect width="512" height="512" fill="#0b1512"/>
+  <path fill="#20d89b" d="M144 90h248v72H224v64h136v72H224v80h-80V90Z"/>
+  <path fill="#fff" d="M392 90v72h-64l64-72Z" opacity=".96"/>
+  <rect y="408" width="512" height="104" fill="#d97706"/>
+  <text x="256" y="475" fill="#fff" font-family="Arial, sans-serif" font-size="43" font-weight="900" letter-spacing="8" text-anchor="middle">STAGING</text>
+</svg>
