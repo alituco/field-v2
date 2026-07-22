@@ -174,6 +174,79 @@ void main() {
     expect(find.text('Sooner Midfield'), findsWidgets);
     expect(find.textContaining('Your next attacker option'), findsNothing);
   });
+
+  testWidgets(
+    'an urgent main-role opening is not hidden by four earlier games',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final base = DateTime.now().add(const Duration(days: 2));
+      final games = [
+        for (var index = 0; index < 4; index++)
+          _roleGame(
+            id: 'ordinary-$index',
+            venue: 'Ordinary Arena $index',
+            startsAt: base.add(Duration(days: index)),
+            confirmed: 6,
+            defenderSpots: 2,
+          ),
+        _roleGame(
+          id: 'urgent-defender',
+          venue: 'One Defender Needed',
+          startsAt: base.add(const Duration(days: 7)),
+          confirmed: 11,
+          defenderSpots: 1,
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpenQueueGamesScreen(
+            repository: _FakeOpenQueueRepository(games),
+            mainRole: OpenQueueRole.defender,
+            backupRoles: const {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(
+          const ValueKey('open-queue-join-urgent-defender-def'),
+          skipOffstage: false,
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Ordinary Arena 3', skipOffstage: false), findsNothing);
+    },
+  );
+}
+
+OpenQueueGame _roleGame({
+  required String id,
+  required String venue,
+  required DateTime startsAt,
+  required int confirmed,
+  required int defenderSpots,
+}) {
+  return OpenQueueGame(
+    id: id,
+    status: 'OPEN',
+    venue: venue,
+    startsAt: startsAt,
+    endsAt: startsAt.add(const Duration(hours: 1)),
+    timezone: 'Asia/Bahrain',
+    priceFils: 3000,
+    ageLabel: 'Ages 16–20',
+    capacity: 12,
+    confirmedCount: confirmed,
+    spots: {
+      OpenQueueRole.goalkeeper: 0,
+      OpenQueueRole.defender: defenderSpots,
+      OpenQueueRole.midfielder: 0,
+      OpenQueueRole.attacker: 0,
+    },
+  );
 }
 
 List<OpenQueueGame> _delayedMainGames() {
