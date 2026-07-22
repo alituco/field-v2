@@ -97,7 +97,11 @@
 .dangerButton { background: #b93642; color: white; }
 .primaryButton:disabled, .dangerButton:disabled { opacity: .45; cursor: not-allowed; }
 .adminActions { display: grid; gap: 9px; }
+.adminActions .secondaryButton { margin-top: 0; }
 .adminActions .dangerButton { width: 100%; }
+.clanActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.clanActions button { min-height: 38px; border: 1px solid #f0d7b1; border-radius: 11px; padding: 8px; background: #fff8eb; color: #8a550d; font-weight: 850; cursor: pointer; }
+.clanActions button:hover { border-color: #ddb775; background: #fff3d8; }
 .actionHint { margin: 12px 0 0; color: #77837f; font-size: 11px; line-height: 1.45; }
 .video { margin-top: 15px; }
 .video video { width: 100%; border-radius: 12px; background: #07100e; }

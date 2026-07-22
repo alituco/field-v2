@@ -8,6 +8,35 @@ import {
 } from "@/lib/referee-session";
 import { createSupabasePublic } from "@/lib/supabase-admin";
 
+export async function GET(request: NextRequest) {
+  const context = await requireReferee(request);
+  if (!isRefereeContext(context)) return context;
+  const adminError = adminOnly(context.referee);
+  if (adminError) return adminError;
+
+  const { data, error } = await context.db
+    .from("referee_profiles")
+    .select("profile_id,display_name,phone,role,is_active,created_at,updated_at")
+    .order("is_active", { ascending: false })
+    .order("display_name");
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  return NextResponse.json({
+    staff: (data ?? []).map((row) => ({
+      profileId: row.profile_id,
+      displayName: row.display_name,
+      phone: row.phone,
+      role: row.role,
+      isActive: row.is_active,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })),
+  });
+}
+
 export async function POST(request: NextRequest) {
   const context = await requireReferee(request);
   if (!isRefereeContext(context)) return context;
@@ -37,17 +66,23 @@ export async function POST(request: NextRequest) {
 
     await upsertProfile(context.db, { userId, phone, displayName, role });
 
+    let loginWarning: string | null = null;
     if (body.sendOtp !== false) {
       const { error } = await createSupabasePublic().auth.signInWithOtp({
         phone,
       });
-      if (error) throw new Error(`Created referee, but OTP failed: ${error.message}`);
+      if (error) loginWarning = `Account created, but the first login code could not be sent: ${error.message}`;
     }
 
-    return NextResponse.json({ ok: true, profileId: userId });
+    return NextResponse.json({
+      ok: true,
+      profileId: userId,
+      staff: { profileId: userId, displayName, phone, role, isActive: true },
+      warning: loginWarning,
+    });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not create referee." },
+      { error: error instanceof Error ? error.message : "Could not create this staff account." },
       { status: 400 },
     );
   }
