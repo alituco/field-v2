@@ -4,6 +4,7 @@ import {
   type AdminClient,
   assertNoError,
   createAdminClient,
+  createAuthUser,
   E2E_DEFAULT_BIRTH_DATE,
   E2E_PROFILE_PREFIX,
   E2E_SCHEMA_VERSION,
@@ -12,6 +13,7 @@ import {
   type E2EGame,
   type E2EManifest,
   isTerminalGameStatus,
+  listAuthUsers,
   loadSetupConfig,
   logStep,
   requireUuid,
@@ -19,6 +21,7 @@ import {
   shortRunId,
   targetProjectRef,
   unwrapRpcRow,
+  updateAuthUser,
   writeManifest,
 } from "./_shared.ts";
 
@@ -415,34 +418,39 @@ async function ensureAccount(
           "Field E2E.",
       );
     }
-    const { data, error } = await client.auth.admin.updateUserById(user.id, {
-      phone: input.phone,
-      phone_confirm: true,
-      password: input.password,
-      user_metadata: {
-        ...user.user_metadata,
-        ...metadata,
+    user = await updateAuthUser(
+      config.supabaseUrl,
+      config.serviceRoleKey,
+      user.id,
+      {
+        phone: input.phone,
+        phone_confirm: true,
+        password: input.password,
+        user_metadata: {
+          ...user.user_metadata,
+          ...metadata,
+        },
       },
-    });
-    if (error || !data.user) {
+    ).catch((error) => {
       throw new Error(
-        `refresh auth user ${input.phone}: ${error?.message ?? "no user"}`,
+        `refresh auth user ${input.phone}: ${errorMessage(error)}`,
       );
-    }
-    user = data.user;
+    });
   } else {
-    const { data, error } = await client.auth.admin.createUser({
-      phone: input.phone,
-      phone_confirm: true,
-      password: input.password,
-      user_metadata: metadata,
-    });
-    if (error || !data.user) {
+    user = await createAuthUser(
+      config.supabaseUrl,
+      config.serviceRoleKey,
+      {
+        phone: input.phone,
+        phone_confirm: true,
+        password: input.password,
+        user_metadata: metadata,
+      },
+    ).catch((error) => {
       throw new Error(
-        `create auth user ${input.phone}: ${error?.message ?? "no user"}`,
+        `create auth user ${input.phone}: ${errorMessage(error)}`,
       );
-    }
-    user = data.user;
+    });
   }
 
   const { error: profileError } = await client.from("profiles").upsert(
@@ -473,16 +481,19 @@ async function findUserByPhone(
 ): Promise<User | null> {
   const digits = phone.replace(/\D/g, "");
   for (let page = 1; page <= 20; page += 1) {
-    const { data, error } = await client.auth.admin.listUsers({
+    const users = await listAuthUsers(
+      config.supabaseUrl,
+      config.serviceRoleKey,
       page,
-      perPage: 1000,
+      1000,
+    ).catch((error) => {
+      throw new Error(`list auth users: ${errorMessage(error)}`);
     });
-    if (error) throw new Error(`list auth users: ${error.message}`);
-    const match = data.users.find((candidate) =>
+    const match = users.find((candidate) =>
       (candidate.phone ?? "").replace(/\D/g, "") === digits
     );
     if (match) return match;
-    if (data.users.length < 1000) break;
+    if (users.length < 1000) break;
   }
   return null;
 }
