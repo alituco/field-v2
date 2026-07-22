@@ -65,15 +65,19 @@ echo "Linking the ${target} Supabase project."
 supabase link --project-ref "$project_ref" --yes
 
 echo "Previewing pending ${target} migrations."
-supabase db push --linked --dry-run --yes
+supabase db push --linked --include-all --dry-run --yes
 
 echo "Applying pending ${target} migrations."
 # Intentionally omit --include-seed. Hosted environments are never seeded by
 # deployment; local seed data is applied only by local reset workflows.
-supabase db push --linked --yes
+# --include-all is required when an approved migration is merged after a newer
+# migration has already reached the hosted project. Supabase still applies only
+# migrations missing from its history table; this allows those pending files to
+# be applied in timestamp order instead of failing before deployment.
+supabase db push --linked --include-all --yes
 
 echo "Verifying that ${target} has no pending migrations."
-supabase db push --linked --dry-run --yes
+supabase db push --linked --include-all --dry-run --yes
 
 echo "Verifying critical ${target} schema and policy invariants."
 supabase db query \
