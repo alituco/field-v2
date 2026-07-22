@@ -88,12 +88,14 @@ Deno.serve(async (request) => {
   }) as SupabaseAnyClient;
 
   try {
-    const userId = await ensureDevUser({
-      admin,
-      phone: devUser.phone,
-      password: devPassword,
-      displayName: devUser.displayName,
-    });
+    const userId = await retryTransientAuthFailure(() =>
+      ensureDevUser({
+        admin,
+        phone: devUser.phone,
+        password: devPassword,
+        displayName: devUser.displayName,
+      })
+    );
 
     const { error: profileError } = await admin.from("profiles").upsert(
       {
@@ -330,6 +332,35 @@ function isAlreadyRegisteredError(message?: string) {
     normalized.includes("already exists") ||
     normalized.includes("duplicate")
   );
+}
+
+async function retryTransientAuthFailure<T>(action: () => Promise<T>) {
+  const delaysMs = [1000, 2000, 4000, 8000];
+
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!isSigningKeyCacheMiss(error) || attempt === delaysMs.length) {
+        throw error;
+      }
+
+      console.warn(
+        `Supabase Auth signing-key cache miss; retrying dev login (${
+          attempt + 1
+        }/${delaysMs.length}).`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
+  }
+
+  throw new Error("Could not create dev login.");
+}
+
+function isSigningKeyCacheMiss(error: unknown) {
+  const message = toErrorMessage(error);
+  return message.includes("unrecognized JWT kid") &&
+    message.includes("token is unverifiable");
 }
 
 function toErrorMessage(error: unknown) {
