@@ -247,7 +247,14 @@ Future<void> scrollUntilFound(
       continue;
     }
     resetToStart = true;
-    if (position.pixels >= position.maxScrollExtent - 0.5) break;
+    if (position.pixels >= position.maxScrollExtent - 0.5) {
+      // The target can be created by a FutureBuilder after the list has
+      // already reached its current boundary (for example, once the booking
+      // quote returns). Keep pumping within the caller's bounded attempt
+      // budget instead of treating the temporary boundary as final.
+      await tester.pump(const Duration(milliseconds: 220));
+      continue;
+    }
     await tester.drag(scrollTarget, Offset(0, -delta), warnIfMissed: false);
     await tester.pump(const Duration(milliseconds: 220));
   }
