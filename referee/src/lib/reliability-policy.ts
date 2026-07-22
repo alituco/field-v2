@@ -1,6 +1,17 @@
 export const RELIABILITY_POLICY_SCHEMA_VERSION = 1;
 export const RELIABILITY_POLICY_TIME_ZONE = "Asia/Bahrain";
 
+// updated_at is an optimistic-lock token, not a display date. Supabase returns
+// PostgreSQL timestamps with microsecond precision, while JavaScript Date only
+// retains milliseconds. Keep the original token so the database can compare
+// the exact revision that the administrator loaded.
+export function validReliabilityRevision(value: unknown) {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) {
+    return null;
+  }
+  return value.trim();
+}
+
 export const RELIABILITY_APPEAL_CATEGORIES = [
   "FIELD_OR_VENUE_ERROR",
   "VENUE_ACCESS_BLOCKED",
@@ -191,6 +202,13 @@ export type ReliabilityPolicyValidationIssue = {
   message: string;
 };
 
+export type ReliabilityPolicyValidationOptions = {
+  // Published versions are immutable snapshots. Season Zero began with clan
+  // matches at seven-a-side, so history must remain readable after the live
+  // format moves to six-a-side.
+  allowLegacyClanSevenSide?: boolean;
+};
+
 export type ReliabilityPolicyDiff = {
   path: string;
   label: string;
@@ -295,7 +313,7 @@ export const reliabilityPolicyDefaults: ReliabilityPolicyConfig = {
     incompleteRefundBps: 10_000,
   },
   clan: {
-    playersPerSide: 7,
+    playersPerSide: 6,
     minimumOnTimeWithoutClanStrike: 6,
     minimumAtKickoffWithoutForfeit: 6,
     partialAttendanceStrikes: 1,
@@ -393,6 +411,7 @@ export function cloneReliabilityPolicyConfig(
 
 export function validateReliabilityPolicyConfig(
   value: unknown,
+  options: ReliabilityPolicyValidationOptions = {},
 ): ReliabilityPolicyValidationIssue[] {
   const issues: ReliabilityPolicyValidationIssue[] = [];
   if (!isRecord(value)) {
@@ -415,7 +434,14 @@ export function validateReliabilityPolicyConfig(
   requireLiteral(value, "attendance.cancellationAfterKickoffOutcome", "NO_SHOW", issues);
   requireLiteral(value, "solo.reliabilityDeposit.onTimeReturnDestination", "FIELD_WALLET", issues);
   requireLiteral(value, "solo.playersPerSide", 6, issues);
-  requireLiteral(value, "clan.playersPerSide", 7, issues);
+  const clanPlayersPerSide = numberAtPath(value, "clan.playersPerSide");
+  if (clanPlayersPerSide !== 6 &&
+      !(options.allowLegacyClanSevenSide && clanPlayersPerSide === 7)) {
+    issues.push({
+      path: "clan.playersPerSide",
+      message: "Clan matches are fixed at 6 players per side.",
+    });
+  }
   requireLiteral(value, "solo.outcomes.fieldCancelled.strikes", 0, issues);
   requireLiteral(value, "injury.strikeDelta", 0, issues);
   requireLiteral(value, "injury.requiresRefereeVerification", true, issues);
@@ -515,8 +541,11 @@ export function validateReliabilityPolicyConfig(
   return issues;
 }
 
-export function parseReliabilityPolicyConfig(value: unknown): ReliabilityPolicyConfig {
-  const issues = validateReliabilityPolicyConfig(value);
+export function parseReliabilityPolicyConfig(
+  value: unknown,
+  options: ReliabilityPolicyValidationOptions = {},
+): ReliabilityPolicyConfig {
+  const issues = validateReliabilityPolicyConfig(value, options);
   if (issues.length > 0) {
     const error = new Error(issues.map((issue) => `${issue.path}: ${issue.message}`).join(" "));
     error.name = "ReliabilityPolicyValidationError";

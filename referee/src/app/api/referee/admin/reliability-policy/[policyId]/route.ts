@@ -6,9 +6,11 @@ import {
   optionalReliabilityUuid,
   reliabilityMutationStatus,
   validReliabilityBahrainDateStart,
-  validReliabilityIso,
 } from "@/lib/reliability-admin-input";
-import { parseReliabilityPolicyConfig } from "@/lib/reliability-policy";
+import {
+  parseReliabilityPolicyConfig,
+  validReliabilityRevision,
+} from "@/lib/reliability-policy";
 import {
   adminOnly,
   isRefereeContext,
@@ -30,7 +32,7 @@ export async function PATCH(request: NextRequest, route: RouteContext) {
   }
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
   const effectiveFrom = validReliabilityBahrainDateStart(body?.effectiveFrom);
-  const expectedUpdatedAt = validReliabilityIso(body?.expectedUpdatedAt);
+  const expectedUpdatedAt = validReliabilityRevision(body?.expectedUpdatedAt);
   const summary = cleanReliabilityText(body?.summary);
   if (!effectiveFrom || !expectedUpdatedAt) {
     return NextResponse.json(

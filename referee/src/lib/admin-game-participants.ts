@@ -404,7 +404,7 @@ export function buildClanGameParticipants(input: {
     matchKind: "CLAN",
     matchId: input.matchId,
     status: input.status,
-    playersPerSide: 7,
+    playersPerSide: 6,
     homeClanId: input.homeClanId,
     awayClanId: input.awayClanId,
     plannedPlayers,

@@ -380,6 +380,74 @@
   background: #fbfcfd;
 }
 
+.labelWithHelp {
+  display: flex !important;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  color: #475569;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.labelWithHelp strong {
+  min-width: 0;
+}
+
+.infoTooltip {
+  position: relative;
+  display: inline-grid !important;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 50%;
+  background: #fff;
+  color: #64748b;
+  cursor: help;
+  font-size: 9px;
+  font-weight: 950;
+  outline: 0;
+}
+
+.infoTooltip > span {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 9px);
+  left: 50%;
+  display: block;
+  visibility: hidden;
+  width: min(260px, 70vw);
+  border-radius: 9px;
+  padding: 9px 10px;
+  background: #172033;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.24);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translate(-50%, 4px);
+  transition: 120ms ease;
+}
+
+.infoTooltip:hover,
+.infoTooltip:focus-visible {
+  border-color: #6ee7b7;
+  color: #047857;
+}
+
+.infoTooltip:hover > span,
+.infoTooltip:focus > span {
+  visibility: visible;
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .numberField,
 .toggleField,
 .lockedRule {
@@ -503,6 +571,248 @@
 
 .toggleField input:checked + i::after {
   transform: translateX(18px);
+}
+
+.cancellationBody {
+  display: grid;
+  gap: 15px;
+  padding: 18px 19px 20px;
+  background: #f8fafc;
+}
+
+.cancellationIntro {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 20px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.cancellationIntro strong {
+  flex: 0 0 auto;
+  font-size: 10px;
+}
+
+.cancellationIntro p {
+  max-width: 620px;
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.cancellationRows {
+  display: grid;
+  gap: 11px;
+}
+
+.cancellationRow {
+  overflow: hidden;
+  border: 1px solid #dbe3ec;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.cancellationRow > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 15px 16px;
+}
+
+.windowLabel {
+  display: block;
+  margin-bottom: 4px;
+  color: #059669;
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cancellationRow h3,
+.cancellationRow p {
+  margin: 0;
+}
+
+.cancellationRow h3 {
+  color: #172033;
+  font-size: 13px;
+  letter-spacing: -0.01em;
+}
+
+.cancellationRow header p {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.consequenceSummary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.consequenceSummary strong,
+.noPenalty {
+  border-radius: 999px;
+  padding: 6px 9px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.consequenceSummary .noPenalty {
+  background: #dcfce7;
+  color: #047857;
+}
+
+.ruleControls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  border-top: 1px solid #eef2f6;
+  padding: 13px 16px 15px;
+  background: #fbfcfd;
+}
+
+.compactPolicyField {
+  display: block;
+  min-width: 0;
+}
+
+.compactPolicyField > .labelWithHelp {
+  min-height: 20px;
+  margin-bottom: 6px;
+}
+
+.compactPolicyField > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid #dbe3ec;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.compactPolicyField input {
+  width: 100%;
+  min-height: 41px;
+  border: 0;
+  padding: 0 10px;
+  background: transparent;
+  color: #172033;
+  outline: 0;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.compactPolicyField input:focus {
+  box-shadow: inset 0 0 0 2px rgba(16, 185, 129, 0.28);
+}
+
+.compactPolicyField em {
+  padding: 0 10px;
+  color: #94a3b8;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.compactPolicyField .fieldError {
+  display: block;
+  margin-top: 5px;
+  color: #b91c1c;
+  font-size: 8px;
+  line-height: 1.35;
+}
+
+.compactPolicyToggle {
+  min-height: 67px;
+  padding: 10px 11px;
+  background: #fff;
+}
+
+.replacementOptions {
+  border-top: 1px solid #eef2f6;
+  background: #fff;
+}
+
+.replacementOptions > summary {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  color: #475569;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 900;
+  list-style: none;
+}
+
+.replacementOptions > summary::-webkit-details-marker {
+  display: none;
+}
+
+.replacementOptions > summary span {
+  color: #94a3b8;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.replacementOptions > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  border-top: 1px solid #eef2f6;
+  padding: 13px 16px 15px;
+  background: #f8fafc;
+}
+
+.depositPanel {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(150px, 0.6fr) minmax(150px, 0.6fr);
+  align-items: end;
+  gap: 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  padding: 15px;
+  background: #eff6ff;
+}
+
+.depositPanel > div > strong {
+  color: #1e3a8a;
+  font-size: 11px;
+}
+
+.depositPanel > div > p {
+  margin: 5px 0 0;
+  color: #475569;
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.ruleIssues {
+  display: grid;
+  gap: 5px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff1f2;
+  color: #991b1b;
+  font-size: 8px;
+  font-weight: 750;
 }
 
 .sanctionTable {
@@ -1409,6 +1719,8 @@
   .hero > button { position: static; margin-top: 18px; }
   .editorLayout { grid-template-columns: minmax(0, 1fr) 290px; }
   .fieldGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ruleControls,
+  .replacementOptions > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sanctionHead,
   .sanctionRow { grid-template-columns: 70px minmax(150px, 1fr) 70px 100px 30px; }
 }
@@ -1436,7 +1748,13 @@
   .draftHeader { grid-template-columns: 1fr; }
   .draftPicker { min-width: 0; }
   .scheduleFields,
-  .fieldGrid { grid-template-columns: 1fr; }
+  .fieldGrid,
+  .ruleControls,
+  .replacementOptions > div,
+  .depositPanel { grid-template-columns: 1fr; }
+  .cancellationIntro { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .cancellationRow > header { grid-template-columns: 1fr; }
+  .consequenceSummary { justify-content: flex-start; }
   .sanctionTable { overflow-x: auto; }
   .sanctionHead,
   .sanctionRow { min-width: 610px; }

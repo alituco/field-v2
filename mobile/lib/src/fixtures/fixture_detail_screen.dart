@@ -1725,7 +1725,7 @@ class _FormationLineupsPanel extends StatelessWidget {
           const SizedBox(height: 5),
           Text(
             fixture.teamRatingSpread == null
-                ? 'Both 7-a-side formations, including each keeper.'
+                ? 'Both 6-a-side formations, including each keeper.'
                 : 'Balanced to a ${fixture.teamRatingSpread} SR average spread.',
             style: const TextStyle(
               color: fieldGray500,

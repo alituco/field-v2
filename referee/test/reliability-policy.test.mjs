@@ -10,12 +10,32 @@ import {
   reliabilityPolicyDefaults,
   reliabilityTimelineForKickoff,
   resolveReliabilityPolicyAt,
+  validReliabilityRevision,
   validateReliabilityPolicyConfig,
 } from "../src/lib/reliability-policy.ts";
 
 test("the canonical reliability policy defaults pass strict validation", () => {
   assert.deepEqual(validateReliabilityPolicyConfig(reliabilityPolicyDefaults), []);
   assert.deepEqual(parseReliabilityPolicyConfig(reliabilityPolicyDefaults), reliabilityPolicyDefaults);
+  assert.equal(reliabilityPolicyDefaults.solo.playersPerSide, 6);
+  assert.equal(reliabilityPolicyDefaults.clan.playersPerSide, 6);
+});
+
+test("historical seven-a-side clan policies remain readable but cannot become drafts", () => {
+  const historical = cloneReliabilityPolicyConfig(reliabilityPolicyDefaults);
+  historical.clan.playersPerSide = 7;
+
+  assert.ok(validateReliabilityPolicyConfig(historical).some((issue) =>
+    issue.path === "clan.playersPerSide"));
+  assert.deepEqual(
+    validateReliabilityPolicyConfig(historical, { allowLegacyClanSevenSide: true }),
+    [],
+  );
+});
+
+test("draft revision tokens preserve PostgreSQL microseconds", () => {
+  const revision = "2026-07-17T00:47:48.977107+00:00";
+  assert.equal(validReliabilityRevision(revision), revision);
 });
 
 test("validation rejects unknown settings, unsafe thresholds, and overlapping cancellation bands", () => {
