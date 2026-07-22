@@ -1748,12 +1748,28 @@ async function finalizeSeededFixtures(
       );
     }
 
+    const checkInsByTimestamp = new Map<string, typeof attendanceRows>();
     for (const attendance of attendanceRows) {
       const checkInAt = new Date(
         new Date(attendance.check_in_deadline_at).getTime() - 60_000,
       ).toISOString();
-      await assertNoError(
-        admin.from("match_attendance_records").update({
+      const groupedRows = checkInsByTimestamp.get(checkInAt) ?? [];
+      groupedRows.push(attendance);
+      checkInsByTimestamp.set(checkInAt, groupedRows);
+    }
+
+    // Backdate each timestamp group in one statement and require PostgREST to
+    // return every updated row. A bare update only reports database errors; it
+    // can otherwise succeed after matching zero rows, which made the large
+    // historical seed intermittently reach match start with an unchecked
+    // participant.
+    for (const [checkInAt, groupedRows] of checkInsByTimestamp) {
+      const expectedAttendanceIds = new Set(
+        groupedRows.map((attendance) => attendance.id),
+      );
+      const { data: checkedInData, error: checkedInError } = await admin
+        .from("match_attendance_records")
+        .update({
           checked_in_at: checkInAt,
           checked_in_by: refereeId,
           consequence_snapshot: {
@@ -1764,25 +1780,60 @@ async function finalizeSeededFixtures(
               historical_seed: true,
             },
           },
-        }).eq("id", attendance.id),
-        `backdate attendance for ${fixtureKey(fixture)}`,
+        })
+        .in("id", [...expectedAttendanceIds])
+        .select("id,checked_in_at,outcome");
+      if (checkedInError) {
+        throw new Error(
+          `backdate attendance for ${fixtureKey(fixture)}: ` +
+            checkedInError.message,
+        );
+      }
+
+      const checkedInRows = (checkedInData ?? []) as {
+        id: string;
+        checked_in_at: string | null;
+        outcome: string | null;
+      }[];
+      const checkedInIds = new Set(checkedInRows.map((row) => row.id));
+      const invalidCheckIn = checkedInRows.some((row) =>
+        row.checked_in_at == null ||
+        (row.outcome != null && !["ON_TIME", "LATE"].includes(row.outcome))
       );
-      await assertNoError(
-        admin.from("attendance_events").insert({
-          attendance_id: attendance.id,
-          event_type: "CHECKED_IN",
-          actor_referee_id: refereeId,
-          event_at: checkInAt,
-          detail: {
-            local_seed: true,
-            referee_authoritative: true,
-            historical_seed: true,
-          },
-          idempotency_key: `local-seed-check-in:${attendance.id}`,
-        }),
-        `audit attendance for ${fixtureKey(fixture)}`,
-      );
+      if (
+        checkedInIds.size !== expectedAttendanceIds.size ||
+        [...expectedAttendanceIds].some((id) => !checkedInIds.has(id)) ||
+        invalidCheckIn
+      ) {
+        throw new Error(
+          `backdate attendance for ${fixtureKey(fixture)} did not persist ` +
+            `all ${expectedAttendanceIds.size} active check-ins.`,
+        );
+      }
     }
+
+    await assertNoError(
+      admin.from("attendance_events").insert(attendanceRows.map(
+        (attendance) => {
+          const checkInAt = new Date(
+            new Date(attendance.check_in_deadline_at).getTime() - 60_000,
+          ).toISOString();
+          return {
+            attendance_id: attendance.id,
+            event_type: "CHECKED_IN",
+            actor_referee_id: refereeId,
+            event_at: checkInAt,
+            detail: {
+              local_seed: true,
+              referee_authoritative: true,
+              historical_seed: true,
+            },
+            idempotency_key: `local-seed-check-in:${attendance.id}`,
+          };
+        },
+      )),
+      `audit attendance for ${fixtureKey(fixture)}`,
+    );
 
     const { error: startError } = await admin.rpc(
       "referee_start_fixture_atomic",
