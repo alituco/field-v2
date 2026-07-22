@@ -5,6 +5,7 @@ import {
   bpsToPercent,
   cloneReliabilityPolicyConfig,
   diffReliabilityPolicyConfigs,
+  normalizeReliabilityPolicyDraftConfig,
   parseReliabilityPolicyConfig,
   percentToBps,
   reliabilityPolicyDefaults,
@@ -31,6 +32,10 @@ test("historical seven-a-side clan policies remain readable but cannot become dr
     validateReliabilityPolicyConfig(historical, { allowLegacyClanSevenSide: true }),
     [],
   );
+
+  const editable = normalizeReliabilityPolicyDraftConfig(historical);
+  assert.equal(editable.clan.playersPerSide, 6);
+  assert.deepEqual(validateReliabilityPolicyConfig(editable), []);
 });
 
 test("draft revision tokens preserve PostgreSQL microseconds", () => {

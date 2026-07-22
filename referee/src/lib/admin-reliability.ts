@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  normalizeReliabilityPolicyDraftConfig,
   parseReliabilityPolicyConfig,
   resolveReliabilityPolicyAt,
   validReliabilityRevision,
@@ -222,9 +223,11 @@ export function normalizeAdminReliabilityPolicyVersion(
   }
   const createdBy = nullableString(row.created_by);
   const publishedBy = nullableString(row.published_by);
-  const config = parseReliabilityPolicyConfig(row.config, {
-    allowLegacyClanSevenSide: state === "PUBLISHED",
-  });
+  const config = state === "DRAFT"
+    ? normalizeReliabilityPolicyDraftConfig(row.config)
+    : parseReliabilityPolicyConfig(row.config, {
+      allowLegacyClanSevenSide: true,
+    });
   const effectiveFrom = requiredDate(row.effective_from, "effective date");
   const createdAt = requiredDate(row.created_at, "created date");
   const updatedAt = requiredRevision(row.updated_at);

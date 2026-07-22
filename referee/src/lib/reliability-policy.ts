@@ -554,6 +554,28 @@ export function parseReliabilityPolicyConfig(
   return cloneReliabilityPolicyConfig(value as ReliabilityPolicyConfig);
 }
 
+// The web app can deploy just before its database migration. During that
+// window, normalize an existing seven-a-side draft in memory so the policy
+// page remains usable and the next save writes only the supported format.
+export function normalizeReliabilityPolicyDraftConfig(
+  value: unknown,
+): ReliabilityPolicyConfig {
+  const config = parseReliabilityPolicyConfig(value, {
+    allowLegacyClanSevenSide: true,
+  });
+  config.solo.playersPerSide = 6;
+  config.clan.playersPerSide = 6;
+  config.clan.minimumOnTimeWithoutClanStrike = Math.min(
+    config.clan.minimumOnTimeWithoutClanStrike,
+    6,
+  );
+  config.clan.minimumAtKickoffWithoutForfeit = Math.min(
+    config.clan.minimumAtKickoffWithoutForfeit,
+    6,
+  );
+  return config;
+}
+
 export function diffReliabilityPolicyConfigs(
   before: ReliabilityPolicyConfig,
   after: ReliabilityPolicyConfig,
