@@ -145,16 +145,8 @@ void main() {
     expect(cancellationBooking, isNotNull);
     await _cancelCurrentBooking(tester);
 
-    final cancelledBooking = await _boundedRemoteStep(
-      'verify cancelled booking persistence',
-      Supabase.instance.client
-          .from('open_queue_bookings')
-          .select(
-            'status, cancelled_at, refund_bps, refund_percent, '
-            'refund_amount_fils',
-          )
-          .eq('id', cancellationBooking!.id)
-          .single(),
+    final cancelledBooking = await _waitForCancelledBooking(
+      cancellationBooking!.id,
     );
     expect(cancelledBooking['status'], 'CANCELLED');
     expect(cancelledBooking['cancelled_at'], isNotNull);
@@ -317,6 +309,38 @@ Future<T> _boundedRemoteStep<T>(
   } on TimeoutException {
     throw TestFailure('$label timed out after ${timeout.inSeconds} seconds.');
   }
+}
+
+Future<Map<String, dynamic>> _waitForCancelledBooking(
+  String bookingId, {
+  Duration timeout = const Duration(seconds: 20),
+}) async {
+  const label = 'verify cancelled booking persistence';
+  debugPrint('[FIELD_E2E] START $label');
+  final deadline = DateTime.now().add(timeout);
+  Map<String, dynamic>? latest;
+
+  while (DateTime.now().isBefore(deadline)) {
+    final response = await Supabase.instance.client
+        .from('open_queue_bookings')
+        .select(
+          'status, cancelled_at, refund_bps, refund_percent, '
+          'refund_amount_fils',
+        )
+        .eq('id', bookingId)
+        .single();
+    latest = Map<String, dynamic>.from(response);
+    if (latest['status'] == 'CANCELLED') {
+      debugPrint('[FIELD_E2E] PASS $label');
+      return latest;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+  }
+
+  throw TestFailure(
+    '$label did not observe CANCELLED within ${timeout.inSeconds} seconds; '
+    'last status was ${latest?['status'] ?? 'missing'}.',
+  );
 }
 
 void _logStage(String label) {
