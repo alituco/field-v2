@@ -365,6 +365,34 @@ void main() {
     expect(find.text('AVAILABLE SPOTS'), findsNothing);
     expect(find.text('OPEN QUEUE BOOKING'), findsNothing);
   });
+
+  testWidgets('cancelled clan and solo games remain visible and labelled', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final date = _nextMatchDay(DateTime.now());
+    final clan = _clanFixture(date, status: FixtureStatus.cancelled);
+    final solo = _soloGame(
+      id: 'solo-cancelled',
+      date: date,
+      status: 'CANCELLED',
+      confirmedCount: 0,
+    );
+
+    await _pumpFixtures(tester, fixtures: [clan], soloGames: [solo]);
+    await _showCard(tester, 'solo-fixture-solo-cancelled');
+
+    expect(
+      find.byKey(const ValueKey('clan-fixture-clan-game')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('solo-fixture-solo-cancelled')),
+      findsOneWidget,
+    );
+    expect(find.text('Cancelled'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _setPhoneSize(WidgetTester tester) async {
@@ -427,10 +455,13 @@ DateTime _previousMatchDay(DateTime from) {
   return date;
 }
 
-Fixture _clanFixture(DateTime date) {
+Fixture _clanFixture(
+  DateTime date, {
+  FixtureStatus status = FixtureStatus.scheduled,
+}) {
   return Fixture(
     id: 'clan-game',
-    status: FixtureStatus.scheduled,
+    status: status,
     homeClanId: _homeClan.id,
     awayClanId: _awayClan.id,
     venue: 'TFA, Saar',
