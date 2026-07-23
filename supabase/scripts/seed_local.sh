@@ -43,3 +43,9 @@ deno run \
   --allow-net \
   --env-file="$env_file" \
   supabase/scripts/seed_dev_data.ts
+
+deno run \
+  --allow-env \
+  --allow-net \
+  --env-file="$env_file" \
+  supabase/scripts/seed_open_queue_data.ts

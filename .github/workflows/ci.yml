@@ -49,6 +49,18 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      # Tap's published checkout_flutter 1.0.4 still calls the repository
+      # method removed by AGP 9. Keep this version-pinned patch explicit and
+      # fail closed if Tap changes the package contents.
+      - name: Patch Tap Checkout for AGP 9
+        run: >-
+          patch
+          --batch
+          --forward
+          --strip=1
+          --directory="$PUB_CACHE/hosted/pub.dev/checkout_flutter-1.0.4"
+          < patches/checkout_flutter-1.0.4-agp9.patch
+
       - name: Analyze Flutter app
         run: flutter analyze
 
@@ -321,7 +333,8 @@ jobs:
             supabase/scripts/verify_clan_attendance_flexibility.sql \
             supabase/scripts/verify_clan_forfeit_workflow.sql \
             supabase/scripts/verify_moderation_system.sql \
-            supabase/scripts/verify_support_ticket_system.sql
+            supabase/scripts/verify_support_ticket_system.sql \
+            supabase/scripts/verify_tap_payment_system.sql
           do
             docker exec -i supabase_db_field_v2 \
               psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \

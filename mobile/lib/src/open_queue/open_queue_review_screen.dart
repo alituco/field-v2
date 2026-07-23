@@ -213,7 +213,6 @@ class _OpenQueuePaymentScreen extends StatefulWidget {
 }
 
 class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
-  String _method = 'APPLE_PAY';
   bool _processing = false;
   String? _error;
   OpenQueueBookingCostPreview? _costPreview;
@@ -247,7 +246,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
       final booking = await widget.repository.bookGame(
         game: widget.game,
         role: widget.role,
-        paymentMethod: _method,
+        paymentMethod: 'TAP_CHECKOUT',
       );
       if (!mounted) return;
       await Navigator.of(context).push<void>(
@@ -311,23 +310,24 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
             ),
             const SizedBox(height: 18),
             Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED),
+                color: fieldEmerald50,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFED7AA)),
+                border: Border.all(color: fieldEmerald100),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.science_outlined, color: Color(0xFFC2410C)),
+                  Icon(Icons.lock_rounded, color: fieldEmerald700),
                   SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      'TEST CHECKOUT · No real payment or refund is sent yet.',
+                      'SECURE TAP CHECKOUT',
                       style: TextStyle(
-                        color: Color(0xFF9A3412),
+                        color: fieldEmerald700,
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
+                        letterSpacing: 0.7,
                       ),
                     ),
                   ),
@@ -336,7 +336,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
             ),
             const SizedBox(height: 18),
             const Text(
-              'PAYMENT METHOD',
+              'AVAILABLE PAYMENT METHODS',
               style: TextStyle(
                 color: fieldGray500,
                 fontSize: 11,
@@ -345,18 +345,29 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            _PaymentMethodTile(
-              icon: Icons.apple_rounded,
-              label: 'Apple Pay (test)',
-              selected: _method == 'APPLE_PAY',
-              onTap: () => setState(() => _method = 'APPLE_PAY'),
-            ),
-            const SizedBox(height: 9),
-            _PaymentMethodTile(
-              icon: Icons.account_balance_wallet_rounded,
-              label: 'BenefitPay (test)',
-              selected: _method == 'BENEFITPAY',
-              onTap: () => setState(() => _method = 'BENEFITPAY'),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: fieldGray100),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.apple_rounded, color: fieldGray900, size: 22),
+                  SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      'BenefitPay · Visa · Mastercard',
+                      style: TextStyle(
+                        color: fieldGray900,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
             Row(
@@ -413,7 +424,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                       ),
                     )
                   : Text(
-                      'Book Test Spot · ${_costPreview?.totalLabel ?? 'Checking total…'}',
+                      'Continue to Pay · ${_costPreview?.totalLabel ?? 'Checking total…'}',
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
             ),
@@ -744,7 +755,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
                     icon: const Icon(Icons.chevron_right_rounded),
                     iconAlignment: IconAlignment.end,
                     label: const Text(
-                      'Continue to Test Checkout',
+                      'Continue to Secure Checkout',
                       style: TextStyle(fontWeight: FontWeight.w900),
                     ),
                   ),
@@ -789,60 +800,6 @@ class _CostLine extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PaymentMethodTile extends StatelessWidget {
-  const _PaymentMethodTile({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(17),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(17),
-        child: Container(
-          padding: const EdgeInsets.all(15),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(
-              color: selected ? fieldGray900 : fieldGray100,
-              width: selected ? 2 : 1.5,
-            ),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, color: fieldGray900),
-              const SizedBox(width: 11),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const Spacer(),
-              Icon(
-                selected ? Icons.radio_button_checked : Icons.radio_button_off,
-                color: selected ? fieldGray900 : fieldGray300,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

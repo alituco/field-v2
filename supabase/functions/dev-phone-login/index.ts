@@ -1,5 +1,8 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
-import { isExactFieldStagingSupabaseUrl } from "../_shared/staging_guard.ts";
+import {
+  isExactFieldStagingSupabaseUrl,
+  isLocalSupabaseUrl,
+} from "../_shared/staging_guard.ts";
 
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -37,21 +40,28 @@ Deno.serve(async (request) => {
   }
 
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  if (!isExactFieldStagingSupabaseUrl(supabaseUrl)) {
+  const isLocal = isLocalSupabaseUrl(supabaseUrl);
+  const isStaging = isExactFieldStagingSupabaseUrl(supabaseUrl);
+  if (!isLocal && !isStaging) {
     return json({ error: "Dev login is unavailable." }, 404);
   }
 
-  const enabled = Deno.env.get("DEV_OTP_ENABLED") === "true";
+  const enabled = isLocal || Deno.env.get("DEV_OTP_ENABLED") === "true";
   const configuredDevUsers = getConfiguredDevUsers();
   const allowedCode = Deno.env.get("DEV_OTP_CODE") ?? "000000";
-  const devPassword = Deno.env.get("DEV_OTP_PASSWORD");
+  const devPassword = isLocal
+    ? Deno.env.get("LOCAL_DEV_SEED_PASSWORD") ?? "LocalField_Only_42!"
+    : Deno.env.get("DEV_OTP_PASSWORD");
   const validUntil = Deno.env.get("DEV_OTP_VALID_UNTIL");
 
   if (configuredDevUsers.error) {
     return json({ error: configuredDevUsers.error }, 500);
   }
 
-  if (!enabled || configuredDevUsers.users.length === 0 || !devPassword) {
+  if (
+    !enabled || (!isLocal && configuredDevUsers.users.length === 0) ||
+    !devPassword
+  ) {
     return json({ error: "Dev login is not configured." }, 404);
   }
 
@@ -66,9 +76,7 @@ Deno.serve(async (request) => {
     return json({ error: "Invalid request body." }, 400);
   }
 
-  const devUser = findConfiguredDevUser(configuredDevUsers.users, body.phone);
-
-  if (!devUser || body.token !== allowedCode) {
+  if (body.token !== allowedCode) {
     return json({ error: "Invalid verification code." }, 401);
   }
 
@@ -88,24 +96,58 @@ Deno.serve(async (request) => {
   }) as SupabaseAnyClient;
 
   try {
-    const userId = await retryTransientAuthFailure(() =>
-      ensureDevUser({
-        admin,
-        phone: devUser.phone,
-        password: devPassword,
-        displayName: devUser.displayName,
-      })
-    );
+    const requestedPhone = body.phone?.trim() ?? "";
+    const localUser = isLocal
+      ? await findUserByPhone(admin, requestedPhone)
+      : null;
+    const devUser = isLocal
+      ? {
+        phone: localUser?.phone ?? requestedPhone,
+        displayName: normalizeDisplayName(
+          String(
+            localUser?.user_metadata?.display_name ??
+              localUser?.user_metadata?.name ??
+              "Local Player",
+          ),
+        ),
+      }
+      : findConfiguredDevUser(configuredDevUsers.users, requestedPhone);
 
-    const { error: profileError } = await admin.from("profiles").upsert(
-      {
-        id: userId,
+    if (!devUser || (isLocal && !localUser)) {
+      return json(
+        {
+          error: isLocal
+            ? "That player is not in the local seed data."
+            : "Invalid verification code.",
+        },
+        401,
+      );
+    }
+
+    const userId = isLocal
+      ? localUser!.id
+      : await retryTransientAuthFailure(() =>
+        ensureDevUser({
+          admin,
+          phone: devUser.phone,
+          password: devPassword,
+          displayName: devUser.displayName,
+        })
+      );
+
+    const { error: profileError } = isLocal
+      ? await admin.from("profiles").update({
         phone: devUser.phone,
-        display_name: devUser.displayName,
-        date_of_birth: devDateOfBirth,
-      },
-      { onConflict: "id" },
-    );
+      }).eq("id", userId)
+      : await admin.from("profiles").upsert(
+        {
+          id: userId,
+          phone: devUser.phone,
+          display_name: devUser.displayName,
+          date_of_birth: devDateOfBirth,
+        },
+        { onConflict: "id" },
+      );
 
     if (profileError) {
       return json({ error: profileError.message }, 500);

@@ -66,6 +66,9 @@ flutter analyze
 flutter test
 ```
 
+See [Tap Payments](../docs/tap-payments.md) for the secure local checkout
+setup, supported payment methods, and device requirements.
+
 The hosted Android journey lives in
 `integration_test/staging_player_journey_test.dart`. CI provisions its isolated
 accounts and games, supplies per-run `--dart-define` values, and runs it only

@@ -141,7 +141,7 @@ void main() {
     await tester.pumpAndSettle();
     final checkoutButton = find.widgetWithText(
       FilledButton,
-      'Continue to Test Checkout',
+      'Continue to Secure Checkout',
     );
     await tester.ensureVisible(checkoutButton);
     await tester.pump();
@@ -150,7 +150,7 @@ void main() {
     await tester.pumpAndSettle();
     final bookButton = find.widgetWithText(
       FilledButton,
-      'Book Test Spot · 3 BHD',
+      'Continue to Pay · 3 BHD',
     );
     await tester.scrollUntilVisible(
       bookButton,
@@ -193,7 +193,7 @@ void main() {
 
     final checkoutButton = find.widgetWithText(
       FilledButton,
-      'Continue to Test Checkout',
+      'Continue to Secure Checkout',
     );
     await _bringAboveFloatingNav(tester, checkoutButton);
     await tester.tap(checkoutButton);
@@ -201,7 +201,7 @@ void main() {
 
     final initialBookButton = find.widgetWithText(
       FilledButton,
-      'Book Test Spot · 3 BHD',
+      'Continue to Pay · 3 BHD',
     );
     await _bringAboveFloatingNav(tester, initialBookButton);
     await tester.tap(initialBookButton);
@@ -213,7 +213,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('Book Test Spot · 4 BHD'), findsOneWidget);
+    expect(find.text('Continue to Pay · 4 BHD'), findsOneWidget);
     expect(repository.bookCalls, 0);
     expect(tester.takeException(), isNull);
   });

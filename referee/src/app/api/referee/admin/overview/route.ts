@@ -43,6 +43,7 @@ export async function GET(request: NextRequest) {
     soloReservesResult,
     fixtureBroadcastResult,
     soloBroadcastResult,
+    paymentReconciliationResult,
     auditResult,
     liveFixtureCount,
     liveSoloCount,
@@ -103,6 +104,14 @@ export async function GET(request: NextRequest) {
       .select("game_id,status,error_message,updated_at")
       .in("status", ["ERROR", "PROCESSING"]),
     context.db
+      .from("tap_payment_intents")
+      .select(
+        "id,purpose,amount_fils,currency,tap_charge_id,tap_payment_method,failure_reason,created_at",
+      )
+      .eq("status", "REQUIRES_REFUND")
+      .order("created_at", { ascending: false })
+      .limit(30),
+    context.db
       .from("admin_audit_events")
       .select("id,actor_referee_id,action,entity_type,entity_id,reason,created_at")
       .order("created_at", { ascending: false })
@@ -124,6 +133,7 @@ export async function GET(request: NextRequest) {
     soloReservesResult,
     fixtureBroadcastResult,
     soloBroadcastResult,
+    paymentReconciliationResult,
     auditResult,
     liveFixtureCount,
     liveSoloCount,
@@ -180,8 +190,18 @@ export async function GET(request: NextRequest) {
     row.status === "ERROR" ||
     (row.status === "PROCESSING" && new Date(String(row.updated_at)).getTime() < staleProcessing.getTime()),
   );
+  const paymentReconciliations = rows(paymentReconciliationResult.data);
 
   const attention = [
+    ...paymentReconciliations.map((payment) => ({
+      id: `payment-${payment.id}`,
+      kind: "PAYMENT_RECONCILIATION",
+      severity: "CRITICAL",
+      title: "Captured payment needs reconciliation",
+      detail:
+        `${(Number(payment.amount_fils) / 1000).toFixed(3)} ${String(payment.currency)} · ${String(payment.purpose).replaceAll("_", " ")} · Tap ${String(payment.tap_charge_id ?? "reference unavailable")}${payment.failure_reason ? ` · ${String(payment.failure_reason)}` : ""}`,
+      createdAt: payment.created_at,
+    })),
     ...forfeits.slice(0, 12).map((forfeit) => ({
       id: String(forfeit.id),
       kind: "FORFEIT_REVIEW",
@@ -298,7 +318,8 @@ export async function GET(request: NextRequest) {
   );
 
   const operationalAttention = forfeits.length + standaloneStoppages.length + unassignedFixtures.length +
-    unassignedSolo.length + fixturesWithoutReserve.length + soloWithoutReserve.length + broadcastProblems.length;
+    unassignedSolo.length + fixturesWithoutReserve.length + soloWithoutReserve.length +
+    broadcastProblems.length + paymentReconciliations.length;
   return NextResponse.json({
     metrics: {
       openReports: reportsResult.count ?? reports.length,

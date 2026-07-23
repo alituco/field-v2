@@ -16,6 +16,7 @@ abstract class AuthRepository {
 }
 
 class SupabaseAuthRepository implements AuthRepository {
+  static const _appEnvironment = String.fromEnvironment('APP_ENV');
   static const _devOtpPhones = {
     '+97338883670',
     '+97338883671',
@@ -42,7 +43,7 @@ class SupabaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> sendPhoneOtp(String phone) {
-    if (_isDevOtpPhone(phone)) {
+    if (_isLocalEnvironment || _isDevOtpPhone(phone)) {
       return Future.value();
     }
     return _client.auth.signInWithOtp(phone: phone);
@@ -50,7 +51,7 @@ class SupabaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> verifyPhoneOtp({required String phone, required String token}) {
-    if (_isDevOtpPhone(phone)) {
+    if (_isLocalEnvironment || _isDevOtpPhone(phone)) {
       return _verifyDevOtp(phone: phone, token: token);
     }
 
@@ -96,6 +97,7 @@ class SupabaseAuthRepository implements AuthRepository {
   }
 
   bool _isDevOtpPhone(String phone) => _devOtpPhones.contains(phone);
+  bool get _isLocalEnvironment => _appEnvironment == 'local';
 
   @override
   Future<void> updateDisplayName(String displayName) async {
