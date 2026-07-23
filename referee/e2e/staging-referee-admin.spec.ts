@@ -32,14 +32,14 @@ test("referee runs the match and admin sees player-created requests", async ({
     hasText: correctedPlayerName,
   }).first();
   await expect(correctedPlayer).toBeVisible();
-  await correctedPlayer.getByRole("button", {
-    name: "Check in",
-    exact: true,
-  }).click();
+  await checkInPlayer(page, correctedPlayer, "Check in early");
 
   const refreshedCorrectedPlayer = page.locator(".attendance-player").filter({
     hasText: correctedPlayerName,
   }).first();
+  await expect(refreshedCorrectedPlayer).toContainText(
+    "Checked in early",
+  );
   await expect(refreshedCorrectedPlayer.getByRole("button", {
     name: "Remove",
     exact: true,
@@ -65,7 +65,7 @@ test("referee runs the match and admin sees player-created requests", async ({
     }).first().getByRole("button", { name: "Check in", exact: true }),
   ).toBeVisible();
 
-  await checkInEveryPlayer(page.locator("details.attendance-roster"));
+  await checkInEveryPlayer(page, page.locator("details.attendance-roster"));
   await expect(playersTab).toContainText("12/12");
   await expect(page.getByRole("button", {
     name: "Start game",
@@ -147,7 +147,27 @@ async function openRoster(roster: Locator) {
   }
 }
 
-async function checkInEveryPlayer(roster: Locator) {
+async function checkInPlayer(
+  page: Page,
+  player: Locator,
+  timing: "Check in early" | "Check in late" | "Check in after kickoff",
+) {
+  await player.getByRole("button", {
+    name: "Check in",
+    exact: true,
+  }).click();
+
+  const timingDialog = page.getByRole("dialog", {
+    name: /When did .* arrive\?/,
+  });
+  await expect(timingDialog).toBeVisible();
+  await timingDialog.getByRole("button", {
+    name: new RegExp(`^${timing}`),
+  }).click();
+  await expect(timingDialog).toBeHidden();
+}
+
+async function checkInEveryPlayer(page: Page, roster: Locator) {
   for (let attempt = 0; attempt < 20; attempt += 1) {
     await openRoster(roster);
     const buttons = roster.getByRole("button", {
@@ -156,7 +176,10 @@ async function checkInEveryPlayer(roster: Locator) {
     });
     const before = await buttons.count();
     if (before === 0) return;
-    await buttons.first().click();
+    const player = buttons.first().locator(
+      "xpath=ancestor::*[contains(@class, 'attendance-player')]",
+    );
+    await checkInPlayer(page, player, "Check in early");
     await expect.poll(() =>
       roster.getByRole("button", {
         name: "Check in",
