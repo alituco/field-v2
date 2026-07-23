@@ -185,6 +185,7 @@ export type ReliabilityAttendancePlayer = {
   side: "HOME" | "AWAY" | "WHITE" | "BLACK" | null;
   role: string | null;
   checkedInAt: string | null;
+  checkInTiming: "EARLY" | "LATE" | "AFTER_KICKOFF" | null;
   outcome: string | null;
   status: ReliabilityAttendanceStatus;
   isCheckedIn: boolean;

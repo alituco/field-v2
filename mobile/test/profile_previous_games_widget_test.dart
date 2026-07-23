@@ -262,6 +262,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('PLAYER RATING'), findsOneWidget);
+    expect(find.text('DIVISION 4'), findsOneWidget);
+    expect(find.text('3 rated games'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('profile-player-rating-progress')),
+      findsOneWidget,
+    );
     expect(find.text('CAREER'), findsOneWidget);
     expect(find.text('SR HISTORY'), findsNothing);
     expect(find.text('PREVIOUS GAMES'), findsNothing);

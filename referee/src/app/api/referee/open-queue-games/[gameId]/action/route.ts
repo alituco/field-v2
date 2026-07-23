@@ -43,6 +43,7 @@ type ActionBody = {
   durationSeconds?: number;
   clanId?: string;
   profileId?: string;
+  checkInTiming?: string;
   assistProfileId?: string | null;
   blueCardId?: string;
   elapsedSeconds?: number;
@@ -158,11 +159,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       case "check_in_player": {
         const checkIn = parseRefereeCheckInInput(body);
-        const { data, error } = await db.rpc("referee_check_in_player", {
+        const { data, error } = await db.rpc("referee_check_in_player_with_timing", {
           actor_referee_id: refereeContext.referee.profileId,
           match_kind_to_use: "SOLO",
           match_id_to_use: gameId,
           profile_id_to_check_in: checkIn.profileId,
+          check_in_timing_to_use: checkIn.timing,
         });
         if (error) throw new Error(`Could not check in player: ${error.message}`);
         result = { reliabilityContext: data };
@@ -192,11 +194,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
         const checkIn = parseRefereeBulkCheckInInput(body);
         let reliabilityContext: unknown = null;
         for (const profileId of checkIn.profileIds) {
-          const { data, error } = await db.rpc("referee_check_in_player", {
+          const { data, error } = await db.rpc("referee_check_in_player_with_timing", {
             actor_referee_id: refereeContext.referee.profileId,
             match_kind_to_use: "SOLO",
             match_id_to_use: gameId,
             profile_id_to_check_in: profileId,
+            check_in_timing_to_use: "EARLY",
           });
           if (error) {
             throw new Error(`Could not check in all players: ${error.message}`);

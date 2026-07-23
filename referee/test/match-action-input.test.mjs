@@ -233,10 +233,13 @@ test("admin match mutations require bounded values and meaningful reasons", () =
   );
 });
 
-test("referee check-ins only accept normalized player ids", () => {
+test("referee check-ins require a player and an explicit arrival category", () => {
   assert.deepEqual(
-    parseRefereeCheckInInput({ profileId: PLAYER_ID.toUpperCase() }),
-    { profileId: PLAYER_ID },
+    parseRefereeCheckInInput({
+      profileId: PLAYER_ID.toUpperCase(),
+      checkInTiming: "after_kickoff",
+    }),
+    { profileId: PLAYER_ID, timing: "AFTER_KICKOFF" },
   );
   assert.deepEqual(
     parseRefereeBulkCheckInInput({
@@ -245,8 +248,15 @@ test("referee check-ins only accept normalized player ids", () => {
     { profileIds: [PLAYER_ID, MATCH_ID] },
   );
   assert.throws(
-    () => parseRefereeCheckInInput({ profileId: "someone-else" }),
+    () => parseRefereeCheckInInput({
+      profileId: "someone-else",
+      checkInTiming: "EARLY",
+    }),
     /choose a player/i,
+  );
+  assert.throws(
+    () => parseRefereeCheckInInput({ profileId: PLAYER_ID }),
+    /arrived early, late, or after kickoff/i,
   );
   assert.throws(
     () => parseRefereeBulkCheckInInput({ profileIds: [] }),

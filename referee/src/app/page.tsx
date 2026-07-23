@@ -754,6 +754,8 @@ function AttendancePanel({
 }) {
   const [playerToRemove, setPlayerToRemove] =
     useState<ReliabilityAttendancePlayer | null>(null);
+  const [playerToCheckIn, setPlayerToCheckIn] =
+    useState<ReliabilityAttendancePlayer | null>(null);
   const context = fixture.reliabilityContext;
   if (!context) {
     return (
@@ -827,10 +829,7 @@ function AttendancePanel({
               key={player.profileId}
               player={player}
               submitting={submitting}
-              onCheckIn={() => onRunAction({
-                action: "check_in_player",
-                profileId: player.profileId,
-              })}
+              onCheckIn={() => setPlayerToCheckIn(player)}
               onRemove={() => setPlayerToRemove(player)}
             />
           ))}
@@ -863,6 +862,20 @@ function AttendancePanel({
         </p>
       )}
     </section>
+    <CheckInTimingDialog
+      player={playerToCheckIn}
+      submitting={submitting}
+      onClose={() => setPlayerToCheckIn(null)}
+      onConfirm={async (timing) => {
+        if (!playerToCheckIn) return;
+        await onRunAction({
+          action: "check_in_player",
+          profileId: playerToCheckIn.profileId,
+          checkInTiming: timing,
+        });
+        setPlayerToCheckIn(null);
+      }}
+    />
     <RemoveCheckInDialog
       player={playerToRemove}
       submitting={submitting}
@@ -895,13 +908,12 @@ function AttendancePlayerRow({
   canCheckIn: boolean;
   canRemoveCheckIn: boolean;
   submitting: string | null;
-  onCheckIn: () => Promise<void>;
+  onCheckIn: () => void;
   onRemove: () => void;
 }) {
   const label = !player.expectedForMatch && player.status === "MISSING"
     ? "Available"
     : attendanceStatusLabel(player.status);
-  const time = formatAttendanceTime(player.checkedInAt);
   const canRecord = canCheckIn &&
     player.checkInEligible &&
     !player.isCheckedIn &&
@@ -924,7 +936,9 @@ function AttendancePlayerRow({
       </div>
       <div className="attendance-player-actions">
         <span className={`attendance-player-status ${player.status.toLowerCase()}`}>
-          {label}{player.checkedInAt ? ` · ${time}` : ""}
+          {player.checkInTiming
+            ? checkInTimingLabel(player.checkInTiming)
+            : label}
         </span>
       {canRecord ? (
         <button
@@ -948,6 +962,106 @@ function AttendancePlayerRow({
         <span className="attendance-player-unavailable">Unavailable</span>
       ) : null}
       </div>
+    </div>
+  );
+}
+
+type CheckInTiming = "EARLY" | "LATE" | "AFTER_KICKOFF";
+
+const CHECK_IN_TIMING_OPTIONS: Array<{
+  value: CheckInTiming;
+  title: string;
+  detail: string;
+}> = [
+  {
+    value: "EARLY",
+    title: "Check in early",
+    detail: "The player arrived by the on-time deadline.",
+  },
+  {
+    value: "LATE",
+    title: "Check in late",
+    detail: "The player arrived after the deadline but before kickoff.",
+  },
+  {
+    value: "AFTER_KICKOFF",
+    title: "Check in after kickoff",
+    detail: "The player arrived after the match had started.",
+  },
+];
+
+function CheckInTimingDialog({
+  player,
+  submitting,
+  onClose,
+  onConfirm,
+}: {
+  player: ReliabilityAttendancePlayer | null;
+  submitting: string | null;
+  onClose: () => void;
+  onConfirm: (timing: CheckInTiming) => Promise<void>;
+}) {
+  useEffect(() => {
+    if (!player) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && submitting === null) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [onClose, player, submitting]);
+
+  if (!player) return null;
+  const busy = submitting === "check_in_player";
+
+  return (
+    <div
+      className="safety-modal-backdrop attendance-correction-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !busy) onClose();
+      }}
+    >
+      <section
+        aria-labelledby="check-in-timing-title"
+        aria-modal="true"
+        className="safety-modal attendance-timing-modal"
+        role="dialog"
+      >
+        <button
+          aria-label="Close"
+          className="safety-modal-close"
+          disabled={busy}
+          onClick={onClose}
+          type="button"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <div className="safety-modal-icon" aria-hidden="true">✓</div>
+        <span className="safety-modal-eyebrow">Record player arrival</span>
+        <h2 id="check-in-timing-title">When did {player.displayName} arrive?</h2>
+        <p className="safety-modal-intro">
+          Choose the attendance category. The action and referee are retained in
+          the audit trail.
+        </p>
+        <div className="attendance-timing-options">
+          {CHECK_IN_TIMING_OPTIONS.map((option) => (
+            <button
+              className={`attendance-timing-option ${option.value.toLowerCase()}`}
+              disabled={busy}
+              key={option.value}
+              onClick={() => void onConfirm(option.value)}
+              type="button"
+            >
+              <span>{option.title}</span>
+              <small>{option.detail}</small>
+            </button>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -1098,6 +1212,19 @@ function attendanceStatusLabel(status: ReliabilityAttendancePlayer["status"]) {
       return "Checked in";
     default:
       return "Not checked in";
+  }
+}
+
+function checkInTimingLabel(
+  timing: NonNullable<ReliabilityAttendancePlayer["checkInTiming"]>,
+) {
+  switch (timing) {
+    case "EARLY":
+      return "Checked in early";
+    case "LATE":
+      return "Checked in late";
+    case "AFTER_KICKOFF":
+      return "Checked in after kickoff";
   }
 }
 

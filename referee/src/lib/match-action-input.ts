@@ -70,6 +70,12 @@ export const CHECK_IN_REMOVAL_REASON_CODES = [
   "OTHER",
 ] as const;
 
+export const CHECK_IN_TIMINGS = [
+  "EARLY",
+  "LATE",
+  "AFTER_KICKOFF",
+] as const;
+
 export const SOLO_RELIABILITY_SIDES = ["WHITE", "BLACK"] as const;
 export const CLAN_RELIABILITY_SIDES = ["HOME", "AWAY"] as const;
 
@@ -263,6 +269,11 @@ export function parseRefereeCheckInInput(body: InputRecord) {
     profileId: uuidValue(
       body.profileId,
       "Choose a player from this match to check in.",
+    ),
+    timing: enumValue(
+      body.checkInTiming,
+      CHECK_IN_TIMINGS,
+      "Choose whether the player arrived early, late, or after kickoff.",
     ),
   };
 }

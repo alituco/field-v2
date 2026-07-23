@@ -846,6 +846,65 @@
   width: min(100%, 440px);
 }
 
+.attendance-timing-modal {
+  width: min(100%, 460px);
+}
+
+.attendance-timing-options {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.attendance-timing-option {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  border: 1px solid #dbe5e1;
+  border-radius: 14px;
+  padding: 14px 16px;
+  color: #111827;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.attendance-timing-option:hover:not(:disabled),
+.attendance-timing-option:focus-visible {
+  border-color: #10b981;
+  background: #f0fdf8;
+  outline: none;
+}
+
+.attendance-timing-option.late:hover:not(:disabled),
+.attendance-timing-option.late:focus-visible {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.attendance-timing-option.after_kickoff:hover:not(:disabled),
+.attendance-timing-option.after_kickoff:focus-visible {
+  border-color: #ef4444;
+  background: #fff7f7;
+}
+
+.attendance-timing-option:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.attendance-timing-option span {
+  font-size: 0.88rem;
+  font-weight: 900;
+}
+
+.attendance-timing-option small {
+  color: #6b7280;
+  font-size: 0.72rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
 .attendance-correction-notice {
   border: 1px solid #fed7aa;
   border-radius: 12px;
