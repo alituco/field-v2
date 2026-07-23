@@ -198,7 +198,8 @@ class _FixturesScreenState extends State<FixturesScreen> {
   Future<void> _openSoloGame(OpenQueueGame game) async {
     if (game.status == 'FULL' ||
         game.status == 'LIVE' ||
-        game.status == 'FINAL') {
+        game.status == 'FINAL' ||
+        game.status == 'CANCELLED') {
       await _openSoloMatchDetail(game);
       return;
     }
@@ -1234,8 +1235,7 @@ List<_FixtureFeedItem> _fixtureFeedItems(
 ) {
   final matches = <_FixtureFeedItem>[
     for (final fixture in fixtures) _FixtureFeedItem.clan(fixture),
-    for (final game in soloGames)
-      if (game.status != 'CANCELLED') _FixtureFeedItem.solo(game),
+    for (final game in soloGames) _FixtureFeedItem.solo(game),
   ];
   matches.sort((left, right) {
     final date = left.matchDate.compareTo(right.matchDate);
@@ -1302,6 +1302,7 @@ String _soloStatusLabel(OpenQueueGame game) {
     'FULL' => 'FULL',
     'LIVE' => 'LIVE NOW',
     'FINAL' => 'FINAL',
+    'CANCELLED' => 'CANCELLED',
     _ => 'SPOTS AVAILABLE',
   };
 }

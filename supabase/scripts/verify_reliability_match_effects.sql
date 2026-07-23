@@ -99,22 +99,25 @@ begin
     raise exception 'Unplayed clan forfeits can still create base Player SR.';
   end if;
 
-  select pg_get_functiondef(
-    'public.enforce_clan_reliability_final_cutoff()'::regprocedure
-  ) into function_text;
-  if position('terms_to_use.no_show_cutoff_at' in function_text) = 0
-    or position('reliability_forfeit_without_play' in function_text) = 0
-  then
-    raise exception 'Ordinary clan fixtures can finalize before attendance is authoritative.';
-  end if;
-  if not exists (
+  if exists (
     select 1
     from pg_trigger trigger_info
     where trigger_info.tgrelid = 'public.fixtures'::regclass
       and trigger_info.tgname = 'enforce_clan_reliability_final_cutoff'
       and not trigger_info.tgisinternal
   ) then
-    raise exception 'Clan FINAL cutoff enforcement trigger is missing.';
+    raise exception 'A stale trigger still blocks referees from ending clan fixtures before attendance cutoff.';
+  end if;
+
+  select pg_get_functiondef(
+    'public.referee_check_in_player_with_timing(uuid,text,uuid,uuid,text)'::regprocedure
+  ) into function_text;
+  if position('FULL_PLAYING_SIDE_ALREADY_CHECKED_IN' in function_text) = 0
+    or position('checked_clan_teammates_before >= full_playing_side_count' in function_text) = 0
+    or position('late_penalty_waived' in function_text) = 0
+    or position('CHECK_IN_CLASSIFIED' in function_text) = 0
+  then
+    raise exception 'Late clan substitutes are not protected once six teammates are checked in.';
   end if;
 
   select pg_get_functiondef(

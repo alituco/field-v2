@@ -286,6 +286,7 @@ class FixtureStatusFilters extends StatelessWidget {
       (status: FixtureStatus.scheduled, label: 'Scheduled'),
       (status: FixtureStatus.live, label: 'Live'),
       (status: FixtureStatus.finalResult, label: 'Final'),
+      (status: FixtureStatus.cancelled, label: 'Cancelled'),
     ];
 
     return SizedBox(

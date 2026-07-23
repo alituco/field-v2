@@ -222,7 +222,6 @@ class SupabaseFixtureRepository
       _client
           .from('fixtures')
           .select(_fixtureSelect)
-          .neq('status', fixtureStatusToWire(FixtureStatus.cancelled))
           .order('match_date')
           .order('time_slot'),
       _loadRegionRanks(),
