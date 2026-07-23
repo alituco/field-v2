@@ -827,88 +827,138 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = rating.lastChange;
+    final division = divisionFromRating(rating.skillRating);
+    final nextRating = division.nextDivisionRating;
+    final nextDivision = nextRating == null
+        ? null
+        : divisionFromRating(nextRating);
     final changeColor = change > 0
-        ? fieldEmerald600
+        ? const Color(0xFF35BD69)
         : change < 0
         ? const Color(0xFFEF4444)
-        : fieldGray400;
-    return _ProfileCard(
-      borderRadius: 22,
-      padding: const EdgeInsets.all(18),
-      child: Row(
+        : const Color(0xFF9A9AA6);
+    return Container(
+      key: const ValueKey('profile-player-rating-card'),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1D1E21),
+        border: Border.all(color: const Color(0xFF303136)),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [fieldEmerald500, fieldBlue600],
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(
-              Icons.insights_rounded,
-              color: Colors.white,
-              size: 25,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Text(
                   'PLAYER RATING',
                   style: TextStyle(
-                    color: fieldEmerald600,
-                    fontSize: 10,
+                    color: Color(0xFF9999A8),
+                    fontSize: 11,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 1.1,
+                    letterSpacing: 1.35,
                   ),
                 ),
-                const SizedBox(height: 3),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '${rating.skillRating}',
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF303136),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      division.label.toUpperCase(),
                       style: const TextStyle(
-                        color: fieldGray900,
-                        fontSize: 28,
-                        height: 1,
+                        color: Color(0xFFAAAAB4),
+                        fontSize: 11,
                         fontWeight: FontWeight.w900,
+                        letterSpacing: 0.7,
                       ),
                     ),
-                    const SizedBox(width: 7),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Text(
-                        '${change > 0 ? '+' : ''}$change',
-                        style: TextStyle(
-                          color: changeColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+                  ),
+                  const SizedBox(height: 9),
+                  Text(
+                    '${rating.matchesPlayed} rated ${rating.matchesPlayed == 1 ? 'game' : 'games'}',
+                    style: const TextStyle(
+                      color: Color(0xFF9999A8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
                     ),
-                  ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${rating.skillRating}',
+                style: const TextStyle(
+                  color: Color(0xFF35BD69),
+                  fontSize: 58,
+                  height: 0.98,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -4,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${ratingDivisionLabel(rating.skillRating)} · ${rating.recordLabel} · ${rating.matchesPlayed} rated games',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: fieldGray500,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+              ),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Text(
+                  '${change > 0 ? '+' : ''}$change',
+                  style: TextStyle(
+                    color: changeColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              key: const ValueKey('profile-player-rating-progress'),
+              value: division.progressFor(rating.skillRating),
+              minHeight: 7,
+              color: const Color(0xFF35BD69),
+              backgroundColor: const Color(0xFF292A2E),
             ),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              Text(
+                '${division.minimumRating}',
+                style: const TextStyle(
+                  color: Color(0xFF9999A8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                nextRating == null
+                    ? 'TOP DIVISION'
+                    : '${nextDivision!.label} · $nextRating',
+                style: const TextStyle(
+                  color: Color(0xFF9999A8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ],
       ),

@@ -35,7 +35,7 @@ export async function loadMatchReliabilityContext(
   const matchColumn = matchKind === "SOLO"
     ? "open_queue_game_id"
     : "fixture_id";
-  const [injuriesResult, periodsResult] = await Promise.all([
+  const [injuriesResult, periodsResult, timingResult] = await Promise.all([
     db
       .from("match_verified_injuries")
       .select(
@@ -51,6 +51,10 @@ export async function loadMatchReliabilityContext(
       .eq(matchColumn, matchId)
       .is("ended_match_second", null)
       .order("started_match_second"),
+    db
+      .from("match_attendance_records")
+      .select("profile_id,check_in_timing")
+      .eq(matchColumn, matchId),
   ]);
 
   if (injuriesResult.error) {
@@ -65,9 +69,26 @@ export async function loadMatchReliabilityContext(
       periodsResult.error.message,
     );
   }
+  if (timingResult.error) {
+    console.error(
+      `Could not load ${matchKind.toLowerCase()} check-in classifications for ${matchId}:`,
+      timingResult.error.message,
+    );
+  }
+
+  const timings = new Map(
+    (timingResult.data ?? []).map((row) => [
+      String(row.profile_id),
+      checkInTiming(row.check_in_timing),
+    ]),
+  );
 
   return {
     ...context,
+    players: context.players.map((player) => ({
+      ...player,
+      checkInTiming: timings.get(player.profileId) ?? player.checkInTiming,
+    })),
     verifiedInjuries: (injuriesResult.data ?? [])
       .map(normalizeVerifiedInjury)
       .filter((row): row is ReliabilityVerifiedInjury => row !== null),
@@ -172,6 +193,9 @@ function normalizeAttendancePlayer(
     row.attendance_outcome ?? row.outcome,
   )?.toUpperCase() ?? null;
   const checkedInAt = nullableString(row.checked_in_at ?? row.check_in_at);
+  const selectedTiming = checkInTiming(
+    row.check_in_timing ?? row.arrival_classification,
+  );
   const rawStatus = nullableString(row.status)?.toUpperCase();
   const status = attendanceStatus(rawStatus, outcome, checkedInAt);
 
@@ -191,6 +215,7 @@ function normalizeAttendancePlayer(
     side: reliabilitySide(row.side),
     role: nullableString(row.role ?? row.position),
     checkedInAt,
+    checkInTiming: selectedTiming,
     outcome,
     status,
     isCheckedIn: booleanValue(
@@ -200,6 +225,15 @@ function normalizeAttendancePlayer(
     checkInRevision: integerValue(row.check_in_revision),
     canRemoveCheckIn: booleanValue(row.can_remove_check_in),
   };
+}
+
+function checkInTiming(
+  value: unknown,
+): ReliabilityAttendancePlayer["checkInTiming"] {
+  const normalized = nullableString(value)?.toUpperCase();
+  return ["EARLY", "LATE", "AFTER_KICKOFF"].includes(normalized ?? "")
+    ? normalized as ReliabilityAttendancePlayer["checkInTiming"]
+    : null;
 }
 
 function normalizeVerifiedInjury(
