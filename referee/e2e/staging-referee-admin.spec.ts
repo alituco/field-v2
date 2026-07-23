@@ -177,7 +177,7 @@ async function checkInEveryPlayer(page: Page, roster: Locator) {
     const before = await buttons.count();
     if (before === 0) return;
     const player = buttons.first().locator(
-      "xpath=ancestor::*[contains(@class, 'attendance-player')]",
+      "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' attendance-player ')][1]",
     );
     await checkInPlayer(page, player, "Check in early");
     await expect.poll(() =>
