@@ -104,7 +104,9 @@ const rolePlans = [
 
 const { data: upcomingBookingRows, error: upcomingBookingsError } = await admin
   .from("open_queue_bookings")
-  .select("profile_id,open_queue_games!inner(status,starts_at)")
+  .select(
+    "profile_id,open_queue_games!open_queue_bookings_game_id_fkey!inner(status,starts_at)",
+  )
   .eq("status", "CONFIRMED")
   .in("open_queue_games.status", ["OPEN", "FULL"])
   .gt("open_queue_games.starts_at", new Date().toISOString());
@@ -192,6 +194,7 @@ for (let gameIndex = 0; gameIndex < insertedGames.length; gameIndex += 1) {
       role: roles[bookingIndex],
       player_rating_at_booking: rating,
       amount_paid_fils: game.price_fils,
+      base_amount_fils: game.price_fils,
       payment_method: "MOCK",
       payment_reference: `open-queue-seed-${gameIndex}-${bookingIndex}`,
     });

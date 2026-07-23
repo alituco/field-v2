@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'fixture.dart';
 import 'fixture_reliability_roster.dart';
+import '../payments/tap_payment_service.dart';
 
 abstract class FixtureRepository {
   Future<List<Fixture>> listFixtures();
@@ -293,17 +294,16 @@ class SupabaseFixtureRepository
     required DateTime matchDate,
     required FixtureTimeSlot timeSlot,
   }) async {
-    final response = await _client.rpc(
-      'create_fixture',
-      params: {
-        'home_clan_id_to_use': homeClanId,
-        'fixture_venue': venue.trim(),
-        'fixture_date': _dateParam(matchDate),
-        'fixture_time_slot': timeSlot.label,
+    final payment = await TapPaymentService(client: _client).pay(
+      purpose: TapPaymentPurpose.clanCreate,
+      payload: {
+        'clan_id': homeClanId,
+        'venue': venue.trim(),
+        'match_date': _dateParam(matchDate),
+        'time_slot': timeSlot.label,
       },
     );
-    final row = Map<String, dynamic>.from(response as Map);
-    return _fetchFixture(row['id'] as String);
+    return _fetchFixture(payment.resourceId);
   }
 
   @override
@@ -311,15 +311,11 @@ class SupabaseFixtureRepository
     required String fixtureId,
     required String awayClanId,
   }) async {
-    final response = await _client.rpc(
-      'join_fixture',
-      params: {
-        'fixture_id_to_join': fixtureId,
-        'away_clan_id_to_use': awayClanId,
-      },
+    final payment = await TapPaymentService(client: _client).pay(
+      purpose: TapPaymentPurpose.clanJoin,
+      payload: {'fixture_id': fixtureId, 'clan_id': awayClanId},
     );
-    final row = Map<String, dynamic>.from(response as Map);
-    return _fetchFixture(row['id'] as String);
+    return _fetchFixture(payment.resourceId);
   }
 
   @override

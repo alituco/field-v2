@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'open_queue.dart';
 import 'open_queue_party_repository.dart';
+import '../payments/tap_payment_service.dart';
 import '../reliability/reliability.dart';
 
 abstract class OpenQueueRepository {
@@ -212,20 +213,14 @@ class SupabaseOpenQueueRepository
     required OpenQueueRole role,
     required String paymentMethod,
   }) async {
-    final bookingId = await _client.rpc(
-      'book_open_queue_game',
-      params: {
-        'game_id_to_book': game.id,
-        'role_to_book': role.code,
-        'payment_method_to_use': paymentMethod,
-        'payment_reference_to_use':
-            'mock-${DateTime.now().millisecondsSinceEpoch}',
-      },
+    final payment = await TapPaymentService(client: _client).pay(
+      purpose: TapPaymentPurpose.soloBooking,
+      payload: {'game_id': game.id, 'role': role.code},
     );
     final response = await _client
         .from('open_queue_bookings')
         .select(_bookingSelect)
-        .eq('id', bookingId as String)
+        .eq('id', payment.resourceId)
         .single();
     return _hydrateBookingGame(
       OpenQueueBooking.fromJson(Map<String, dynamic>.from(response)),

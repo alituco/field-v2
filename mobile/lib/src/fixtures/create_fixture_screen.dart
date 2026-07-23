@@ -536,13 +536,13 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.apple_rounded),
+              : const Icon(Icons.lock_rounded),
           label: Text(
             _isSubmitting
                 ? 'Processing...'
                 : _isLoadingCharge
                 ? 'Calculating exact total…'
-                : 'Pay ${totalLabel ?? ''}',
+                : 'Continue to Pay · ${totalLabel ?? ''}',
           ),
           style: FilledButton.styleFrom(
             backgroundColor: Colors.black,

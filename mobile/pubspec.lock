@@ -81,6 +81,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+  checkout_flutter:
+    dependency: "direct main"
+    description:
+      name: checkout_flutter
+      sha256: "2af0e6893936f171d8adcbc9dfb0e463248d24646c486d58602fb09d5b216154"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.0.4"
   cli_config:
     dependency: transitive
     description:
