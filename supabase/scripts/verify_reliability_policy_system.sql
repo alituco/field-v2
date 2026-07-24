@@ -268,7 +268,7 @@ begin
   end if;
 
   select pg_get_functiondef(
-    'public.book_open_queue_game(uuid,text,text,text)'::regprocedure
+    'public.book_open_queue_game_server(uuid,text,text,text)'::regprocedure
   ) into function_text;
   if position('postCheckInDeadlineMarketplaceEnabled' in function_text) = 0
     or position('clock_timestamp() >= terms_to_use.check_in_deadline_at' in function_text) = 0
