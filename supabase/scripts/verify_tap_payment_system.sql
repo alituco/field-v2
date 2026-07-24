@@ -11,13 +11,21 @@ declare
   linked_booking public.open_queue_bookings%rowtype;
   forged_rejected boolean := false;
 begin
-  if has_function_privilege(
+  if not has_function_privilege(
     'authenticated',
     'public.book_open_queue_game(uuid,text,text,text)',
     'EXECUTE'
   ) then
     raise exception
-      'Authenticated clients can bypass Tap by calling the booking mutation directly.';
+      'Authenticated clients cannot submit a server-verified booking.';
+  end if;
+  if has_function_privilege(
+    'authenticated',
+    'public.book_open_queue_game_server(uuid,text,text,text)',
+    'EXECUTE'
+  ) then
+    raise exception
+      'Authenticated clients can execute the internal booking mutation.';
   end if;
 
   select
@@ -115,6 +123,24 @@ begin
     role_to_test
   );
 
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
+  begin
+    perform public.book_open_queue_game(
+      game_id_to_test,
+      role_to_test,
+      'MOCK',
+      'field_ci_mock_payment'
+    );
+  exception
+    when others then
+      forged_rejected :=
+        sqlerrm = 'Mock payments cannot create a booking.';
+  end;
+  if not forged_rejected then
+    raise exception 'An authenticated client created a mock-paid booking.';
+  end if;
+
+  forged_rejected := false;
   begin
     perform public.book_open_queue_game(
       game_id_to_test,

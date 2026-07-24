@@ -51,12 +51,16 @@ async function verifyFinalRoleRace() {
   const game = await createGame(futureBahrainOpenQueueStart(0), "RACE");
   await insertBooking(game.id, participants[2], "GK", "verify-race-existing");
 
-  const calls = [firstClient, secondClient].map((client) =>
+  const paymentReferences = await Promise.all([
+    prepareCapturedPayment(firstClient, first.id, game.id, "GK"),
+    prepareCapturedPayment(secondClient, second.id, game.id, "GK"),
+  ]);
+  const calls = [firstClient, secondClient].map((client, index) =>
     client.rpc("book_open_queue_game", {
       game_id_to_book: game.id,
       role_to_book: "GK",
-      payment_method_to_use: "MOCK",
-      payment_reference_to_use: crypto.randomUUID(),
+      payment_method_to_use: "CARD",
+      payment_reference_to_use: paymentReferences[index],
     })
   );
   const results = await Promise.all(calls);
@@ -74,6 +78,40 @@ async function verifyFinalRoleRace() {
     failures[0].error!.message.includes("position just filled"),
     "The losing booking should receive the position-filled business error.",
   );
+}
+
+async function prepareCapturedPayment(
+  client: SupabaseClient,
+  profileId: string,
+  gameId: string,
+  role: string,
+) {
+  const { data: quote, error: quoteError } = await client.rpc(
+    "preview_open_queue_booking_cost",
+    { game_id_to_book: gameId, role_to_book: role },
+  );
+  if (quoteError) throw quoteError;
+
+  const id = crypto.randomUUID();
+  const compactId = id.replaceAll("-", "");
+  const chargeId = `chg_verify_${compactId}`;
+  const { error } = await admin.from("tap_payment_intents").insert({
+    id,
+    profile_id: profileId,
+    purpose: "SOLO_BOOKING",
+    status: "CAPTURED",
+    currency: "BHD",
+    amount_fils: Number(quote.total_fils),
+    payload: { game_id: gameId, role },
+    quote_snapshot: quote,
+    transaction_reference: `field_verify_${compactId}`,
+    tap_charge_id: chargeId,
+    tap_payment_method: "CARD",
+    tap_status: "CAPTURED",
+    captured_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+  return chargeId;
 }
 
 async function verifyFullGameReopensWithPolicyRefund() {
