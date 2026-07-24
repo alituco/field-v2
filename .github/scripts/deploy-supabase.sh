@@ -95,6 +95,27 @@ deploy_function() {
 }
 
 if [[ "$target" == "staging" ]]; then
+  if [[ -z "${TAP_SECRET_KEY:-}" || -z "${TAP_PUBLIC_KEY:-}" ||
+    -z "${TAP_MERCHANT_ID:-}" ]]; then
+    echo "TAP_SECRET_KEY, TAP_PUBLIC_KEY, and TAP_MERCHANT_ID are required for staging." >&2
+    exit 64
+  fi
+
+  tap_webhook_url="https://${project_ref}.supabase.co/functions/v1/tap-payment-webhook"
+  supabase secrets set \
+    --project-ref "$project_ref" \
+    TAP_SECRET_KEY="$TAP_SECRET_KEY" \
+    TAP_PUBLIC_KEY="$TAP_PUBLIC_KEY" \
+    TAP_MERCHANT_ID="$TAP_MERCHANT_ID" \
+    TAP_APPLE_PAY_ENABLED="${TAP_APPLE_PAY_ENABLED:-false}" \
+    TAP_WEBHOOK_URL="$tap_webhook_url" \
+    FIELD_ENVIRONMENT=staging
+
+  # Both endpoints authenticate their own request: tap-payment validates the
+  # caller's access token and the webhook validates Tap's HMAC signature.
+  deploy_function tap-payment --no-verify-jwt
+  deploy_function tap-payment-webhook --no-verify-jwt
+
   # Cloudflare authenticates its webhook with Webhook-Signature, so this
   # endpoint cannot require a Supabase user JWT.
   deploy_function cloudflare-stream-webhook --no-verify-jwt

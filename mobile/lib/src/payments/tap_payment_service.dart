@@ -24,6 +24,34 @@ class TapPaymentService {
     required TapPaymentPurpose purpose,
     required Map<String, dynamic> payload,
   }) async {
+    if (_stagingE2EPaymentBypass) {
+      final confirmation = await _invoke({
+        'action': 'complete_staging_e2e',
+        'purpose': purpose.code,
+        'payload': payload,
+        'run_id': _stagingE2ERunId,
+      });
+      return TapPaymentResult(
+        intentId: _requiredString(
+          confirmation['intent_id'],
+          'Field did not return a payment attempt.',
+        ),
+        chargeId: _requiredString(
+          confirmation['charge_id'],
+          'Field did not return a payment reference.',
+        ),
+        resourceType: _requiredString(
+          confirmation['resource_type'],
+          'Field did not return the paid booking type.',
+        ),
+        resourceId: _requiredString(
+          confirmation['resource_id'],
+          'Field did not return the paid booking.',
+        ),
+        paymentMethod: confirmation['payment_method']?.toString() ?? 'CARD',
+      );
+    }
+
     final preparation = await _invoke({
       'action': 'prepare',
       'purpose': purpose.code,
@@ -176,6 +204,11 @@ class TapPaymentService {
     return 'Tap could not complete the payment. Try another method.';
   }
 }
+
+const _stagingE2EPaymentBypass = bool.fromEnvironment(
+  'FIELD_E2E_PAYMENT_BYPASS',
+);
+const _stagingE2ERunId = String.fromEnvironment('E2E_RUN_ID');
 
 typedef TapFunctionInvoker =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> body);

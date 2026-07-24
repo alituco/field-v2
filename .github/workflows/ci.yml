@@ -378,6 +378,9 @@ jobs:
       E2E_DEV_OTP_CODE: "000000"
       E2E_ONBOARDING_PHONE: "+97339009100"
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      TAP_PUBLIC_KEY: ${{ vars.TAP_PUBLIC_KEY }}
+      TAP_MERCHANT_ID: ${{ vars.TAP_MERCHANT_ID }}
+      TAP_APPLE_PAY_ENABLED: ${{ vars.TAP_APPLE_PAY_ENABLED }}
 
     steps:
       - name: Check out repository
@@ -389,6 +392,7 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF" != "refs/heads/staging" ]]; then
@@ -411,6 +415,10 @@ jobs:
             echo "::error::The staging GitHub environment is missing Supabase credentials."
             exit 1
           fi
+          if [[ -z "$TAP_SECRET_KEY" || -z "$TAP_PUBLIC_KEY" || -z "$TAP_MERCHANT_ID" ]]; then
+            echo "::error::The staging GitHub environment is missing Tap credentials."
+            exit 1
+          fi
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
@@ -422,6 +430,7 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
         run: .github/scripts/deploy-supabase.sh staging "$SUPABASE_PROJECT_REF"
 
       - name: Smoke-test hosted staging

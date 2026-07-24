@@ -11,6 +11,15 @@ declare
   linked_booking public.open_queue_bookings%rowtype;
   forged_rejected boolean := false;
 begin
+  if has_function_privilege(
+    'authenticated',
+    'public.book_open_queue_game(uuid,text,text,text)',
+    'EXECUTE'
+  ) then
+    raise exception
+      'Authenticated clients can bypass Tap by calling the booking mutation directly.';
+  end if;
+
   select
     game.id,
     available.role

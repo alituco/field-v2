@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
+import { isExactFieldStagingSupabaseUrl } from "../_shared/staging_guard.ts";
 
 // deno-lint-ignore no-explicit-any
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
@@ -18,6 +19,7 @@ type RequestBody = {
   payload?: unknown;
   intent_id?: unknown;
   charge_id?: unknown;
+  run_id?: unknown;
 };
 
 type PaymentIntent = {
@@ -77,6 +79,9 @@ Deno.serve(async (request) => {
     if (action === "confirm") {
       return json(await confirmCheckout(context, body), 200);
     }
+    if (action === "complete_staging_e2e") {
+      return json(await completeStagingE2ECheckout(context, body), 200);
+    }
     throw new HttpError("Choose a valid payment action.", 400);
   } catch (error) {
     if (error instanceof HttpError) {
@@ -89,6 +94,141 @@ Deno.serve(async (request) => {
     );
   }
 });
+
+async function completeStagingE2ECheckout(
+  context: FunctionContext,
+  body: RequestBody,
+): Promise<Record<string, unknown>> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  if (
+    !isExactFieldStagingSupabaseUrl(supabaseUrl) ||
+    Deno.env.get("FIELD_ENVIRONMENT") !== "staging" ||
+    Deno.env.get("DEV")?.toLowerCase() !== "true"
+  ) {
+    throw new HttpError("Staging test checkout is unavailable.", 404);
+  }
+  if (context.authUser.user_metadata?.field_e2e !== true) {
+    throw new HttpError("Staging test checkout is unavailable.", 403);
+  }
+
+  const runId = text(body.run_id);
+  if (!runId || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(runId)) {
+    throw new HttpError("The staging test run is invalid.", 400);
+  }
+  if (paymentPurpose(body.purpose) !== "SOLO_BOOKING") {
+    throw new HttpError(
+      "Staging test checkout only supports isolated solo games.",
+      400,
+    );
+  }
+
+  const inputPayload = object(body.payload, "Payment details are missing.");
+  const gameId = uuid(inputPayload.game_id, "Choose a valid solo game.");
+  const roleToBook = role(inputPayload.role);
+  const payload = { game_id: gameId, role: roleToBook };
+
+  const [{ data: profile, error: profileError }, {
+    data: game,
+    error: gameError,
+  }] = await Promise.all([
+    context.admin
+      .from("profiles")
+      .select("display_name, username")
+      .eq("id", context.userId)
+      .maybeSingle(),
+    context.admin
+      .from("open_queue_games")
+      .select("id, venue")
+      .eq("id", gameId)
+      .maybeSingle(),
+  ]);
+  if (profileError) throw profileError;
+  if (gameError) throw gameError;
+  if (
+    !profile ||
+    !String(profile.display_name ?? "").startsWith("[E2E]") ||
+    !String(profile.username ?? "").startsWith("field_e2e_") ||
+    !game ||
+    !String(game.venue ?? "").startsWith(`[FIELD E2E ${runId}] `)
+  ) {
+    throw new HttpError(
+      "Staging test checkout is restricted to this run's fixtures.",
+      403,
+    );
+  }
+
+  const finalized = await findMatchingIntent(
+    context.admin,
+    context.userId,
+    "SOLO_BOOKING",
+    payload,
+    ["FINALIZED"],
+    false,
+  );
+  if (finalized?.resource_id && finalized.tap_charge_id) {
+    return {
+      status: "FINALIZED",
+      intent_id: finalized.id,
+      charge_id: finalized.tap_charge_id,
+      payment_method: finalized.tap_payment_method ?? "CARD",
+      resource_type: finalized.resource_type,
+      resource_id: finalized.resource_id,
+    };
+  }
+
+  const quote = await authoritativeQuote(
+    context.user,
+    "SOLO_BOOKING",
+    payload,
+  );
+  const amountFils = positiveInteger(
+    quote.total_fils,
+    "The checkout total is unavailable.",
+  );
+  const id = crypto.randomUUID();
+  const compactId = id.replaceAll("-", "");
+  const chargeId = `field_e2e_${compactId}`;
+
+  const { error: expireError } = await context.admin
+    .from("tap_payment_intents")
+    .update({ status: "EXPIRED" })
+    .eq("profile_id", context.userId)
+    .eq("purpose", "SOLO_BOOKING")
+    .eq("status", "PENDING")
+    .eq("payload->>game_id", gameId);
+  if (expireError) throw expireError;
+
+  const { error: insertError } = await context.admin
+    .from("tap_payment_intents")
+    .insert({
+      id,
+      profile_id: context.userId,
+      purpose: "SOLO_BOOKING",
+      status: "CAPTURED",
+      currency: "BHD",
+      amount_fils: amountFils,
+      payload,
+      quote_snapshot: quote,
+      transaction_reference: `field_e2e_${runId}_${compactId}`,
+      tap_charge_id: chargeId,
+      tap_payment_method: "CARD",
+      tap_status: "CAPTURED",
+      captured_at: new Date().toISOString(),
+    });
+  if (insertError) throw insertError;
+
+  const { data, error } = await context.admin.rpc(
+    "finalize_tap_payment_intent",
+    { intent_id_to_finalize: id },
+  );
+  if (error) throw error;
+  const result = object(data, "The staging booking could not be finalized.");
+  return {
+    ...result,
+    charge_id: chargeId,
+    payment_method: "CARD",
+  };
+}
 
 async function createContext(request: Request): Promise<FunctionContext> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
