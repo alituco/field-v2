@@ -53,13 +53,23 @@ jobs:
       # method removed by AGP 9. Keep this version-pinned patch explicit and
       # fail closed if Tap changes the package contents.
       - name: Patch Tap Checkout for AGP 9
-        run: >-
-          patch
-          --batch
-          --forward
-          --strip=1
-          --directory="$PUB_CACHE/hosted/pub.dev/checkout_flutter-1.0.4"
-          < patches/checkout_flutter-1.0.4-agp9.patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$PUB_CACHE/hosted/pub.dev/checkout_flutter-1.0.4"
+          patch_file="$PWD/patches/checkout_flutter-1.0.4-agp9.patch"
+
+          if patch --batch --dry-run --forward --strip=1 \
+            --directory="$package_dir" < "$patch_file"; then
+            patch --batch --forward --strip=1 \
+              --directory="$package_dir" < "$patch_file"
+          elif patch --batch --dry-run --reverse --strip=1 \
+            --directory="$package_dir" < "$patch_file"; then
+            echo "Tap Checkout AGP 9 patch is already applied in the restored cache."
+          else
+            echo "Tap Checkout 1.0.4 no longer matches the reviewed AGP 9 patch." >&2
+            exit 1
+          fi
 
       - name: Analyze Flutter app
         run: flutter analyze
