@@ -109,6 +109,38 @@ begin
   ) then
     raise exception 'Operational reason codes are not exposed on both match kinds.';
   end if;
+  if not has_column_privilege(
+    'authenticated',
+    'public.fixtures',
+    'operational_state',
+    'SELECT'
+  ) or not has_column_privilege(
+    'authenticated',
+    'public.fixtures',
+    'operational_state_updated_at',
+    'SELECT'
+  ) or not has_column_privilege(
+    'authenticated',
+    'public.fixtures',
+    'operational_reason_code',
+    'SELECT'
+  ) then
+    raise exception
+      'Authenticated clients cannot read fixture operational state.';
+  end if;
+  if has_column_privilege(
+    'authenticated',
+    'public.fixtures',
+    'home_reliability_deposit_fils',
+    'SELECT'
+  ) or has_column_privilege(
+    'authenticated',
+    'public.fixtures',
+    'away_reliability_deposit_fils',
+    'SELECT'
+  ) then
+    raise exception 'Authenticated clients can read private fixture deposits.';
+  end if;
   if (
     select coalesce(
       (policy.config #>>
