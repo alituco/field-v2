@@ -28,15 +28,21 @@ APP_ENV=local # or staging / production
 SUPABASE_URL=
 SUPABASE_PUBLISHABLE_KEY=
 DEV=true
+PROFILE_SWITCHER_ENABLED=true
 ```
 
 Use the Supabase publishable key in the app. Never put a secret or service-role
 key in Flutter. Do not pass the repo root `.env` into Flutter builds.
 
-`DEV=true` enables development-only tools such as switching users from the
-Profile screen. It must be `false` in production. The app validates the native
-flavor, environment label, and expected Supabase project before initializing;
-an invalid combination stops on a configuration screen.
+`PROFILE_SWITCHER_ENABLED=true` exposes the staging-only **Swap profile** tool.
+The app rejects this flag in production, and the matching backend function is
+guarded to the exact Field Staging project and removed from production deploys.
+
+`DEV=true` enables the remaining development-only tools. Staging TestFlight can
+therefore keep `DEV=false` while still allowing approved testers to swap users.
+Both flags must be `false` in production. The app validates the native flavor,
+environment label, and expected Supabase project before initializing; an
+invalid combination stops on a configuration screen.
 
 Local and staging builds have a visible ribbon. Production has no ribbon.
 

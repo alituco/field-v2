@@ -9,12 +9,14 @@ class FieldApp extends StatelessWidget {
     super.key,
     required this.hasSupabaseConfig,
     this.isDev = false,
+    this.profileSwitcherEnabled = false,
     this.configurationError,
     this.environmentLabel,
   });
 
   final bool hasSupabaseConfig;
   final bool isDev;
+  final bool profileSwitcherEnabled;
   final String? configurationError;
   final String? environmentLabel;
 
@@ -73,7 +75,11 @@ class FieldApp extends StatelessWidget {
         ),
       ),
       home: hasSupabaseConfig
-          ? AuthGate(authRepository: SupabaseAuthRepository(), isDev: isDev)
+          ? AuthGate(
+              authRepository: SupabaseAuthRepository(),
+              isDev: isDev,
+              profileSwitcherEnabled: profileSwitcherEnabled,
+            )
           : ConfigurationScreen(error: configurationError),
     );
   }

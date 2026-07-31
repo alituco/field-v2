@@ -36,7 +36,7 @@ class ProfileScreen extends StatefulWidget {
     this.reliabilityRepository,
     this.supportRepository,
     this.profileId,
-    this.devModeEnabled = false,
+    this.profileSwitcherEnabled = false,
     this.onSwitchUser,
     this.isSigningOut = false,
     this.onSignOut,
@@ -50,7 +50,7 @@ class ProfileScreen extends StatefulWidget {
   final ReliabilityRepository? reliabilityRepository;
   final SupportRepository? supportRepository;
   final String? profileId;
-  final bool devModeEnabled;
+  final bool profileSwitcherEnabled;
   final Future<void> Function(String profileId)? onSwitchUser;
   final bool isSigningOut;
   final VoidCallback? onSignOut;
@@ -282,6 +282,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         builder: (_) => ProfileConnectionsScreen(
           profileRepository: widget.profileRepository,
           initialTab: tab,
+          onOpenProfile: _openPlayerProfile,
         ),
       ),
     );
@@ -303,6 +304,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() {
       _profileFuture = next;
     });
+  }
+
+  Future<void> _openPlayerProfile(String profileId) async {
+    final targetProfileId = profileId.trim();
+    final currentUserId = widget.profileRepository.currentUserId?.trim();
+    if (targetProfileId.isEmpty || targetProfileId == currentUserId) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileScreen(
+          profileRepository: widget.profileRepository,
+          clanRepository: _clanRepository,
+          fixtureRepository: _fixtureRepository,
+          openQueueRepository: _openQueueRepository,
+          moderationRepository: _moderationRepository,
+          reliabilityRepository: widget.reliabilityRepository,
+          supportRepository: _supportRepository,
+          profileId: targetProfileId,
+        ),
+      ),
+    );
   }
 
   Future<void> _openEditProfile() async {
@@ -397,10 +419,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_isCurrentProfile) ...[
-              if (widget.devModeEnabled && widget.onSwitchUser != null) ...[
+              if (widget.profileSwitcherEnabled &&
+                  widget.onSwitchUser != null) ...[
                 _HeaderIconButton(
                   icon: Icons.switch_account_rounded,
-                  tooltip: 'Switch dev user',
+                  tooltip: 'Swap profile',
                   onPressed: _openDevUserSwitcher,
                 ),
                 const SizedBox(width: 8),

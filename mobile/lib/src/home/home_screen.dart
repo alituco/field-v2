@@ -25,12 +25,14 @@ class HomeScreen extends StatefulWidget {
     required this.supportRepository,
     this.moderationStatus,
     this.isDev = false,
+    this.profileSwitcherEnabled = false,
   });
 
   final AuthRepository authRepository;
   final SupportRepository supportRepository;
   final ModerationStatus? moderationStatus;
   final bool isDev;
+  final bool profileSwitcherEnabled;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -183,7 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
         openQueueRepository: _openQueueRepository,
         reliabilityRepository: _reliabilityRepository,
         supportRepository: widget.supportRepository,
-        devModeEnabled: widget.isDev,
+        profileSwitcherEnabled: widget.profileSwitcherEnabled,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,

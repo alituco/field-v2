@@ -21,6 +21,7 @@ Future<void> main() async {
     FieldApp(
       hasSupabaseConfig: configurationError == null,
       isDev: config.isDev,
+      profileSwitcherEnabled: config.canSwitchProfiles,
       configurationError: configurationError,
       environmentLabel: config.environment == AppEnvironment.production
           ? null

@@ -14,6 +14,10 @@ import type {
   AdminGameReserve,
   AdminReserveCandidate,
 } from "@/lib/admin-game-reserves";
+import {
+  hasGuaranteedNoSrChange,
+  playerSrConsequenceLabel,
+} from "@/lib/admin-match-resolution-ui";
 import type { MatchResolutionType } from "@/lib/match-action-input";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -694,6 +698,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
   );
   const attendanceCandidates = resolutionAttendanceCandidates(detail);
   const outcome = RESOLUTION_OUTCOMES.find((item) => item.type === resolutionType);
+  const guaranteesNoSrChange = hasGuaranteedNoSrChange(resolutionType);
 
   function chooseOutcome(type: MatchResolutionType) {
     setResolutionType(type);
@@ -895,17 +900,17 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
                 <>
                   <ConsequencePreview
                     label={`${homeLabel} SR`}
-                    value={deltaOrPolicy(effects.homeSrDelta)}
+                    value={guaranteesNoSrChange ? "No change" : deltaOrPolicy(effects.homeSrDelta)}
                   />
                   <ConsequencePreview
                     label={`${awayLabel} SR`}
-                    value={deltaOrPolicy(effects.awaySrDelta)}
+                    value={guaranteesNoSrChange ? "No change" : deltaOrPolicy(effects.awaySrDelta)}
                   />
                 </>
               ) : (
                 <ConsequencePreview
                   label="Player SR"
-                  value="Calculated per player"
+                  value={playerSrConsequenceLabel(resolutionType)}
                 />
               )}
               <ConsequencePreview

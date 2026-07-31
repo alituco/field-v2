@@ -27,6 +27,7 @@ class AppConfig {
     required this.supabaseUrl,
     required this.supabasePublishableKey,
     this.isDev = false,
+    this.profileSwitcherEnabled = false,
   });
 
   factory AppConfig.fromEnvironment() {
@@ -39,6 +40,9 @@ class AppConfig {
         'SUPABASE_PUBLISHABLE_KEY',
       ),
       isDev: const bool.fromEnvironment('DEV'),
+      profileSwitcherEnabled: const bool.fromEnvironment(
+        'PROFILE_SWITCHER_ENABLED',
+      ),
     );
   }
 
@@ -49,6 +53,11 @@ class AppConfig {
   final String supabaseUrl;
   final String supabasePublishableKey;
   final bool isDev;
+  final bool profileSwitcherEnabled;
+
+  bool get canSwitchProfiles =>
+      environment != AppEnvironment.production &&
+      (profileSwitcherEnabled || isDev);
 
   bool get hasSupabaseConfig =>
       supabaseUrl.isNotEmpty && supabasePublishableKey.isNotEmpty;
@@ -109,6 +118,9 @@ class AppConfig {
     }
     if (environment == AppEnvironment.production && isDev) {
       return 'DEV must be false in production.';
+    }
+    if (environment == AppEnvironment.production && profileSwitcherEnabled) {
+      return 'PROFILE_SWITCHER_ENABLED must be false in production.';
     }
 
     return null;

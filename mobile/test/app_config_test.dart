@@ -14,6 +14,40 @@ void main() {
       expect(config.validationError(nativeFlavor: 'staging'), isNull);
     });
 
+    test(
+      'enables profile switching only for configured non-production builds',
+      () {
+        const staging = AppConfig(
+          environment: AppEnvironment.staging,
+          supabaseUrl: 'https://${AppConfig.stagingProjectRef}.supabase.co',
+          supabasePublishableKey: 'publishable',
+          profileSwitcherEnabled: true,
+        );
+        const production = AppConfig(
+          environment: AppEnvironment.production,
+          supabaseUrl: 'https://${AppConfig.productionProjectRef}.supabase.co',
+          supabasePublishableKey: 'publishable',
+        );
+
+        expect(staging.canSwitchProfiles, isTrue);
+        expect(production.canSwitchProfiles, isFalse);
+      },
+    );
+
+    test('rejects the profile switcher flag in production', () {
+      const config = AppConfig(
+        environment: AppEnvironment.production,
+        supabaseUrl: 'https://${AppConfig.productionProjectRef}.supabase.co',
+        supabasePublishableKey: 'publishable',
+        profileSwitcherEnabled: true,
+      );
+
+      expect(
+        config.validationError(nativeFlavor: 'production'),
+        contains('PROFILE_SWITCHER_ENABLED must be false'),
+      );
+    });
+
     test('rejects Field Staging in a production build', () {
       const config = AppConfig(
         environment: AppEnvironment.production,
@@ -110,10 +144,7 @@ void main() {
           isDev: true,
         );
 
-        expect(
-          config.validationError(nativeFlavor: 'staging'),
-          isNotNull,
-        );
+        expect(config.validationError(nativeFlavor: 'staging'), isNotNull);
       }
     });
 
