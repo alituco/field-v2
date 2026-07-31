@@ -195,7 +195,8 @@ flutter build ios \
   --dart-define=APP_ENV=staging \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
-  --dart-define=DEV=false
+  --dart-define=DEV=false \
+  --dart-define=PROFILE_SWITCHER_ENABLED=true
 
 (
   cd ios

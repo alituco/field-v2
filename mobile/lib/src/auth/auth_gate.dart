@@ -23,6 +23,7 @@ class AuthGate extends StatefulWidget {
     this.supportRepository,
     this.authenticatedAppBuilder,
     this.isDev = false,
+    this.profileSwitcherEnabled = false,
   });
 
   final AuthRepository authRepository;
@@ -30,6 +31,7 @@ class AuthGate extends StatefulWidget {
   final SupportRepository? supportRepository;
   final AuthenticatedAppBuilder? authenticatedAppBuilder;
   final bool isDev;
+  final bool profileSwitcherEnabled;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -168,6 +170,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
         supportRepository: _supportRepository,
         moderationStatus: moderationStatus,
         isDev: widget.isDev,
+        profileSwitcherEnabled: widget.profileSwitcherEnabled,
       );
     }
 

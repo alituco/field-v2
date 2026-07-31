@@ -79,7 +79,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
     final confirmed = await showFieldConfirmDialog(
       context: context,
       icon: Icons.switch_account_rounded,
-      eyebrow: 'Switch user',
+      eyebrow: 'Swap profile',
       title: 'Continue as ${profile.displayName}?',
       message:
           'The app will reload this user’s profile, bookings, and clan access.',
@@ -87,7 +87,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
           ? profile.displayName
           : '@${profile.username}',
       cancelLabel: 'Stay here',
-      confirmLabel: 'Switch user',
+      confirmLabel: 'Swap profile',
     );
     if (!confirmed || !mounted) return;
 
@@ -139,7 +139,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
                 children: [
                   const Expanded(
                     child: Text(
-                      'Switch User',
+                      'Swap profile',
                       style: TextStyle(
                         color: fieldGray900,
                         fontSize: 22,
@@ -164,7 +164,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
                 autofocus: false,
                 textInputAction: TextInputAction.search,
                 decoration: InputDecoration(
-                  hintText: 'Search users',
+                  hintText: 'Search profiles',
                   prefixIcon: const Icon(Icons.search_rounded),
                   suffixIcon: _query.isEmpty
                       ? null

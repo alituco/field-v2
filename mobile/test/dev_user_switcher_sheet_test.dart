@@ -48,7 +48,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
     await tester.pumpAndSettle();
     expect(switchedTo, isNull);
-    expect(find.text('Switch User'), findsOneWidget);
+    expect(find.text('Swap profile'), findsOneWidget);
 
     await tester.tap(find.text('Ali Altaraif'));
     await tester.pumpAndSettle();
@@ -56,7 +56,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(switchedTo, 'other-user');
-    expect(find.text('Switch User'), findsNothing);
+    expect(find.text('Swap profile'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }

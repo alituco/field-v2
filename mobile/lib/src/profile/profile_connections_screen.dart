@@ -10,10 +10,12 @@ class ProfileConnectionsScreen extends StatefulWidget {
     super.key,
     required this.profileRepository,
     required this.initialTab,
+    required this.onOpenProfile,
   });
 
   final ProfileRepository profileRepository;
   final ProfileConnectionTab initialTab;
+  final Future<void> Function(String profileId) onOpenProfile;
 
   @override
   State<ProfileConnectionsScreen> createState() =>
@@ -173,6 +175,7 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
                 : 'Keep playing to grow your fanbase.',
             people: list,
             onToggleFollow: _toggleFollow,
+            onOpenProfile: widget.onOpenProfile,
           ),
           if (connections.discover.isNotEmpty) ...[
             const SizedBox(height: 22),
@@ -181,6 +184,7 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
             _PeopleCard(
               people: connections.discover,
               onToggleFollow: _toggleFollow,
+              onOpenProfile: widget.onOpenProfile,
             ),
           ],
         ],
@@ -349,12 +353,14 @@ class _PeopleCard extends StatelessWidget {
   const _PeopleCard({
     required this.people,
     required this.onToggleFollow,
+    required this.onOpenProfile,
     this.emptyTitle,
     this.emptySubtitle,
   });
 
   final List<ProfileConnection> people;
   final ValueChanged<ProfileConnection> onToggleFollow;
+  final Future<void> Function(String profileId) onOpenProfile;
   final String? emptyTitle;
   final String? emptySubtitle;
 
@@ -411,6 +417,7 @@ class _PeopleCard extends StatelessWidget {
                   _PlayerRow(
                     connection: people[index],
                     onToggleFollow: () => onToggleFollow(people[index]),
+                    onOpenProfile: () => onOpenProfile(people[index].id),
                   ),
                 ],
               ],
@@ -420,58 +427,72 @@ class _PeopleCard extends StatelessWidget {
 }
 
 class _PlayerRow extends StatelessWidget {
-  const _PlayerRow({required this.connection, required this.onToggleFollow});
+  const _PlayerRow({
+    required this.connection,
+    required this.onToggleFollow,
+    required this.onOpenProfile,
+  });
 
   final ProfileConnection connection;
   final VoidCallback onToggleFollow;
+  final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
     final clan = connection.clan;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      child: Row(
-        children: [
-          _ConnectionAvatar(connection: connection, size: 44),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  connection.displayName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: fieldGray900,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
+    return InkWell(
+      onTap: onOpenProfile,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            _ConnectionAvatar(connection: connection, size: 44),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    connection.displayName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: fieldGray900,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  [
-                    '@${connection.username}',
-                    if (clan != null) clan.name,
-                  ].join(' - '),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: fieldGray500,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                  const SizedBox(height: 3),
+                  Text(
+                    [
+                      '@${connection.username}',
+                      if (clan != null) clan.name,
+                    ].join(' - '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: fieldGray500,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 10),
-          _FollowButton(
-            following: connection.isFollowedByMe,
-            onTap: onToggleFollow,
-          ),
-        ],
+            const SizedBox(width: 10),
+            _FollowButton(
+              following: connection.isFollowedByMe,
+              onTap: onToggleFollow,
+            ),
+            const SizedBox(width: 4),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: fieldGray300,
+              size: 20,
+            ),
+          ],
+        ),
       ),
     );
   }
