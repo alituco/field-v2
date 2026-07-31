@@ -2075,6 +2075,9 @@ class _HomeActivityItem {
   }
 
   FixtureStatus get status {
+    if (hasPendingOperationalResolution) {
+      return FixtureStatus.finalResult;
+    }
     final clanFixture = fixture;
     if (clanFixture != null) {
       if (clanFixture.isLive) return FixtureStatus.live;
@@ -2109,6 +2112,10 @@ class _HomeActivityItem {
   bool get isCompleted => status == FixtureStatus.finalResult;
   bool get isCancelled => status == FixtureStatus.cancelled;
   bool get isLive => status == FixtureStatus.live;
+  bool get hasPendingOperationalResolution =>
+      fixture?.hasPendingOperationalResolution ??
+      soloGame?.hasPendingOperationalResolution ??
+      false;
   bool get isRelevantLive => isMyMatch || isMyClanMatch || isSolo;
 
   bool get isUpcomingForViewer {
@@ -2138,6 +2145,7 @@ class _HomeActivityItem {
   bool get shouldOpenWatch => isLive || highlightsReady || hasFullMatch;
 
   FixturePlayerRatingUpdate? get fixturePlayerRatingUpdate {
+    if (hasPendingOperationalResolution) return null;
     final event = ratingEvent;
     if (event != null) {
       return FixturePlayerRatingUpdate(
@@ -2190,6 +2198,13 @@ class _HomeActivityItem {
   }
 
   String get matchup {
+    if (hasPendingOperationalResolution) {
+      final clanFixture = fixture;
+      if (clanFixture != null) {
+        return '${clanFixture.homeClan.tag} vs ${clanFixture.awayClan?.tag ?? 'TBD'}';
+      }
+      return 'WHITE vs BLACK';
+    }
     final played = previousGame;
     if (played != null) {
       return '${played.homeTag}  ${played.homeScore}–${played.awayScore}  ${played.awayTag}';
@@ -2237,6 +2252,9 @@ class _HomeActivityItem {
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
 
   String get eyebrowLabel {
+    final operationalLabel =
+        fixture?.operationalStatusLabel ?? soloGame?.operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel.toUpperCase();
     return switch (status) {
       FixtureStatus.live => 'LIVE NOW',
       FixtureStatus.finalResult when previousGame != null => 'YOUR RESULT',
@@ -2251,6 +2269,20 @@ class _HomeActivityItem {
 
   String get detailLabel {
     if (!isCompleted) return '';
+    if (hasPendingOperationalResolution) {
+      final isNoData =
+          fixture?.operationalState == MatchOperationalState.noData ||
+          soloGame?.operationalState == MatchOperationalState.noData;
+      if (!isNoData) return 'Result is being reviewed';
+      final reasonCode =
+          fixture?.operationalReasonCode ?? soloGame?.operationalReasonCode;
+      if (reasonCode == null || reasonCode.trim().isEmpty) {
+        return 'Awaiting admin resolution';
+      }
+      return fixture?.operationalStatusDetail ??
+          soloGame?.operationalStatusDetail ??
+          'Awaiting admin resolution';
+    }
 
     final ratingUpdate = fixturePlayerRatingUpdate;
     final parts = <String>[
@@ -2457,7 +2489,9 @@ class _ActivityRow extends StatelessWidget {
     final icon = item.isLive || isWatch
         ? Icons.play_arrow_rounded
         : item.isCompleted
-        ? Icons.sports_score_rounded
+        ? item.hasPendingOperationalResolution
+              ? Icons.pending_actions_rounded
+              : Icons.sports_score_rounded
         : item.isSolo
         ? Icons.person_rounded
         : Icons.shield_rounded;

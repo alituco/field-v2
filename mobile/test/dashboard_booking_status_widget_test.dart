@@ -566,6 +566,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'matchday keeps unresolved past matches in recent without scores',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final yesterday = _bahrainDateNow().subtract(const Duration(days: 1));
+      final noDataSolo = _fixtureGame(
+        id: 'no-data-solo',
+        date: yesterday,
+        status: 'FINAL',
+        operationalState: MatchOperationalState.noData,
+        whiteScore: 4,
+        blackScore: 2,
+      );
+      final reviewedClan = _clanFixture(
+        id: 'reviewed-clan',
+        date: yesterday,
+        status: FixtureStatus.scheduled,
+        operationalState: MatchOperationalState.underReview,
+        homeScore: 3,
+        awayScore: 0,
+      );
+
+      await _pumpHome(
+        tester,
+        fixtures: [reviewedClan],
+        soloGames: [noDataSolo],
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('home-matchday-recent')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+
+      expect(find.text('NO DATA'), findsOneWidget);
+      expect(find.text('UNDER REVIEW'), findsOneWidget);
+      expect(find.text('Awaiting admin resolution'), findsOneWidget);
+      expect(find.text('Result is being reviewed'), findsOneWidget);
+      expect(find.textContaining('4–2'), findsNothing);
+      expect(find.textContaining('3–0'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-no-data-solo')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-clan-reviewed-clan')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('open solo match uses exact spots-left copy and join flow', (
     tester,
   ) async {
@@ -1136,11 +1187,13 @@ OpenQueueGame _fixtureGame({
   OpenQueueRole? myBookingRole,
   String? myBookingTeam,
   String venue = 'TFA, Saar',
+  MatchOperationalState operationalState = MatchOperationalState.normal,
 }) {
   final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
   return OpenQueueGame(
     id: id,
     status: status,
+    operationalState: operationalState,
     venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),
@@ -1171,12 +1224,14 @@ Fixture _clanFixture({
   required FixtureStatus status,
   int? homeScore,
   int? awayScore,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
   FixtureBroadcast? broadcast,
   List<FixtureTimelineEvent> timeline = const [],
 }) {
   return Fixture(
     id: id,
     status: status,
+    operationalState: operationalState,
     homeClanId: _homeFixtureClan.id,
     awayClanId: _awayFixtureClan.id,
     venue: 'TFA, Saar',

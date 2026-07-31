@@ -342,6 +342,7 @@ jobs:
             supabase/scripts/verify_admin_game_reserves.sql \
             supabase/scripts/verify_clan_attendance_flexibility.sql \
             supabase/scripts/verify_clan_forfeit_workflow.sql \
+            supabase/scripts/verify_match_resolution_control_plane.sql \
             supabase/scripts/verify_moderation_system.sql \
             supabase/scripts/verify_support_ticket_system.sql \
             supabase/scripts/verify_tap_payment_system.sql

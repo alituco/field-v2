@@ -137,6 +137,9 @@ class OpenQueueGame {
     this.teamAssignmentLeadMinutes,
     this.partyLockLeadMinutes,
     this.maxPartySize,
+    this.operationalState = MatchOperationalState.normal,
+    this.operationalStateUpdatedAt,
+    this.operationalReasonCode,
   });
 
   final String id;
@@ -166,10 +169,55 @@ class OpenQueueGame {
   final int? teamAssignmentLeadMinutes;
   final int? partyLockLeadMinutes;
   final int? maxPartySize;
+  final MatchOperationalState operationalState;
+  final DateTime? operationalStateUpdatedAt;
+  final String? operationalReasonCode;
 
   bool get isFull => status == 'FULL' || confirmedCount >= capacity;
 
   bool get hasRecordedScore => whiteScore != null || blackScore != null;
+
+  bool get hasPendingOperationalResolution =>
+      operationalState.isPendingResolution;
+
+  String? get operationalStatusLabel => operationalState.pendingLabel;
+
+  String? get operationalStatusDetail {
+    if (!hasPendingOperationalResolution) return null;
+    return switch (operationalReasonCode?.trim().toUpperCase()) {
+      'RESULT_MISSING' => 'Result missing',
+      'REFEREE_REPORT_MISSING' => 'Referee report missing',
+      'DISPUTED' => 'Resolution disputed',
+      'REFUND_FAILED' => 'Refund needs attention',
+      'NO_ACTIVITY' => 'Match data missing',
+      _ =>
+        operationalState == MatchOperationalState.underReview
+            ? 'Admin review in progress'
+            : 'Match data missing',
+    };
+  }
+
+  bool get shouldDisplayScore {
+    final normalizedStatus = status.toUpperCase();
+    return !hasPendingOperationalResolution &&
+        (normalizedStatus == 'LIVE' ||
+            normalizedStatus == 'FINAL' ||
+            hasRecordedScore);
+  }
+
+  String get statusLabel {
+    final operationalLabel = operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel;
+    return switch (status.toUpperCase()) {
+      'OPEN' when isFull => 'Full',
+      'OPEN' => 'Spots available',
+      'FULL' => 'Full',
+      'LIVE' => 'Live Now',
+      'FINAL' => 'Final',
+      'CANCELLED' => 'Cancelled',
+      _ => 'Scheduled',
+    };
+  }
 
   bool get isUpcomingReservation => isUpcomingReservationAt(DateTime.now());
 
@@ -304,6 +352,13 @@ class OpenQueueGame {
       ),
       partyLockLeadMinutes: _asNullableInt(json['party_lock_lead_minutes']),
       maxPartySize: _asNullableInt(json['max_party_size']),
+      operationalState: MatchOperationalState.fromWire(
+        json['operational_state'],
+      ),
+      operationalStateUpdatedAt: _asDate(json['operational_state_updated_at']),
+      operationalReasonCode: _nonEmptyString(
+        json['operational_reason_code'],
+      )?.toUpperCase(),
     );
   }
 
@@ -335,6 +390,13 @@ class OpenQueueGame {
       ),
       partyLockLeadMinutes: _asNullableInt(json['party_lock_lead_minutes']),
       maxPartySize: _asNullableInt(json['max_party_size']),
+      operationalState: MatchOperationalState.fromWire(
+        json['operational_state'],
+      ),
+      operationalStateUpdatedAt: _asDate(json['operational_state_updated_at']),
+      operationalReasonCode: _nonEmptyString(
+        json['operational_reason_code'],
+      )?.toUpperCase(),
     );
   }
 }
@@ -467,6 +529,9 @@ class OpenQueueMatchDetail {
       matchAveragePlayerRating: game.matchAverageSr,
       teamRatingSpread: game.teamSrSpread,
       teamsAssignedAt: game.teamsAssignedAt,
+      operationalState: game.operationalState,
+      operationalStateUpdatedAt: game.operationalStateUpdatedAt,
+      operationalReasonCode: game.operationalReasonCode,
       homeLineup: _fixtureLineup(openQueueWhiteTeamId),
       awayLineup: _fixtureLineup(openQueueBlackTeamId),
     );

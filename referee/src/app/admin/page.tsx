@@ -1288,7 +1288,13 @@ function OverviewSection({
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.detail}</p>
-                    {!item.dismissible ? <small className="admin-required-resolution">Assignment required · cannot dismiss</small> : null}
+                    {!item.dismissible ? (
+                      <small className="admin-required-resolution">
+                        {item.resolution === "RESOLVE_NO_DATA"
+                          ? "Admin resolution required · cannot dismiss"
+                          : "Assignment required · cannot dismiss"}
+                      </small>
+                    ) : null}
                   </div>
                   <div className="admin-attention-meta">
                     <span>{humanize(item.kind)}</span>
@@ -1394,7 +1400,7 @@ function CompactGameList({ games }: { games: RefereeFixture[] }) {
             <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
             <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
           </div>
-          <StatusBadge status={game.status} />
+          <StatusBadge status={adminDisplayStatus(game)} />
         </article>
       ))}
     </div>
@@ -1671,7 +1677,7 @@ function GamesSection({
         if (view === "SCHEDULED" ? !isScheduledAdminGame(game) : !isFinalAdminGame(game)) {
           return false;
         }
-        if (status !== "ALL" && game.status !== status) return false;
+        if (status !== "ALL" && adminDisplayStatus(game) !== status) return false;
         if (kind !== "ALL" && game.matchKind !== kind) return false;
         const assignedId = assignedRefereeId(assignments, game);
         if (refereeFilter === "UNASSIGNED" && assignedId) return false;
@@ -1847,6 +1853,8 @@ function GamesSection({
           </select>
           <select onChange={(event) => setStatus(event.target.value)} value={status}>
             <option value="ALL">All {view === "SCHEDULED" ? "scheduled" : "final"} statuses</option>
+            <option value="NO_DATA">No data</option>
+            <option value="UNDER_REVIEW">Under review</option>
             {view === "SCHEDULED" ? (
               <>
                 <option value="LIVE">Live</option>
@@ -1929,7 +1937,7 @@ function GamesSection({
                         <small>{game.timeSlot} · {game.venue}</small>
                       </td>
                       <td>{assignedRefereeName(assignments, game)}</td>
-                      <td><StatusBadge status={game.status} /></td>
+                      <td><StatusBadge status={adminDisplayStatus(game)} /></td>
                       <td className="admin-score-cell">{displayScore(game)}</td>
                       <td><AdminIcon name="arrow" /></td>
                     </tr>
@@ -1948,7 +1956,7 @@ function GamesSection({
               <span className="admin-eyebrow">{active.matchKind === "SOLO" ? "Solo queue" : "Clan fixture"}</span>
               <h2>{active.homeClan.name} <span>vs</span> {active.awayClan.name}</h2>
             </div>
-            <StatusBadge status={active.status} />
+            <StatusBadge status={adminDisplayStatus(active)} />
           </div>
           <button
             className="admin-open-game-overview"
@@ -4515,15 +4523,30 @@ function assignedRefereeId(
 }
 
 function displayScore(fixture: RefereeFixture) {
+  if (fixture.operationalState === "NO_DATA") return "No data";
+  if (fixture.operationalState === "UNDER_REVIEW") return "Under review";
   if (fixture.homeScore === null && fixture.awayScore === null) return "—";
   return `${fixture.homeScore ?? 0} – ${fixture.awayScore ?? 0}`;
 }
 
+function adminDisplayStatus(fixture: RefereeFixture) {
+  const operationalState = fixture.operationalState?.toUpperCase();
+  return operationalState === "NO_DATA" || operationalState === "UNDER_REVIEW"
+    ? operationalState
+    : fixture.status;
+}
+
 function isScheduledAdminGame(fixture: RefereeFixture) {
+  if (["NO_DATA", "UNDER_REVIEW"].includes(adminDisplayStatus(fixture))) {
+    return false;
+  }
   return ["OPEN", "FULL", "SCHEDULED", "LIVE"].includes(fixture.status);
 }
 
 function isFinalAdminGame(fixture: RefereeFixture) {
+  if (["NO_DATA", "UNDER_REVIEW"].includes(adminDisplayStatus(fixture))) {
+    return true;
+  }
   return ["FINAL", "CANCELLED"].includes(fixture.status);
 }
 

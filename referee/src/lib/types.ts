@@ -252,6 +252,8 @@ export type RefereeFixture = {
   matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
+  operationalState: string | null;
+  operationalStateUpdatedAt: string | null;
   venue: string;
   day: string;
   timeSlot: string;

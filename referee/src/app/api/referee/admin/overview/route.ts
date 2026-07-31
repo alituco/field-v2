@@ -44,6 +44,7 @@ export async function GET(request: NextRequest) {
     fixtureBroadcastResult,
     soloBroadcastResult,
     paymentReconciliationResult,
+    resolutionCasesResult,
     auditResult,
     liveFixtureCount,
     liveSoloCount,
@@ -112,6 +113,14 @@ export async function GET(request: NextRequest) {
       .order("created_at", { ascending: false })
       .limit(30),
     context.db
+      .from("match_resolution_cases")
+      .select(
+        "id,match_kind,fixture_id,open_queue_game_id,state,reason_code,scheduled_end_at,detected_at,high_priority_at,current_revision",
+      )
+      .in("state", ["NO_DATA", "UNDER_REVIEW"])
+      .order("high_priority_at", { ascending: true })
+      .limit(100),
+    context.db
       .from("admin_audit_events")
       .select("id,actor_referee_id,action,entity_type,entity_id,reason,created_at")
       .order("created_at", { ascending: false })
@@ -134,6 +143,7 @@ export async function GET(request: NextRequest) {
     fixtureBroadcastResult,
     soloBroadcastResult,
     paymentReconciliationResult,
+    resolutionCasesResult,
     auditResult,
     liveFixtureCount,
     liveSoloCount,
@@ -191,8 +201,37 @@ export async function GET(request: NextRequest) {
     (row.status === "PROCESSING" && new Date(String(row.updated_at)).getTime() < staleProcessing.getTime()),
   );
   const paymentReconciliations = rows(paymentReconciliationResult.data);
+  const resolutionCases = rows(resolutionCasesResult.data);
 
   const attention = [
+    ...resolutionCases.map((resolutionCase) => {
+      const matchKind = String(resolutionCase.match_kind).toUpperCase() === "SOLO"
+        ? "SOLO"
+        : "CLAN";
+      const state = String(resolutionCase.state).toUpperCase();
+      const highPriorityAt = new Date(String(resolutionCase.high_priority_at));
+      const isCritical = Number.isFinite(highPriorityAt.getTime()) &&
+        highPriorityAt.getTime() <= now.getTime();
+      const gameId = matchKind === "CLAN"
+        ? String(resolutionCase.fixture_id)
+        : String(resolutionCase.open_queue_game_id);
+      return {
+        id: `resolution-${resolutionCase.id}`,
+        kind: state === "UNDER_REVIEW"
+          ? "MATCH_UNDER_REVIEW"
+          : "MATCH_NO_DATA",
+        severity: isCritical ? "CRITICAL" : "HIGH",
+        title: state === "UNDER_REVIEW"
+          ? `${matchKind === "CLAN" ? "Clan" : "Solo"} match is under review`
+          : `${matchKind === "CLAN" ? "Clan" : "Solo"} match has no data`,
+        detail: `${String(resolutionCase.reason_code).replaceAll("_", " ")} · scheduled end ${new Date(String(resolutionCase.scheduled_end_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })}`,
+        createdAt: resolutionCase.detected_at,
+        matchKind,
+        gameId,
+        resolution: "RESOLVE_NO_DATA",
+        dismissible: false,
+      };
+    }),
     ...paymentReconciliations.map((payment) => ({
       id: `payment-${payment.id}`,
       kind: "PAYMENT_RECONCILIATION",
@@ -319,7 +358,7 @@ export async function GET(request: NextRequest) {
 
   const operationalAttention = forfeits.length + standaloneStoppages.length + unassignedFixtures.length +
     unassignedSolo.length + fixturesWithoutReserve.length + soloWithoutReserve.length +
-    broadcastProblems.length + paymentReconciliations.length;
+    broadcastProblems.length + paymentReconciliations.length + resolutionCases.length;
   return NextResponse.json({
     metrics: {
       openReports: reportsResult.count ?? reports.length,

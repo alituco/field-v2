@@ -163,11 +163,21 @@ begin
   select pg_get_functiondef(
     'public.finalize_due_clan_reliability_attendance()'::regprocedure
   ) into function_text;
-  if position('''FINAL''' in function_text) = 0
-    or position('reliability_forfeit_without_play' in function_text) = 0
-    or position('clan_fixture_cancellations' in function_text) = 0
+  if position('select 0' in lower(function_text)) = 0
+    or position('finalize_match_attendance_internal' in function_text) > 0
+    or position('finalize_clan_reliability_outcomes' in function_text) > 0
   then
-    raise exception 'Historical FINAL clan attendance cannot settle safely at cutoff.';
+    raise exception 'The clan deadline worker can still infer attendance or no-shows.';
+  end if;
+
+  select pg_get_functiondef(
+    'public.detect_due_match_resolution_cases()'::regprocedure
+  ) into function_text;
+  if position('match_resolution_cases' in function_text) = 0
+    or position('NO_DATA' in function_text) = 0
+    or position('RESULT_MISSING' in function_text) = 0
+  then
+    raise exception 'Overdue matches are not routed to the audited No Data review queue.';
   end if;
   if not exists (
     select 1
@@ -371,10 +381,11 @@ begin
   if not exists (
     select 1
     from cron.job job
-    where job.jobname = 'finalize-field-clan-reliability-attendance'
+    where job.jobname = 'detect-field-match-resolution-cases'
       and job.schedule = '* * * * *'
+      and position('detect_due_match_resolution_cases' in job.command) > 0
   ) then
-    raise exception 'Clan reliability attendance finalizer is missing.';
+    raise exception 'The audited No Data detector is missing.';
   end if;
 
   if has_function_privilege(

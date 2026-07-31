@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'fixture.dart';
 import 'fixture_reliability_roster.dart';
+import 'match_resolution.dart';
 import '../payments/tap_payment_service.dart';
 
 abstract class FixtureRepository {
@@ -74,12 +75,16 @@ class SupabaseFixtureRepository
     implements
         FixtureRepository,
         FixtureReliabilityBookingRepository,
-        FixtureReliabilityRosterRepository {
+        FixtureReliabilityRosterRepository,
+        MatchResolutionRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   static const _fixtureSelect = '''
     id,
     status,
+    operational_state,
+    operational_state_updated_at,
+    operational_reason_code,
     home_clan_id,
     away_clan_id,
     venue,
@@ -400,6 +405,36 @@ class SupabaseFixtureRepository
       },
     );
     return getMyFixtureReliabilityRoster(fixtureId);
+  }
+
+  @override
+  Future<MatchResolutionCase?> getMatchResolutionCase({
+    required MatchResolutionKind matchKind,
+    required String matchId,
+  }) async {
+    final response = await _client.rpc(
+      'get_match_resolution_case',
+      params: {'match_kind_to_use': matchKind.code, 'match_id_to_use': matchId},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => null,
+    };
+    return row == null ? null : MatchResolutionCase.fromJson(row);
+  }
+
+  @override
+  Future<void> submitMatchResolutionDispute({
+    required String caseId,
+    required String reason,
+  }) async {
+    await _client.rpc(
+      'submit_match_resolution_dispute',
+      params: {'case_id_to_use': caseId, 'reason_to_use': reason.trim()},
+    );
   }
 
   @override

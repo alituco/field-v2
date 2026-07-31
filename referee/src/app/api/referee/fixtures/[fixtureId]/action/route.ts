@@ -16,6 +16,7 @@ import {
   parseRefereeStartShorthandedInput,
   parseRefereeVerifiedInjuryInput,
 } from "@/lib/match-action-input";
+import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 
 type RouteContext = {
@@ -108,6 +109,30 @@ export async function POST(request: NextRequest, context: RouteContext) {
     );
 
     const body = (await request.json()) as ActionBody;
+    const { data: operationalFixture, error: operationalError } = await db
+      .from("fixtures")
+      .select("operational_state")
+      .eq("id", fixtureId)
+      .single();
+    if (operationalError) {
+      throw new Error(
+        `Could not verify the match review state: ${operationalError.message}`,
+      );
+    }
+    if (
+      !canRefereePerformOperationalAction(
+        operationalFixture.operational_state,
+        body.action,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This match is locked for admin review. You can still submit a report, but attendance, clock, score, and result changes are paused.",
+        },
+        { status: 409 },
+      );
+    }
 
     let result: Record<string, unknown> = {};
 

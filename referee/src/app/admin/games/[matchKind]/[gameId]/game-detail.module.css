@@ -9,6 +9,32 @@
 .error { color: #9f2831; background: #fff0f1; border: 1px solid #f3c4c8; }
 .notice { color: #096a52; background: #e9fff7; border: 1px solid #b7efdb; }
 .error button, .notice button { border: 0; background: transparent; color: inherit; font-size: 20px; cursor: pointer; }
+.resolutionBanner { max-width: 1440px; margin: 20px auto 0; border-radius: 20px; padding: 22px 24px; border: 1px solid; box-shadow: 0 12px 34px rgba(58, 45, 13, .08); }
+.resolutionOpen { color: #5a3b06; background: linear-gradient(135deg, #fffaf0, #fff3d5); border-color: #e9c572; }
+.resolutionCritical { color: #76242c; background: linear-gradient(135deg, #fff5f5, #ffe5e8); border-color: #e7979e; }
+.resolutionComplete { color: #155a49; background: linear-gradient(135deg, #f2fff9, #e8faf3); border-color: #a8dfcf; }
+.resolutionBannerMain { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.resolutionBannerMain h2 { margin: 5px 0 0; font-size: 24px; letter-spacing: -.025em; }
+.resolutionBannerMain p { max-width: 900px; margin: 7px 0 0; color: currentColor; opacity: .82; font-size: 13px; line-height: 1.55; }
+.resolutionEyebrow { font-size: 10px; font-weight: 950; letter-spacing: .15em; }
+.resolutionButton { flex: 0 0 auto; border: 0; border-radius: 12px; padding: 12px 16px; background: #151d1a; color: white; font: inherit; font-weight: 900; cursor: pointer; }
+.resolutionCritical .resolutionButton { background: #a9323d; }
+.resolutionFacts { margin: 18px 0 0; padding-top: 16px; border-top: 1px solid currentColor; border-color: color-mix(in srgb, currentColor 18%, transparent); display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
+.resolutionFacts div { min-width: 0; }
+.resolutionFacts dt { opacity: .65; font-size: 9px; font-weight: 900; letter-spacing: .1em; text-transform: uppercase; }
+.resolutionFacts dd { margin: 5px 0 0; font-size: 12px; font-weight: 850; overflow-wrap: anywhere; }
+.resolutionFlags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.resolutionFlags span { padding: 7px 10px; border-radius: 999px; background: rgba(255,255,255,.7); border: 1px solid rgba(35,46,42,.12); font-size: 10px; font-weight: 850; }
+.resolutionFlags .failedFlag { color: #9d2631; background: #fff0f1; border-color: #efb8bd; }
+.failedRefundList { display: grid; gap: 9px; margin-top: 14px; }
+.failedRefundList article { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 13px 14px; border-radius: 13px; color: #7d252e; background: rgba(255,255,255,.78); border: 1px solid #edb8bd; }
+.failedRefundList article > div { min-width: 0; }
+.failedRefundList span, .failedRefundList strong, .failedRefundList small { display: block; }
+.failedRefundList span { font-size: 9px; font-weight: 950; letter-spacing: .09em; text-transform: uppercase; }
+.failedRefundList strong { margin-top: 4px; color: #241719; font-size: 17px; }
+.failedRefundList small { margin-top: 4px; color: #77575a; line-height: 1.4; overflow-wrap: anywhere; }
+.failedRefundList button { flex: 0 0 auto; border: 0; border-radius: 10px; padding: 10px 12px; color: white; background: #a9323d; font: inherit; font-size: 11px; font-weight: 900; cursor: pointer; }
+.failedRefundList em { flex: 0 0 auto; color: #8b555a; font-size: 10px; font-style: normal; font-weight: 850; }
 .hero { max-width: 1440px; margin: 26px auto 0; border-radius: 28px; overflow: hidden; padding: 28px 34px 0; color: white; background: radial-gradient(circle at 78% 15%, #1b3d38 0, transparent 32%), linear-gradient(135deg, #07110f, #101b2b 65%, #1c2535); box-shadow: 0 24px 50px rgba(16, 36, 30, .16); }
 .heroMeta { display: flex; align-items: center; justify-content: space-between; }
 .kind { color: #45e1b6; font-weight: 900; letter-spacing: .16em; font-size: 12px; }
@@ -16,6 +42,8 @@
 .status.live { color: #101010; background: #58e7ba; }
 .status.cancelled { background: #723941; color: #ffd9dc; }
 .status.final { background: #e5e9ef; color: #1b2434; }
+.status.no_data { color: #332106; background: #ffc862; }
+.status.under_review { color: #391117; background: #ff9da8; }
 .scoreboard { display: grid; grid-template-columns: 1fr 180px 1fr; gap: 24px; align-items: center; padding: 48px 4% 40px; }
 .team { display: flex; align-items: center; gap: 18px; min-width: 0; }
 .team > span { width: 84px; height: 84px; flex: 0 0 auto; border-radius: 24px; display: grid; place-items: center; background: rgba(255,255,255,.1); font-size: 44px; border: 1px solid rgba(255,255,255,.09); }
@@ -98,7 +126,7 @@
 .primaryButton:disabled, .dangerButton:disabled { opacity: .45; cursor: not-allowed; }
 .adminActions { display: grid; gap: 9px; }
 .adminActions .secondaryButton { margin-top: 0; }
-.adminActions .dangerButton { width: 100%; }
+.adminActions .primaryButton, .adminActions .dangerButton { width: 100%; }
 .clanActions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .clanActions button { min-height: 38px; border: 1px solid #f0d7b1; border-radius: 11px; padding: 8px; background: #fff8eb; color: #8a550d; font-weight: 850; cursor: pointer; }
 .clanActions button:hover { border-color: #ddb775; background: #fff3d8; }
@@ -122,6 +150,7 @@
 .modalBackdrop { position: fixed; z-index: 100; inset: 0; padding: 24px; background: rgba(4, 13, 11, .7); backdrop-filter: blur(8px); display: grid; place-items: center; }
 .modal { width: min(680px, 100%); max-height: min(820px, calc(100vh - 48px)); overflow: auto; border-radius: 23px; background: white; padding: 24px; box-shadow: 0 30px 90px rgba(0,0,0,.35); }
 .smallModal { width: min(520px, 100%); }
+.resolutionModal { width: min(900px, 100%); }
 .modal > header { display: flex; align-items: flex-start; justify-content: space-between; }
 .modal > header span { color: #08a57b; font-size: 10px; font-weight: 950; letter-spacing: .14em; }
 .modal > header h2 { margin: 5px 0 0; }
@@ -137,6 +166,67 @@
 .refundNotice { color: #087457; background: #ebfbf5; border: 1px solid #bcebdc; }
 .modalWarning strong, .refundNotice strong { display: block; }
 .modalWarning p, .refundNotice p { margin: 4px 0 0; font-size: 12px; line-height: 1.45; }
+.refundRetryFacts { margin: 16px 0 0; border: 1px solid #e0e8e5; border-radius: 14px; overflow: hidden; }
+.refundRetryFacts > div { display: flex; justify-content: space-between; gap: 18px; padding: 11px 13px; border-bottom: 1px solid #e8eeec; }
+.refundRetryFacts > div:last-child { border-bottom: 0; }
+.refundRetryFacts dt { color: #75817e; font-size: 11px; }
+.refundRetryFacts dd { margin: 0; max-width: 66%; text-align: right; font-size: 11px; font-weight: 850; overflow-wrap: anywhere; }
+.wizardSteps { position: relative; margin: 22px 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); list-style: none; }
+.wizardSteps::before { content: ""; position: absolute; z-index: 0; top: 14px; left: 16.666%; right: 16.666%; height: 2px; background: #dce5e2; }
+.wizardSteps li { position: relative; z-index: 1; display: grid; justify-items: center; gap: 5px; color: #8a9692; font-size: 10px; font-weight: 850; }
+.wizardSteps b { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; color: #788580; background: #e9efed; border: 3px solid white; box-shadow: 0 0 0 1px #dce5e2; }
+.wizardSteps .activeStep { color: #087859; }
+.wizardSteps .activeStep b { color: white; background: #0aa77d; box-shadow: 0 0 0 1px #0aa77d; }
+.revisionNotice { margin: 0 0 18px; padding: 13px 14px; border-radius: 12px; color: #6d4607; background: #fff7e7; border: 1px solid #ecd4a4; }
+.revisionNotice strong { display: block; }
+.revisionNotice p { margin: 4px 0 0; font-size: 12px; line-height: 1.45; }
+.outcomeGrid { margin-top: 18px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.outcomeGrid button { min-height: 88px; border: 1px solid #dfe7e4; border-radius: 14px; padding: 14px; background: white; color: #26332f; text-align: left; cursor: pointer; }
+.outcomeGrid button:hover { border-color: #80cdb7; background: #f7fffc; }
+.outcomeGrid .selectedOutcome { border-color: #08a77d; background: #edfcf7; box-shadow: inset 0 0 0 1px #08a77d; }
+.outcomeGrid strong, .outcomeGrid span { display: block; }
+.outcomeGrid strong { font-size: 13px; }
+.outcomeGrid span { margin-top: 5px; color: #71807b; font-size: 11px; line-height: 1.4; }
+.scoreInputs { margin: 18px auto 0; max-width: 500px; display: grid; grid-template-columns: 1fr auto 1fr; gap: 14px; align-items: end; }
+.scoreInputs b { padding-bottom: 13px; color: #75827e; font-size: 23px; }
+.scoreInputs input { text-align: center; font-size: 20px; font-weight: 900; }
+.consequenceGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 18px; }
+.consequenceGrid article { min-height: 75px; padding: 13px; border-radius: 13px; background: #f4f8f7; border: 1px solid #e1e9e6; }
+.consequenceGrid span, .consequenceGrid strong { display: block; }
+.consequenceGrid span { color: #75827e; font-size: 10px; font-weight: 800; }
+.consequenceGrid strong { margin-top: 7px; font-size: 14px; }
+.attendanceEditor { margin-top: 18px; border: 1px solid #cfe3dc; border-radius: 16px; padding: 16px; background: #f7fcfa; }
+.attendanceEditor > header span { color: #078665; font-size: 9px; font-weight: 950; letter-spacing: .14em; }
+.attendanceEditor > header h3 { margin: 5px 0 0; font-size: 17px; }
+.attendanceEditor > header p { margin: 5px 0 0; max-width: 680px; color: #64746f; font-size: 12px; line-height: 1.45; }
+.attendanceTeams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+.attendanceTeams > section { min-width: 0; overflow: hidden; border: 1px solid #dfe9e6; border-radius: 13px; background: white; }
+.attendanceTeams > section > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px; background: #f1f7f5; }
+.attendanceTeams > section > header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.attendanceTeams > section > header span { flex: 0 0 auto; border-radius: 999px; padding: 5px 7px; font-size: 8px; font-weight: 900; }
+.attendanceReady { color: #087858; background: #dff8ef; }
+.attendanceMissing { color: #94530c; background: #fff0d2; }
+.attendancePlayers { display: grid; }
+.attendancePlayers > label { margin: 0; padding: 10px 11px; display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(124px, .75fr); align-items: center; gap: 9px; border-top: 1px solid #edf2f0; }
+.attendancePlayers > label:first-child { border-top: 0; }
+.attendancePlayers .avatar { width: 34px; height: 34px; border-radius: 10px; font-size: 10px; }
+.attendancePlayers > label > span { min-width: 0; }
+.attendancePlayers > label > span strong, .attendancePlayers > label > span small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attendancePlayers > label > span strong { font-size: 11px; }
+.attendancePlayers > label > span small { margin-top: 3px; color: #788681; font-size: 9px; font-weight: 700; }
+.attendancePlayers select { min-width: 0; width: 100%; padding: 8px; border-radius: 9px; font-size: 10px; }
+.attendanceEmpty { margin: 0; padding: 18px 13px; color: #92510a; background: #fffaf0; font-size: 11px; line-height: 1.45; }
+.attendanceHelp { margin: 11px 2px 0; color: #71817c; font-size: 10px; line-height: 1.45; }
+.advancedResolution { margin-top: 17px; border: 1px solid #dfe7e4; border-radius: 14px; padding: 14px; background: #fbfdfc; }
+.advancedResolution summary { cursor: pointer; color: #34504a; font-weight: 900; }
+.advancedResolution > p { color: #74817d; font-size: 11px; line-height: 1.45; }
+.finalDecision { margin-top: 18px; padding: 20px; border-radius: 16px; color: #eafff8; background: linear-gradient(135deg, #0d1916, #15342c); }
+.finalDecision > span { color: #4ee0b8; font-size: 9px; font-weight: 950; letter-spacing: .14em; }
+.finalDecision h3 { margin: 6px 0 4px; font-size: 22px; }
+.finalDecision p { margin: 0; color: #a9bbb5; font-size: 12px; line-height: 1.5; }
+.finalDecision strong { display: block; margin-top: 13px; font-size: 18px; }
+.finalEffects { display: grid; gap: 7px; margin-top: 13px; }
+.finalEffects span { padding: 9px 11px; border-radius: 10px; color: #53625d; background: #f2f6f5; font-size: 11px; font-weight: 800; }
 .candidates { min-height: 140px; max-height: 330px; overflow: auto; margin-top: 12px; display: grid; gap: 7px; }
 .candidates > p { text-align: center; color: #7a8682; padding: 30px; }
 .candidates > button { border: 1px solid #e1e8e6; border-radius: 13px; padding: 10px; background: white; display: grid; grid-template-columns: 42px 1fr auto; gap: 10px; align-items: center; text-align: left; cursor: pointer; }
@@ -161,6 +251,7 @@
 @keyframes shimmer { to { background-position: -200% 0; } }
 
 @media (max-width: 980px) {
+  .resolutionFacts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .scoreboard { grid-template-columns: 1fr 110px 1fr; padding-inline: 0; }
   .team > span { width: 64px; height: 64px; border-radius: 18px; font-size: 34px; }
   .heroFacts, .metrics { grid-template-columns: repeat(2, 1fr); }
@@ -175,6 +266,12 @@
   .topbar { height: 64px; }
   .brand span, .back span { display: none; }
   .hero { margin-top: 14px; border-radius: 20px; padding: 20px 17px 0; }
+  .resolutionBanner { margin-top: 14px; padding: 18px; border-radius: 17px; }
+  .resolutionBannerMain { align-items: stretch; flex-direction: column; }
+  .resolutionButton { width: 100%; }
+  .resolutionFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .failedRefundList article { align-items: stretch; flex-direction: column; }
+  .failedRefundList button, .failedRefundList em { width: 100%; text-align: center; }
   .scoreboard { grid-template-columns: 1fr 70px 1fr; gap: 7px; padding: 32px 0; }
   .team { display: grid; gap: 7px; text-align: center; justify-items: center; }
   .alignRight { display: grid; text-align: center; }
@@ -193,6 +290,11 @@
   .modalBackdrop { padding: 10px; }
   .modal { padding: 19px; border-radius: 18px; max-height: calc(100vh - 20px); }
   .formGrid { grid-template-columns: 1fr; gap: 0; }
+  .outcomeGrid, .consequenceGrid { grid-template-columns: 1fr; }
+  .attendanceTeams { grid-template-columns: 1fr; }
+  .attendancePlayers > label { grid-template-columns: 34px minmax(0, 1fr); }
+  .attendancePlayers select { grid-column: 2; }
+  .scoreInputs { gap: 7px; }
   .candidates > button { grid-template-columns: 40px 1fr; }
   .candidates em { grid-column: 2; text-align: left; max-width: none; }
 }

@@ -19,8 +19,6 @@ begin
   from public.fixtures fixture
   where fixture.status = 'SCHEDULED'
     and fixture.away_clan_id is not null
-    and public.fixture_start_at(fixture.match_date, fixture.time_slot) >
-      clock_timestamp()
     and (
       select count(*)
       from public.clan_members member
@@ -41,6 +39,20 @@ begin
     raise exception
       'Clan attendance flexibility verification needs one scheduled fixture with 7 home and 6 away members.';
   end if;
+
+  -- Keep the verifier stable after the checked-in seed dates have passed.
+  -- The reschedule is rolled back with the rest of this script.
+  update public.fixtures fixture
+  set match_date = current_date + (
+    case fixture.day
+      when 'TUESDAY' then 2
+      else 5
+    end
+    - extract(dow from current_date)::integer
+    + 7
+  ) % 7 + 7
+  where fixture.id = fixture_to_test.id
+  returning fixture.* into fixture_to_test;
 
   select referee.profile_id into actor_referee_id
   from public.referee_profiles referee

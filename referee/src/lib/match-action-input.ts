@@ -46,6 +46,17 @@ export const FORFEIT_STOP_REASON_CODES = [
 
 export const FORFEIT_REVIEW_ACTIONS = ["CONFIRM", "OVERTURN"] as const;
 
+export const MATCH_RESOLUTION_TYPES = [
+  "RECORDED_RESULT",
+  "HOME_NO_SHOW",
+  "AWAY_NO_SHOW",
+  "BOTH_NO_SHOW",
+  "FIELD_OR_VENUE_CANCELLATION",
+  "MUTUAL_CANCELLATION",
+  "BOTH_AT_FAULT",
+  "ADMINISTRATIVE_VOID",
+] as const;
+
 export const CANCELLATION_REASON_CODES = [
   "WEATHER_OR_VENUE",
   "SAFETY",
@@ -87,6 +98,7 @@ export type StopMode = (typeof STOP_MODES)[number];
 export type StopReasonCode = (typeof STOP_REASON_CODES)[number];
 export type ForfeitStopReasonCode = (typeof FORFEIT_STOP_REASON_CODES)[number];
 export type ForfeitReviewAction = (typeof FORFEIT_REVIEW_ACTIONS)[number];
+export type MatchResolutionType = (typeof MATCH_RESOLUTION_TYPES)[number];
 export type ShorthandedReason = (typeof SHORTHANDED_REASONS)[number];
 
 type InputRecord = Record<string, unknown>;
@@ -264,6 +276,116 @@ export function parseAdminScoreOverrideInput(body: InputRecord) {
   return { homeScore, awayScore, reason };
 }
 
+export function parseAdminMatchResolutionInput(body: InputRecord) {
+  const expectedRevision = requiredInteger(
+    body.expectedRevision,
+    "Refresh this match before resolving it.",
+    0,
+    1_000_000,
+  );
+  const resolutionType = enumValue(
+    body.resolutionType,
+    MATCH_RESOLUTION_TYPES,
+    "Choose a supported match resolution.",
+  );
+  const reason = boundedText(
+    body.reason,
+    "Record a clear reason between 10 and 2,000 characters.",
+    10,
+    2000,
+  );
+  if (body.payload != null && !isRecord(body.payload)) {
+    throw new Error("Resolution details must be an object.");
+  }
+  const rawPayload = isRecord(body.payload) ? body.payload : {};
+  const payload: Record<string, unknown> = {};
+
+  copyOptionalInteger(
+    rawPayload,
+    payload,
+    "home_score",
+    "Home score must be between 0 and 99.",
+    0,
+    99,
+  );
+  copyOptionalInteger(
+    rawPayload,
+    payload,
+    "away_score",
+    "Away score must be between 0 and 99.",
+    0,
+    99,
+  );
+  for (const key of ["home_refund_bps", "away_refund_bps"] as const) {
+    copyOptionalInteger(
+      rawPayload,
+      payload,
+      key,
+      "Refund percentages must be between 0 and 100%.",
+      0,
+      10_000,
+    );
+  }
+  for (const key of ["home_sr_delta", "away_sr_delta"] as const) {
+    copyOptionalInteger(
+      rawPayload,
+      payload,
+      key,
+      "SR adjustments must be whole numbers between -10,000 and 10,000.",
+      -10_000,
+      10_000,
+    );
+  }
+  for (const key of ["home_strikes", "away_strikes"] as const) {
+    copyOptionalInteger(
+      rawPayload,
+      payload,
+      key,
+      "Strike adjustments must be between 0 and 20.",
+      0,
+      20,
+    );
+  }
+
+  if (rawPayload.attendance != null) {
+    if (
+      !Array.isArray(rawPayload.attendance) &&
+      !isRecord(rawPayload.attendance)
+    ) {
+      throw new Error("Attendance must be a JSON map or list.");
+    }
+    payload.attendance = rawPayload.attendance;
+  }
+
+  if (resolutionType === "RECORDED_RESULT") {
+    if (payload.home_score == null || payload.away_score == null) {
+      throw new Error("Enter both final scores for a recorded result.");
+    }
+  }
+
+  return {
+    expectedRevision,
+    resolutionType,
+    reason,
+    payload,
+  };
+}
+
+export function parseAdminMatchResolutionReopenInput(body: InputRecord) {
+  return {
+    caseId: uuidValue(
+      body.caseId,
+      "Choose the match resolution case to reopen.",
+    ),
+    reason: boundedText(
+      body.reason,
+      "Record a clear correction reason between 10 and 2,000 characters.",
+      10,
+      2000,
+    ),
+  };
+}
+
 export function parseRefereeCheckInInput(body: InputRecord) {
   return {
     profileId: uuidValue(
@@ -410,6 +532,22 @@ function uuidValue(value: unknown, message: string) {
 function optionalUuidValue(value: unknown, message: string) {
   if (value == null || String(value).trim() === "") return null;
   return uuidValue(value, message);
+}
+
+function isRecord(value: unknown): value is InputRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function copyOptionalInteger(
+  source: InputRecord,
+  target: Record<string, unknown>,
+  key: string,
+  message: string,
+  minimum: number,
+  maximum: number,
+) {
+  if (source[key] == null || source[key] === "") return;
+  target[key] = requiredInteger(source[key], message, minimum, maximum);
 }
 
 function booleanValue(value: unknown, message: string) {

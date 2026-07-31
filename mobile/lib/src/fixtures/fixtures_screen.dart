@@ -196,7 +196,8 @@ class _FixturesScreenState extends State<FixturesScreen> {
   }
 
   Future<void> _openSoloGame(OpenQueueGame game) async {
-    if (game.status == 'FULL' ||
+    if (game.hasPendingOperationalResolution ||
+        game.status == 'FULL' ||
         game.status == 'LIVE' ||
         game.status == 'FINAL' ||
         game.status == 'CANCELLED') {
@@ -730,8 +731,7 @@ class _SoloFixtureSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = _soloFixtureStatus(game);
-    final showScore =
-        status == FixtureStatus.live || status == FixtureStatus.finalResult;
+    final showScore = game.shouldDisplayScore;
     final showAvailability =
         !showScore &&
         status != FixtureStatus.cancelled &&
@@ -823,6 +823,32 @@ class _SoloFixtureSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 18),
+              if (game.hasPendingOperationalResolution) ...[
+                Container(
+                  key: const ValueKey('solo-operational-state-callout'),
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFFBEB),
+                    border: Border.all(color: const Color(0xFFFDE68A)),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Text(
+                    game.operationalState == MatchOperationalState.noData
+                        ? game.operationalReasonCode == 'RESULT_MISSING'
+                              ? 'The final result is missing. An admin can review and finalize the outcome.'
+                              : 'No match data was recorded. An admin can review and finalize the outcome.'
+                        : 'This match is under admin review. Its score and attendance outcome are not final.',
+                    style: const TextStyle(
+                      color: Color(0xFF92400E),
+                      fontSize: 12,
+                      height: 1.4,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
               if (showScore)
                 Container(
                   padding: const EdgeInsets.symmetric(
@@ -1297,14 +1323,7 @@ FixtureStatus _soloFixtureStatus(OpenQueueGame game) {
 }
 
 String _soloStatusLabel(OpenQueueGame game) {
-  return switch (game.status.toUpperCase()) {
-    'OPEN' when game.isFull => 'FULL',
-    'FULL' => 'FULL',
-    'LIVE' => 'LIVE NOW',
-    'FINAL' => 'FINAL',
-    'CANCELLED' => 'CANCELLED',
-    _ => 'SPOTS AVAILABLE',
-  };
+  return game.statusLabel.toUpperCase();
 }
 
 DateTime _bahrainToday() {
