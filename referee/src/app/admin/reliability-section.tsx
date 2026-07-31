@@ -23,6 +23,11 @@ import {
   type ReliabilityPolicyVersion,
   type ReliabilitySanctionKind,
 } from "@/lib/reliability-policy";
+import {
+  buildReliabilityPolicySummary,
+  reliabilityPolicySummaryHtml,
+  type ReliabilityPolicySummaryDocument,
+} from "@/lib/reliability-policy-summary";
 
 import styles from "./reliability-section.module.css";
 
@@ -221,6 +226,7 @@ export function ReliabilitySection({
   } | null>(null);
   const [previewDate, setPreviewDate] = useState(todayInBahrain());
   const [expandedHistory, setExpandedHistory] = useState<string | null>(null);
+  const [policyDocument, setPolicyDocument] = useState<ReliabilityPolicySummaryDocument | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -465,6 +471,45 @@ export function ReliabilitySection({
         ))}
       </div>
 
+      <section className={`admin-card ${styles.readablePolicyBanner}`}>
+        <div className={styles.readablePolicyIcon}>Aa</div>
+        <div>
+          <span className={styles.eyebrow}>Human-readable policy</span>
+          <h2>Understand the rules without reading every control</h2>
+          <p>Review scenario-based cancellations, attendance, deposits, sanctions, SR, and appeals. Download the same summary as a standalone document or print it to PDF.</p>
+        </div>
+        <div className={styles.readablePolicyActions}>
+          {payload.inForce ? (
+            <button
+              className="admin-secondary-button"
+              onClick={() => setPolicyDocument(buildReliabilityPolicySummary(payload.inForce!.config, {
+                status: "ACTIVE",
+                version: payload.inForce!.version,
+                effectiveFrom: payload.inForce!.effectiveFrom,
+                changeSummary: payload.inForce!.summary,
+              }))}
+              type="button"
+            >
+              View active policy
+            </button>
+          ) : null}
+          {activeDraft && editor ? (
+            <button
+              className="admin-primary-button"
+              onClick={() => setPolicyDocument(buildReliabilityPolicySummary(editor, {
+                status: "DRAFT",
+                version: activeDraft.version || null,
+                effectiveFrom: bahrainDateToIso(effectiveDate),
+                changeSummary: summary,
+              }))}
+              type="button"
+            >
+              Preview this draft
+            </button>
+          ) : null}
+        </div>
+      </section>
+
       {localError ? (
         <div className={styles.localError} role="alert">
           <span>!</span><p>{localError}</p><button onClick={() => setLocalError(null)} type="button">Dismiss</button>
@@ -651,6 +696,12 @@ export function ReliabilitySection({
             : newDraftDialog(version.id, `Update policy v${version.version}`))}
           onExpand={(id) => setExpandedHistory((current) => current === id ? null : id)}
           onPreviewDate={setPreviewDate}
+          onViewPolicy={(version) => setPolicyDocument(buildReliabilityPolicySummary(version.config, {
+            status: isFutureVersion(version) ? "SCHEDULED" : version.id === payload.inForce?.id ? "ACTIVE" : "HISTORICAL",
+            version: version.version,
+            effectiveFrom: version.effectiveFrom,
+            changeSummary: version.summary,
+          }))}
           previewDate={previewDate}
           previewPolicy={previewPolicy}
         />
@@ -778,6 +829,12 @@ export function ReliabilitySection({
                   : "Uphold decision"}
             </button>
           </div>
+        </PolicyModal>
+      ) : null}
+
+      {policyDocument ? (
+        <PolicyModal document onClose={() => setPolicyDocument(null)}>
+          <PolicyDocumentPreview document={policyDocument} />
         </PolicyModal>
       ) : null}
     </div>
@@ -1484,7 +1541,7 @@ function QueueCard({ eyebrow, title, items, readiness }: {
   );
 }
 
-function HistorySection({ history, previewDate, previewPolicy, expandedId, onPreviewDate, onExpand, onClone }: {
+function HistorySection({ history, previewDate, previewPolicy, expandedId, onPreviewDate, onExpand, onClone, onViewPolicy }: {
   history: ReliabilityPolicyVersion[];
   previewDate: string;
   previewPolicy: ReliabilityPolicyVersion | null;
@@ -1492,6 +1549,7 @@ function HistorySection({ history, previewDate, previewPolicy, expandedId, onPre
   onPreviewDate: (value: string) => void;
   onExpand: (id: string) => void;
   onClone: (version: ReliabilityPolicyVersion) => void;
+  onViewPolicy: (version: ReliabilityPolicyVersion) => void;
 }) {
   return (
     <div className={styles.historyLayout}>
@@ -1523,7 +1581,13 @@ function HistorySection({ history, previewDate, previewPolicy, expandedId, onPre
                   {diff.length > 0 ? <div className={styles.historyDiff}>{diff.map((change) => (
                     <div key={change.path}><span>{change.label}</span><del>{change.before}</del><b>→</b><ins>{change.after}</ins></div>
                   ))}</div> : <p>This is the first immutable policy snapshot.</p>}
-                  <div className={styles.historyActions}><span>Published {formatDateTime(version.publishedAt)}</span><button className="admin-secondary-button" onClick={() => onClone(version)} type="button">{isCurrentEffectiveLeaf(version, history) ? "Replace scheduled version" : "Clone into new draft"}</button></div>
+                  <div className={styles.historyActions}>
+                    <span>Published {formatDateTime(version.publishedAt)}</span>
+                    <div>
+                      <button className="admin-secondary-button" onClick={() => onViewPolicy(version)} type="button">Readable policy</button>
+                      <button className="admin-secondary-button" onClick={() => onClone(version)} type="button">{isCurrentEffectiveLeaf(version, history) ? "Replace scheduled version" : "Clone into new draft"}</button>
+                    </div>
+                  </div>
                 </div>
               ) : null}
             </article>
@@ -1543,7 +1607,7 @@ function EmptyDraft({ inForce, onCreate }: { inForce: ReliabilityPolicyVersion |
   );
 }
 
-function PolicyModal({ children, onClose, wide = false }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+function PolicyModal({ children, onClose, wide = false, document = false }: { children: React.ReactNode; onClose: () => void; wide?: boolean; document?: boolean }) {
   useEffect(() => {
     function closeOnEscape(event: KeyboardEvent) { if (event.key === "Escape") onClose(); }
     window.addEventListener("keydown", closeOnEscape);
@@ -1551,9 +1615,57 @@ function PolicyModal({ children, onClose, wide = false }: { children: React.Reac
   }, [onClose]);
   return (
     <div className={styles.modalBackdrop} onMouseDown={onClose} role="presentation">
-      <section aria-modal="true" className={`${styles.modal} ${wide ? styles.modalWide : ""}`} onMouseDown={(event) => event.stopPropagation()} role="dialog">
+      <section aria-modal="true" className={`${styles.modal} ${wide ? styles.modalWide : ""} ${document ? styles.policyDocumentModal : ""}`} onMouseDown={(event) => event.stopPropagation()} role="dialog">
         <button aria-label="Close" className={styles.modalClose} onClick={onClose} type="button">×</button>{children}
       </section>
+    </div>
+  );
+}
+
+function PolicyDocumentPreview({ document }: { document: ReliabilityPolicySummaryDocument }) {
+  return (
+    <div className={styles.policyDocument}>
+      <header className={styles.policyDocumentHeader}>
+        <div>
+          <span className={styles.eyebrow}>Generated from enforced settings</span>
+          <h2>{document.title}</h2>
+          <p>{document.changeSummary}</p>
+        </div>
+        <div className={styles.policyDocumentMeta}>
+          <div><span>Status</span><strong>{policyDocumentStatusLabel(document.status)}</strong></div>
+          <div><span>Version</span><strong>{document.versionLabel}</strong></div>
+          <div><span>Effective · Bahrain</span><strong>{document.effectiveDateLabel}</strong></div>
+        </div>
+      </header>
+
+      <div className={styles.policyDocumentSections}>
+        {document.sections.map((section) => (
+          <section key={section.id}>
+            <header>
+              <span>{section.id.replaceAll("-", " ")}</span>
+              <h3>{section.title}</h3>
+              <p>{section.introduction}</p>
+            </header>
+            <div>
+              {section.rules.map((rule) => (
+                <article key={rule.title}>
+                  <h4>{rule.title}</h4>
+                  <p>{rule.explanation}</p>
+                  {rule.facts?.length ? <ul>{rule.facts.map((fact) => <li key={fact}>{fact}</li>)}</ul> : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <footer className={styles.policyDocumentFooter}>
+        <p>Generated {document.generatedAtLabel}. The stored policy version remains the source of truth.</p>
+        <div>
+          <button className="admin-secondary-button" onClick={() => printPolicyDocument(document)} type="button">Print / save PDF</button>
+          <button className="admin-primary-button" onClick={() => downloadPolicyDocument(document)} type="button">Download document</button>
+        </div>
+      </footer>
     </div>
   );
 }
@@ -1734,6 +1846,44 @@ function reserveStepDescription(step: ReliabilityPolicyConfig["replacement"]["or
     case "PLAY_SHORTHANDED":
       return "Record the side as shorthanded when no eligible replacement is available.";
   }
+}
+
+function policyDocumentStatusLabel(status: ReliabilityPolicySummaryDocument["status"]) {
+  switch (status) {
+    case "ACTIVE": return "Active policy";
+    case "DRAFT": return "Draft · not in force";
+    case "SCHEDULED": return "Published · scheduled";
+    case "HISTORICAL": return "Historical version";
+  }
+}
+
+function downloadPolicyDocument(document: ReliabilityPolicySummaryDocument) {
+  const blob = new Blob([reliabilityPolicySummaryHtml(document)], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = window.document.createElement("a");
+  link.href = url;
+  link.download = policyDocumentFilename(document);
+  window.document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function printPolicyDocument(document: ReliabilityPolicySummaryDocument) {
+  const printWindow = window.open("", "_blank", "noopener,noreferrer");
+  if (!printWindow) return;
+  printWindow.document.open();
+  printWindow.document.write(reliabilityPolicySummaryHtml(document));
+  printWindow.document.close();
+  printWindow.addEventListener("load", () => {
+    printWindow.focus();
+    printWindow.print();
+  }, { once: true });
+}
+
+function policyDocumentFilename(document: ReliabilityPolicySummaryDocument) {
+  const version = document.versionLabel.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-").replaceAll(/^-|-$/g, "");
+  return `field-reliability-policy-${version || "draft"}.html`;
 }
 
 function humanize(value: string) {
