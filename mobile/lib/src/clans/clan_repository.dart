@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../fixtures/fixture.dart';
 import 'clan.dart';
+import 'clan_reliability.dart';
 
 abstract class ClanRepository {
   Future<List<Clan>> listClans();
@@ -63,12 +64,20 @@ abstract class ClanRepository {
   Future<void> archiveClan(String clanId);
 }
 
-class SupabaseClanRepository implements ClanRepository {
+abstract interface class ClanReliabilityRepository {
+  Future<ClanReliabilitySummary> getClanReliabilitySummary(String clanId);
+}
+
+class SupabaseClanRepository
+    implements ClanRepository, ClanReliabilityRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   static const _fixtureSelect = '''
     id,
     status,
+    operational_state,
+    operational_state_updated_at,
+    operational_reason_code,
     home_clan_id,
     away_clan_id,
     venue,
@@ -136,6 +145,23 @@ class SupabaseClanRepository implements ClanRepository {
     return [
       for (final row in rows) Clan.fromJson(Map<String, dynamic>.from(row)),
     ];
+  }
+
+  @override
+  Future<ClanReliabilitySummary> getClanReliabilitySummary(
+    String clanId,
+  ) async {
+    final response = await _client.rpc(
+      'get_clan_reliability_summary',
+      params: {'clan_id_to_use': clanId},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty && value.first is Map =>
+        Map<String, dynamic>.from(value.first as Map),
+      _ => throw StateError('Clan reliability details are unavailable.'),
+    };
+    return ClanReliabilitySummary.fromJson(row);
   }
 
   @override

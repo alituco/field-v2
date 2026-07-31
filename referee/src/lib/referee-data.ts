@@ -18,6 +18,8 @@ import { loadMatchReliabilityContext } from "./match-reliability";
 const fixtureSelect = `
   id,
   status,
+  operational_state,
+  operational_state_updated_at,
   venue,
   day,
   time_slot,
@@ -349,6 +351,8 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     matchKind: "CLAN",
     id: String(row.id),
     status: String(row.status) as RefereeFixture["status"],
+    operationalState: nullableString(row.operational_state),
+    operationalStateUpdatedAt: nullableString(row.operational_state_updated_at),
     venue: String(row.venue ?? ""),
     day: String(row.day ?? ""),
     timeSlot: String(row.time_slot ?? ""),

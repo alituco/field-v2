@@ -69,6 +69,9 @@ class SupabaseOpenQueueRepository
     game:open_queue_games!open_queue_bookings_game_id_fkey(
       id,
       status,
+      operational_state,
+      operational_state_updated_at,
+      operational_reason_code,
       venue,
       starts_at,
       ends_at,

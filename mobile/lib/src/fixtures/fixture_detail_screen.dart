@@ -19,6 +19,8 @@ import 'fixture_reliability_roster.dart';
 import 'fixture_reliability_roster_panel.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
+import 'match_resolution.dart';
+import 'match_resolution_panel.dart';
 
 class FixtureDetailScreen extends StatefulWidget {
   const FixtureDetailScreen({
@@ -67,11 +69,13 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   bool _isRefreshing = false;
   bool _isLoadingRoster = false;
   bool _isSavingRoster = false;
+  bool _isLoadingMatchResolution = false;
   bool _didChange = false;
   String? _openingClanId;
   String? _errorText;
   String? _rosterErrorText;
   FixtureReliabilityRoster? _reliabilityRoster;
+  MatchResolutionCase? _matchResolutionCase;
 
   @override
   void initState() {
@@ -87,6 +91,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     _configureRefreshTimer();
     unawaited(_refreshFixture(quiet: true));
     unawaited(_loadReliabilityRoster(quiet: true));
+    unawaited(_loadMatchResolution());
   }
 
   @override
@@ -112,6 +117,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     return widget.fixtureRepository is FixtureReliabilityBookingRepository &&
         membership != null &&
         membership.canManageMatches &&
+        !_fixture.hasPendingOperationalResolution &&
         (membership.clan.id == _fixture.homeClanId ||
             membership.clan.id == _fixture.awayClanId) &&
         (_fixture.status == FixtureStatus.open ||
@@ -136,6 +142,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     return widget.sourceLabel?.toUpperCase() != 'SOLO' &&
         widget.fixtureRepository is FixtureReliabilityRosterRepository &&
         membership != null &&
+        !_fixture.hasPendingOperationalResolution &&
         (membership.clan.id == _fixture.homeClanId ||
             membership.clan.id == _fixture.awayClanId) &&
         (_fixture.status == FixtureStatus.open ||
@@ -214,6 +221,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       });
       _configureRefreshTimer();
       unawaited(_loadReliabilityRoster(quiet: true));
+      unawaited(_loadMatchResolution());
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Match joined. Game on.')));
@@ -438,6 +446,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       });
       _configureRefreshTimer();
       unawaited(_loadReliabilityRoster(quiet: true));
+      unawaited(_loadMatchResolution());
     } catch (error) {
       if (!mounted || quiet) return;
       setState(
@@ -482,6 +491,34 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       if (mounted) setState(() => _isLoadingRoster = false);
     }
   }
+
+  Future<void> _loadMatchResolution() async {
+    final repository = widget.fixtureRepository;
+    if (repository is! MatchResolutionRepository || _isLoadingMatchResolution) {
+      return;
+    }
+    final resolutionRepository = repository as MatchResolutionRepository;
+    _isLoadingMatchResolution = true;
+    try {
+      final resolutionCase = await resolutionRepository.getMatchResolutionCase(
+        matchKind: _matchResolutionKind,
+        matchId: _fixture.id,
+      );
+      if (!mounted) return;
+      setState(() => _matchResolutionCase = resolutionCase);
+    } catch (_) {
+      // Match details are public, while resolution finances and disputes are
+      // participant-only. A non-participant should still be able to view the
+      // match without seeing an authorization error or private case details.
+    } finally {
+      _isLoadingMatchResolution = false;
+    }
+  }
+
+  MatchResolutionKind get _matchResolutionKind =>
+      widget.sourceLabel?.trim().toUpperCase() == 'SOLO'
+      ? MatchResolutionKind.solo
+      : MatchResolutionKind.clan;
 
   Future<void> _openReliabilityRoster() async {
     final roster = _reliabilityRoster;
@@ -594,11 +631,14 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
               onOpenProfile: _openPlayerProfile,
             ),
           ],
-          if (_fixture.isFinal && widget.playerRatingUpdate != null) ...[
+          if (_fixture.isFinal &&
+              !_fixture.hasPendingOperationalResolution &&
+              widget.playerRatingUpdate != null) ...[
             const SizedBox(height: 18),
             _PlayerRatingUpdateCard(update: widget.playerRatingUpdate!),
           ],
           if (_fixture.isFinal &&
+              !_fixture.hasPendingOperationalResolution &&
               (_fixture.homeSrChange != null ||
                   _fixture.awaySrChange != null)) ...[
             const SizedBox(height: 18),
@@ -710,9 +750,30 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
                       const SizedBox(height: 14),
                       _ErrorCallout(message: _errorText!),
                     ],
+                    if (_fixture.hasPendingOperationalResolution &&
+                        _matchResolutionCase == null) ...[
+                      const SizedBox(height: 18),
+                      _OperationalResolutionPanel(fixture: _fixture),
+                    ],
                     if (_fixture.isCancelled) ...[
                       const SizedBox(height: 18),
                       _CancellationPanel(fixture: _fixture),
+                    ],
+                    if (_matchResolutionCase case final resolutionCase?) ...[
+                      const SizedBox(height: 18),
+                      MatchResolutionPanel(
+                        resolutionCase: resolutionCase,
+                        repository:
+                            widget.fixtureRepository
+                                as MatchResolutionRepository,
+                        matchKind: _matchResolutionKind,
+                        matchId: _fixture.id,
+                        onChanged: (updated) {
+                          if (mounted) {
+                            setState(() => _matchResolutionCase = updated);
+                          }
+                        },
+                      ),
                     ],
                     if (_shouldShowReliabilityRoster) ...[
                       const SizedBox(height: 18),
@@ -1003,12 +1064,12 @@ class _Scoreboard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final homeWin =
-        fixture.isFinal &&
+        fixture.shouldDisplayScore &&
         fixture.homeScore != null &&
         fixture.awayScore != null &&
         fixture.homeScore! > fixture.awayScore!;
     final awayWin =
-        fixture.isFinal &&
+        fixture.shouldDisplayScore &&
         fixture.homeScore != null &&
         fixture.awayScore != null &&
         fixture.awayScore! > fixture.homeScore!;
@@ -1124,7 +1185,9 @@ class _Scoreboard extends StatelessWidget {
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 10),
-                    child: fixture.isFinal || fixture.isLive
+                    child: fixture.hasPendingOperationalResolution
+                        ? _OperationalScoreState(fixture: fixture)
+                        : fixture.shouldDisplayScore
                         ? Row(
                             children: [
                               _ScoreNumber(
@@ -1191,6 +1254,100 @@ class _Scoreboard extends StatelessWidget {
                 ),
               ],
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OperationalScoreState extends StatelessWidget {
+  const _OperationalScoreState({required this.fixture});
+
+  final Fixture fixture;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('fixture-operational-score-state'),
+      constraints: const BoxConstraints(maxWidth: 76),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(13),
+      ),
+      child: Text(
+        fixture.statusLabel.toUpperCase(),
+        maxLines: 2,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 9,
+          height: 1.15,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.5,
+        ),
+      ),
+    );
+  }
+}
+
+class _OperationalResolutionPanel extends StatelessWidget {
+  const _OperationalResolutionPanel({required this.fixture});
+
+  final Fixture fixture;
+
+  @override
+  Widget build(BuildContext context) {
+    final noData = fixture.operationalState == MatchOperationalState.noData;
+    return Container(
+      key: const ValueKey('fixture-operational-resolution-panel'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            noData ? Icons.pending_actions_rounded : Icons.fact_check_outlined,
+            color: const Color(0xFFB45309),
+            size: 22,
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  noData
+                      ? 'No data · ${fixture.operationalStatusDetail ?? 'Match data missing'}'
+                      : fixture.statusLabel,
+                  style: const TextStyle(
+                    color: Color(0xFF78350F),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  noData
+                      ? fixture.operationalReasonCode == 'RESULT_MISSING'
+                            ? 'The final result was not recorded. An admin can verify attendance, refunds, and the official outcome.'
+                            : 'No match data was recorded. An admin can review attendance, refunds, and the final outcome.'
+                      : 'An admin is reviewing this match. Scores, attendance outcomes, and rating changes are not final.',
+                  style: const TextStyle(
+                    color: Color(0xFF92400E),
+                    fontSize: 12,
+                    height: 1.4,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),

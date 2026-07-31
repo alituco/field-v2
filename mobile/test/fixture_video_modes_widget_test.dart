@@ -42,6 +42,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('under-review final hides provisional score and rating result', (
+    tester,
+  ) async {
+    await _pumpDetail(
+      tester,
+      _fixture(
+        status: FixtureStatus.finalResult,
+        operationalState: MatchOperationalState.underReview,
+      ),
+      playerRatingUpdate: const FixturePlayerRatingUpdate(
+        ratingBefore: 1200,
+        ratingChange: 14,
+        ratingAfter: 1214,
+        result: 'WIN',
+      ),
+    );
+
+    expect(find.text('UNDER REVIEW'), findsWidgets);
+    expect(find.text('Under review'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixture-operational-score-state')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('fixture-operational-resolution-panel')),
+      findsOneWidget,
+    );
+    expect(find.text('1'), findsNothing);
+    expect(find.text('0'), findsNothing);
+    expect(find.text('+14 SR'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('fixture opens on match timeline with details and rating', (
     tester,
   ) async {
@@ -1000,12 +1033,14 @@ Future<void> _scrollToBroadcast(WidgetTester tester, String heading) async {
 
 Fixture _fixture({
   required FixtureStatus status,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
   FixtureBroadcast? broadcast,
   List<FixtureTimelineEvent> timeline = const [],
 }) {
   return Fixture(
     id: 'fixture',
     status: status,
+    operationalState: operationalState,
     homeClanId: 'home',
     awayClanId: 'away',
     venue: 'Field',

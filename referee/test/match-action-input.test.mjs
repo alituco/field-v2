@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   parseAdminCancellationInput,
   parseAdminForfeitReviewInput,
+  parseAdminMatchResolutionInput,
+  parseAdminMatchResolutionReopenInput,
   parseAdminScoreOverrideInput,
   parseMatchStoppageInput,
   parseRefereeBulkCheckInInput,
@@ -230,6 +232,100 @@ test("admin match mutations require bounded values and meaningful reasons", () =
         reason: "typo",
       }),
     /official score/,
+  );
+});
+
+test("admin no-data resolutions whitelist outcomes and consequence overrides", () => {
+  assert.deepEqual(
+    parseAdminMatchResolutionInput({
+      expectedRevision: 2,
+      resolutionType: "recorded_result",
+      reason: "Verified against the complete venue recording.",
+      payload: {
+        home_score: 4,
+        away_score: 3,
+        home_refund_bps: 2500,
+        away_refund_bps: 10_000,
+        home_sr_delta: -15,
+        away_sr_delta: 15,
+        home_strikes: 1,
+        away_strikes: 0,
+        attendance: { HOME: "PRESENT", AWAY: "PRESENT" },
+        ignored_client_field: "not forwarded",
+      },
+    }),
+    {
+      expectedRevision: 2,
+      resolutionType: "RECORDED_RESULT",
+      reason: "Verified against the complete venue recording.",
+      payload: {
+        home_score: 4,
+        away_score: 3,
+        home_refund_bps: 2500,
+        away_refund_bps: 10_000,
+        home_sr_delta: -15,
+        away_sr_delta: 15,
+        home_strikes: 1,
+        away_strikes: 0,
+        attendance: { HOME: "PRESENT", AWAY: "PRESENT" },
+      },
+    },
+  );
+
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 0,
+      resolutionType: "RECORDED_RESULT",
+      reason: "A result was reportedly available but no scores were entered.",
+      payload: {},
+    }),
+    /both final scores/i,
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 0,
+      resolutionType: "AUTOMATIC_NO_SHOW",
+      reason: "The system should never invent an attendance outcome.",
+    }),
+    /supported match resolution/i,
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 1,
+      resolutionType: "HOME_NO_SHOW",
+      reason: "The away side was present and the home side did not appear.",
+      payload: { away_refund_bps: 10_001 },
+    }),
+    /refund percentages/i,
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 0,
+      resolutionType: "ADMINISTRATIVE_VOID",
+      reason: "The match must be voided without assigning team blame.",
+      payload: ["unexpected"],
+    }),
+    /details must be an object/i,
+  );
+});
+
+test("reopening a match resolution requires its case and an audited reason", () => {
+  assert.deepEqual(
+    parseAdminMatchResolutionReopenInput({
+      caseId: MATCH_ID.toUpperCase(),
+      reason: "New evidence requires a corrected resolution.",
+    }),
+    {
+      caseId: MATCH_ID,
+      reason: "New evidence requires a corrected resolution.",
+    },
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionReopenInput({
+      caseId: MATCH_ID,
+      reason: "short",
+    }),
+    /correction reason/i,
   );
 });
 

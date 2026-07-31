@@ -38,6 +38,67 @@ export type AdminGameStoppageSummary = {
   createdAt: string;
 };
 
+export type AdminGameResolutionRevision = {
+  id: string;
+  revision: number;
+  resolutionType: string;
+  reason: string;
+  payload: Record<string, unknown>;
+  consequenceSnapshot: Record<string, unknown>;
+  createdBy: string | null;
+  createdAt: string;
+  supersedesRevisionId: string | null;
+};
+
+export type AdminGameResolutionRefund = {
+  id: string;
+  revisionId: string | null;
+  recipientProfileId: string | null;
+  clanId: string | null;
+  side: string | null;
+  amountFils: number;
+  refundBps: number;
+  destination: string;
+  status: string;
+  failureReason: string | null;
+  walletTransactionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AdminGameResolutionDispute = {
+  id: string;
+  revisionId: string | null;
+  submittedBy: string | null;
+  clanId: string | null;
+  reason: string;
+  status: string;
+  submittedAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  resolutionNote: string | null;
+};
+
+export type AdminGameResolutionCase = {
+  id: string;
+  matchKind: "SOLO" | "CLAN";
+  state: string;
+  reasonCode: string;
+  scheduledEndAt: string;
+  detectedAt: string;
+  highPriorityAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+  currentRevision: number;
+  evidenceSnapshot: Record<string, unknown>;
+  policySnapshot: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  revisions: AdminGameResolutionRevision[];
+  refunds: AdminGameResolutionRefund[];
+  disputes: AdminGameResolutionDispute[];
+};
+
 export type AdminGameDetail = {
   fixture: RefereeFixture;
   participants: AdminGameParticipants;
@@ -67,6 +128,7 @@ export type AdminGameDetail = {
   audit: AdminGameAuditItem[];
   reports: AdminGameReportSummary[];
   stoppages: AdminGameStoppageSummary[];
+  resolutionCase: AdminGameResolutionCase | null;
 };
 
 type Row = Record<string, unknown>;
@@ -95,6 +157,7 @@ export async function loadAdminGameDetail(
     reportResult,
     stoppageResult,
     ratingSummary,
+    resolutionCase,
   ] = await Promise.all([
     gamePromise,
     loadAdminGameParticipants(db, matchKind, matchId),
@@ -126,6 +189,7 @@ export async function loadAdminGameDetail(
     matchKind === "CLAN"
       ? loadClanRatingSummary(db, matchId)
       : loadSoloRatingSummary(db, matchId),
+    loadAdminGameResolution(db, matchKind, matchId),
   ]);
 
   const fixture = games.find((game) => game.id === matchId);
@@ -169,6 +233,113 @@ export async function loadAdminGameDetail(
       reasonCode: text(row.reason_code),
       note: nullableText(row.note),
       createdAt: text(row.created_at),
+    })),
+    resolutionCase,
+  };
+}
+
+async function loadAdminGameResolution(
+  db: SupabaseClient,
+  matchKind: "SOLO" | "CLAN",
+  matchId: string,
+): Promise<AdminGameResolutionCase | null> {
+  const matchColumn = matchKind === "CLAN" ? "fixture_id" : "open_queue_game_id";
+  const { data: caseData, error: caseError } = await db
+    .from("match_resolution_cases")
+    .select(
+      "id,match_kind,fixture_id,open_queue_game_id,state,reason_code,scheduled_end_at,detected_at,high_priority_at,resolved_at,resolved_by,current_revision,evidence_snapshot,policy_snapshot,created_at,updated_at",
+    )
+    .eq("match_kind", matchKind)
+    .eq(matchColumn, matchId)
+    .maybeSingle();
+  if (caseError) {
+    throw new Error(`Could not load match resolution: ${caseError.message}`);
+  }
+  if (!caseData) return null;
+
+  const caseRow = caseData as Row;
+  const caseId = text(caseRow.id);
+  const [revisionResult, refundResult, disputeResult] = await Promise.all([
+    db.from("match_resolution_revisions")
+      .select(
+        "id,case_id,revision,resolution_type,reason,payload,consequence_snapshot,created_by,created_at,supersedes_revision_id",
+      )
+      .eq("case_id", caseId)
+      .order("revision", { ascending: false }),
+    db.from("match_resolution_refunds")
+      .select(
+        "id,case_id,revision_id,recipient_profile_id,clan_id,side,amount_fils,refund_bps,destination,status,failure_reason,wallet_transaction_id,created_at,updated_at",
+      )
+      .eq("case_id", caseId)
+      .order("created_at", { ascending: false }),
+    db.from("match_resolution_disputes")
+      .select(
+        "id,case_id,revision_id,submitted_by,clan_id,reason,status,submitted_at,resolved_at,resolved_by,resolution_note",
+      )
+      .eq("case_id", caseId)
+      .order("submitted_at", { ascending: false }),
+  ]);
+  const firstError = [
+    revisionResult,
+    refundResult,
+    disputeResult,
+  ].find((result) => result.error)?.error;
+  if (firstError) {
+    throw new Error(`Could not load match resolution history: ${firstError.message}`);
+  }
+
+  return {
+    id: caseId,
+    matchKind,
+    state: text(caseRow.state, "NO_DATA").toUpperCase(),
+    reasonCode: text(caseRow.reason_code, "NO_ACTIVITY").toUpperCase(),
+    scheduledEndAt: text(caseRow.scheduled_end_at),
+    detectedAt: text(caseRow.detected_at),
+    highPriorityAt: text(caseRow.high_priority_at),
+    resolvedAt: nullableText(caseRow.resolved_at),
+    resolvedBy: nullableText(caseRow.resolved_by),
+    currentRevision: integer(caseRow.current_revision),
+    evidenceSnapshot: record(caseRow.evidence_snapshot),
+    policySnapshot: record(caseRow.policy_snapshot),
+    createdAt: text(caseRow.created_at),
+    updatedAt: text(caseRow.updated_at),
+    revisions: rows(revisionResult.data).map((row) => ({
+      id: text(row.id),
+      revision: integer(row.revision),
+      resolutionType: text(row.resolution_type),
+      reason: text(row.reason),
+      payload: record(row.payload),
+      consequenceSnapshot: record(row.consequence_snapshot),
+      createdBy: nullableText(row.created_by),
+      createdAt: text(row.created_at),
+      supersedesRevisionId: nullableText(row.supersedes_revision_id),
+    })),
+    refunds: rows(refundResult.data).map((row) => ({
+      id: text(row.id),
+      revisionId: nullableText(row.revision_id),
+      recipientProfileId: nullableText(row.recipient_profile_id),
+      clanId: nullableText(row.clan_id),
+      side: nullableText(row.side),
+      amountFils: integer(row.amount_fils),
+      refundBps: integer(row.refund_bps),
+      destination: text(row.destination, "FIELD_WALLET"),
+      status: text(row.status, "PENDING").toUpperCase(),
+      failureReason: nullableText(row.failure_reason),
+      walletTransactionId: nullableText(row.wallet_transaction_id),
+      createdAt: text(row.created_at),
+      updatedAt: text(row.updated_at),
+    })),
+    disputes: rows(disputeResult.data).map((row) => ({
+      id: text(row.id),
+      revisionId: nullableText(row.revision_id),
+      submittedBy: nullableText(row.submitted_by),
+      clanId: nullableText(row.clan_id),
+      reason: text(row.reason),
+      status: text(row.status, "OPEN").toUpperCase(),
+      submittedAt: text(row.submitted_at),
+      resolvedAt: nullableText(row.resolved_at),
+      resolvedBy: nullableText(row.resolved_by),
+      resolutionNote: nullableText(row.resolution_note),
     })),
   };
 }
@@ -286,6 +457,12 @@ function rows(value: unknown): Row[] {
   return Array.isArray(value)
     ? value.filter((row): row is Row => Boolean(row) && typeof row === "object")
     : [];
+}
+
+function record(value: unknown): Row {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Row
+    : {};
 }
 
 function text(value: unknown, fallback = "") {

@@ -426,7 +426,7 @@ function GamesView({
   useEffect(() => {
     setEventDialog(null);
     setView("match");
-  }, [activeFixture?.id]);
+  }, [activeFixture?.id, activeFixture?.operationalState]);
 
   if (fixtures.length === 0) {
     return (
@@ -450,7 +450,10 @@ function GamesView({
 
   if (!activeFixture) return null;
 
-  const canRecordEvent = activeFixture.status === "LIVE";
+  const resolutionLocked = ["NO_DATA", "UNDER_REVIEW"].includes(
+    activeFixture.operationalState?.toUpperCase() ?? "",
+  );
+  const canRecordEvent = activeFixture.status === "LIVE" && !resolutionLocked;
   const activeBlueCards = activeFixture.blueCards.filter(
     (card) => card.status === "ACTIVE",
   );
@@ -465,8 +468,13 @@ function GamesView({
       <section className="referee-match-header">
         <div className="referee-match-header-top">
           <span>{fixtures.length > 1 ? `Match ${fixtures.indexOf(activeFixture) + 1} of ${fixtures.length}` : "Your assigned match"}</span>
-          <span className={`fixture-status ${activeFixture.status.toLowerCase()}`}>
-            {friendlyFixtureStatus(activeFixture.status)}
+          <span className={`fixture-status ${
+            (activeFixture.operationalState ?? activeFixture.status).toLowerCase()
+          }`}>
+            {friendlyFixtureStatus(
+              activeFixture.status,
+              activeFixture.operationalState,
+            )}
           </span>
         </div>
         {fixtures.length > 1 ? (
@@ -500,6 +508,14 @@ function GamesView({
         submitting={submitting}
         onRunAction={onRunAction}
       />
+
+      {resolutionLocked ? (
+        <div className="result-locked-note">
+          <span aria-hidden="true">!</span>
+          This match is read-only while Field admins review the missing result.
+          Reports remain available as evidence.
+        </div>
+      ) : null}
 
       <nav className="referee-view-tabs" aria-label="Match tools">
         <button
@@ -556,8 +572,18 @@ function GamesView({
             <small>of {attendance.expectedCount}</small>
           </span>
           <span>
-            <strong>{attendance.canFinalizeAttendance ? "Attendance needs finalizing" : "Player check-in"}</strong>
-            <small>{attendance.missingCount} still missing · tap to manage</small>
+            <strong>
+              {resolutionLocked
+                ? "Attendance recorded so far"
+                : attendance.canFinalizeAttendance
+                  ? "Attendance needs finalizing"
+                  : "Player check-in"}
+            </strong>
+            <small>
+              {resolutionLocked
+                ? `${attendance.missingCount} missing · read-only during review`
+                : `${attendance.missingCount} still missing · tap to manage`}
+            </small>
           </span>
           <span aria-hidden="true">›</span>
         </button>
@@ -568,7 +594,11 @@ function GamesView({
           <div>
             <span className="match-action-kicker">Match controls</span>
             <h2 className="panel-title">
-              {canRecordEvent ? "Record what happens" : "Ready when play starts"}
+              {resolutionLocked
+                ? "Admin review in progress"
+                : canRecordEvent
+                  ? "Record what happens"
+                  : "Ready when play starts"}
             </h2>
           </div>
           <span className={`match-action-live ${canRecordEvent ? "active" : ""}`}>
@@ -603,15 +633,17 @@ function GamesView({
           </button>
         </div>
 
-        <RefereeSafetyPanel
-          compact
-          fixture={activeFixture}
-          submitting={submitting}
-          onAction={onSafetyAction}
-        />
+        {resolutionLocked ? null : (
+          <RefereeSafetyPanel
+            compact
+            fixture={activeFixture}
+            submitting={submitting}
+            onAction={onSafetyAction}
+          />
+        )}
       </section>
 
-      {activeBlueCards.length > 0 ? (
+      {!resolutionLocked && activeBlueCards.length > 0 ? (
         <section className="panel active-card-panel">
           <div className="panel-heading">
             <div>
@@ -658,7 +690,7 @@ function GamesView({
         </div>
       </details>
 
-      {activeFixture.status === "FINAL" ? (
+      {activeFixture.status === "FINAL" && !resolutionLocked ? (
         <div className="result-locked-note">
           <span aria-hidden="true">✓</span>
           Final result saved. Admin corrections remain fully audited.
@@ -671,6 +703,7 @@ function GamesView({
         <div className="referee-view-panel referee-view-players">
           <AttendancePanel
             fixture={activeFixture}
+            readOnly={resolutionLocked}
             submitting={submitting}
             onRunAction={onRunAction}
           />
@@ -684,7 +717,7 @@ function GamesView({
             fixture={activeFixture}
           />
 
-          {activeFixture.reliabilityContext ? (
+          {activeFixture.reliabilityContext && !resolutionLocked ? (
             <section className="panel referee-operations-panel">
               <RefereeReliabilityEvidencePanel
                 fixture={activeFixture}
@@ -745,10 +778,12 @@ function GamesView({
 
 function AttendancePanel({
   fixture,
+  readOnly = false,
   submitting,
   onRunAction,
 }: {
   fixture: RefereeFixture;
+  readOnly?: boolean;
   submitting: string | null;
   onRunAction: (body: FixtureActionBody) => Promise<void>;
 }) {
@@ -779,7 +814,9 @@ function AttendancePanel({
   const deadline = formatAttendanceTime(context.checkInDeadlineAt);
   const kickoff = formatAttendanceTime(context.kickoffAt);
   const cutoff = formatAttendanceTime(context.noShowCutoffAt);
-  const statusLabel = context.attendanceFinalized
+  const statusLabel = readOnly
+    ? "Admin review"
+    : context.attendanceFinalized
     ? "Attendance final"
     : context.canFinalizeAttendance
       ? "Ready to finalize"
@@ -809,6 +846,13 @@ function AttendancePanel({
         <span>On-time arrival is by {deadline} · kickoff is {kickoff}</span>
       </p>
 
+      {readOnly ? (
+        <p className="attendance-cutoff-note">
+          Attendance is visible for reference, but check-in changes are locked
+          until an admin resolves this match.
+        </p>
+      ) : null}
+
       <div className="attendance-summary" aria-label="Attendance totals">
         <span><strong>{context.checkedInCount}</strong> checked in</span>
         <span><strong>{context.lateCount}</strong> late</span>
@@ -824,8 +868,10 @@ function AttendancePanel({
         <div className="attendance-player-list">
           {context.players.map((player) => (
             <AttendancePlayerRow
-              canCheckIn={context.canCheckIn && !context.attendanceFinalized}
-              canRemoveCheckIn={player.canRemoveCheckIn}
+              canCheckIn={
+                !readOnly && context.canCheckIn && !context.attendanceFinalized
+              }
+              canRemoveCheckIn={!readOnly && player.canRemoveCheckIn}
               key={player.profileId}
               player={player}
               submitting={submitting}
@@ -836,7 +882,8 @@ function AttendancePanel({
         </div>
       </details>
 
-      {!context.attendanceFinalized && context.canFinalizeAttendance ? (
+      {readOnly ? null : !context.attendanceFinalized &&
+        context.canFinalizeAttendance ? (
         <div className="attendance-finalize">
           <div>
             <strong>No-show cutoff reached</strong>
@@ -863,7 +910,7 @@ function AttendancePanel({
       )}
     </section>
     <CheckInTimingDialog
-      player={playerToCheckIn}
+      player={readOnly ? null : playerToCheckIn}
       submitting={submitting}
       onClose={() => setPlayerToCheckIn(null)}
       onConfirm={async (timing) => {
@@ -877,7 +924,7 @@ function AttendancePanel({
       }}
     />
     <RemoveCheckInDialog
-      player={playerToRemove}
+      player={readOnly ? null : playerToRemove}
       submitting={submitting}
       onClose={() => setPlayerToRemove(null)}
       onConfirm={async (reasonCode, note) => {
@@ -1546,8 +1593,12 @@ function TimerPanel({
   const elapsedSeconds = Math.min(rawElapsedSeconds, MAX_MATCH_SECONDS);
   const duration = fixture.clock?.durationSeconds ?? 3600;
   const progress = Math.min(1, elapsedSeconds / duration);
-  const isClosed = fixture.status === "FINAL" || status === "ENDED";
-  const isBeforeStart = status === "NOT_STARTED" &&
+  const resolutionLocked = ["NO_DATA", "UNDER_REVIEW"].includes(
+    fixture.operationalState?.toUpperCase() ?? "",
+  );
+  const isClosed =
+    fixture.status === "FINAL" || status === "ENDED" || resolutionLocked;
+  const isBeforeStart = !resolutionLocked && status === "NOT_STARTED" &&
     (fixture.matchKind === "SOLO"
       ? fixture.status === "FULL"
       : fixture.status === "SCHEDULED");
@@ -1588,6 +1639,7 @@ function TimerPanel({
 
   useEffect(() => {
     if (
+      resolutionLocked ||
       status !== "RUNNING" ||
       rawElapsedSeconds < MAX_MATCH_SECONDS ||
       autoStopFixtureId.current === fixture.id
@@ -1597,7 +1649,7 @@ function TimerPanel({
 
     autoStopFixtureId.current = fixture.id;
     void onRunAction({ action: "finish" });
-  }, [fixture.id, onRunAction, rawElapsedSeconds, status]);
+  }, [fixture.id, onRunAction, rawElapsedSeconds, resolutionLocked, status]);
 
   const correctedMinuteValue = Number(correctedMinutes);
   const correctedSecondValue = Number(correctedSeconds);
@@ -1734,7 +1786,7 @@ function TimerPanel({
       <div className="control-grid single">
         {isClosed ? (
           <button className="ghost-button" disabled type="button">
-            Final
+            {resolutionLocked ? "Admin review" : "Final"}
           </button>
         ) : status === "RUNNING" ? (
           <button
@@ -1771,14 +1823,18 @@ function TimerPanel({
           </button>
         )}
       </div>
-      {!isClosed && status === "NOT_STARTED" && startBlockedReason ? (
+      {resolutionLocked ? (
+        <p className="timer-start-note">
+          Clock and result controls are locked until the admin review is resolved.
+        </p>
+      ) : !isClosed && status === "NOT_STARTED" && startBlockedReason ? (
         <p className="timer-start-note">{startBlockedReason}</p>
       ) : soloTeamsPending && canAdminister ? (
         <p className="timer-start-note admin-override">
           Admin test start: all booked players must be checked in. The early team reveal and completion are audited.
         </p>
       ) : null}
-      {status === "RUNNING" || status === "PAUSED" ? (
+      {!resolutionLocked && (status === "RUNNING" || status === "PAUSED") ? (
         <details className="timer-end-disclosure">
           <summary>End match</summary>
           <div>
@@ -1794,7 +1850,7 @@ function TimerPanel({
           </div>
         </details>
       ) : null}
-      {isClosed && compact ? (
+      {isClosed && !resolutionLocked && compact ? (
         <details className="clock-editor clock-editor-disclosure">
           <summary>
             <span>
@@ -1818,7 +1874,7 @@ function TimerPanel({
             }
           />
         </details>
-      ) : isClosed ? (
+      ) : isClosed && !resolutionLocked ? (
         <div className="clock-editor">
           <div className="clock-editor-title">Correct match time</div>
           <ClockEditor
@@ -2546,7 +2602,12 @@ function formatMatchDate(value: string) {
   }).format(date);
 }
 
-function friendlyFixtureStatus(status: RefereeFixture["status"]) {
+function friendlyFixtureStatus(
+  status: RefereeFixture["status"],
+  operationalState: string | null = null,
+) {
+  if (operationalState === "NO_DATA") return "No data";
+  if (operationalState === "UNDER_REVIEW") return "Under review";
   switch (status) {
     case "LIVE":
       return "Live now";

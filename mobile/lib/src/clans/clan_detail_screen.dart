@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -13,6 +15,7 @@ import '../moderation/report_issue_sheet.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import 'clan.dart';
+import 'clan_reliability.dart';
 import 'clan_repository.dart';
 import 'clan_widgets.dart';
 import 'customize_clan_screen.dart';
@@ -49,15 +52,18 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   List<ClanMember> _members = const [];
   List<ClanJoinRequest> _pendingRequests = const [];
   List<Fixture> _fixtures = const [];
+  ClanReliabilitySummary? _reliabilitySummary;
   ClanMembership? _currentMembership;
   ClanJoinRequest? _myJoinRequest;
   bool _isLoadingMembers = true;
   bool _isLoadingRequests = true;
+  bool _isLoadingReliability = true;
   bool _isSubmittingJoinRequest = false;
   bool _isArchiving = false;
   String? _activeMemberAction;
   String? _activeJoinRequest;
   String? _membersErrorText;
+  String? _reliabilityErrorText;
 
   Clan get clan => _clan;
 
@@ -230,6 +236,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   }
 
   Future<void> _loadClanData() async {
+    unawaited(_loadClanReliability());
     setState(() {
       _isLoadingMembers = true;
       _isLoadingRequests = true;
@@ -280,6 +287,42 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
           _isLoadingRequests = false;
         });
       }
+    }
+  }
+
+  Future<void> _loadClanReliability() async {
+    final repository = widget.clanRepository;
+    if (repository is! ClanReliabilityRepository) {
+      if (mounted) setState(() => _isLoadingReliability = false);
+      return;
+    }
+    final reliabilityRepository = repository as ClanReliabilityRepository;
+
+    setState(() {
+      _isLoadingReliability = true;
+      _reliabilityErrorText = null;
+    });
+    try {
+      final summary = await reliabilityRepository.getClanReliabilitySummary(
+        clan.id,
+      );
+      if (summary.clanId.isNotEmpty && summary.clanId != clan.id) {
+        throw StateError(
+          'Field returned reliability details for another clan.',
+        );
+      }
+      if (!mounted) return;
+      setState(() => _reliabilitySummary = summary);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _reliabilityErrorText = userFacingError(
+          error,
+          fallback: 'Clan reliability details are unavailable right now.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _isLoadingReliability = false);
     }
   }
 
@@ -659,6 +702,12 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
                   key: const ValueKey('overview'),
                   clan: clan,
                   detail: detail,
+                  showReliability:
+                      widget.clanRepository is ClanReliabilityRepository,
+                  reliabilitySummary: _reliabilitySummary,
+                  isLoadingReliability: _isLoadingReliability,
+                  reliabilityErrorText: _reliabilityErrorText,
+                  onRetryReliability: _loadClanReliability,
                 ),
                 1 => _MatchesTab(
                   key: const ValueKey('matches'),
@@ -1207,16 +1256,39 @@ class _SegmentedTabButton extends StatelessWidget {
 }
 
 class _OverviewTab extends StatelessWidget {
-  const _OverviewTab({super.key, required this.clan, required this.detail});
+  const _OverviewTab({
+    super.key,
+    required this.clan,
+    required this.detail,
+    required this.showReliability,
+    required this.reliabilitySummary,
+    required this.isLoadingReliability,
+    required this.reliabilityErrorText,
+    required this.onRetryReliability,
+  });
 
   final Clan clan;
   final _ClanDetailData detail;
+  final bool showReliability;
+  final ClanReliabilitySummary? reliabilitySummary;
+  final bool isLoadingReliability;
+  final String? reliabilityErrorText;
+  final Future<void> Function() onRetryReliability;
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
         _RatingPanel(clan: clan),
+        if (showReliability) ...[
+          const SizedBox(height: 16),
+          _ClanReliabilityCard(
+            summary: reliabilitySummary,
+            isLoading: isLoadingReliability,
+            errorText: reliabilityErrorText,
+            onRetry: onRetryReliability,
+          ),
+        ],
         if (detail.nextMatch != null) ...[
           const SizedBox(height: 16),
           _NextMatchCard(match: detail.nextMatch!),
@@ -1396,6 +1468,485 @@ class _RatingPanel extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ClanReliabilityCard extends StatelessWidget {
+  const _ClanReliabilityCard({
+    required this.summary,
+    required this.isLoading,
+    required this.errorText,
+    required this.onRetry,
+  });
+
+  final ClanReliabilitySummary? summary;
+  final bool isLoading;
+  final String? errorText;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading && summary == null) {
+      return const KeyedSubtree(
+        key: ValueKey('clan-reliability-loading'),
+        child: _Panel(
+          child: SizedBox(
+            height: 68,
+            child: Row(
+              children: [
+                SizedBox.square(
+                  dimension: 22,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.4,
+                    color: fieldEmerald600,
+                  ),
+                ),
+                SizedBox(width: 13),
+                Expanded(
+                  child: Text(
+                    'Loading clan reliability…',
+                    style: TextStyle(
+                      color: fieldGray600,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (errorText != null && summary == null) {
+      return KeyedSubtree(
+        key: const ValueKey('clan-reliability-error'),
+        child: _Panel(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.shield_outlined, color: fieldGray400, size: 24),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Reliability unavailable',
+                      style: TextStyle(
+                        color: fieldGray900,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(
+                        color: fieldGray500,
+                        fontSize: 12,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    TextButton(
+                      key: const ValueKey('retry-clan-reliability'),
+                      onPressed: onRetry,
+                      style: TextButton.styleFrom(
+                        foregroundColor: fieldEmerald700,
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: const Text(
+                        'Try again',
+                        style: TextStyle(fontWeight: FontWeight.w900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final reliability = summary;
+    if (reliability == null) return const SizedBox.shrink();
+
+    final hasActiveStrikes = reliability.activeStrikes > 0;
+    final accent = hasActiveStrikes ? const Color(0xFFB45309) : fieldEmerald600;
+    final surface = hasActiveStrikes ? const Color(0xFFFFFBEB) : fieldEmerald50;
+    final border = hasActiveStrikes ? const Color(0xFFFDE68A) : fieldEmerald100;
+    final consequences = reliability.consequenceSummary;
+
+    return Container(
+      key: const ValueKey('clan-reliability-card'),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: border),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  hasActiveStrikes
+                      ? Icons.policy_rounded
+                      : Icons.verified_user_rounded,
+                  color: accent,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 11),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'CLAN RELIABILITY',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Reliability standing',
+                      style: TextStyle(
+                        color: fieldGray900,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(
+                key: const ValueKey('clan-active-strikes'),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${reliability.activeStrikes} ACTIVE',
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 9,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .6,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Text(
+            hasActiveStrikes
+                ? '${reliability.activeStrikes} active clan '
+                      '${reliability.activeStrikes == 1 ? 'strike' : 'strikes'}. '
+                      'Each strike expires on its own schedule.'
+                : 'No active clan reliability strikes.',
+            style: const TextStyle(
+              color: fieldGray600,
+              fontSize: 12,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (!reliability.isMember) ...[
+            const SizedBox(height: 12),
+            Container(
+              key: const ValueKey('clan-reliability-private-note'),
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: fieldGray100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.lock_outline_rounded,
+                    size: 16,
+                    color: fieldGray500,
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Strike details are private to current clan members.',
+                      style: TextStyle(
+                        color: fieldGray600,
+                        fontSize: 11,
+                        height: 1.35,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ] else ...[
+            if (consequences.depositRequired ||
+                consequences.activeSanctionCount > 0) ...[
+              const SizedBox(height: 13),
+              Wrap(
+                spacing: 7,
+                runSpacing: 7,
+                children: [
+                  if (consequences.depositRequired)
+                    const _ReliabilityConsequenceChip(
+                      icon: Icons.account_balance_wallet_outlined,
+                      label: 'Deposit required',
+                    ),
+                  if (consequences.activeSanctionCount > 0)
+                    _ReliabilityConsequenceChip(
+                      icon: Icons.gpp_maybe_outlined,
+                      label:
+                          '${consequences.activeSanctionCount} active '
+                          '${consequences.activeSanctionCount == 1 ? 'sanction' : 'sanctions'}',
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 16),
+            const Divider(height: 1, color: fieldGray100),
+            const SizedBox(height: 13),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'PRIVATE STRIKE HISTORY',
+                    style: TextStyle(
+                      color: fieldGray700,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                ),
+                Icon(Icons.lock_rounded, color: fieldGray400, size: 14),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (reliability.incidents.isEmpty)
+              const Text(
+                'No clan reliability incidents have been recorded.',
+                key: ValueKey('clan-reliability-empty-history'),
+                style: TextStyle(
+                  color: fieldGray500,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              )
+            else
+              Column(
+                key: const ValueKey('clan-reliability-private-history'),
+                children: [
+                  for (
+                    var index = 0;
+                    index < reliability.incidents.length;
+                    index++
+                  ) ...[
+                    _ClanReliabilityIncidentRow(
+                      incident: reliability.incidents[index],
+                    ),
+                    if (index != reliability.incidents.length - 1)
+                      const Divider(height: 19, color: fieldGray100),
+                  ],
+                ],
+              ),
+          ],
+          if (isLoading) ...[
+            const SizedBox(height: 12),
+            const LinearProgressIndicator(
+              minHeight: 2,
+              color: fieldEmerald600,
+              backgroundColor: fieldGray100,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _ReliabilityConsequenceChip extends StatelessWidget {
+  const _ReliabilityConsequenceChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBEB),
+        border: Border.all(color: const Color(0xFFFDE68A)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: const Color(0xFFB45309)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF92400E),
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClanReliabilityIncidentRow extends StatelessWidget {
+  const _ClanReliabilityIncidentRow({required this.incident});
+
+  final ClanReliabilityIncident incident;
+
+  @override
+  Widget build(BuildContext context) {
+    final contextParts = <String>[
+      if (incident.fixtureLabel case final fixture?) fixture,
+      if (incident.occurredAt case final occurred?)
+        _clanReliabilityDate(occurred),
+    ];
+    final auditParts = <String>[
+      if (incident.issuerLabel case final issuer?) 'Issued by $issuer',
+      if (incident.expiresAt case final expiry?)
+        incident.isActive
+            ? 'Expires ${_clanReliabilityDate(expiry)}'
+            : 'Expired ${_clanReliabilityDate(expiry)}',
+    ];
+
+    return Container(
+      key: ValueKey('clan-reliability-incident-${incident.id}'),
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: incident.isActive ? const Color(0xFFFFFBEB) : fieldGray100,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: incident.isActive ? const Color(0xFFFDE68A) : fieldGray200,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  incident.outcomeLabel,
+                  style: const TextStyle(
+                    color: fieldGray900,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              if (incident.strikeDelta != 0)
+                Text(
+                  '${incident.strikeDelta > 0 ? '+' : ''}'
+                  '${incident.strikeDelta} '
+                  '${incident.strikeDelta.abs() == 1 ? 'strike' : 'strikes'}',
+                  style: TextStyle(
+                    color: incident.strikeDelta > 0
+                        ? const Color(0xFFB45309)
+                        : fieldEmerald700,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+            ],
+          ),
+          if (contextParts.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(
+              contextParts.join(' · '),
+              style: const TextStyle(
+                color: fieldGray500,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (incident.reason case final reason?) ...[
+            const SizedBox(height: 8),
+            Text(
+              reason,
+              style: const TextStyle(
+                color: fieldGray700,
+                fontSize: 12,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+          if (auditParts.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              auditParts.join(' · '),
+              style: const TextStyle(
+                color: fieldGray400,
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+String _clanReliabilityDate(DateTime value) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final bahrain = value.toUtc().add(const Duration(hours: 3));
+  return '${months[bahrain.month - 1]} ${bahrain.day}, ${bahrain.year}';
 }
 
 class _NextMatchCard extends StatelessWidget {
@@ -2640,6 +3191,8 @@ class _PastMatchCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final badgeColor = match.isCancelled
         ? const Color(0xFFB45309)
+        : match.hasPendingOperationalResolution
+        ? const Color(0xFFB45309)
         : match.outcome == 'Victory'
         ? fieldEmerald600
         : match.outcome == 'Draw'
@@ -2647,6 +3200,8 @@ class _PastMatchCard extends StatelessWidget {
         : const Color(0xFFDC2626);
     final badgeBackground = match.isCancelled
         ? const Color(0xFFFFF7ED)
+        : match.hasPendingOperationalResolution
+        ? const Color(0xFFFFFBEB)
         : match.outcome == 'Victory'
         ? const Color(0xFFECFDF5)
         : match.outcome == 'Draw'
@@ -2701,7 +3256,7 @@ class _PastMatchCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              if (match.isCancelled)
+              if (match.isCancelled || match.hasPendingOperationalResolution)
                 Row(
                   children: [
                     Container(
@@ -2711,9 +3266,11 @@ class _PastMatchCard extends StatelessWidget {
                         color: const Color(0xFFFFF7ED),
                         borderRadius: BorderRadius.circular(10),
                       ),
-                      child: const Icon(
-                        Icons.event_busy_rounded,
-                        color: Color(0xFFEA580C),
+                      child: Icon(
+                        match.hasPendingOperationalResolution
+                            ? Icons.pending_actions_rounded
+                            : Icons.event_busy_rounded,
+                        color: const Color(0xFFEA580C),
                         size: 19,
                       ),
                     ),
@@ -2768,7 +3325,9 @@ class _PastMatchCard extends StatelessWidget {
                     ),
                   ],
                 ),
-              if (!match.isCancelled && match.srChange != null) ...[
+              if (!match.isCancelled &&
+                  !match.hasPendingOperationalResolution &&
+                  match.srChange != null) ...[
                 const SizedBox(height: 12),
                 const Divider(color: fieldGray100, height: 1),
                 const SizedBox(height: 10),
@@ -3308,9 +3867,10 @@ List<_FixtureSummary> _upcomingMatchesFor(Clan clan, List<Fixture> fixtures) {
       fixtures
           .where(
             (fixture) =>
-                fixture.status == FixtureStatus.open ||
-                fixture.status == FixtureStatus.scheduled ||
-                fixture.status == FixtureStatus.live,
+                !fixture.hasPendingOperationalResolution &&
+                (fixture.status == FixtureStatus.open ||
+                    fixture.status == FixtureStatus.scheduled ||
+                    fixture.status == FixtureStatus.live),
           )
           .toList()
         ..sort(_fixtureAscending);
@@ -3323,6 +3883,7 @@ List<_FixtureSummary> _pastMatchesFor(Clan clan, List<Fixture> fixtures) {
       fixtures
           .where(
             (fixture) =>
+                fixture.hasPendingOperationalResolution ||
                 fixture.status == FixtureStatus.finalResult ||
                 fixture.status == FixtureStatus.cancelled,
           )
@@ -3368,7 +3929,15 @@ _FixtureSummary _summaryFromFixture(Clan clan, Fixture fixture) {
     opponentScore: opponentScore ?? 0,
     srChange: fixture.srChangeFor(clan.id),
     isCancelled: isCancelled,
-    note: isCancelled ? fixture.cancellationDisplayReason : null,
+    note: isCancelled
+        ? fixture.cancellationDisplayReason
+        : fixture.operationalState == MatchOperationalState.noData
+        ? fixture.operationalReasonCode == 'RESULT_MISSING'
+              ? 'The final result is missing. An admin can finalize the outcome.'
+              : 'No match data was recorded. An admin can finalize the outcome.'
+        : fixture.operationalState == MatchOperationalState.underReview
+        ? 'An admin is reviewing this match. The outcome is not final.'
+        : null,
   );
 }
 
@@ -3412,8 +3981,13 @@ class _FixtureSummary {
   final bool isCancelled;
   final String? note;
 
+  bool get hasPendingOperationalResolution =>
+      fixture.hasPendingOperationalResolution;
+
   String get outcome {
     if (isCancelled) return 'Cancelled';
+    final operationalLabel = fixture.operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel;
     if (myScore > opponentScore) return 'Victory';
     if (myScore == opponentScore) return 'Draw';
     return 'Defeat';

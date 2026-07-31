@@ -3345,6 +3345,8 @@ button:disabled {
 .admin-status-badge.in_progress { background: #dbeafe; color: #1d4ed8; }
 .admin-status-badge.open,
 .admin-status-badge.triaged { background: #fef3c7; color: #a16207; }
+.admin-status-badge.no_data { background: #ffedd5; color: #c2410c; }
+.admin-status-badge.under_review { background: #ede9fe; color: #6d28d9; }
 .admin-status-badge.final { background: #e2e8f0; color: #334155; }
 .admin-status-badge.cancelled,
 .admin-status-badge.dismissed { background: #fee2e2; color: #b91c1c; }
@@ -6502,6 +6504,16 @@ button:disabled {
 .fixture-status.cancelled {
   background: #fee2e2;
   color: #991b1b;
+}
+
+.fixture-status.no_data {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.fixture-status.under_review {
+  background: #ede9fe;
+  color: #6d28d9;
 }
 
 .fixture-card-footer {

@@ -4,12 +4,17 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import type { AdminGameDetail } from "@/lib/admin-game-detail";
+import type {
+  AdminGameDetail,
+  AdminGameResolutionCase,
+  AdminGameResolutionRefund,
+} from "@/lib/admin-game-detail";
 import type { AdminGameParticipant } from "@/lib/admin-game-participants";
 import type {
   AdminGameReserve,
   AdminReserveCandidate,
 } from "@/lib/admin-game-reserves";
+import type { MatchResolutionType } from "@/lib/match-action-input";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   BroadcastControlResponse,
@@ -39,6 +44,9 @@ export default function AdminGameDetailPage() {
   const [clanActionId, setClanActionId] = useState<string | null>(null);
   const [assignReferee, setAssignReferee] = useState(false);
   const [cancelGame, setCancelGame] = useState(false);
+  const [resolveCase, setResolveCase] = useState(false);
+  const [retryRefund, setRetryRefund] =
+    useState<AdminGameResolutionRefund | null>(null);
 
   const load = useCallback(async (quiet = false) => {
     if (!accessToken || !gameId || !["SOLO", "CLAN"].includes(matchKind)) return;
@@ -112,6 +120,12 @@ export default function AdminGameDetailPage() {
 
   const fixture = detail.fixture;
   const activeReserve = detail.reserves.active[0];
+  const resolutionCase = detail.resolutionCase;
+  const needsResolution = Boolean(
+    resolutionCase &&
+    ["NO_DATA", "UNDER_REVIEW"].includes(resolutionCase.state),
+  );
+  const displayedStatus = resolutionDisplayStatus(detail);
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
@@ -123,16 +137,25 @@ export default function AdminGameDetailPage() {
       {error ? <div className={styles.error} role="alert">{error}<button onClick={() => setError(null)}>×</button></div> : null}
       {notice ? <div className={styles.notice} role="status">{notice}<button onClick={() => setNotice(null)}>×</button></div> : null}
 
+      {resolutionCase ? (
+        <ResolutionCaseBanner
+          caseData={resolutionCase}
+          detail={detail}
+          onResolve={() => setResolveCase(true)}
+          onRetryRefund={setRetryRefund}
+        />
+      ) : null}
+
       <section className={styles.hero}>
         <div className={styles.heroMeta}>
           <span className={styles.kind}>{fixture.matchKind === "SOLO" ? "SOLO QUEUE" : "CLAN FIXTURE"}</span>
-          <Status status={fixture.status} />
+          <Status status={displayedStatus} />
         </div>
         <div className={styles.scoreboard}>
           <Team clan={fixture.homeClan} detail={detail} side="home" />
           <div className={styles.score}>
             <strong>{score(fixture)}</strong>
-            <span>{fixture.status === "FINAL" ? "FINAL SCORE" : fixture.status === "LIVE" ? "LIVE" : "VS"}</span>
+            <span>{displayedStatus === "NO_DATA" ? "NO DATA" : displayedStatus === "UNDER_REVIEW" ? "UNDER REVIEW" : fixture.status === "FINAL" ? "FINAL SCORE" : fixture.status === "LIVE" ? "LIVE" : "VS"}</span>
           </div>
           <Team clan={fixture.awayClan} detail={detail} side="away" align="right" />
         </div>
@@ -216,6 +239,17 @@ export default function AdminGameDetailPage() {
           <section className={styles.card}>
             <SectionHead eyebrow="ADMIN CONTROLS" title="Resolve game issues" detail="Every action requires a reason and is permanently audited." />
             <div className={styles.adminActions}>
+              {needsResolution ? (
+                <button
+                  className={styles.primaryButton}
+                  onClick={() => setResolveCase(true)}
+                  type="button"
+                >
+                  {resolutionCase?.currentRevision
+                    ? "Review or correct resolution"
+                    : "Review & resolve no data"}
+                </button>
+              ) : null}
               <button
                 className={styles.secondaryButton}
                 disabled={!canAssignReferee(fixture.status)}
@@ -236,14 +270,18 @@ export default function AdminGameDetailPage() {
               ) : null}
               <button
                 className={styles.dangerButton}
-                disabled={!canCancelGame(fixture.status)}
+                disabled={needsResolution || !canCancelGame(fixture.status)}
                 onClick={() => setCancelGame(true)}
                 type="button"
               >
                 Cancel game
               </button>
             </div>
-            <p className={styles.actionHint}>Admin cancellation gives every payer a 100% Field Wallet refund, including held reliability deposits.</p>
+            <p className={styles.actionHint}>
+              {needsResolution
+                ? "Use the no-data review so attendance, refunds, SR and strikes are decided together."
+                : "Admin cancellation gives every payer a 100% Field Wallet refund, including held reliability deposits."}
+            </p>
           </section>
 
           <section className={styles.card}>
@@ -334,6 +372,33 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
+      {resolveCase && resolutionCase ? (
+        <ResolveMatchCaseDialog
+          accessToken={accessToken}
+          caseData={resolutionCase}
+          detail={detail}
+          onClose={() => setResolveCase(false)}
+          onSaved={async (savedNotice) => {
+            setResolveCase(false);
+            setNotice(savedNotice);
+            await load(true);
+          }}
+        />
+      ) : null}
+      {retryRefund && resolutionCase ? (
+        <RetryResolutionRefundDialog
+          accessToken={accessToken}
+          caseData={resolutionCase}
+          detail={detail}
+          refund={retryRefund}
+          onClose={() => setRetryRefund(null)}
+          onSaved={async (savedNotice) => {
+            setRetryRefund(null);
+            setNotice(savedNotice);
+            await load(true);
+          }}
+        />
+      ) : null}
       {removeReserve ? (
         <RemoveReserveDialog
           accessToken={accessToken}
@@ -348,6 +413,778 @@ export default function AdminGameDetailPage() {
         />
       ) : null}
     </main>
+  );
+}
+
+function ResolutionCaseBanner({
+  caseData,
+  detail,
+  onResolve,
+  onRetryRefund,
+}: {
+  caseData: AdminGameResolutionCase;
+  detail: AdminGameDetail;
+  onResolve: () => void;
+  onRetryRefund: (refund: AdminGameResolutionRefund) => void;
+}) {
+  const open = ["NO_DATA", "UNDER_REVIEW"].includes(caseData.state);
+  const highPriorityAt = new Date(caseData.highPriorityAt).getTime();
+  const critical = open &&
+    Number.isFinite(highPriorityAt) &&
+    highPriorityAt <= Date.now();
+  const openDisputes = caseData.disputes.filter((item) =>
+    ["OPEN", "UNDER_REVIEW", "PENDING"].includes(item.status),
+  );
+  const failedRefunds = caseData.refunds.filter((item) =>
+    ["FAILED", "REJECTED"].includes(item.status),
+  );
+  const pendingRefunds = caseData.refunds.filter((item) =>
+    ["PENDING", "PROCESSING", "QUEUED"].includes(item.status),
+  );
+  const completedRefunds = caseData.refunds.filter((item) =>
+    ["COMPLETED", "SUCCEEDED", "REFUNDED"].includes(item.status),
+  );
+  const latestRevision = caseData.revisions[0];
+  const currentRevisionId = caseData.revisions.find(
+    (revision) => revision.revision === caseData.currentRevision,
+  )?.id;
+  const retriableRefunds = failedRefunds.filter(
+    (refund) =>
+      refund.status === "FAILED" &&
+      refund.revisionId === currentRevisionId,
+  );
+
+  return (
+    <section
+      className={`${styles.resolutionBanner} ${
+        critical ? styles.resolutionCritical : open ? styles.resolutionOpen : styles.resolutionComplete
+      }`}
+      aria-label="Match data resolution"
+    >
+      <div className={styles.resolutionBannerMain}>
+        <div>
+          <span className={styles.resolutionEyebrow}>
+            {critical ? "CRITICAL · ADMIN ACTION REQUIRED" : open ? "NEEDS ATTENTION" : "RESOLUTION HISTORY"}
+          </span>
+          <h2>
+            {caseData.state === "NO_DATA"
+              ? "No match data was received"
+              : caseData.state === "UNDER_REVIEW"
+                ? "This match resolution is under review"
+                : "An admin resolution was recorded"}
+          </h2>
+          <p>
+            {caseData.state === "NO_DATA"
+              ? `The match passed its reporting window without an official result. Field has not assumed a no-show and no automatic attendance penalty was applied.`
+              : caseData.state === "UNDER_REVIEW"
+                ? "The recorded outcome and refund processing remain active while the dispute is reviewed. Any correction creates a new audited revision."
+                : latestRevision
+                  ? `${humanize(latestRevision.resolutionType)} was recorded. Previous decisions, corrections and refund attempts remain in the audit history.`
+                  : "This case is closed and retained for audit."}
+          </p>
+        </div>
+        <button className={styles.resolutionButton} onClick={onResolve} type="button">
+          {open
+            ? caseData.currentRevision
+              ? "Review or correct"
+              : "Resolve match"
+            : "Create correction"}
+        </button>
+      </div>
+      <dl className={styles.resolutionFacts}>
+        <div><dt>Reason</dt><dd>{humanize(caseData.reasonCode)}</dd></div>
+        <div><dt>Scheduled end</dt><dd>{formatDateTime(caseData.scheduledEndAt)}</dd></div>
+        <div><dt>Detected</dt><dd>{formatDateTime(caseData.detectedAt)}</dd></div>
+        <div><dt>Referee</dt><dd>{detail.assignedReferee?.displayName ?? "No referee assigned"}</dd></div>
+        <div><dt>Revision</dt><dd>{caseData.currentRevision || "Unresolved"}</dd></div>
+      </dl>
+      {openDisputes.length || failedRefunds.length || pendingRefunds.length || completedRefunds.length ? (
+        <div className={styles.resolutionFlags}>
+          {openDisputes.length ? <span>{openDisputes.length} open dispute{openDisputes.length === 1 ? "" : "s"} · effects stay active</span> : null}
+          {pendingRefunds.length ? <span>{pendingRefunds.length} refund{pendingRefunds.length === 1 ? "" : "s"} processing</span> : null}
+          {completedRefunds.length ? <span>{completedRefunds.length} refund{completedRefunds.length === 1 ? "" : "s"} completed</span> : null}
+          {retriableRefunds.length ? <span className={styles.failedFlag}>{retriableRefunds.length} refund{retriableRefunds.length === 1 ? "" : "s"} need retry</span> : null}
+          {failedRefunds.length > retriableRefunds.length ? <span>{failedRefunds.length - retriableRefunds.length} historical refund failure{failedRefunds.length - retriableRefunds.length === 1 ? "" : "s"} retained</span> : null}
+        </div>
+      ) : null}
+      {failedRefunds.length ? (
+        <div className={styles.failedRefundList}>
+          {failedRefunds.map((refund) => (
+            <article key={refund.id}>
+              <div>
+                <span>{refundSideLabel(refund, detail)} · {humanize(refund.status)}</span>
+                <strong>{formatBhd(refund.amountFils)}</strong>
+                <small>
+                  {humanize(refund.destination)} · {refund.refundBps / 100}% refund
+                  {refund.failureReason ? ` · ${refund.failureReason}` : " · No failure detail was recorded"}
+                </small>
+              </div>
+              {refund.status === "FAILED" && refund.revisionId === currentRevisionId ? (
+                <button onClick={() => onRetryRefund(refund)} type="button">
+                  Retry refund
+                </button>
+              ) : (
+                <em>
+                  {refund.revisionId !== currentRevisionId
+                    ? "Superseded · audit only"
+                    : "Manual review required"}
+                </em>
+              )}
+            </article>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RetryResolutionRefundDialog({
+  accessToken,
+  caseData,
+  detail,
+  refund,
+  onClose,
+  onSaved,
+}: {
+  accessToken: string;
+  caseData: AdminGameResolutionCase;
+  detail: AdminGameDetail;
+  refund: AdminGameResolutionRefund;
+  onClose: () => void;
+  onSaved: (notice: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const trimmedReason = reason.trim();
+
+  async function submit() {
+    if (trimmedReason.length < 10 || trimmedReason.length > 2000) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await fetchJson<{
+        result?: {
+          status?: string;
+          amount_fils?: number;
+          already_settled?: boolean;
+        };
+      }>(
+        `/api/referee/admin/games/${detail.fixture.matchKind.toLowerCase()}/${detail.fixture.id}/resolution/refunds/${refund.id}/retry`,
+        {
+          method: "POST",
+          headers: { ...auth(accessToken), "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: trimmedReason }),
+        },
+      );
+      const status = result.result?.status?.toUpperCase() ?? "COMPLETED";
+      const creditedFils = numericValue(result.result?.amount_fils);
+      const savedNotice = result.result?.already_settled
+        ? `This refund was already ${humanize(status).toLowerCase()}. No second credit was issued.`
+        : `Refund retry completed. ${formatBhd(creditedFils)} was credited to the original payer through ${humanize(refund.destination)}.`;
+      await onSaved(savedNotice);
+    } catch (retryError) {
+      setError(message(retryError, "Could not retry this refund."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div
+      className={styles.modalBackdrop}
+      role="presentation"
+      onMouseDown={(event) =>
+        !saving && event.target === event.currentTarget && onClose()
+      }
+    >
+      <section
+        aria-labelledby="retry-refund-title"
+        aria-modal="true"
+        className={`${styles.modal} ${styles.smallModal}`}
+        role="dialog"
+      >
+        <header>
+          <div>
+            <span>FAILED REFUND · REVISION {caseData.currentRevision}</span>
+            <h2 id="retry-refund-title">Retry this refund?</h2>
+          </div>
+          <button aria-label="Close refund retry" disabled={saving} onClick={onClose}>×</button>
+        </header>
+        <p className={styles.modalIntro}>
+          This retries the missing Field Wallet credit for the original payer.
+          It does not reverse completed refunds or issue a duplicate credit.
+        </p>
+        <dl className={styles.refundRetryFacts}>
+          <div><dt>Recipient</dt><dd>{refundSideLabel(refund, detail)}</dd></div>
+          <div><dt>Amount due</dt><dd>{formatBhd(refund.amountFils)}</dd></div>
+          <div><dt>Destination</dt><dd>{humanize(refund.destination)}</dd></div>
+          <div><dt>Failed because</dt><dd>{refund.failureReason ?? "No failure detail was recorded."}</dd></div>
+        </dl>
+        <div className={styles.modalWarning}>
+          <strong>This action is audited</strong>
+          <p>
+            The retry reason, admin, prior failure and resulting wallet
+            transaction are permanently recorded against this match.
+          </p>
+        </div>
+        <label>
+          <span>Why are you retrying it?</span>
+          <textarea
+            autoFocus
+            disabled={saving}
+            maxLength={2000}
+            placeholder="Example: Payer account was reconciled and the wallet credit can now be issued."
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+          />
+          <small>{trimmedReason.length} / 2000 · minimum 10 characters</small>
+        </label>
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+        <footer>
+          <button className={styles.cancelButton} disabled={saving} onClick={onClose}>
+            Keep failed
+          </button>
+          <button
+            className={styles.primaryButton}
+            disabled={saving || trimmedReason.length < 10 || trimmedReason.length > 2000}
+            onClick={() => void submit()}
+          >
+            {saving ? "Retrying securely…" : "Confirm refund retry"}
+          </button>
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSaved }: {
+  accessToken: string;
+  caseData: AdminGameResolutionCase;
+  detail: AdminGameDetail;
+  onClose: () => void;
+  onSaved: (notice: string) => Promise<void>;
+}) {
+  const [step, setStep] = useState(1);
+  const [resolutionType, setResolutionType] = useState<MatchResolutionType | "">("");
+  const [homeScore, setHomeScore] = useState("");
+  const [awayScore, setAwayScore] = useState("");
+  const [effects, setEffects] = useState<ResolutionEffects>(emptyResolutionEffects());
+  const [playerAttendance, setPlayerAttendance] =
+    useState<Record<string, PlayerAttendanceState>>({});
+  const [advanced, setAdvanced] = useState(false);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [preview, setPreview] = useState<AdminResolutionPreview | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fixture = detail.fixture;
+  const homeLabel = fixture.matchKind === "SOLO" ? "White team" : fixture.homeClan.tag;
+  const awayLabel = fixture.matchKind === "SOLO" ? "Black team" : fixture.awayClan.tag;
+  const homeSideCode = fixture.matchKind === "SOLO" ? "WHITE" : "HOME";
+  const awaySideCode = fixture.matchKind === "SOLO" ? "BLACK" : "AWAY";
+  const minimumAtKickoff = nestedNumber(
+    caseData.policySnapshot,
+    "clan",
+    "minimumAtKickoffWithoutForfeit",
+  );
+  const minimumOnTime = nestedNumber(
+    caseData.policySnapshot,
+    "clan",
+    "minimumOnTimeWithoutClanStrike",
+  );
+  const attendanceCandidates = resolutionAttendanceCandidates(detail);
+  const outcome = RESOLUTION_OUTCOMES.find((item) => item.type === resolutionType);
+
+  function chooseOutcome(type: MatchResolutionType) {
+    setResolutionType(type);
+    setEffects(defaultResolutionEffects(type));
+    setPlayerAttendance({});
+    setPreview(null);
+    setError(null);
+  }
+
+  function updateEffect(key: keyof ResolutionEffects, value: string) {
+    setEffects((current) => ({ ...current, [key]: value }));
+    setPreview(null);
+  }
+
+  async function next() {
+    setError(null);
+    if (step === 1) {
+      if (!resolutionType) {
+        setError("Choose what happened to this match.");
+        return;
+      }
+      if (resolutionType === "RECORDED_RESULT") {
+        const scoreError = validateWholeNumber(homeScore, 0, 99, `${homeLabel} score`) ??
+          validateWholeNumber(awayScore, 0, 99, `${awayLabel} score`);
+        if (scoreError) {
+          setError(scoreError);
+          return;
+        }
+      }
+    }
+    if (step === 2) {
+      if (resolutionType === "RECORDED_RESULT") {
+        const attendanceError = validateRecordedResultAttendance(
+          detail,
+          attendanceCandidates,
+          playerAttendance,
+          homeLabel,
+          awayLabel,
+        );
+        if (attendanceError) {
+          setError(attendanceError);
+          return;
+        }
+      }
+      const effectError = validateResolutionEffects(effects);
+      if (effectError) {
+        setError(effectError);
+        return;
+      }
+      if (!resolutionType) return;
+      setPreviewing(true);
+      try {
+        const payload = buildResolutionPayload(
+          resolutionType,
+          homeScore,
+          awayScore,
+          effects,
+          playerAttendance,
+        );
+        const response = await fetchJson<{
+          preview: AdminResolutionPreview;
+        }>(
+          `/api/referee/admin/games/${fixture.matchKind.toLowerCase()}/${fixture.id}/resolution/preview`,
+          {
+            method: "POST",
+            headers: { ...auth(accessToken), "Content-Type": "application/json" },
+            body: JSON.stringify({
+              expectedRevision: caseData.currentRevision,
+              resolutionType,
+              reason: "Consequence preview before admin confirmation.",
+              payload,
+            }),
+          },
+        );
+        setPreview(response.preview);
+      } catch (previewError) {
+        setError(message(previewError, "Could not calculate the exact consequences."));
+        return;
+      } finally {
+        setPreviewing(false);
+      }
+    }
+    setStep((current) => Math.min(3, current + 1));
+  }
+
+  async function submit() {
+    if (!resolutionType) return;
+    if (reason.trim().length < 10) {
+      setError("Add at least 10 characters explaining the evidence and decision.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const payload = buildResolutionPayload(
+        resolutionType,
+        homeScore,
+        awayScore,
+        effects,
+        playerAttendance,
+      );
+      await fetchJson(
+        `/api/referee/admin/games/${fixture.matchKind.toLowerCase()}/${fixture.id}/resolution`,
+        {
+          method: "POST",
+          headers: { ...auth(accessToken), "Content-Type": "application/json" },
+          body: JSON.stringify({
+            expectedRevision: caseData.currentRevision,
+            resolutionType,
+            reason: reason.trim(),
+            payload,
+          }),
+        },
+      );
+      await onSaved(
+        caseData.currentRevision
+          ? `Resolution corrected as ${humanize(resolutionType)}. Revision ${caseData.currentRevision + 1} preserves the earlier decision in the audit trail.`
+          : `Match resolved as ${humanize(resolutionType)}. Refunds and consequences are now being processed.`,
+      );
+    } catch (submitError) {
+      setError(message(submitError, "Could not resolve this match."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={styles.modalBackdrop} role="presentation">
+      <section
+        aria-modal="true"
+        aria-labelledby="resolution-title"
+        className={`${styles.modal} ${styles.resolutionModal}`}
+        role="dialog"
+      >
+        <header>
+          <div>
+            <span>MATCH DATA REVIEW · STEP {step} OF 3</span>
+            <h2 id="resolution-title">
+              {caseData.currentRevision ? "Review or correct resolution" : "Resolve missing match data"}
+            </h2>
+          </div>
+          <button aria-label="Close" disabled={saving} onClick={onClose}>×</button>
+        </header>
+
+        <ol className={styles.wizardSteps} aria-label="Resolution steps">
+          <li className={step >= 1 ? styles.activeStep : ""}><b>1</b><span>Outcome</span></li>
+          <li className={step >= 2 ? styles.activeStep : ""}><b>2</b><span>Consequences</span></li>
+          <li className={step >= 3 ? styles.activeStep : ""}><b>3</b><span>Confirm</span></li>
+        </ol>
+
+        {caseData.currentRevision ? (
+          <div className={styles.revisionNotice}>
+            <strong>This creates revision {caseData.currentRevision + 1}</strong>
+            <p>The previous resolution remains immutable. Corrections use new ledger and audit entries instead of deleting history.</p>
+          </div>
+        ) : null}
+
+        {step === 1 ? (
+          <>
+            <p className={styles.modalIntro}>
+              Choose only what the evidence supports. “No data” is not itself a no-show, so no attendance or reliability consequence is assumed.
+            </p>
+            <div className={styles.outcomeGrid}>
+              {RESOLUTION_OUTCOMES.map((item) => (
+                <button
+                  aria-pressed={resolutionType === item.type}
+                  className={resolutionType === item.type ? styles.selectedOutcome : ""}
+                  key={item.type}
+                  onClick={() => chooseOutcome(item.type)}
+                  type="button"
+                >
+                  <strong>{item.title}</strong>
+                  <span>{item.description}</span>
+                </button>
+              ))}
+            </div>
+            {resolutionType === "RECORDED_RESULT" ? (
+              <div className={styles.scoreInputs}>
+                <label><span>{homeLabel} final score</span><input inputMode="numeric" min={0} max={99} type="number" value={homeScore} onChange={(event) => setHomeScore(event.target.value)} /></label>
+                <b>–</b>
+                <label><span>{awayLabel} final score</span><input inputMode="numeric" min={0} max={99} type="number" value={awayScore} onChange={(event) => setAwayScore(event.target.value)} /></label>
+              </div>
+            ) : null}
+          </>
+        ) : null}
+
+        {step === 2 && resolutionType && outcome ? (
+          <>
+            <p className={styles.modalIntro}>{outcome.consequence}</p>
+            <div className={styles.consequenceGrid}>
+              <ConsequencePreview
+                label={`${homeLabel} refund`}
+                value={percentOrPolicy(effects.homeRefundPercent)}
+              />
+              <ConsequencePreview
+                label={`${awayLabel} refund`}
+                value={percentOrPolicy(effects.awayRefundPercent)}
+              />
+              {fixture.matchKind === "CLAN" ? (
+                <>
+                  <ConsequencePreview
+                    label={`${homeLabel} SR`}
+                    value={deltaOrPolicy(effects.homeSrDelta)}
+                  />
+                  <ConsequencePreview
+                    label={`${awayLabel} SR`}
+                    value={deltaOrPolicy(effects.awaySrDelta)}
+                  />
+                </>
+              ) : (
+                <ConsequencePreview
+                  label="Player SR"
+                  value="Calculated per player"
+                />
+              )}
+              <ConsequencePreview
+                label={`${homeLabel} strikes`}
+                value={numberOrPolicy(effects.homeStrikes)}
+              />
+              <ConsequencePreview
+                label={`${awayLabel} strikes`}
+                value={numberOrPolicy(effects.awayStrikes)}
+              />
+            </div>
+
+            {resolutionType === "RECORDED_RESULT" ? (
+              <PlayerAttendanceEditor
+                awayLabel={awayLabel}
+                candidates={attendanceCandidates}
+                detail={detail}
+                homeLabel={homeLabel}
+                onChange={(profileId, state) => {
+                  setPlayerAttendance((current) => {
+                    const next = { ...current };
+                    if (state) next[profileId] = state;
+                    else delete next[profileId];
+                    return next;
+                  });
+                  setPreview(null);
+                }}
+                values={playerAttendance}
+              />
+            ) : null}
+
+            <details
+              className={styles.advancedResolution}
+              open={advanced}
+              onToggle={(event) => setAdvanced(event.currentTarget.open)}
+            >
+              <summary>Advanced overrides</summary>
+              <p>Only override policy defaults when the evidence requires it. Every override is stored with this revision.</p>
+              {fixture.matchKind === "CLAN" ? (
+                <p>
+                  {minimumAtKickoff === null || minimumOnTime === null
+                    ? "This legacy match has no complete short-roster policy snapshot, so Field will not invent new reliability strikes."
+                    : `Snapshotted policy: ${minimumAtKickoff} players at kickoff avoids a forfeit; ${minimumOnTime} on-time players avoids a clan strike.`}
+                </p>
+              ) : null}
+              <div className={styles.formGrid}>
+                <label><span>{homeLabel} refund %</span><input inputMode="decimal" min={0} max={100} type="number" value={effects.homeRefundPercent} onChange={(event) => updateEffect("homeRefundPercent", event.target.value)} placeholder="Policy default" /></label>
+                <label><span>{awayLabel} refund %</span><input inputMode="decimal" min={0} max={100} type="number" value={effects.awayRefundPercent} onChange={(event) => updateEffect("awayRefundPercent", event.target.value)} placeholder="Policy default" /></label>
+                {fixture.matchKind === "CLAN" ? (
+                  <>
+                    <label><span>{homeLabel} SR delta</span><input inputMode="numeric" type="number" value={effects.homeSrDelta} onChange={(event) => updateEffect("homeSrDelta", event.target.value)} placeholder="Policy default" /></label>
+                    <label><span>{awayLabel} SR delta</span><input inputMode="numeric" type="number" value={effects.awaySrDelta} onChange={(event) => updateEffect("awaySrDelta", event.target.value)} placeholder="Policy default" /></label>
+                  </>
+                ) : null}
+                <label><span>{homeLabel} strikes</span><input inputMode="numeric" min={0} max={20} type="number" value={effects.homeStrikes} onChange={(event) => updateEffect("homeStrikes", event.target.value)} placeholder="Policy default" /></label>
+                <label><span>{awayLabel} strikes</span><input inputMode="numeric" min={0} max={20} type="number" value={effects.awayStrikes} onChange={(event) => updateEffect("awayStrikes", event.target.value)} placeholder="Policy default" /></label>
+                <label>
+                  <span>{homeLabel} attendance</span>
+                  <select
+                    value={effects.homeAttendanceState}
+                    onChange={(event) => updateEffect("homeAttendanceState", event.target.value)}
+                  >
+                    <option value="">Use outcome / recorded attendance</option>
+                    <option value="PRESENT">Present</option>
+                    {fixture.matchKind === "CLAN" ? <option value="SHORT_ROSTER">Present with a short roster</option> : null}
+                    <option value="NO_SHOW">No-show</option>
+                    <option value="EXCUSED">Excused</option>
+                    <option value="FORFEIT">Forfeit / at fault</option>
+                  </select>
+                </label>
+                <label>
+                  <span>{awayLabel} attendance</span>
+                  <select
+                    value={effects.awayAttendanceState}
+                    onChange={(event) => updateEffect("awayAttendanceState", event.target.value)}
+                  >
+                    <option value="">Use outcome / recorded attendance</option>
+                    <option value="PRESENT">Present</option>
+                    {fixture.matchKind === "CLAN" ? <option value="SHORT_ROSTER">Present with a short roster</option> : null}
+                    <option value="NO_SHOW">No-show</option>
+                    <option value="EXCUSED">Excused</option>
+                    <option value="FORFEIT">Forfeit / at fault</option>
+                  </select>
+                </label>
+              </div>
+              <p>
+                Team choices are saved as {homeSideCode} and {awaySideCode}.
+                Player attendance is selected by name above so the result and
+                rating history cannot be attached to an unknown lineup.
+              </p>
+            </details>
+          </>
+        ) : null}
+
+        {step === 3 && resolutionType && outcome ? (
+          <>
+            <div className={styles.finalDecision}>
+              <span>FINAL DECISION</span>
+              <h3>{outcome.title}</h3>
+              <p>{outcome.consequence}</p>
+              {resolutionType === "RECORDED_RESULT" ? (
+                <>
+                  <strong>{homeLabel} {homeScore} – {awayScore} {awayLabel}</strong>
+                  <p>
+                    {recordedAttendanceSummary(
+                      detail,
+                      attendanceCandidates,
+                      playerAttendance,
+                      homeLabel,
+                      awayLabel,
+                    )}
+                  </p>
+                </>
+              ) : null}
+            </div>
+            {preview ? (
+              <>
+                <div className={styles.finalEffects}>
+                  <span>{homeLabel}: {previewConsequenceLine(preview, "home", fixture.matchKind === "SOLO")}</span>
+                  <span>{awayLabel}: {previewConsequenceLine(preview, "away", fixture.matchKind === "SOLO")}</span>
+                </div>
+                <div className={styles.modalWarning}>
+                  <strong>Exact server-calculated preview</strong>
+                  <p>
+                    {previewRefundLine(preview, "home", homeLabel)}{" · "}
+                    {previewRefundLine(preview, "away", awayLabel)}
+                  </p>
+                </div>
+              </>
+            ) : null}
+            <label>
+              <span>Evidence and reason · required</span>
+              <textarea
+                autoFocus
+                maxLength={2000}
+                placeholder="State what was verified, the evidence used, and why this outcome is correct…"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              />
+            </label>
+            <div className={styles.modalWarning}>
+              <strong>Resolution takes effect immediately</strong>
+              <p>Refunds are queued independently. A later dispute marks the case under review but does not pause or reverse completed effects.</p>
+            </div>
+          </>
+        ) : null}
+
+        {error ? <p className={styles.modalError}>{error}</p> : null}
+        <footer>
+          {step > 1 ? <button className={styles.cancelButton} disabled={saving} onClick={() => { setError(null); setStep((current) => current - 1); }}>Back</button> : <button className={styles.cancelButton} disabled={saving} onClick={onClose}>Close</button>}
+          {step < 3 ? (
+            <button
+              className={styles.primaryButton}
+              disabled={previewing}
+              onClick={() => void next()}
+            >
+              {previewing ? "Calculating…" : "Continue"}
+            </button>
+          ) : (
+            <button className={styles.dangerButton} disabled={saving || reason.trim().length < 10} onClick={() => void submit()}>
+              {saving ? "Applying resolution…" : caseData.currentRevision ? "Confirm corrected resolution" : "Confirm and resolve"}
+            </button>
+          )}
+        </footer>
+      </section>
+    </div>
+  );
+}
+
+function ConsequencePreview({ label, value }: { label: string; value: string }) {
+  return <article><span>{label}</span><strong>{value}</strong></article>;
+}
+
+function PlayerAttendanceEditor({
+  awayLabel,
+  candidates,
+  detail,
+  homeLabel,
+  onChange,
+  values,
+}: {
+  awayLabel: string;
+  candidates: AdminGameParticipant[];
+  detail: AdminGameDetail;
+  homeLabel: string;
+  onChange: (profileId: string, state: PlayerAttendanceState | "") => void;
+  values: Record<string, PlayerAttendanceState>;
+}) {
+  const sides = detail.fixture.matchKind === "SOLO"
+    ? [
+        { code: "WHITE", label: homeLabel },
+        { code: "BLACK", label: awayLabel },
+      ]
+    : [
+        { code: "HOME", label: homeLabel },
+        { code: "AWAY", label: awayLabel },
+      ];
+
+  return (
+    <section className={styles.attendanceEditor}>
+      <header>
+        <div>
+          <span>OFFICIAL LINEUP · REQUIRED</span>
+          <h3>Confirm every player who took part</h3>
+          <p>
+            This decides who receives a rated appearance. If referee check-ins
+            are missing, mark at least one player from each side as played.
+          </p>
+        </div>
+      </header>
+      <div className={styles.attendanceTeams}>
+        {sides.map((side) => {
+          const players = candidates.filter((player) => player.side === side.code);
+          const confirmed = players.filter((player) =>
+            hasPlayedEvidence(player, values[player.profileId] ?? "")
+          ).length;
+          return (
+            <section key={side.code}>
+              <header>
+                <strong>{side.label}</strong>
+                <span className={confirmed ? styles.attendanceReady : styles.attendanceMissing}>
+                  {confirmed
+                    ? `${confirmed} ${confirmed === 1 ? "player" : "players"} confirmed`
+                    : "Player confirmation needed"}
+                </span>
+              </header>
+              {players.length ? (
+                <div className={styles.attendancePlayers}>
+                  {players.map((player) => {
+                    const recorded = player.checkedInAt !== null;
+                    return (
+                      <label key={player.profileId}>
+                        <Avatar name={player.displayName} url={player.avatarUrl} />
+                        <span>
+                          <strong>{player.displayName}</strong>
+                          <small>
+                            {player.role ? humanize(player.role) : "Player"}
+                            {recorded ? " · Referee check-in on file" : ""}
+                            {!player.planned && !player.played
+                              ? " · Previously rostered"
+                              : ""}
+                          </small>
+                        </span>
+                        <select
+                          aria-label={`${player.displayName} attendance`}
+                          value={values[player.profileId] ?? ""}
+                          onChange={(event) =>
+                            onChange(
+                              player.profileId,
+                              event.target.value as PlayerAttendanceState | "",
+                            )}
+                        >
+                          <option value="">
+                            {recorded ? "Use referee check-in" : "Not confirmed"}
+                          </option>
+                          <option value="PRESENT">Played</option>
+                          <option value="LATE">Played · arrived late</option>
+                          <option value="EXCUSED">Did not play · excused</option>
+                          <option value="NO_SHOW">Did not arrive</option>
+                        </select>
+                      </label>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className={styles.attendanceEmpty}>
+                  No rostered players are available for this side. The result
+                  cannot be rated until its lineup is repaired.
+                </p>
+              )}
+            </section>
+          );
+        })}
+      </div>
+      <p className={styles.attendanceHelp}>
+        “Played” and “arrived late” count toward the rated lineup. A blank
+        choice only counts when an official referee check-in already exists.
+      </p>
+    </section>
   );
 }
 
@@ -838,6 +1675,446 @@ function initials(value: string) { return value.split(/\s+/).slice(0, 2).map((pa
 function formatDate(value: string) { const date = new Date(`${value}T12:00:00Z`); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-BH", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Bahrain" }).format(date); }
 function formatDateTime(value: string | null) { if (!value) return "Unknown time"; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : new Intl.DateTimeFormat("en-BH", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Asia/Bahrain" }).format(date); }
 function message(error: unknown, fallback: string) { return error instanceof Error && error.message ? error.message : fallback; }
+function refundSideLabel(
+  refund: AdminGameResolutionRefund,
+  detail: AdminGameDetail,
+) {
+  const side = refund.side?.toUpperCase() ?? "";
+  if (detail.fixture.matchKind === "CLAN") {
+    const clan = side === "HOME"
+      ? detail.fixture.homeClan
+      : side === "AWAY"
+        ? detail.fixture.awayClan
+        : null;
+    return clan ? `${clan.name} · original payer` : "Original clan payer";
+  }
+  const team = side === "WHITE"
+    ? "White team"
+    : side === "BLACK"
+      ? "Black team"
+      : "Solo player";
+  const profile = refund.recipientProfileId?.slice(0, 8);
+  return `${team} payer${profile ? ` · ${profile}` : ""}`;
+}
+
+type ResolutionEffects = {
+  homeRefundPercent: string;
+  awayRefundPercent: string;
+  homeSrDelta: string;
+  awaySrDelta: string;
+  homeStrikes: string;
+  awayStrikes: string;
+  homeAttendanceState: string;
+  awayAttendanceState: string;
+};
+
+type PlayerAttendanceState = "PRESENT" | "LATE" | "EXCUSED" | "NO_SHOW";
+
+type AdminResolutionPreview = {
+  preview: boolean;
+  case_id: string;
+  current_revision: number;
+  next_revision: number;
+  is_correction: boolean;
+  resolution_type: string;
+  would_set_case_state: string;
+  consequences: Record<string, unknown>;
+  refunds: Array<{
+    side: string | null;
+    amount_fils: number;
+    target_amount_fils: number;
+    previously_refunded_fils: number;
+    refund_bps: number;
+    destination: string | null;
+    status: string | null;
+    failure_reason: string | null;
+  }>;
+};
+
+const RESOLUTION_OUTCOMES: ReadonlyArray<{
+  type: MatchResolutionType;
+  title: string;
+  description: string;
+  consequence: string;
+}> = [
+  {
+    type: "RECORDED_RESULT",
+    title: "Recorded result",
+    description: "A reliable final score is available.",
+    consequence: "Record the verified score and use the normal match settlement policy.",
+  },
+  {
+    type: "HOME_NO_SHOW",
+    title: "Home / white no-show",
+    description: "The home or white side did not appear; the other side did.",
+    consequence: "The present away or black side receives a full refund. The absent side uses the configured no-show SR and strike policy.",
+  },
+  {
+    type: "AWAY_NO_SHOW",
+    title: "Away / black no-show",
+    description: "The away or black side did not appear; the other side did.",
+    consequence: "The present home or white side receives a full refund. The absent side uses the configured no-show SR and strike policy.",
+  },
+  {
+    type: "BOTH_NO_SHOW",
+    title: "Both sides no-show",
+    description: "Neither side appeared for the match.",
+    consequence: "Neither side receives a refund. Both sides use the configured no-show SR loss and strike policy.",
+  },
+  {
+    type: "FIELD_OR_VENUE_CANCELLATION",
+    title: "Field / venue cancellation",
+    description: "Field, venue, weather or operations prevented play.",
+    consequence: "Both sides receive full refunds with no SR loss or strikes.",
+  },
+  {
+    type: "MUTUAL_CANCELLATION",
+    title: "Mutual cancellation",
+    description: "Both sides agreed not to play and neither is at fault.",
+    consequence: "Both sides receive full refunds with no SR loss or strikes.",
+  },
+  {
+    type: "BOTH_AT_FAULT",
+    title: "Both sides at fault",
+    description: "Both sides caused the match not to be played.",
+    consequence: "Neither side receives a refund. Both sides use the configured SR and strike consequences.",
+  },
+  {
+    type: "ADMINISTRATIVE_VOID",
+    title: "Administrative void",
+    description: "Field is voiding the match without blaming either side.",
+    consequence: "Both sides receive full refunds with no SR loss or strikes.",
+  },
+];
+
+function resolutionDisplayStatus(detail: AdminGameDetail) {
+  if (
+    detail.resolutionCase &&
+    ["NO_DATA", "UNDER_REVIEW"].includes(detail.resolutionCase.state)
+  ) {
+    return detail.resolutionCase.state;
+  }
+  if (["NO_DATA", "UNDER_REVIEW"].includes(detail.fixture.operationalState ?? "")) {
+    return detail.fixture.operationalState as string;
+  }
+  return detail.fixture.status;
+}
+
+function resolutionAttendanceCandidates(detail: AdminGameDetail) {
+  const source = detail.participants.matchKind === "SOLO"
+    ? [
+        ...detail.participants.registeredPlayers,
+        ...detail.participants.actualPlayers,
+      ]
+    : [
+        ...detail.participants.plannedPlayers,
+        ...detail.participants.removedPlayers,
+        ...detail.participants.actualPlayers,
+      ];
+  const byProfile = new Map<string, AdminGameParticipant>();
+  for (const player of source) {
+    const existing = byProfile.get(player.profileId);
+    byProfile.set(player.profileId, existing
+      ? {
+          ...existing,
+          ...player,
+          side: player.side ?? existing.side,
+          role: player.role ?? existing.role,
+          clanId: player.clanId ?? existing.clanId,
+          checkedInAt: player.checkedInAt ?? existing.checkedInAt,
+          attendanceOutcome:
+            player.attendanceOutcome ?? existing.attendanceOutcome,
+          planned: player.planned || existing.planned,
+          played: player.played || existing.played,
+        }
+      : player);
+  }
+  const validSides = detail.fixture.matchKind === "SOLO"
+    ? new Set(["WHITE", "BLACK"])
+    : new Set(["HOME", "AWAY"]);
+  return [...byProfile.values()]
+    .filter((player) => player.side !== null && validSides.has(player.side))
+    .sort((left, right) =>
+      left.displayName.localeCompare(right.displayName) ||
+      left.profileId.localeCompare(right.profileId)
+    );
+}
+
+function hasPlayedEvidence(
+  player: AdminGameParticipant,
+  selectedState: PlayerAttendanceState | "",
+) {
+  if (selectedState) {
+    return selectedState === "PRESENT" || selectedState === "LATE";
+  }
+  return player.checkedInAt !== null;
+}
+
+function recordedAttendanceCounts(
+  detail: AdminGameDetail,
+  candidates: AdminGameParticipant[],
+  values: Record<string, PlayerAttendanceState>,
+) {
+  const homeCode = detail.fixture.matchKind === "SOLO" ? "WHITE" : "HOME";
+  const awayCode = detail.fixture.matchKind === "SOLO" ? "BLACK" : "AWAY";
+  const confirmed = (side: string) => candidates.filter(
+    (player) =>
+      player.side === side &&
+      hasPlayedEvidence(player, values[player.profileId] ?? ""),
+  ).length;
+  return { home: confirmed(homeCode), away: confirmed(awayCode) };
+}
+
+function validateRecordedResultAttendance(
+  detail: AdminGameDetail,
+  candidates: AdminGameParticipant[],
+  values: Record<string, PlayerAttendanceState>,
+  homeLabel: string,
+  awayLabel: string,
+) {
+  const counts = recordedAttendanceCounts(detail, candidates, values);
+  const missing = [
+    counts.home < 1 ? homeLabel : null,
+    counts.away < 1 ? awayLabel : null,
+  ].filter((label): label is string => label !== null);
+  if (!missing.length) return null;
+  return `Confirm at least one player who took part for ${
+    missing.join(" and ")
+  }. Select “Played” or “Played · arrived late” next to the player’s name.`;
+}
+
+function recordedAttendanceSummary(
+  detail: AdminGameDetail,
+  candidates: AdminGameParticipant[],
+  values: Record<string, PlayerAttendanceState>,
+  homeLabel: string,
+  awayLabel: string,
+) {
+  const counts = recordedAttendanceCounts(detail, candidates, values);
+  return `Rated lineup: ${homeLabel} ${counts.home} · ${awayLabel} ${counts.away}.`;
+}
+
+function emptyResolutionEffects(): ResolutionEffects {
+  return {
+    homeRefundPercent: "",
+    awayRefundPercent: "",
+    homeSrDelta: "",
+    awaySrDelta: "",
+    homeStrikes: "",
+    awayStrikes: "",
+    homeAttendanceState: "",
+    awayAttendanceState: "",
+  };
+}
+
+function defaultResolutionEffects(type: MatchResolutionType): ResolutionEffects {
+  const draft = emptyResolutionEffects();
+  if (type === "RECORDED_RESULT") return draft;
+  if (type === "HOME_NO_SHOW") {
+    return {
+      ...draft,
+      homeRefundPercent: "0",
+      awayRefundPercent: "100",
+    };
+  }
+  if (type === "AWAY_NO_SHOW") {
+    return {
+      ...draft,
+      homeRefundPercent: "100",
+      awayRefundPercent: "0",
+    };
+  }
+  if (type === "BOTH_NO_SHOW" || type === "BOTH_AT_FAULT") {
+    return {
+      ...draft,
+      homeRefundPercent: "0",
+      awayRefundPercent: "0",
+    };
+  }
+  return {
+    ...draft,
+    homeRefundPercent: "100",
+    awayRefundPercent: "100",
+    homeSrDelta: "0",
+    awaySrDelta: "0",
+    homeStrikes: "0",
+    awayStrikes: "0",
+  };
+}
+
+function validateResolutionEffects(effects: ResolutionEffects) {
+  const checks = [
+    validateOptionalNumber(effects.homeRefundPercent, 0, 100, "Home / white refund percentage", false),
+    validateOptionalNumber(effects.awayRefundPercent, 0, 100, "Away / black refund percentage", false),
+    validateOptionalNumber(effects.homeSrDelta, -10_000, 10_000, "Home / white SR delta", true),
+    validateOptionalNumber(effects.awaySrDelta, -10_000, 10_000, "Away / black SR delta", true),
+    validateOptionalNumber(effects.homeStrikes, 0, 20, "Home / white strikes", true),
+    validateOptionalNumber(effects.awayStrikes, 0, 20, "Away / black strikes", true),
+  ];
+  const invalid = checks.find(Boolean);
+  if (invalid) return invalid;
+  return null;
+}
+
+function validateWholeNumber(value: string, min: number, max: number, label: string) {
+  if (!value.trim()) return `${label} is required.`;
+  return validateOptionalNumber(value, min, max, label, true);
+}
+
+function validateOptionalNumber(
+  value: string,
+  min: number,
+  max: number,
+  label: string,
+  whole: boolean,
+) {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max || (whole && !Number.isInteger(parsed))) {
+    return `${label} must be ${whole ? "a whole number " : ""}between ${min.toLocaleString()} and ${max.toLocaleString()}.`;
+  }
+  return null;
+}
+
+function buildResolutionPayload(
+  type: MatchResolutionType,
+  homeScore: string,
+  awayScore: string,
+  effects: ResolutionEffects,
+  playerAttendance: Record<string, PlayerAttendanceState>,
+) {
+  const payload: Record<string, unknown> = {};
+  if (type === "RECORDED_RESULT") {
+    payload.home_score = Number(homeScore);
+    payload.away_score = Number(awayScore);
+  }
+  if (effects.homeRefundPercent.trim()) payload.home_refund_bps = Math.round(Number(effects.homeRefundPercent) * 100);
+  if (effects.awayRefundPercent.trim()) payload.away_refund_bps = Math.round(Number(effects.awayRefundPercent) * 100);
+  if (effects.homeSrDelta.trim()) payload.home_sr_delta = Number(effects.homeSrDelta);
+  if (effects.awaySrDelta.trim()) payload.away_sr_delta = Number(effects.awaySrDelta);
+  if (effects.homeStrikes.trim()) payload.home_strikes = Number(effects.homeStrikes);
+  if (effects.awayStrikes.trim()) payload.away_strikes = Number(effects.awayStrikes);
+  const hasSideAttendance =
+    effects.homeAttendanceState.trim() ||
+    effects.awayAttendanceState.trim();
+  const playerEntries = Object.entries(playerAttendance);
+  if (playerEntries.length || hasSideAttendance) {
+    const attendance: Record<string, unknown> = {};
+    if (playerEntries.length) {
+      attendance.players = playerEntries.map(([profileId, state]) => ({
+        profile_id: profileId,
+        state,
+      }));
+    }
+    if (effects.homeAttendanceState.trim()) {
+      attendance.HOME = effects.homeAttendanceState.trim();
+      attendance.WHITE = effects.homeAttendanceState.trim();
+    }
+    if (effects.awayAttendanceState.trim()) {
+      attendance.AWAY = effects.awayAttendanceState.trim();
+      attendance.BLACK = effects.awayAttendanceState.trim();
+    }
+    payload.attendance = attendance;
+  }
+  return payload;
+}
+
+function percentOrPolicy(value: string) {
+  return value.trim() ? `${Number(value).toLocaleString()}%` : "Policy default";
+}
+
+function deltaOrPolicy(value: string) {
+  if (!value.trim()) return "Policy default";
+  const parsed = Number(value);
+  if (parsed === 0) return "No change";
+  return parsed > 0 ? `+${parsed}` : String(parsed);
+}
+
+function numberOrPolicy(value: string) {
+  return value.trim() ? Number(value).toLocaleString() : "Policy default";
+}
+
+function previewConsequenceLine(
+  preview: AdminResolutionPreview,
+  side: "home" | "away",
+  playerSrIsIndividual: boolean,
+) {
+  const consequences = preview.consequences;
+  const refundBps = numericValue(consequences[`${side}_refund_bps`]);
+  const srDelta = numericValue(
+    consequences[`${side}_sr_delta_applied`] ??
+      consequences[`${side}_sr_delta`],
+  );
+  const strikes = numericValue(consequences[`${side}_strikes`]);
+  const srLabel = playerSrIsIndividual
+    ? "player SR calculated individually"
+    : srDelta === 0
+      ? "no SR change"
+      : `${srDelta > 0 ? "+" : ""}${srDelta} SR`;
+  return `${refundBps / 100}% refund · ${srLabel} · ${strikes} ${
+    strikes === 1 ? "strike" : "strikes"
+  }`;
+}
+
+function previewRefundLine(
+  preview: AdminResolutionPreview,
+  side: "home" | "away",
+  label: string,
+) {
+  const acceptedSides = side === "home"
+    ? new Set(["HOME", "WHITE"])
+    : new Set(["AWAY", "BLACK"]);
+  const refunds = preview.refunds.filter((refund) =>
+    acceptedSides.has(refund.side?.toUpperCase() ?? "")
+  );
+  if (refunds.length === 0) return `${label}: no paid refund due`;
+
+  const targetFils = refunds.reduce(
+    (sum, refund) => sum + numericValue(refund.target_amount_fils),
+    0,
+  );
+  const statuses = [...new Set(
+    refunds.map((refund) => refund.status?.toUpperCase()).filter(Boolean),
+  )];
+  return `${label}: ${formatBhd(targetFils)} total · ${
+    statuses.length ? statuses.map((status) => humanize(status!)).join(", ") : "Calculated"
+  }`;
+}
+
+function numericValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return 0;
+}
+
+function nestedNumber(
+  source: Record<string, unknown>,
+  ...path: string[]
+) {
+  let value: unknown = source;
+  for (const key of path) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    value = (value as Record<string, unknown>)[key];
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function formatBhd(fils: number) {
+  return `${(fils / 1000).toLocaleString("en-BH", {
+    minimumFractionDigits: 3,
+    maximumFractionDigits: 3,
+  })} BHD`;
+}
 
 const REPORT_CATEGORIES = [
   "HARASSMENT", "THREATS_OR_VIOLENCE", "DISCRIMINATION", "DANGEROUS_PLAY",

@@ -34,6 +34,8 @@ const BLACK = {
 const gameSelect = `
   id,
   status,
+  operational_state,
+  operational_state_updated_at,
   venue,
   starts_at,
   ends_at,
@@ -146,6 +148,8 @@ async function hydrateOpenQueueRows(
       matchKind: "SOLO",
       id,
       status: String(row.status) as RefereeFixture["status"],
+      operationalState: nullableString(row.operational_state),
+      operationalStateUpdatedAt: nullableString(row.operational_state_updated_at),
       venue: String(row.venue ?? ""),
       day: zonedPart(startsAt, timezone, "weekday").toUpperCase(),
       timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,

@@ -2,6 +2,36 @@ import '../clans/clan.dart';
 
 enum FixtureStatus { open, scheduled, live, finalResult, cancelled }
 
+enum MatchOperationalState {
+  normal('NORMAL'),
+  noData('NO_DATA'),
+  underReview('UNDER_REVIEW'),
+  resolved('RESOLVED');
+
+  const MatchOperationalState(this.wireValue);
+
+  final String wireValue;
+
+  bool get isPendingResolution =>
+      this == MatchOperationalState.noData ||
+      this == MatchOperationalState.underReview;
+
+  String? get pendingLabel => switch (this) {
+    MatchOperationalState.noData => 'No data',
+    MatchOperationalState.underReview => 'Under review',
+    MatchOperationalState.normal || MatchOperationalState.resolved => null,
+  };
+
+  static MatchOperationalState fromWire(Object? value) {
+    return switch (value?.toString().trim().toUpperCase()) {
+      'NO_DATA' => MatchOperationalState.noData,
+      'UNDER_REVIEW' => MatchOperationalState.underReview,
+      'RESOLVED' => MatchOperationalState.resolved,
+      _ => MatchOperationalState.normal,
+    };
+  }
+}
+
 class ClanFixtureChargePreview {
   const ClanFixtureChargePreview({
     required this.currency,
@@ -528,6 +558,9 @@ class Fixture {
     this.cancelledBy,
     this.cancellationContext = const {},
     this.cancellationActor,
+    this.operationalState = MatchOperationalState.normal,
+    this.operationalStateUpdatedAt,
+    this.operationalReasonCode,
     this.createdAt,
     this.updatedAt,
     this.clock,
@@ -572,6 +605,9 @@ class Fixture {
   final String? cancelledBy;
   final Map<String, dynamic> cancellationContext;
   final FixtureParticipant? cancellationActor;
+  final MatchOperationalState operationalState;
+  final DateTime? operationalStateUpdatedAt;
+  final String? operationalReasonCode;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final FixtureClock? clock;
@@ -593,6 +629,29 @@ class Fixture {
   bool get isLive => status == FixtureStatus.live;
 
   bool get isCancelled => status == FixtureStatus.cancelled;
+
+  bool get hasPendingOperationalResolution =>
+      operationalState.isPendingResolution;
+
+  String? get operationalStatusLabel => operationalState.pendingLabel;
+
+  String? get operationalStatusDetail {
+    if (!hasPendingOperationalResolution) return null;
+    return switch (operationalReasonCode?.trim().toUpperCase()) {
+      'RESULT_MISSING' => 'Result missing',
+      'REFEREE_REPORT_MISSING' => 'Referee report missing',
+      'DISPUTED' => 'Resolution disputed',
+      'REFUND_FAILED' => 'Refund needs attention',
+      'NO_ACTIVITY' => 'Match data missing',
+      _ =>
+        operationalState == MatchOperationalState.underReview
+            ? 'Admin review in progress'
+            : 'Match data missing',
+    };
+  }
+
+  bool get shouldDisplayScore =>
+      (isFinal || isLive) && !hasPendingOperationalResolution;
 
   String? get livePlaybackUrl => _nonEmptyUrl(broadcast?.hlsUrl);
 
@@ -705,6 +764,8 @@ class Fixture {
   }
 
   String get statusLabel {
+    final operationalLabel = operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel;
     return switch (status) {
       FixtureStatus.open => 'Looking for opponent',
       FixtureStatus.scheduled => 'Scheduled',
@@ -715,6 +776,8 @@ class Fixture {
   }
 
   String get detailStatusLabel {
+    final operationalLabel = operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel;
     return switch (status) {
       FixtureStatus.open => 'Open',
       FixtureStatus.scheduled => 'Upcoming',
@@ -837,6 +900,13 @@ class Fixture {
       cancellationActor: cancellationActor == null
           ? null
           : FixtureParticipant.fromJson(cancellationActor),
+      operationalState: MatchOperationalState.fromWire(
+        json['operational_state'],
+      ),
+      operationalStateUpdatedAt: _asDate(json['operational_state_updated_at']),
+      operationalReasonCode: _nonEmptyString(
+        json['operational_reason_code'],
+      )?.toUpperCase(),
       createdAt: _asDate(json['created_at']),
       updatedAt: _asDate(json['updated_at']),
       clock: clock == null ? null : FixtureClock.fromJson(clock),
@@ -988,6 +1058,11 @@ DateTime? _asDate(Object? value) {
 
 String? _nonEmptyUrl(String? value) {
   final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+String? _nonEmptyString(Object? value) {
+  final trimmed = value?.toString().trim();
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 
