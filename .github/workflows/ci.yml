@@ -119,6 +119,17 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
+      - name: Validate iOS privacy purpose strings
+        shell: bash
+        run: |
+          set -euo pipefail
+          plutil -lint ios/Runner/Info.plist
+          camera_description="$(/usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' ios/Runner/Info.plist)"
+          if [[ -z "${camera_description//[[:space:]]/}" ]]; then
+            echo "::error::NSCameraUsageDescription must explain why Field may access the camera."
+            exit 1
+          fi
+
       - name: Build iOS staging simulator flavor
         run: >-
           flutter build ios
