@@ -28,6 +28,7 @@ import {
   reliabilityPolicySummaryHtml,
   type ReliabilityPolicySummaryDocument,
 } from "@/lib/reliability-policy-summary";
+import { printStandaloneHtml } from "@/lib/browser-print";
 
 import styles from "./reliability-section.module.css";
 
@@ -1870,15 +1871,7 @@ function downloadPolicyDocument(document: ReliabilityPolicySummaryDocument) {
 }
 
 function printPolicyDocument(document: ReliabilityPolicySummaryDocument) {
-  const printWindow = window.open("", "_blank", "noopener,noreferrer");
-  if (!printWindow) return;
-  printWindow.document.open();
-  printWindow.document.write(reliabilityPolicySummaryHtml(document));
-  printWindow.document.close();
-  printWindow.addEventListener("load", () => {
-    printWindow.focus();
-    printWindow.print();
-  }, { once: true });
+  printStandaloneHtml(reliabilityPolicySummaryHtml(document));
 }
 
 function policyDocumentFilename(document: ReliabilityPolicySummaryDocument) {
