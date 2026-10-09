@@ -28,6 +28,20 @@ void main() {
       await _pump(tester, repo);
       expect(find.text('Fieldrush'), findsOneWidget);
       expect(find.text('Every game counts.'), findsOneWidget);
+      final agreement = tester.widget<Text>(
+        find.byKey(const Key('fieldrush-welcome-agreement')),
+      );
+      expect(
+        agreement.textSpan!.toPlainText(),
+        'By tapping Create account or Log in, you agree to our Terms and '
+        'Privacy Policy.',
+      );
+      expect(find.text('Your next game starts here.'), findsNothing);
+      expect(
+        tester.getTopLeft(find.text('Every game counts.')).dy -
+            tester.getBottomLeft(find.text('Fieldrush')).dy,
+        4,
+      );
       expect(find.text('9:41'), findsNothing);
       await _tap(tester, 'fieldrush-create-account');
       expect(find.text('What’s your\nnumber?'), findsOneWidget);

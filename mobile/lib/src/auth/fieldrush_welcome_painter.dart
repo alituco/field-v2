@@ -20,7 +20,7 @@ class FieldrushWelcomePainter extends CustomPainter {
       ..color = const Color(0xFF407C4D)
       ..strokeWidth = 73.2;
     for (double x = -height; x < 372 + height; x += 207) {
-      canvas.drawLine(Offset(x, 0), Offset(x + height, height), stripe);
+      canvas.drawLine(Offset(x, 0), Offset(x - height, height), stripe);
     }
     canvas.drawRect(
       const Rect.fromLTWH(0, 0, 372, 231.8),

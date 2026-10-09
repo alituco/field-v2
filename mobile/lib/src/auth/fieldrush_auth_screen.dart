@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
@@ -57,6 +58,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   final _year = TextEditingController();
   final _email = TextEditingController();
   final _scroll = ScrollController();
+  final _termsLink = TapGestureRecognizer();
+  final _privacyLink = TapGestureRecognizer();
 
   FieldrushAccount? _account;
   _Step _step = _Step.welcome;
@@ -82,6 +85,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   @override
   void initState() {
     super.initState();
+    _termsLink.onTap = () => _openPolicy('/terms');
+    _privacyLink.onTap = () => _openPolicy('/privacy');
     if (widget.account != null) _applyAccount(widget.account!);
     _username.addListener(_scheduleUsernameCheck);
   }
@@ -100,6 +105,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   void dispose() {
     _cooldownTimer?.cancel();
     _usernameDebounce?.cancel();
+    _termsLink.dispose();
+    _privacyLink.dispose();
     for (final controller in [
       _phone,
       _code,
@@ -544,12 +551,13 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                         style: TextStyle(
                           fontFamily: 'Outfit',
                           fontSize: 50,
+                          height: 1,
                           fontWeight: FontWeight.w800,
                           letterSpacing: -2,
                           color: Colors.white,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 4),
                       const Text(
                         'Every game counts.',
                         style: TextStyle(
@@ -560,26 +568,42 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                       ),
                       const SizedBox(height: 40),
                       const Spacer(),
-                      const Text(
-                        'Your next game starts here.',
+                      Text.rich(
+                        TextSpan(
+                          text:
+                              'By tapping Create account or Log in, you agree '
+                              'to our ',
+                          children: [
+                            TextSpan(
+                              text: 'Terms',
+                              style: const TextStyle(
+                                decoration: TextDecoration.underline,
+                                fontWeight: FontWeight.w800,
+                              ),
+                              recognizer: _termsLink,
+                            ),
+                            const TextSpan(text: ' and '),
+                            TextSpan(
+                              text: 'Privacy Policy',
+                              style: const TextStyle(
+                                decoration: TextDecoration.underline,
+                                fontWeight: FontWeight.w800,
+                              ),
+                              recognizer: _privacyLink,
+                            ),
+                            const TextSpan(text: '.'),
+                          ],
+                        ),
+                        key: const Key('fieldrush-welcome-agreement'),
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Colors.white,
+                          fontSize: 13,
+                          height: 1.45,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      Wrap(
-                        alignment: WrapAlignment.center,
-                        children: [
-                          _policyButton('Terms', '/terms', light: true),
-                          _policyButton(
-                            'Privacy Policy',
-                            '/privacy',
-                            light: true,
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 16),
                       FilledButton(
                         key: const Key('fieldrush-create-account'),
                         onPressed: () {
