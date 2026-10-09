@@ -47,6 +47,8 @@ select pg_temp.check_assert(not public.is_fieldrush_account_active('fd000000-000
 select pg_temp.expect_error($q$insert into public.profiles (id,display_name)
   values ('fd000000-0000-4000-8000-000000000001','Fake name')$q$, '42501');
 select pg_temp.expect_error($q$select public.save_my_onboarding_profile('Fake name','2000-01-01')$q$, '42501');
+select pg_temp.expect_error($q$select public.save_my_account_details(
+  'Fake name', 'administrator', '', null, 'Phoenix', '2000-01-01')$q$, '42501');
 select pg_temp.expect_error($q$select * from fieldrush_private.accounts$q$, '42501');
 select pg_temp.expect_error($q$select phone from public.profiles$q$, '42501');
 select pg_temp.expect_error($q$select date_of_birth from public.profiles$q$, '42501');
@@ -98,6 +100,8 @@ select pg_temp.check_assert((select count(*) = 2 from fieldrush_private.legal_ac
   where user_id = 'fd000000-0000-4000-8000-000000000001'), 'both legal acceptances recorded');
 select pg_temp.check_assert((select date_of_birth is null from public.profiles
   where id = 'fd000000-0000-4000-8000-000000000001'), 'DOB stays out of public profiles');
+insert into public.profile_settings (profile_id, home_city)
+  values ('fd000000-0000-4000-8000-000000000001', 'Phoenix');
 
 select set_config('request.jwt.claims', '{"sub":"fd000000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 set local role authenticated;
@@ -158,6 +162,8 @@ select pg_temp.check_assert(not exists(select 1 from fieldrush_private.accounts
   where user_id = 'fd000000-0000-4000-8000-000000000001'), 'private identity must be deleted');
 select pg_temp.check_assert(not exists(select 1 from fieldrush_private.legal_acceptances
   where user_id = 'fd000000-0000-4000-8000-000000000001'), 'private legal identity must be deleted');
+select pg_temp.check_assert(not exists(select 1 from public.profile_settings
+  where profile_id = 'fd000000-0000-4000-8000-000000000001'), 'private profile settings must be deleted');
 select pg_temp.expect_error($q$update public.field_wallet_accounts set balance_fils = 100
   where profile_id = 'fd000000-0000-4000-8000-000000000001'$q$, '22023');
 set local role authenticated;

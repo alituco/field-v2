@@ -79,6 +79,10 @@ grant update (bio, avatar_url) on public.profiles to authenticated;
 drop policy if exists "Users can insert their own profile" on public.profiles;
 revoke all on function public.save_my_onboarding_profile(text, date)
   from public, anon, authenticated;
+-- The earlier account-settings API writes public identity and DOB directly.
+-- Fieldrush account RPCs are now the only player-facing identity writers.
+revoke all on function public.save_my_account_details(text, text, text, text, text, date)
+  from public, anon, authenticated;
 
 create function fieldrush_private.require_user()
 returns uuid language plpgsql security definer
@@ -471,6 +475,7 @@ begin
   update public.clan_members set left_at = coalesce(left_at, now()), removal_reason = coalesce(removal_reason, 'LEFT')
     where profile_id = old.id;
   delete from public.profile_career_entries where profile_id = old.id;
+  delete from public.profile_settings where profile_id = old.id;
   update public.referee_profiles set is_active = false where profile_id = old.id;
   return old;
 end;
