@@ -186,6 +186,24 @@ export function createAdminClient(
   }) as AdminClient;
 }
 
+/** Test users still complete signup through the authenticated production RPCs. */
+export async function createE2EUserClient(supabaseUrl: string, phone: string) {
+  assertAndConfirmTarget(supabaseUrl, "authenticate isolated E2E account");
+  const client = createClient(
+    supabaseUrl,
+    requireEnv("SUPABASE_PUBLISHABLE_KEY"),
+    {
+      auth: { autoRefreshToken: false, persistSession: false },
+    },
+  );
+  const { error } = await client.auth.signInWithPassword({
+    phone,
+    password: requireEnv("E2E_TEST_PASSWORD"),
+  });
+  if (error) throw new Error(`authenticate E2E account: ${error.message}`);
+  return client;
+}
+
 export async function listAuthUsers(
   supabaseUrl: string,
   serviceRoleKey: string,

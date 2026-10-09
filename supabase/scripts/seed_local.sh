@@ -33,6 +33,7 @@ trap 'rm -f "$env_file"' EXIT
 
 supabase status -o env \
   --override-name api.url=SUPABASE_URL \
+  --override-name auth.anon_key=SUPABASE_PUBLISHABLE_KEY \
   --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
   >"$env_file"
 printf '\nDEV_SEED_PASSWORD=%s\n' "$seed_password" >>"$env_file"

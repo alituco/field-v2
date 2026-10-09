@@ -341,7 +341,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     final dateOfBirth = _dateOfBirth;
     if (dateOfBirth == null || !isEligibleDateOfBirth(dateOfBirth)) {
       setState(() {
-        _errorText = 'You must be at least 16 years old to play.';
+        _errorText = 'You must be at least 18 years old to play.';
       });
       return;
     }
@@ -1521,7 +1521,7 @@ class _DateOfBirthStepBody extends StatelessWidget {
             SizedBox(width: 8),
             Expanded(
               child: Text(
-                'You must be 16 or older. Your full birthday stays private.',
+                'You must be 18 or older. Your full birthday stays private.',
                 style: TextStyle(
                   color: Color(0x99FFFFFF),
                   fontSize: 12,

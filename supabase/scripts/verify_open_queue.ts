@@ -2,6 +2,7 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
 
 type ProfileRow = { id: string; phone: string | null };
 
@@ -340,14 +341,16 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
   });
   if (error) throw error;
 
-  const { error: profileError } = await admin.from("profiles").upsert({
-    id: data.user.id,
+  await completeLocalFieldrushFixture({
+    url,
+    publishableKey,
     phone,
-    display_name: `Open Queue Verify ${label}`,
-    date_of_birth: "2000-01-01",
+    password,
+    firstName: "Open Queue",
+    lastName: `Verify ${label}`,
+    dateOfBirth: "2000-01-01",
     username: `oq_verify_${digits}`,
   });
-  if (profileError) throw profileError;
   return { id: data.user.id, phone };
 }
 

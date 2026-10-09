@@ -40,6 +40,7 @@ class ProfileScreen extends StatefulWidget {
     this.onSwitchUser,
     this.isSigningOut = false,
     this.onSignOut,
+    this.onOpenAccount,
   });
 
   final ProfileRepository profileRepository;
@@ -54,6 +55,7 @@ class ProfileScreen extends StatefulWidget {
   final Future<void> Function(String profileId)? onSwitchUser;
   final bool isSigningOut;
   final VoidCallback? onSignOut;
+  final Future<void> Function()? onOpenAccount;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -433,7 +435,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 tooltip: 'Edit profile',
                 onPressed: _openEditProfile,
               ),
-              if (widget.onSignOut != null) ...[
+              if (widget.onOpenAccount != null) ...[
+                const SizedBox(width: 8),
+                _HeaderIconButton(
+                  icon: Icons.settings_outlined,
+                  tooltip: 'Account settings',
+                  onPressed: () async {
+                    await widget.onOpenAccount!();
+                    if (mounted) await _refresh();
+                  },
+                ),
+              ] else if (widget.onSignOut != null) ...[
                 const SizedBox(width: 8),
                 _HeaderIconButton(
                   key: const ValueKey('profile-sign-out'),

@@ -135,23 +135,9 @@ Deno.serve(async (request) => {
         })
       );
 
-    const { error: profileError } = isLocal
-      ? await admin.from("profiles").update({
-        phone: devUser.phone,
-      }).eq("id", userId)
-      : await admin.from("profiles").upsert(
-        {
-          id: userId,
-          phone: devUser.phone,
-          display_name: devUser.displayName,
-          date_of_birth: devDateOfBirth,
-        },
-        { onConflict: "id" },
-      );
-
-    if (profileError) {
-      return json({ error: profileError.message }, 500);
-    }
+    // Login proves identity only. Fieldrush completion owns profile creation,
+    // public initials and private DOB. Never restore a full name or birthday
+    // into a public profile when a test user signs in again.
 
     const { data: signInData, error: signInError } =
       await signInDevUserWithPassword({

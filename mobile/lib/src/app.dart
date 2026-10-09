@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
-import 'auth/auth_gate.dart';
 import 'auth/auth_repository.dart';
+import 'auth/fieldrush_account.dart';
+import 'auth/fieldrush_account_gate.dart';
+import 'auth/fieldrush_account_repository.dart';
 import 'config/configuration_screen.dart';
 
 class FieldApp extends StatelessWidget {
@@ -12,6 +14,7 @@ class FieldApp extends StatelessWidget {
     this.profileSwitcherEnabled = false,
     this.configurationError,
     this.environmentLabel,
+    this.accountRepository,
   });
 
   final bool hasSupabaseConfig;
@@ -19,6 +22,7 @@ class FieldApp extends StatelessWidget {
   final bool profileSwitcherEnabled;
   final String? configurationError;
   final String? environmentLabel;
+  final FieldrushAccountRepository? accountRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -28,7 +32,7 @@ class FieldApp extends StatelessWidget {
     );
 
     return MaterialApp(
-      title: 'Field',
+      title: 'Fieldrush',
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
         final content = _KeyboardDismissRegion(
@@ -75,8 +79,10 @@ class FieldApp extends StatelessWidget {
         ),
       ),
       home: hasSupabaseConfig
-          ? AuthGate(
+          ? FieldrushAccountGate(
               authRepository: SupabaseAuthRepository(),
+              accountRepository:
+                  accountRepository ?? SupabaseFieldrushAccountRepository(),
               isDev: isDev,
               profileSwitcherEnabled: profileSwitcherEnabled,
             )

@@ -1,6 +1,5 @@
 import {
   createAdminClient,
-  E2E_DEFAULT_BIRTH_DATE,
   isTerminalGameStatus,
   listAuthUsers,
   loadManifestConfig,
@@ -39,7 +38,7 @@ await bestEffort("cancel transient E2E games", cancelTransientGames);
 await bestEffort("remove E2E referee assignment", removeRefereeAssignment);
 await bestEffort("dismiss E2E moderation reports", dismissReports);
 await bestEffort("close E2E support requests", closeSupportTickets);
-await bestEffort("restore E2E onboarding baseline", restoreAccountBaselines);
+await bestEffort("verify isolated account ownership", restoreAccountBaselines);
 
 if (errors.length > 0) {
   throw new Error(
@@ -232,6 +231,13 @@ async function restoreAccountBaselines(): Promise<void> {
       );
     }
 
+    if (existing.user_metadata?.field_e2e !== true) {
+      throw new Error(
+        `refusing to change unmarked account ${account.profileId}`,
+      );
+    }
+    // Never reset the server-owned signup state or rewrite private DOB into
+    // public profiles. The dedicated onboarding actor is recreated next setup.
     await updateAuthUser(
       config.supabaseUrl,
       config.serviceRoleKey,
@@ -239,9 +245,6 @@ async function restoreAccountBaselines(): Promise<void> {
       {
         user_metadata: {
           ...existing.user_metadata,
-          display_name: account.displayName,
-          name: account.displayName,
-          date_of_birth: E2E_DEFAULT_BIRTH_DATE,
           field_e2e: true,
           field_e2e_role: account.profileId ===
               manifest.accounts.admin.profileId
@@ -254,16 +257,6 @@ async function restoreAccountBaselines(): Promise<void> {
         `restore auth baseline ${account.profileId}: ${String(error)}`,
       );
     });
-
-    const { error: profileError } = await admin.from("profiles").update({
-      display_name: account.displayName,
-      date_of_birth: E2E_DEFAULT_BIRTH_DATE,
-    }).eq("id", account.profileId);
-    if (profileError) {
-      throw new Error(
-        `restore profile baseline ${account.profileId}: ${profileError.message}`,
-      );
-    }
   }
 }
 

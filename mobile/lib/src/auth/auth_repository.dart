@@ -43,7 +43,8 @@ class SupabaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> sendPhoneOtp(String phone) {
-    if (_isLocalEnvironment || _isDevOtpPhone(phone)) {
+    if (_isLocalEnvironment ||
+        (_appEnvironment == 'staging' && _isDevOtpPhone(phone))) {
       return Future.value();
     }
     return _client.auth.signInWithOtp(phone: phone);
@@ -51,7 +52,8 @@ class SupabaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> verifyPhoneOtp({required String phone, required String token}) {
-    if (_isLocalEnvironment || _isDevOtpPhone(phone)) {
+    if (_isLocalEnvironment ||
+        (_appEnvironment == 'staging' && _isDevOtpPhone(phone))) {
       return _verifyDevOtp(phone: phone, token: token);
     }
 
@@ -123,7 +125,7 @@ class SupabaseAuthRepository implements AuthRepository {
   @override
   Future<void> updateDateOfBirth(DateTime dateOfBirth) async {
     if (!isEligibleDateOfBirth(dateOfBirth)) {
-      throw const AuthException('You must be at least 16 years old to play.');
+      throw const AuthException('You must be at least 18 years old to play.');
     }
     final user = currentUser;
     if (user == null) {

@@ -1,10 +1,12 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
 
 import {
   type AdminClient,
   assertNoError,
   createAdminClient,
   createAuthUser,
+  createE2EUserClient,
   E2E_DEFAULT_BIRTH_DATE,
   E2E_PROFILE_PREFIX,
   E2E_SCHEMA_VERSION,
@@ -92,7 +94,13 @@ if (Deno.args.includes("--dry-run")) {
 }
 
 const admin = createAdminClient(config.supabaseUrl, config.serviceRoleKey);
+if (config.onboardingPhone !== "+97339009100") {
+  throw new Error(
+    "The auth-only onboarding fixture must use the server-allowlisted +97339009100 test number.",
+  );
+}
 const authUsersByPhone = await loadAuthUsersByPhone();
+await ensureBootstrapAccount();
 const selectedMainIndex = selectRotatingIndex(
   config.runId,
   PLAYER_DEFINITIONS.length,
@@ -117,7 +125,6 @@ if (
   PLAYER_DEFINITIONS.some((definition) =>
     definition[0] === config.onboardingPhone
   ) ||
-  config.onboardingPhone === ADMIN_DEFINITION[0] ||
   config.onboardingPhone === config.bootstrapPhone
 ) {
   throw new Error(
@@ -410,9 +417,15 @@ async function ensureAccount(
     }
     if (
       existingProfile &&
-      (
-        existingProfile.username !== input.username ||
-        !String(existingProfile.display_name).startsWith(E2E_PROFILE_PREFIX)
+      !(
+        (existingProfile.username === input.username &&
+          String(existingProfile.display_name).startsWith(
+            E2E_PROFILE_PREFIX,
+          )) ||
+        (input.clearAuthOnboarding &&
+          existingProfile.username ===
+            `e2e_${user.id.replaceAll("-", "").slice(0, 12)}` &&
+          existingProfile.display_name === "E2E O.")
       )
     ) {
       throw new Error(
@@ -420,25 +433,54 @@ async function ensureAccount(
           "Field E2E.",
       );
     }
-    user = await updateAuthUser(
-      config.supabaseUrl,
-      config.serviceRoleKey,
-      user.id,
-      {
-        phone: input.phone,
-        phone_confirm: true,
-        password: input.password,
-        user_metadata: {
-          ...user.user_metadata,
-          ...metadata,
-        },
-      },
-    ).catch((error) => {
-      throw new Error(
-        `refresh auth user ${input.phone}: ${errorMessage(error)}`,
+    if (input.clearAuthOnboarding) {
+      if (!isAuthOnlyOnboardingFixture(user)) {
+        throw new Error(
+          "The existing onboarding fixture predates protected Fieldrush ownership markers. " +
+            "Verify its identity and mark or remove that one synthetic Auth user using an administrator before rerunning; " +
+            "editable user metadata is not sufficient authority to delete it.",
+        );
+      }
+      // This dedicated, marker-checked signup actor is disposable. Deleting
+      // Auth cascades its private account state; clearing editable metadata
+      // would not actually reset the server-owned completion state.
+      const { error: deletionError } = await client.auth.admin.deleteUser(
+        user.id,
       );
-    });
-  } else {
+      if (deletionError) {
+        throw new Error(
+          `reset isolated onboarding actor: ${deletionError.message}`,
+        );
+      }
+      authUsersByPhone.delete(normalizedPhone);
+      user = null;
+    } else {
+      user = await updateAuthUser(
+        config.supabaseUrl,
+        config.serviceRoleKey,
+        user.id,
+        {
+          phone: input.phone,
+          phone_confirm: true,
+          password: input.password,
+          user_metadata: {
+            ...user.user_metadata,
+            ...metadata,
+          },
+          app_metadata: {
+            ...user.app_metadata,
+            fieldrush_e2e: true,
+            fieldrush_e2e_role: input.role,
+          },
+        },
+      ).catch((error) => {
+        throw new Error(
+          `refresh auth user ${input.phone}: ${errorMessage(error)}`,
+        );
+      });
+    }
+  }
+  if (!user) {
     user = await createAuthUser(
       config.supabaseUrl,
       config.serviceRoleKey,
@@ -447,6 +489,12 @@ async function ensureAccount(
         phone_confirm: true,
         password: input.password,
         user_metadata: metadata,
+        app_metadata: {
+          fieldrush_e2e: true,
+          fieldrush_e2e_role: input.clearAuthOnboarding
+            ? "onboarding"
+            : input.role,
+        },
       },
     ).catch((error) => {
       throw new Error(
@@ -455,27 +503,88 @@ async function ensureAccount(
     });
   }
 
-  const { error: profileError } = await client.from("profiles").upsert(
-    {
-      id: user.id,
-      phone: input.phone,
-      display_name: input.displayName,
-      username: input.username,
-      date_of_birth: input.dateOfBirth,
-    },
-    { onConflict: "id" },
-  );
-  if (profileError) {
-    throw new Error(`upsert profile ${input.phone}: ${profileError.message}`);
+  let publicDisplayName = input.displayName;
+  if (!input.clearAuthOnboarding) {
+    const actor = await createE2EUserClient(config.supabaseUrl, input.phone);
+    try {
+      const words = input.displayName.trim().split(/\s+/);
+      const lastName = words.pop()!;
+      const firstName = words.join(" ");
+      const { error: signupError } = await actor.rpc(
+        "complete_fieldrush_onboarding",
+        {
+          draft: {
+            first_name: firstName,
+            last_name: lastName,
+            username: input.username,
+            date_of_birth: input.dateOfBirth,
+            email: `${input.username}@fieldrush-e2e.example`,
+          },
+          terms_version: "fieldrush-v1",
+          privacy_version: "fieldrush-v1",
+        },
+      );
+      if (signupError) {
+        throw new Error(`complete E2E signup: ${signupError.message}`);
+      }
+      const { error: tourError } = await actor.rpc("complete_fieldrush_tour");
+      if (tourError) throw tourError;
+      publicDisplayName = `${firstName} ${lastName[0].toUpperCase()}.`;
+    } finally {
+      await actor.auth.signOut();
+    }
   }
   authUsersByPhone.set(normalizedPhone, user);
 
   return {
     profileId: user.id,
     phone: input.phone,
-    displayName: input.displayName,
+    displayName: publicDisplayName,
     username: input.username,
   };
+}
+
+async function ensureBootstrapAccount(): Promise<void> {
+  const target = authUsersByPhone.get(config.bootstrapPhone.replace(/\D/g, ""));
+  if (
+    !target || target.app_metadata?.fieldrush_e2e !== true ||
+    target.app_metadata?.fieldrush_e2e_role !== "bootstrap"
+  ) {
+    throw new Error(
+      "The configured bootstrap account needs administrator-verified protected app_metadata " +
+        "fieldrush_e2e=true and fieldrush_e2e_role=bootstrap. Refusing to onboard an unmarked staging user.",
+    );
+  }
+  const actor = await createE2EUserClient(
+    config.supabaseUrl,
+    config.bootstrapPhone,
+  );
+  try {
+    const { data: account, error: accountError } = await actor.rpc(
+      "get_my_fieldrush_account",
+    );
+    if (accountError) throw accountError;
+    if (account.onboarding_completed !== true) {
+      const { error } = await actor.rpc("complete_fieldrush_onboarding", {
+        draft: {
+          first_name: account.first_name || "E2E Bootstrap",
+          last_name: account.last_name || "Player",
+          username: account.username || "field_e2e_bootstrap",
+          date_of_birth: account.date_of_birth || E2E_DEFAULT_BIRTH_DATE,
+          email: account.email || "field_e2e_bootstrap@fieldrush-e2e.example",
+        },
+        terms_version: "fieldrush-v1",
+        privacy_version: "fieldrush-v1",
+      });
+      if (error) {
+        throw new Error(`complete marked E2E bootstrap: ${error.message}`);
+      }
+    }
+    const { error: tourError } = await actor.rpc("complete_fieldrush_tour");
+    if (tourError) throw tourError;
+  } finally {
+    await actor.auth.signOut();
+  }
 }
 
 async function loadAuthUsersByPhone(): Promise<Map<string, User>> {
