@@ -1,4 +1,3 @@
-import 'package:field/src/auth/auth_repository.dart';
 import 'package:field/src/auth/fieldrush_account_repository.dart';
 import 'package:field/src/config/app_config.dart';
 import 'package:flutter/services.dart';
@@ -21,16 +20,14 @@ class FieldrushFixtureAuthRepository
         'Fixture login requires the staging flavor and exact staging backend.',
       );
     }
-    if (!RegExp(r'^\+9733888367[0-8]$').hasMatch(_bootstrapPhone) ||
-        fixture.devOtpCode != '000000') {
+    if (_bootstrapPhone != '+97339009099' || fixture.devOtpCode != '000000') {
       throw TestFailure(
-        'Fixture login must use an existing staging-only test phone and OTP.',
+        'Fixture login must use the isolated staging bootstrap phone and OTP.',
       );
     }
   }
 
   final String _bootstrapPhone;
-  final _fixtureAuth = SupabaseAuthRepository();
   bool _fixtureOtpPending = false;
 
   bool _canUseFixturePhone(String phone) =>
@@ -41,7 +38,6 @@ class FieldrushFixtureAuthRepository
   Future<void> sendPhoneCode(String phone) async {
     _fixtureOtpPending = _canUseFixturePhone(phone);
     if (_fixtureOtpPending) {
-      await _fixtureAuth.sendPhoneOtp(phone);
       return;
     }
     await super.sendPhoneCode(phone);
@@ -51,7 +47,6 @@ class FieldrushFixtureAuthRepository
   Future<void> sendRecoveryCode(String phone) async {
     _fixtureOtpPending = _canUseFixturePhone(phone);
     if (_fixtureOtpPending) {
-      await _fixtureAuth.sendPhoneOtp(phone);
       return;
     }
     await super.sendRecoveryCode(phone);
@@ -60,7 +55,24 @@ class FieldrushFixtureAuthRepository
   @override
   Future<void> verifyPhoneCode(String phone, String token) async {
     if (_fixtureOtpPending && _canUseFixturePhone(phone)) {
-      await _fixtureAuth.verifyPhoneOtp(phone: phone, token: token);
+      if (token != '000000') {
+        throw const AuthException('Invalid verification code.');
+      }
+      final client = Supabase.instance.client;
+      final response = await client.functions.invoke(
+        'dev-phone-login',
+        body: {'phone': phone, 'token': token},
+      );
+      final data = response.data;
+      if (data is! Map ||
+          data['access_token'] is! String ||
+          data['refresh_token'] is! String) {
+        throw const AuthException('Fixture login returned an invalid session.');
+      }
+      await client.auth.setSession(
+        data['refresh_token'] as String,
+        accessToken: data['access_token'] as String,
+      );
       _fixtureOtpPending = false;
       return;
     }

@@ -1,4 +1,7 @@
-import { isAuthOnlyOnboardingFixture } from "./fixture.ts";
+import {
+  isAuthOnlyOnboardingFixture,
+  isProtectedBootstrapFixture,
+} from "./fixture.ts";
 
 Deno.test("auth-only onboarding exception requires protected marker and reserved phone", () => {
   const valid = {
@@ -27,5 +30,23 @@ Deno.test("auth-only onboarding exception requires protected marker and reserved
     if (isAuthOnlyOnboardingFixture(target) !== expected) {
       throw new Error("Auth-only fixture guard failed");
     }
+  }
+});
+
+Deno.test("bootstrap refresh refuses unmarked or different accounts", () => {
+  const valid = {
+    phone: "+97339009099",
+    app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "bootstrap" },
+  };
+  if (
+    !isProtectedBootstrapFixture(valid) ||
+    isProtectedBootstrapFixture({ phone: valid.phone }) ||
+    isProtectedBootstrapFixture({ ...valid, phone: "+97338883672" }) ||
+    isProtectedBootstrapFixture({
+      ...valid,
+      app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "player" },
+    })
+  ) {
+    throw new Error("Bootstrap ownership guard failed");
   }
 });

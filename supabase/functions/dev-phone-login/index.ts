@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
+import { isProtectedBootstrapFixture } from "../dev-switch-user/fixture.ts";
 import {
   isExactFieldStagingSupabaseUrl,
   isLocalSupabaseUrl,
@@ -179,6 +180,11 @@ async function ensureDevUser({
     phone,
     password,
     phone_confirm: true,
+    ...(phone === "+97339009099"
+      ? {
+        app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "bootstrap" },
+      }
+      : {}),
     user_metadata: {
       display_name: displayName,
       name: displayName,
@@ -197,6 +203,11 @@ async function ensureDevUser({
   const existingUser = await findUserByPhone(admin, phone);
   if (!existingUser) {
     throw new Error("Dev user already exists, but could not be found.");
+  }
+  if (phone === "+97339009099" && !isProtectedBootstrapFixture(existingUser)) {
+    throw new Error(
+      "The reserved E2E bootstrap number belongs to an unmarked account.",
+    );
   }
 
   const { error: updateError } = await admin.auth.admin.updateUserById(

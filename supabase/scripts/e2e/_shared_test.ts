@@ -95,7 +95,7 @@ function validManifest(): E2EManifest {
       projectRef: "nfdkdhdevpstfspazbfn",
     },
     login: {
-      bootstrapPhone: "+97338883672",
+      bootstrapPhone: "+97339009099",
       otpCode: "000000",
       adminProfileId: admin.profileId,
       adminPhone: admin.phone,
