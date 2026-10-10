@@ -94,12 +94,12 @@ if (typeof healthPayload !== "object" || healthPayload === null) {
 }
 
 const tables = [
-  "profiles",
   "clans",
   "open_queue_games",
 ];
 if (serviceRoleKey) {
   tables.push(
+    "profiles",
     "fixtures",
     "season_zero_waitlist",
     "reliability_policy_versions",
@@ -107,6 +107,9 @@ if (serviceRoleKey) {
 }
 
 if (!serviceRoleKey) {
+  // Fieldrush deliberately exposes public profile columns only to signed-in
+  // users. An anonymous profile read succeeding is a privacy regression.
+  await assertAnonymousAccessDenied("profiles");
   await assertAnonymousAccessDenied("season_zero_waitlist");
   await assertAnonymousAccessDenied("reliability_policy_versions");
 }

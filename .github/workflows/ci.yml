@@ -269,6 +269,7 @@ jobs:
           bash -n .github/scripts/run-staging-android-e2e.sh
           bash -n .github/scripts/upload-staging-testflight.sh
           node --check .github/scripts/smoke-supabase.mjs
+          node --test .github/scripts/smoke-supabase.test.mjs
           grep -q "deploy_function dev-phone-login --no-verify-jwt" \
             .github/scripts/deploy-supabase.sh
           grep -q "Hosted schema has no published reliability policy" \
