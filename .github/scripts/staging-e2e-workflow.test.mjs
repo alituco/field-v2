@@ -44,6 +44,8 @@ test("fresh Android job only executes the encrypted prebuilt binary", () => {
 test("preflight and protected Android job share late-guarded 2 GiB emulator", () => {
   assert.match(job("android-staging-e2e"), /uses: \.\/\.github\/actions\/staging-android-emulator/);
   assert.match(preflight, /uses: \.\/\.github\/actions\/staging-android-emulator/);
+  assert.match(preflight, /script: bash .*check-android-emulator\.sh/);
+  assert.doesNotMatch(preflight, /script: \|/);
   assert.match(emulator, /disk-size: 2048M/);
   assert.match(emulator, /pre-emulator-launch-script: .*prepare-android-emulator\.sh/);
   assert.ok(emulator.indexOf("sudo udevadm settle") < emulator.indexOf("test -r /dev/kvm"));

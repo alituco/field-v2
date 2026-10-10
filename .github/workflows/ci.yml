@@ -268,6 +268,7 @@ jobs:
           bash -n .github/scripts/deploy-supabase.sh
           bash -n .github/scripts/run-staging-android-e2e.sh
           bash -n .github/scripts/prepare-android-emulator.sh
+          bash -n .github/scripts/check-android-emulator.sh
           bash -n .github/scripts/upload-staging-testflight.sh
           node --check .github/scripts/smoke-supabase.mjs
           node --test .github/scripts/smoke-supabase.test.mjs

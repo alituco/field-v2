@@ -42,13 +42,6 @@ jobs:
       - name: Boot and exercise the real GitHub emulator
         uses: ./.github/actions/staging-android-emulator
         with:
-          script: |
-            set -euo pipefail
-            test "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed | tr -d '\r')" = 1
-            for attempt in {1..12}; do
-              test "$(adb -s "$ANDROID_SERIAL" get-state | tr -d '\r')" = device
-              adb -s "$ANDROID_SERIAL" shell input keyevent KEYCODE_HOME
-              sleep 5
-            done
-            df -h /
-            echo "Android booted and remained online for the runtime check."
+          # The upstream action runs each input line as a separate sh command.
+          # Keep loops and Bash options together in an explicit Bash script.
+          script: bash "$GITHUB_WORKSPACE/.github/scripts/check-android-emulator.sh"
