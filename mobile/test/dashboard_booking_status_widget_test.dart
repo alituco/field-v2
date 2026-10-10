@@ -23,6 +23,7 @@ void main() {
       daysFromToday: 0,
       confirmedCount: 8,
       staleAssignment: true,
+      teamAssignmentDue: false,
       venue: '[SCHEDULE SEED] Solo Future 5',
     );
 
@@ -109,6 +110,27 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('reactivating Home reloads a newly created solo booking', (
+    tester,
+  ) async {
+    final game = _game(daysFromToday: 2, confirmedCount: 7);
+    final repository = _FakeOpenQueueRepository(null);
+
+    await _pumpHome(tester, openQueueRepository: repository, activationTick: 0);
+    expect(
+      find.byKey(ValueKey('home-solo-booking-booking-${game.id}')),
+      findsNothing,
+    );
+
+    repository.booking = _bookingFor(game);
+    await _pumpHome(tester, openQueueRepository: repository, activationTick: 1);
+
+    expect(
+      find.byKey(ValueKey('home-solo-booking-booking-${game.id}')),
+      findsOneWidget,
+    );
+  });
 
   testWidgets('confirmed home booking never guesses a missing kit color', (
     tester,
@@ -544,6 +566,57 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'matchday keeps unresolved past matches in recent without scores',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final yesterday = _bahrainDateNow().subtract(const Duration(days: 1));
+      final noDataSolo = _fixtureGame(
+        id: 'no-data-solo',
+        date: yesterday,
+        status: 'FINAL',
+        operationalState: MatchOperationalState.noData,
+        whiteScore: 4,
+        blackScore: 2,
+      );
+      final reviewedClan = _clanFixture(
+        id: 'reviewed-clan',
+        date: yesterday,
+        status: FixtureStatus.scheduled,
+        operationalState: MatchOperationalState.underReview,
+        homeScore: 3,
+        awayScore: 0,
+      );
+
+      await _pumpHome(
+        tester,
+        fixtures: [reviewedClan],
+        soloGames: [noDataSolo],
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('home-matchday-recent')),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+
+      expect(find.text('NO DATA'), findsOneWidget);
+      expect(find.text('UNDER REVIEW'), findsOneWidget);
+      expect(find.text('Awaiting admin resolution'), findsOneWidget);
+      expect(find.text('Result is being reviewed'), findsOneWidget);
+      expect(find.textContaining('4–2'), findsNothing);
+      expect(find.textContaining('3–0'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('home-activity-solo-no-data-solo')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-activity-clan-reviewed-clan')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('open solo match uses exact spots-left copy and join flow', (
     tester,
   ) async {
@@ -914,6 +987,7 @@ Future<void> _pumpDashboard(
 
 Future<void> _pumpHome(
   WidgetTester tester, {
+  int activationTick = 0,
   PlayerProfile profile = _defaultProfile,
   OpenQueueBooking? booking,
   List<OpenQueueGame> soloGames = const [],
@@ -930,6 +1004,7 @@ Future<void> _pumpHome(
     MaterialApp(
       home: Scaffold(
         body: DashboardHome(
+          activationTick: activationTick,
           profileRepository: _FakeProfileRepository(profile),
           clanRepository: _FakeClanRepository(
             clans: clans,
@@ -998,6 +1073,8 @@ OpenQueuePartyContext _partyContextWithInvite(
     gameStatus: game.status,
     canUseParties: true,
     maxPartySize: 4,
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
     receivedInvites: const [
       OpenQueuePartyInvite(
         membershipId: 'invite-one',
@@ -1047,6 +1124,7 @@ OpenQueueGame _game({
   required int daysFromToday,
   required int confirmedCount,
   bool staleAssignment = false,
+  bool? teamAssignmentDue,
   String venue = 'TFA, Saar',
   Duration? startsIn,
 }) {
@@ -1061,6 +1139,11 @@ OpenQueueGame _game({
   final startsAt = startsIn == null
       ? bahrainStart.subtract(const Duration(hours: 3))
       : DateTime.now().add(startsIn);
+  final teamAssignmentAt = switch (teamAssignmentDue) {
+    true => DateTime.now().subtract(const Duration(days: 1)),
+    false => DateTime.now().add(const Duration(days: 1)),
+    null => startsAt.subtract(const Duration(hours: 3)),
+  };
   final hasAssignmentMetadata = confirmedCount == 12 || staleAssignment;
   return OpenQueueGame(
     id: 'game-$daysFromToday-$confirmedCount',
@@ -1079,6 +1162,11 @@ OpenQueueGame _game({
     matchAverageSr: hasAssignmentMetadata ? 1200 : null,
     teamSrSpread: hasAssignmentMetadata ? 0 : null,
     teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
+    teamAssignmentAt: teamAssignmentAt,
+    partyLockAt: startsAt.subtract(const Duration(hours: 3)),
+    teamAssignmentLeadMinutes: 180,
+    partyLockLeadMinutes: 180,
+    maxPartySize: 4,
   );
 }
 
@@ -1099,11 +1187,13 @@ OpenQueueGame _fixtureGame({
   OpenQueueRole? myBookingRole,
   String? myBookingTeam,
   String venue = 'TFA, Saar',
+  MatchOperationalState operationalState = MatchOperationalState.normal,
 }) {
   final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
   return OpenQueueGame(
     id: id,
     status: status,
+    operationalState: operationalState,
     venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),
@@ -1134,12 +1224,14 @@ Fixture _clanFixture({
   required FixtureStatus status,
   int? homeScore,
   int? awayScore,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
   FixtureBroadcast? broadcast,
   List<FixtureTimelineEvent> timeline = const [],
 }) {
   return Fixture(
     id: id,
     status: status,
+    operationalState: operationalState,
     homeClanId: _homeFixtureClan.id,
     awayClanId: _awayFixtureClan.id,
     venue: 'TFA, Saar',
@@ -1275,7 +1367,7 @@ class _FakeOpenQueueRepository
         OpenQueueRepository,
         OpenQueuePartyRepository,
         OpenQueueBookingLookupRepository {
-  const _FakeOpenQueueRepository(
+  _FakeOpenQueueRepository(
     this.booking, {
     this.fixtureGames = const [],
     this.matchDetails = const {},
@@ -1283,7 +1375,7 @@ class _FakeOpenQueueRepository
     this.additionalBookings = const [],
   });
 
-  final OpenQueueBooking? booking;
+  OpenQueueBooking? booking;
   final List<OpenQueueGame> fixtureGames;
   final Map<String, OpenQueueMatchDetail> matchDetails;
   final OpenQueuePartyContext? partyContext;
@@ -1322,6 +1414,8 @@ class _FakeOpenQueueRepository
           gameStatus: booking?.game.status ?? 'OPEN',
           canUseParties: true,
           maxPartySize: 4,
+          teamAssignmentLeadMinutes: 180,
+          partyLockLeadMinutes: 180,
           receivedInvites: const [],
           eligiblePlayers: const [],
         );

@@ -1,5 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 
+import { assertSupabaseAdminEnvironment } from "./app-environment";
+
 export function createSupabaseAdmin() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -7,6 +9,8 @@ export function createSupabaseAdmin() {
   if (!supabaseUrl) {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing.");
   }
+
+  assertSupabaseAdminEnvironment(supabaseUrl);
 
   if (!serviceRoleKey) {
     throw new Error("SUPABASE_SERVICE_ROLE_KEY is missing.");
@@ -22,13 +26,14 @@ export function createSupabaseAdmin() {
 
 export function createSupabasePublic() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const publishableKey =
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+  const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
     process.env.SUPABASE_PUBLISHABLE_KEY;
 
   if (!supabaseUrl) {
     throw new Error("NEXT_PUBLIC_SUPABASE_URL is missing.");
   }
+
+  assertSupabaseAdminEnvironment(supabaseUrl);
 
   if (!publishableKey) {
     throw new Error("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY is missing.");

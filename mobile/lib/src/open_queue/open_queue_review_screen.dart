@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
+import '../reliability/reliability_deadline_notice.dart';
 import 'open_queue.dart';
 import 'open_queue_booking_screen.dart';
 import 'open_queue_repository.dart';
@@ -95,6 +96,13 @@ class OpenQueueReviewScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            if (repository is OpenQueueReliabilityLookupRepository) ...[
+              ReliabilityDeadlineNotice(
+                load: () => (repository as OpenQueueReliabilityLookupRepository)
+                    .getMatchReliabilityContext(game.id),
+              ),
+              const SizedBox(height: 16),
+            ],
             Container(
               padding: const EdgeInsets.all(18),
               decoration: BoxDecoration(
@@ -145,15 +153,19 @@ class OpenQueueReviewScreen extends StatelessWidget {
                 borderRadius: BorderRadius.circular(22),
                 border: Border.all(color: fieldGray100),
               ),
-              child: const Row(
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.shield_outlined, color: fieldGray400, size: 20),
-                  SizedBox(width: 11),
+                  const Icon(
+                    Icons.shield_outlined,
+                    color: fieldGray400,
+                    size: 20,
+                  ),
+                  const SizedBox(width: 11),
                   Expanded(
                     child: Text(
-                      'White/Black teams and kits are finalized 3 hours before kickoff once the match is full.',
-                      style: TextStyle(
+                      'White/Black teams and kits are finalized ${game.teamAssignmentLeadLabel} once the match is full.',
+                      style: const TextStyle(
                         color: fieldGray600,
                         fontSize: 13,
                         height: 1.45,
@@ -165,54 +177,11 @@ class OpenQueueReviewScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: fieldGray100),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        'Total',
-                        style: TextStyle(
-                          color: fieldGray500,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const Spacer(),
-                      Text(
-                        game.priceLabel,
-                        style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 23,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 15),
-                  FilledButton.icon(
-                    onPressed: () => _pay(context),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(56),
-                      backgroundColor: fieldEmerald600,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    icon: const Icon(Icons.chevron_right_rounded),
-                    iconAlignment: IconAlignment.end,
-                    label: const Text(
-                      'Continue to Test Checkout',
-                      style: TextStyle(fontWeight: FontWeight.w900),
-                    ),
-                  ),
-                ],
-              ),
+            _BookingCostPanel(
+              repository: repository,
+              game: game,
+              role: role,
+              onContinue: () => _pay(context),
             ),
           ],
         ),
@@ -244,9 +213,10 @@ class _OpenQueuePaymentScreen extends StatefulWidget {
 }
 
 class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
-  String _method = 'APPLE_PAY';
   bool _processing = false;
   String? _error;
+  OpenQueueBookingCostPreview? _costPreview;
+  int _costRefreshKey = 0;
 
   Future<void> _pay() async {
     if (_processing) return;
@@ -255,10 +225,28 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
       _error = null;
     });
     try {
+      final repository = widget.repository;
+      if (repository is OpenQueueBookingCostPreviewRepository) {
+        final latestPreview =
+            await (repository as OpenQueueBookingCostPreviewRepository)
+                .previewBookingCost(gameId: widget.game.id, role: widget.role);
+        if (!mounted) return;
+        final displayedPreview = _costPreview;
+        if (displayedPreview == null ||
+            !displayedPreview.hasSameCheckoutTermsAs(latestPreview)) {
+          setState(() {
+            _costPreview = latestPreview;
+            _costRefreshKey += 1;
+            _error =
+                'Your booking terms changed. Review the updated total and deposit, then confirm again.';
+          });
+          return;
+        }
+      }
       final booking = await widget.repository.bookGame(
         game: widget.game,
         role: widget.role,
-        paymentMethod: _method,
+        paymentMethod: 'TAP_CHECKOUT',
       );
       if (!mounted) return;
       await Navigator.of(context).push<void>(
@@ -310,25 +298,36 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
           padding: fieldHeaderAwarePadding(context, top: 16, bottom: 116),
           children: [
             _PaymentSummary(game: widget.game, role: widget.role),
+            const SizedBox(height: 12),
+            _BookingCostPanel(
+              key: ValueKey(_costRefreshKey),
+              repository: widget.repository,
+              game: widget.game,
+              role: widget.role,
+              onLoaded: (preview) {
+                if (mounted) setState(() => _costPreview = preview);
+              },
+            ),
             const SizedBox(height: 18),
             Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF7ED),
+                color: fieldEmerald50,
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFED7AA)),
+                border: Border.all(color: fieldEmerald100),
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.science_outlined, color: Color(0xFFC2410C)),
+                  Icon(Icons.lock_rounded, color: fieldEmerald700),
                   SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      'TEST CHECKOUT · No real payment or refund is sent yet.',
+                      'SECURE TAP CHECKOUT',
                       style: TextStyle(
-                        color: Color(0xFF9A3412),
+                        color: fieldEmerald700,
                         fontSize: 11,
                         fontWeight: FontWeight.w900,
+                        letterSpacing: 0.7,
                       ),
                     ),
                   ),
@@ -337,7 +336,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
             ),
             const SizedBox(height: 18),
             const Text(
-              'PAYMENT METHOD',
+              'AVAILABLE PAYMENT METHODS',
               style: TextStyle(
                 color: fieldGray500,
                 fontSize: 11,
@@ -346,28 +345,43 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
               ),
             ),
             const SizedBox(height: 10),
-            _PaymentMethodTile(
-              icon: Icons.apple_rounded,
-              label: 'Apple Pay (test)',
-              selected: _method == 'APPLE_PAY',
-              onTap: () => setState(() => _method = 'APPLE_PAY'),
-            ),
-            const SizedBox(height: 9),
-            _PaymentMethodTile(
-              icon: Icons.account_balance_wallet_rounded,
-              label: 'BenefitPay (test)',
-              selected: _method == 'BENEFITPAY',
-              onTap: () => setState(() => _method = 'BENEFITPAY'),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: fieldGray100),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.apple_rounded, color: fieldGray900, size: 22),
+                  SizedBox(width: 11),
+                  Expanded(
+                    child: Text(
+                      'BenefitPay · Visa · Mastercard',
+                      style: TextStyle(
+                        color: fieldGray900,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
             const SizedBox(height: 14),
-            const Row(
+            Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.lock_outline_rounded, color: fieldGray400, size: 15),
-                SizedBox(width: 6),
-                Expanded(
+                const Icon(
+                  Icons.lock_outline_rounded,
+                  color: fieldGray400,
+                  size: 15,
+                ),
+                const SizedBox(width: 6),
+                const Expanded(
                   child: Text(
-                    'Cancel before midnight starting game day for a 50% test-ledger refund. Cancellations on game day are not refundable.',
+                    'Before any cancellation, Field shows the exact wallet refund, reliability strikes, and deposit outcome calculated using server time.',
                     style: TextStyle(
                       color: fieldGray400,
                       fontSize: 11,
@@ -391,7 +405,8 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
             ],
             const SizedBox(height: 18),
             FilledButton(
-              onPressed: _processing ? null : _pay,
+              key: const ValueKey('open-queue-confirm-payment'),
+              onPressed: _processing || _costPreview == null ? null : _pay,
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(56),
                 backgroundColor: fieldGray900,
@@ -409,7 +424,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                       ),
                     )
                   : Text(
-                      'Book Test Spot · ${widget.game.priceLabel}',
+                      'Continue to Pay · ${_costPreview?.totalLabel ?? 'Checking total…'}',
                       style: const TextStyle(fontWeight: FontWeight.w900),
                     ),
             ),
@@ -517,21 +532,6 @@ class _PaymentSummary extends StatelessWidget {
           ),
           _summaryLine(Icons.location_on_outlined, game.venue),
           _summaryLine(Icons.person_rounded, role.label),
-          const Divider(height: 25, color: fieldGray100),
-          Row(
-            children: [
-              const Text('Total to pay', style: TextStyle(color: fieldGray500)),
-              const Spacer(),
-              Text(
-                game.priceLabel,
-                style: const TextStyle(
-                  color: fieldGray900,
-                  fontSize: 23,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -559,55 +559,247 @@ class _PaymentSummary extends StatelessWidget {
   }
 }
 
-class _PaymentMethodTile extends StatelessWidget {
-  const _PaymentMethodTile({
-    required this.icon,
-    required this.label,
-    required this.selected,
-    required this.onTap,
+class _BookingCostPanel extends StatefulWidget {
+  const _BookingCostPanel({
+    super.key,
+    required this.repository,
+    required this.game,
+    required this.role,
+    this.onContinue,
+    this.onLoaded,
   });
 
-  final IconData icon;
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
+  final OpenQueueRepository repository;
+  final OpenQueueGame game;
+  final OpenQueueRole role;
+  final VoidCallback? onContinue;
+  final ValueChanged<OpenQueueBookingCostPreview>? onLoaded;
+
+  @override
+  State<_BookingCostPanel> createState() => _BookingCostPanelState();
+}
+
+class _BookingCostPanelState extends State<_BookingCostPanel> {
+  late Future<OpenQueueBookingCostPreview> _preview;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant _BookingCostPanel oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository ||
+        oldWidget.game.id != widget.game.id ||
+        oldWidget.role != widget.role) {
+      _load();
+    }
+  }
+
+  void _load() {
+    final repository = widget.repository;
+    _preview = repository is OpenQueueBookingCostPreviewRepository
+        ? (repository as OpenQueueBookingCostPreviewRepository)
+              .previewBookingCost(gameId: widget.game.id, role: widget.role)
+        : Future.value(
+            OpenQueueBookingCostPreview(
+              currency: 'BHD',
+              standardMatchFeeFils: widget.game.priceFils,
+              replacementDiscountBps: 0,
+              discountAmountFils: 0,
+              matchFeeFils: widget.game.priceFils,
+              reliabilityDepositRequired: false,
+              reliabilityDepositBps: 0,
+              reliabilityDepositFils: 0,
+              totalFils: widget.game.priceFils,
+            ),
+          );
+    _preview.then<void>(
+      (value) {
+        if (mounted) widget.onLoaded?.call(value);
+      },
+      onError: (Object _, StackTrace _) {
+        // FutureBuilder owns the visible error state. This handler prevents
+        // the separate success observer from surfacing an unhandled error.
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(17),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(17),
-        child: Container(
-          padding: const EdgeInsets.all(15),
+    return FutureBuilder<OpenQueueBookingCostPreview>(
+      future: _preview,
+      builder: (context, snapshot) {
+        final preview = snapshot.data;
+        return Container(
+          padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(17),
-            border: Border.all(
-              color: selected ? fieldGray900 : fieldGray100,
-              width: selected ? 2 : 1.5,
-            ),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: fieldGray100),
           ),
-          child: Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Icon(icon, color: fieldGray900),
-              const SizedBox(width: 11),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: fieldGray900,
+              const Text(
+                'BOOKING TOTAL',
+                style: TextStyle(
+                  color: fieldGray500,
+                  fontSize: 11,
                   fontWeight: FontWeight.w900,
+                  letterSpacing: 1.1,
                 ),
               ),
-              const Spacer(),
-              Icon(
-                selected ? Icons.radio_button_checked : Icons.radio_button_off,
-                color: selected ? fieldGray900 : fieldGray300,
-              ),
+              const SizedBox(height: 13),
+              if (snapshot.connectionState == ConnectionState.waiting)
+                const Row(
+                  children: [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Checking your exact total…',
+                        style: TextStyle(
+                          color: fieldGray600,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                )
+              else if (snapshot.hasError || preview == null) ...[
+                const Text(
+                  'We could not verify the exact price. Refresh before booking.',
+                  style: TextStyle(
+                    color: Color(0xFFB45309),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                OutlinedButton(
+                  onPressed: () => setState(_load),
+                  child: const Text('Try again'),
+                ),
+              ] else ...[
+                _CostLine(
+                  label: 'Match fee',
+                  value: preview.replacementDiscountBps > 0
+                      ? preview.standardMatchFeeLabel
+                      : preview.matchFeeLabel,
+                ),
+                if (preview.replacementDiscountBps > 0)
+                  _CostLine(
+                    label: 'Replacement discount (${preview.discountPercent}%)',
+                    value: '−${preview.discountLabel}',
+                    valueColor: fieldEmerald700,
+                  ),
+                if (preview.reliabilityDepositRequired) ...[
+                  const SizedBox(height: 7),
+                  _CostLine(
+                    label:
+                        'Refundable reliability deposit (${preview.depositPercent}%)',
+                    value: preview.depositLabel,
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.only(top: 5),
+                    child: Text(
+                      'Returned to your Field Wallet after the referee records your on-time arrival.',
+                      style: TextStyle(
+                        color: fieldGray500,
+                        fontSize: 11,
+                        height: 1.35,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                const Divider(height: 25, color: fieldGray100),
+                Row(
+                  children: [
+                    const Text(
+                      'Total to pay',
+                      style: TextStyle(
+                        color: fieldGray700,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const Spacer(),
+                    Text(
+                      preview.totalLabel,
+                      style: const TextStyle(
+                        color: fieldGray900,
+                        fontSize: 23,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
+                ),
+                if (widget.onContinue != null) ...[
+                  const SizedBox(height: 15),
+                  FilledButton.icon(
+                    key: const ValueKey('open-queue-continue-to-checkout'),
+                    onPressed: widget.onContinue,
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size.fromHeight(56),
+                      backgroundColor: fieldEmerald600,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                    ),
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    iconAlignment: IconAlignment.end,
+                    label: const Text(
+                      'Continue to Secure Checkout',
+                      style: TextStyle(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ],
+              ],
             ],
           ),
-        ),
+        );
+      },
+    );
+  }
+}
+
+class _CostLine extends StatelessWidget {
+  const _CostLine({required this.label, required this.value, this.valueColor});
+
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(
+                color: fieldGray600,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? fieldGray900,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 class ConfigurationScreen extends StatelessWidget {
-  const ConfigurationScreen({super.key});
+  const ConfigurationScreen({super.key, this.error});
+
+  final String? error;
 
   @override
   Widget build(BuildContext context) {
@@ -36,8 +38,15 @@ class ConfigurationScreen extends StatelessWidget {
                       style: Theme.of(context).textTheme.headlineSmall,
                     ),
                     const SizedBox(height: 8),
+                    Text(
+                      error ??
+                          'Choose a local, staging, or production environment.',
+                    ),
+                    const SizedBox(height: 8),
                     const Text(
-                      'Run the app with --dart-define-from-file=.env.mobile from the mobile directory.',
+                      'Run with --flavor staging and '
+                      '--dart-define-from-file=.env.local or .env.staging, '
+                      'or use the production equivalents.',
                     ),
                   ],
                 ),

@@ -6,7 +6,7 @@ import { FixtureStatus } from '@/app/lib/types';
 import {
   getBooking,
   getQueueMatch,
-  playerTierLabel,
+  playerDivisionLabel,
   roleLabel,
 } from '@/app/lib/openQueue';
 import {
@@ -31,7 +31,7 @@ export default function Home() {
 
   const firstName = currentPlayer.name.split(' ')[0];
   const playerRating = currentPlayer.playerRating ?? 1200;
-  const tier = playerTierLabel(playerRating);
+  const tier = playerDivisionLabel(playerRating);
 
   const booking = getBooking();
   const bookedMatch = booking ? getQueueMatch(booking.matchId) : undefined;

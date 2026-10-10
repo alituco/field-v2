@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type FixtureRow = {
   id: string;
@@ -35,6 +36,7 @@ type BookingRow = {
 const SEED_PREFIX = "[SCHEDULE SEED]";
 const CLAN_SLOT = "7:00 PM - 8:00 PM";
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "permanent game-schedule verification");
 const key = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const admin = createClient(url, key, {
   auth: { autoRefreshToken: false, persistSession: false },

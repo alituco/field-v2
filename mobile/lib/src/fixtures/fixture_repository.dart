@@ -1,6 +1,9 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'fixture.dart';
+import 'fixture_reliability_roster.dart';
+import 'match_resolution.dart';
+import '../payments/tap_payment_service.dart';
 
 abstract class FixtureRepository {
   Future<List<Fixture>> listFixtures();
@@ -34,12 +37,54 @@ abstract class FixtureRepository {
   });
 }
 
-class SupabaseFixtureRepository implements FixtureRepository {
+abstract interface class FixtureReliabilityBookingRepository {
+  Future<ClanFixtureChargePreview> previewCreateFixtureCharge({
+    required String clanId,
+    required DateTime matchDate,
+    required FixtureTimeSlot timeSlot,
+  });
+
+  Future<ClanFixtureChargePreview> previewJoinFixtureCharge({
+    required String fixtureId,
+    required String clanId,
+  });
+
+  Future<ClanFixtureCancellationPreview> previewFixtureCancellation(
+    String fixtureId,
+  );
+
+  Future<ClanFixtureCancellationPreview> cancelFixtureBooking({
+    required String fixtureId,
+    required String reason,
+  });
+}
+
+abstract interface class FixtureReliabilityRosterRepository {
+  Future<FixtureReliabilityRoster> getMyFixtureReliabilityRoster(
+    String fixtureId,
+  );
+
+  Future<FixtureReliabilityRoster> saveMyFixtureReliabilityRoster({
+    required String fixtureId,
+    required String clanId,
+    required List<String> profileIds,
+  });
+}
+
+class SupabaseFixtureRepository
+    implements
+        FixtureRepository,
+        FixtureReliabilityBookingRepository,
+        FixtureReliabilityRosterRepository,
+        MatchResolutionRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   static const _fixtureSelect = '''
     id,
     status,
+    operational_state,
+    operational_state_updated_at,
+    operational_reason_code,
     home_clan_id,
     away_clan_id,
     venue,
@@ -183,7 +228,6 @@ class SupabaseFixtureRepository implements FixtureRepository {
       _client
           .from('fixtures')
           .select(_fixtureSelect)
-          .neq('status', fixtureStatusToWire(FixtureStatus.cancelled))
           .order('match_date')
           .order('time_slot'),
       _loadRegionRanks(),
@@ -255,17 +299,16 @@ class SupabaseFixtureRepository implements FixtureRepository {
     required DateTime matchDate,
     required FixtureTimeSlot timeSlot,
   }) async {
-    final response = await _client.rpc(
-      'create_fixture',
-      params: {
-        'home_clan_id_to_use': homeClanId,
-        'fixture_venue': venue.trim(),
-        'fixture_date': _dateParam(matchDate),
-        'fixture_time_slot': timeSlot.label,
+    final payment = await TapPaymentService(client: _client).pay(
+      purpose: TapPaymentPurpose.clanCreate,
+      payload: {
+        'clan_id': homeClanId,
+        'venue': venue.trim(),
+        'match_date': _dateParam(matchDate),
+        'time_slot': timeSlot.label,
       },
     );
-    final row = Map<String, dynamic>.from(response as Map);
-    return _fetchFixture(row['id'] as String);
+    return _fetchFixture(payment.resourceId);
   }
 
   @override
@@ -273,15 +316,125 @@ class SupabaseFixtureRepository implements FixtureRepository {
     required String fixtureId,
     required String awayClanId,
   }) async {
+    final payment = await TapPaymentService(client: _client).pay(
+      purpose: TapPaymentPurpose.clanJoin,
+      payload: {'fixture_id': fixtureId, 'clan_id': awayClanId},
+    );
+    return _fetchFixture(payment.resourceId);
+  }
+
+  @override
+  Future<ClanFixtureChargePreview> previewCreateFixtureCharge({
+    required String clanId,
+    required DateTime matchDate,
+    required FixtureTimeSlot timeSlot,
+  }) async {
     final response = await _client.rpc(
-      'join_fixture',
+      'preview_create_clan_fixture_charge',
       params: {
-        'fixture_id_to_join': fixtureId,
-        'away_clan_id_to_use': awayClanId,
+        'clan_id_to_use': clanId,
+        'match_date_to_use': _dateParam(matchDate),
+        'time_slot_to_use': timeSlot.label,
       },
     );
-    final row = Map<String, dynamic>.from(response as Map);
-    return _fetchFixture(row['id'] as String);
+    return ClanFixtureChargePreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<ClanFixtureChargePreview> previewJoinFixtureCharge({
+    required String fixtureId,
+    required String clanId,
+  }) async {
+    final response = await _client.rpc(
+      'preview_join_clan_fixture_charge',
+      params: {'fixture_id_to_use': fixtureId, 'clan_id_to_use': clanId},
+    );
+    return ClanFixtureChargePreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<ClanFixtureCancellationPreview> previewFixtureCancellation(
+    String fixtureId,
+  ) async {
+    final response = await _client.rpc(
+      'preview_clan_fixture_cancellation',
+      params: {'fixture_id_to_use': fixtureId},
+    );
+    return ClanFixtureCancellationPreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<ClanFixtureCancellationPreview> cancelFixtureBooking({
+    required String fixtureId,
+    required String reason,
+  }) async {
+    final response = await _client.rpc(
+      'cancel_clan_fixture_booking',
+      params: {
+        'fixture_id_to_cancel': fixtureId,
+        'reason_to_use': reason.trim(),
+      },
+    );
+    return ClanFixtureCancellationPreview.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<FixtureReliabilityRoster> getMyFixtureReliabilityRoster(
+    String fixtureId,
+  ) async {
+    final response = await _client.rpc(
+      'get_my_fixture_reliability_roster',
+      params: {'fixture_id_to_view': fixtureId},
+    );
+    return FixtureReliabilityRoster.fromJson(_rpcMap(response));
+  }
+
+  @override
+  Future<FixtureReliabilityRoster> saveMyFixtureReliabilityRoster({
+    required String fixtureId,
+    required String clanId,
+    required List<String> profileIds,
+  }) async {
+    await _client.rpc(
+      'set_fixture_reliability_roster',
+      params: {
+        'fixture_id_to_manage': fixtureId,
+        'clan_id_to_manage': clanId,
+        'profile_ids_to_confirm': profileIds,
+        'note_to_use': 'Confirmed from match booking details',
+      },
+    );
+    return getMyFixtureReliabilityRoster(fixtureId);
+  }
+
+  @override
+  Future<MatchResolutionCase?> getMatchResolutionCase({
+    required MatchResolutionKind matchKind,
+    required String matchId,
+  }) async {
+    final response = await _client.rpc(
+      'get_match_resolution_case',
+      params: {'match_kind_to_use': matchKind.code, 'match_id_to_use': matchId},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty => Map<String, dynamic>.from(
+        value.first as Map,
+      ),
+      _ => null,
+    };
+    return row == null ? null : MatchResolutionCase.fromJson(row);
+  }
+
+  @override
+  Future<void> submitMatchResolutionDispute({
+    required String caseId,
+    required String reason,
+  }) async {
+    await _client.rpc(
+      'submit_match_resolution_dispute',
+      params: {'case_id_to_use': caseId, 'reason_to_use': reason.trim()},
+    );
   }
 
   @override
@@ -431,4 +584,14 @@ int _intValue(Object? value) {
   if (value is num) return value.toInt();
   if (value is String) return int.tryParse(value) ?? 0;
   return 0;
+}
+
+Map<String, dynamic> _rpcMap(Object? response) {
+  return switch (response) {
+    final Map value => Map<String, dynamic>.from(value),
+    final List value when value.isNotEmpty => Map<String, dynamic>.from(
+      value.first as Map,
+    ),
+    _ => throw StateError('The server did not return a reliability quote.'),
+  };
 }

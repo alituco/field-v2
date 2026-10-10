@@ -365,6 +365,65 @@ void main() {
     expect(find.text('AVAILABLE SPOTS'), findsNothing);
     expect(find.text('OPEN QUEUE BOOKING'), findsNothing);
   });
+
+  testWidgets('past unresolved matches show operational state, not a result', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final date = _previousMatchDay(DateTime.now());
+    final clan = _clanFixture(
+      date,
+      operationalState: MatchOperationalState.noData,
+      homeScore: 3,
+      awayScore: 0,
+    );
+    final solo = _soloGame(
+      id: 'solo-review',
+      date: date,
+      status: 'FINAL',
+      confirmedCount: 12,
+      operationalState: MatchOperationalState.underReview,
+      whiteScore: 4,
+      blackScore: 2,
+    );
+
+    await _pumpFixtures(tester, fixtures: [clan], soloGames: [solo]);
+    await _showCard(tester, 'solo-fixture-solo-review');
+
+    expect(find.text('No data'), findsOneWidget);
+    expect(find.text('Under review'), findsOneWidget);
+    expect(find.text('3 - 0'), findsNothing);
+    expect(find.text('4 - 2'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('cancelled clan and solo games remain visible and labelled', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final date = _nextMatchDay(DateTime.now());
+    final clan = _clanFixture(date, status: FixtureStatus.cancelled);
+    final solo = _soloGame(
+      id: 'solo-cancelled',
+      date: date,
+      status: 'CANCELLED',
+      confirmedCount: 0,
+    );
+
+    await _pumpFixtures(tester, fixtures: [clan], soloGames: [solo]);
+    await _showCard(tester, 'solo-fixture-solo-cancelled');
+
+    expect(
+      find.byKey(const ValueKey('clan-fixture-clan-game')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('solo-fixture-solo-cancelled')),
+      findsOneWidget,
+    );
+    expect(find.text('Cancelled'), findsNWidgets(2));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _setPhoneSize(WidgetTester tester) async {
@@ -427,16 +486,25 @@ DateTime _previousMatchDay(DateTime from) {
   return date;
 }
 
-Fixture _clanFixture(DateTime date) {
+Fixture _clanFixture(
+  DateTime date, {
+  FixtureStatus status = FixtureStatus.scheduled,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
+  int? homeScore,
+  int? awayScore,
+}) {
   return Fixture(
     id: 'clan-game',
-    status: FixtureStatus.scheduled,
+    status: status,
+    operationalState: operationalState,
     homeClanId: _homeClan.id,
     awayClanId: _awayClan.id,
     venue: 'TFA, Saar',
     day: date.weekday == DateTime.tuesday ? 'TUESDAY' : 'FRIDAY',
     timeSlot: FixtureTimeSlot.early.label,
     matchDate: date,
+    homeScore: homeScore,
+    awayScore: awayScore,
     createdBy: 'leader-1',
     homeClan: _homeClan,
     awayClan: _awayClan,
@@ -461,11 +529,13 @@ OpenQueueGame _soloGame({
   int? blackAverageSr,
   int? matchAverageSr,
   int? teamSrSpread,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
 }) {
   final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
   return OpenQueueGame(
     id: id,
     status: status,
+    operationalState: operationalState,
     venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),

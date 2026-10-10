@@ -8,6 +8,12 @@ class OpenQueuePartyContext {
     required this.maxPartySize,
     required this.receivedInvites,
     required this.eligiblePlayers,
+    this.policyVersionId,
+    this.serverNow,
+    this.teamAssignmentAt,
+    this.partyLockAt,
+    this.teamAssignmentLeadMinutes,
+    this.partyLockLeadMinutes,
     this.myParty,
   });
 
@@ -15,6 +21,12 @@ class OpenQueuePartyContext {
   final String gameStatus;
   final bool canUseParties;
   final int maxPartySize;
+  final String? policyVersionId;
+  final DateTime? serverNow;
+  final DateTime? teamAssignmentAt;
+  final DateTime? partyLockAt;
+  final int? teamAssignmentLeadMinutes;
+  final int? partyLockLeadMinutes;
   final OpenQueueParty? myParty;
   final List<OpenQueuePartyInvite> receivedInvites;
   final List<OpenQueuePartyPlayer> eligiblePlayers;
@@ -24,7 +36,15 @@ class OpenQueuePartyContext {
       gameId: _string(json['game_id']),
       gameStatus: _string(json['game_status'], fallback: 'OPEN').toUpperCase(),
       canUseParties: json['can_use_parties'] == true,
-      maxPartySize: _integer(json['max_party_size'], fallback: 4).clamp(2, 4),
+      maxPartySize: _integer(json['max_party_size'], fallback: 4).clamp(1, 4),
+      policyVersionId: _nullableString(json['policy_version_id']),
+      serverNow: _date(json['server_now']),
+      teamAssignmentAt: _date(json['team_assignment_at']),
+      partyLockAt: _date(json['party_lock_at']),
+      teamAssignmentLeadMinutes: _nullableInteger(
+        json['team_assignment_lead_minutes'],
+      ),
+      partyLockLeadMinutes: _nullableInteger(json['party_lock_lead_minutes']),
       myParty: switch (json['my_party']) {
         final Map value => OpenQueueParty.fromJson(
           Map<String, dynamic>.from(value),
@@ -39,6 +59,11 @@ class OpenQueuePartyContext {
       ).map(OpenQueuePartyPlayer.fromJson).toList(growable: false),
     );
   }
+
+  String get teamAssignmentLeadLabel =>
+      openQueueLeadTimeLabel(teamAssignmentLeadMinutes);
+
+  String get partyLockLeadLabel => openQueueLeadTimeLabel(partyLockLeadMinutes);
 }
 
 class OpenQueueParty {
@@ -208,6 +233,8 @@ class OpenQueuePartyInviteNotification {
     required this.venue,
     required this.gameStatus,
     this.readAt,
+    this.policyVersionId,
+    this.partyLockAt,
   });
 
   final String id;
@@ -221,6 +248,8 @@ class OpenQueuePartyInviteNotification {
   final DateTime? gameStartsAt;
   final String venue;
   final String gameStatus;
+  final String? policyVersionId;
+  final DateTime? partyLockAt;
 
   factory OpenQueuePartyInviteNotification.fromJson(Map<String, dynamic> json) {
     final inviter = switch (json['inviter']) {
@@ -243,6 +272,8 @@ class OpenQueuePartyInviteNotification {
       gameStartsAt: _date(game['starts_at']),
       venue: _string(game['venue'], fallback: 'Venue to be confirmed'),
       gameStatus: _string(game['status'], fallback: 'OPEN').toUpperCase(),
+      policyVersionId: _nullableString(game['policy_version_id']),
+      partyLockAt: _date(game['party_lock_at']),
     );
   }
 }
@@ -295,6 +326,14 @@ int _integer(dynamic value, {required int fallback}) {
     final num number => number.round(),
     final String text => int.tryParse(text) ?? fallback,
     _ => fallback,
+  };
+}
+
+int? _nullableInteger(dynamic value) {
+  return switch (value) {
+    final num number => number.round(),
+    final String text => int.tryParse(text),
+    _ => null,
   };
 }
 

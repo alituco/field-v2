@@ -30,7 +30,8 @@ Deno.serve(async (request) => {
 
   const webhookSecret = Deno.env.get("CLOUDFLARE_STREAM_WEBHOOK_SECRET");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceRoleKey = Deno.env.get("FIELD_SUPABASE_SECRET_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!webhookSecret || !supabaseUrl || !serviceRoleKey) {
     return json({ error: "Stream webhook is not configured." }, 500);
   }
@@ -145,12 +146,16 @@ Deno.serve(async (request) => {
   const broadcastTable = broadcast.kind === "SOLO"
     ? "open_queue_broadcasts"
     : "fixture_broadcasts";
-  const broadcastIdColumn = broadcast.kind === "SOLO" ? "game_id" : "fixture_id";
+  const broadcastIdColumn = broadcast.kind === "SOLO"
+    ? "game_id"
+    : "fixture_id";
   const recordingStartedAt = validRecordingTimestamp(payload.created);
-  if (isRecordingOlderThanRequest(
-    recordingStartedAt,
-    broadcast.streamRequestedAt,
-  )) {
+  if (
+    isRecordingOlderThanRequest(
+      recordingStartedAt,
+      broadcast.streamRequestedAt,
+    )
+  ) {
     return json({ received: true, ignored: true, reason: "stale recording" });
   }
   const state = stringValue(payload.status?.state)?.toLowerCase();
@@ -194,9 +199,7 @@ Deno.serve(async (request) => {
       status: "REPLAY_READY",
       replay_hls_url: replayUrl,
       recording_ready_at: readyAt,
-      ...(recordingStartedAt
-        ? { stream_started_at: recordingStartedAt }
-        : {}),
+      ...(recordingStartedAt ? { stream_started_at: recordingStartedAt } : {}),
       error_message: null,
     })
     .eq(broadcastIdColumn, matchId)
@@ -210,7 +213,9 @@ Deno.serve(async (request) => {
     return json({ received: true, ignored: true, reason: "stale recording" });
   }
 
-  const matchTable = broadcast.kind === "SOLO" ? "open_queue_games" : "fixtures";
+  const matchTable = broadcast.kind === "SOLO"
+    ? "open_queue_games"
+    : "fixtures";
   const { error: fixtureError } = await admin
     .from(matchTable)
     .update({ video_url: replayUrl })
@@ -304,8 +309,10 @@ function isRecordingOlderThanRequest(
   if (!recordingStartedAt || !streamRequestedAt) return false;
   const recordingMilliseconds = Date.parse(recordingStartedAt);
   const requestMilliseconds = Date.parse(streamRequestedAt);
-  if (!Number.isFinite(recordingMilliseconds) ||
-    !Number.isFinite(requestMilliseconds)) {
+  if (
+    !Number.isFinite(recordingMilliseconds) ||
+    !Number.isFinite(requestMilliseconds)
+  ) {
     return false;
   }
   return recordingMilliseconds < requestMilliseconds - 60_000;

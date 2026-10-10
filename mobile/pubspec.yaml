@@ -42,9 +42,15 @@ dependencies:
   image_picker: ^1.2.3
   path_provider: ^2.1.5
   video_player: ^2.12.0
+  checkout_flutter: ^1.0.4
+  phone_numbers_parser: ^9.0.28
+  country_picker: ^2.0.28
+  url_launcher: ^6.3.3
 
 dev_dependencies:
   flutter_test:
+    sdk: flutter
+  integration_test:
     sdk: flutter
   video_player_platform_interface: ^6.9.0
 
@@ -65,6 +71,13 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+  fonts:
+    - family: Outfit
+      fonts:
+        - asset: assets/fonts/Outfit.ttf
+    - family: PlusJakartaSans
+      fonts:
+        - asset: assets/fonts/PlusJakartaSans.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

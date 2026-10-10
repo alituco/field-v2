@@ -109,15 +109,17 @@ void main() {
     );
   });
 
-  test('team assignment becomes due exactly three hours before kickoff', () {
+  test('team assignment uses the server-provided policy cutoff', () {
     final kickoff = DateTime.utc(2026, 7, 21, 17, 30);
+    final cutoff = kickoff.subtract(const Duration(minutes: 90));
     final game = _game(
       id: 'team-cutoff',
       startsAt: kickoff,
       status: 'FULL',
       confirmedCount: 12,
+      teamAssignmentAt: cutoff,
+      teamAssignmentLeadMinutes: 90,
     );
-    final cutoff = kickoff.subtract(const Duration(hours: 3));
 
     expect(
       game.isTeamAssignmentDueAt(
@@ -132,6 +134,29 @@ void main() {
       true,
     );
   });
+
+  test('booking-cost preview exposes discount, deposit, and exact total', () {
+    final preview = OpenQueueBookingCostPreview.fromJson({
+      'currency': 'BHD',
+      'standard_match_fee_fils': 3000,
+      'replacement_discount_bps': 5000,
+      'discount_amount_fils': 1500,
+      'match_fee_fils': 1500,
+      'reliability_deposit_required': true,
+      'reliability_deposit_bps': 2000,
+      'reliability_deposit_fils': 300,
+      'total_fils': 1800,
+      'policy_version_id': 'policy-2',
+    });
+
+    expect(preview.standardMatchFeeLabel, '3 BHD');
+    expect(preview.discountLabel, '1.500 BHD');
+    expect(preview.depositLabel, '0.300 BHD');
+    expect(preview.totalLabel, '1.800 BHD');
+    expect(preview.discountPercent, 50);
+    expect(preview.depositPercent, 20);
+    expect(preview.reliabilityDepositRequired, true);
+  });
 }
 
 OpenQueueGame _game({
@@ -142,6 +167,8 @@ OpenQueueGame _game({
   int confirmedCount = 6,
   int? whiteScore,
   int? blackScore,
+  DateTime? teamAssignmentAt,
+  int? teamAssignmentLeadMinutes,
 }) {
   return OpenQueueGame(
     id: id,
@@ -157,6 +184,8 @@ OpenQueueGame _game({
     spots: const {},
     whiteScore: whiteScore,
     blackScore: blackScore,
+    teamAssignmentAt: teamAssignmentAt,
+    teamAssignmentLeadMinutes: teamAssignmentLeadMinutes,
   );
 }
 

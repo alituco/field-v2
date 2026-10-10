@@ -2,6 +2,160 @@ import '../clans/clan.dart';
 
 enum FixtureStatus { open, scheduled, live, finalResult, cancelled }
 
+enum MatchOperationalState {
+  normal('NORMAL'),
+  noData('NO_DATA'),
+  underReview('UNDER_REVIEW'),
+  resolved('RESOLVED');
+
+  const MatchOperationalState(this.wireValue);
+
+  final String wireValue;
+
+  bool get isPendingResolution =>
+      this == MatchOperationalState.noData ||
+      this == MatchOperationalState.underReview;
+
+  String? get pendingLabel => switch (this) {
+    MatchOperationalState.noData => 'No data',
+    MatchOperationalState.underReview => 'Under review',
+    MatchOperationalState.normal || MatchOperationalState.resolved => null,
+  };
+
+  static MatchOperationalState fromWire(Object? value) {
+    return switch (value?.toString().trim().toUpperCase()) {
+      'NO_DATA' => MatchOperationalState.noData,
+      'UNDER_REVIEW' => MatchOperationalState.underReview,
+      'RESOLVED' => MatchOperationalState.resolved,
+      _ => MatchOperationalState.normal,
+    };
+  }
+}
+
+class ClanFixtureChargePreview {
+  const ClanFixtureChargePreview({
+    required this.currency,
+    required this.baseAmountFils,
+    required this.reliabilityDepositRequired,
+    required this.reliabilityDepositBps,
+    required this.reliabilityDepositFils,
+    required this.totalFils,
+    required this.activeClanStrikes,
+    this.policyVersionId,
+  });
+
+  final String currency;
+  final int baseAmountFils;
+  final bool reliabilityDepositRequired;
+  final int reliabilityDepositBps;
+  final int reliabilityDepositFils;
+  final int totalFils;
+  final int activeClanStrikes;
+  final String? policyVersionId;
+
+  String get baseAmountLabel => _fixtureMoneyLabel(baseAmountFils, currency);
+  String get depositLabel =>
+      _fixtureMoneyLabel(reliabilityDepositFils, currency);
+  String get totalLabel => _fixtureMoneyLabel(totalFils, currency);
+  int get depositPercent => (reliabilityDepositBps / 100).round();
+
+  bool hasSameCheckoutTermsAs(ClanFixtureChargePreview other) {
+    return currency == other.currency &&
+        baseAmountFils == other.baseAmountFils &&
+        reliabilityDepositRequired == other.reliabilityDepositRequired &&
+        reliabilityDepositBps == other.reliabilityDepositBps &&
+        reliabilityDepositFils == other.reliabilityDepositFils &&
+        totalFils == other.totalFils &&
+        activeClanStrikes == other.activeClanStrikes &&
+        policyVersionId == other.policyVersionId;
+  }
+
+  factory ClanFixtureChargePreview.fromJson(Map<String, dynamic> json) {
+    return ClanFixtureChargePreview(
+      currency: (json['currency'] as String? ?? 'BHD').trim(),
+      baseAmountFils: _asInt(json['base_amount_fils']),
+      reliabilityDepositRequired:
+          json['reliability_deposit_required'] as bool? ?? false,
+      reliabilityDepositBps: _asInt(json['reliability_deposit_bps']),
+      reliabilityDepositFils: _asInt(json['reliability_deposit_fils']),
+      totalFils: _asInt(json['total_fils']),
+      activeClanStrikes: _asInt(json['active_clan_strikes']),
+      policyVersionId: (json['policy_version_id'] as String?)?.trim(),
+    );
+  }
+}
+
+class ClanFixtureCancellationPreview {
+  const ClanFixtureCancellationPreview({
+    required this.canCancel,
+    required this.outcomeCode,
+    required this.cancellationBand,
+    required this.strikeDelta,
+    required this.refundBps,
+    required this.refundAmountFils,
+    required this.depositForfeited,
+    required this.opponentRefundAmountFils,
+    required this.createsForfeit,
+    required this.forfeitScore,
+    required this.currency,
+    this.depositRefundFils = 0,
+    this.policyVersionId,
+  });
+
+  final bool canCancel;
+  final String outcomeCode;
+  final String cancellationBand;
+  final int strikeDelta;
+  final int refundBps;
+  final int refundAmountFils;
+  final bool depositForfeited;
+  final int opponentRefundAmountFils;
+  final bool createsForfeit;
+  final int forfeitScore;
+  final String currency;
+  final int depositRefundFils;
+  final String? policyVersionId;
+
+  int get refundPercent => (refundBps / 100).round();
+  String get refundLabel => _fixtureMoneyLabel(refundAmountFils, currency);
+  String get depositRefundLabel =>
+      _fixtureMoneyLabel(depositRefundFils, currency);
+
+  bool hasSameConsequencesAs(ClanFixtureCancellationPreview other) {
+    return canCancel == other.canCancel &&
+        outcomeCode == other.outcomeCode &&
+        cancellationBand == other.cancellationBand &&
+        strikeDelta == other.strikeDelta &&
+        refundBps == other.refundBps &&
+        refundAmountFils == other.refundAmountFils &&
+        depositForfeited == other.depositForfeited &&
+        opponentRefundAmountFils == other.opponentRefundAmountFils &&
+        createsForfeit == other.createsForfeit &&
+        forfeitScore == other.forfeitScore &&
+        currency == other.currency &&
+        depositRefundFils == other.depositRefundFils &&
+        policyVersionId == other.policyVersionId;
+  }
+
+  factory ClanFixtureCancellationPreview.fromJson(Map<String, dynamic> json) {
+    return ClanFixtureCancellationPreview(
+      canCancel: json['can_cancel'] as bool? ?? false,
+      outcomeCode: json['outcome_code'] as String? ?? '',
+      cancellationBand: json['cancellation_band'] as String? ?? '',
+      strikeDelta: _asInt(json['strike_delta']),
+      refundBps: _asInt(json['refund_bps']),
+      refundAmountFils: _asInt(json['refund_amount_fils']),
+      depositForfeited: json['deposit_forfeited'] as bool? ?? false,
+      opponentRefundAmountFils: _asInt(json['opponent_refund_amount_fils']),
+      createsForfeit: json['creates_forfeit'] as bool? ?? false,
+      forfeitScore: _asInt(json['forfeit_score'], fallback: 3),
+      currency: (json['currency'] as String? ?? 'BHD').trim(),
+      depositRefundFils: _asInt(json['deposit_refund_fils']),
+      policyVersionId: (json['policy_version_id'] as String?)?.trim(),
+    );
+  }
+}
+
 enum FixtureTimeSlot {
   early('7:00 PM - 8:00 PM'),
   late('8:30 PM - 9:30 PM');
@@ -40,7 +194,7 @@ class FixtureClan {
   final String region;
   final int? regionRank;
 
-  ClanRank get rank => rankFromRating(skillRating);
+  RatingDivision get rank => divisionFromRating(skillRating);
 
   ClanTheme get theme => clanThemeById(themeId);
 
@@ -404,6 +558,9 @@ class Fixture {
     this.cancelledBy,
     this.cancellationContext = const {},
     this.cancellationActor,
+    this.operationalState = MatchOperationalState.normal,
+    this.operationalStateUpdatedAt,
+    this.operationalReasonCode,
     this.createdAt,
     this.updatedAt,
     this.clock,
@@ -448,6 +605,9 @@ class Fixture {
   final String? cancelledBy;
   final Map<String, dynamic> cancellationContext;
   final FixtureParticipant? cancellationActor;
+  final MatchOperationalState operationalState;
+  final DateTime? operationalStateUpdatedAt;
+  final String? operationalReasonCode;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final FixtureClock? clock;
@@ -469,6 +629,29 @@ class Fixture {
   bool get isLive => status == FixtureStatus.live;
 
   bool get isCancelled => status == FixtureStatus.cancelled;
+
+  bool get hasPendingOperationalResolution =>
+      operationalState.isPendingResolution;
+
+  String? get operationalStatusLabel => operationalState.pendingLabel;
+
+  String? get operationalStatusDetail {
+    if (!hasPendingOperationalResolution) return null;
+    return switch (operationalReasonCode?.trim().toUpperCase()) {
+      'RESULT_MISSING' => 'Result missing',
+      'REFEREE_REPORT_MISSING' => 'Referee report missing',
+      'DISPUTED' => 'Resolution disputed',
+      'REFUND_FAILED' => 'Refund needs attention',
+      'NO_ACTIVITY' => 'Match data missing',
+      _ =>
+        operationalState == MatchOperationalState.underReview
+            ? 'Admin review in progress'
+            : 'Match data missing',
+    };
+  }
+
+  bool get shouldDisplayScore =>
+      (isFinal || isLive) && !hasPendingOperationalResolution;
 
   String? get livePlaybackUrl => _nonEmptyUrl(broadcast?.hlsUrl);
 
@@ -581,6 +764,8 @@ class Fixture {
   }
 
   String get statusLabel {
+    final operationalLabel = operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel;
     return switch (status) {
       FixtureStatus.open => 'Looking for opponent',
       FixtureStatus.scheduled => 'Scheduled',
@@ -591,6 +776,8 @@ class Fixture {
   }
 
   String get detailStatusLabel {
+    final operationalLabel = operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel;
     return switch (status) {
       FixtureStatus.open => 'Open',
       FixtureStatus.scheduled => 'Upcoming',
@@ -713,6 +900,13 @@ class Fixture {
       cancellationActor: cancellationActor == null
           ? null
           : FixtureParticipant.fromJson(cancellationActor),
+      operationalState: MatchOperationalState.fromWire(
+        json['operational_state'],
+      ),
+      operationalStateUpdatedAt: _asDate(json['operational_state_updated_at']),
+      operationalReasonCode: _nonEmptyString(
+        json['operational_reason_code'],
+      )?.toUpperCase(),
       createdAt: _asDate(json['created_at']),
       updatedAt: _asDate(json['updated_at']),
       clock: clock == null ? null : FixtureClock.fromJson(clock),
@@ -840,6 +1034,14 @@ int _asInt(Object? value, {int fallback = 0}) {
   return fallback;
 }
 
+String _fixtureMoneyLabel(int fils, String currency) {
+  final dinars = fils / 1000;
+  final amount = dinars == dinars.roundToDouble()
+      ? dinars.toInt().toString()
+      : dinars.toStringAsFixed(3);
+  return '$amount $currency';
+}
+
 int? _asNullableInt(Object? value) {
   if (value == null) return null;
   if (value is int) return value;
@@ -856,6 +1058,11 @@ DateTime? _asDate(Object? value) {
 
 String? _nonEmptyUrl(String? value) {
   final trimmed = value?.trim();
+  return trimmed == null || trimmed.isEmpty ? null : trimmed;
+}
+
+String? _nonEmptyString(Object? value) {
+  final trimmed = value?.toString().trim();
   return trimmed == null || trimmed.isEmpty ? null : trimmed;
 }
 

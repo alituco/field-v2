@@ -1,4 +1,9 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { createClient } from "npm:@supabase/supabase-js@2.86.0";
+import { isProtectedBootstrapFixture } from "../dev-switch-user/fixture.ts";
+import {
+  isExactFieldStagingSupabaseUrl,
+  isLocalSupabaseUrl,
+} from "../_shared/staging_guard.ts";
 
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -35,17 +40,29 @@ Deno.serve(async (request) => {
     return json({ error: "Method not allowed." }, 405);
   }
 
-  const enabled = Deno.env.get("DEV_OTP_ENABLED") === "true";
+  const supabaseUrl = Deno.env.get("SUPABASE_URL");
+  const isLocal = isLocalSupabaseUrl(supabaseUrl);
+  const isStaging = isExactFieldStagingSupabaseUrl(supabaseUrl);
+  if (!isLocal && !isStaging) {
+    return json({ error: "Dev login is unavailable." }, 404);
+  }
+
+  const enabled = isLocal || Deno.env.get("DEV_OTP_ENABLED") === "true";
   const configuredDevUsers = getConfiguredDevUsers();
   const allowedCode = Deno.env.get("DEV_OTP_CODE") ?? "000000";
-  const devPassword = Deno.env.get("DEV_OTP_PASSWORD");
+  const devPassword = isLocal
+    ? Deno.env.get("LOCAL_DEV_SEED_PASSWORD") ?? "LocalField_Only_42!"
+    : Deno.env.get("DEV_OTP_PASSWORD");
   const validUntil = Deno.env.get("DEV_OTP_VALID_UNTIL");
 
   if (configuredDevUsers.error) {
     return json({ error: configuredDevUsers.error }, 500);
   }
 
-  if (!enabled || configuredDevUsers.users.length === 0 || !devPassword) {
+  if (
+    !enabled || (!isLocal && configuredDevUsers.users.length === 0) ||
+    !devPassword
+  ) {
     return json({ error: "Dev login is not configured." }, 404);
   }
 
@@ -60,17 +77,15 @@ Deno.serve(async (request) => {
     return json({ error: "Invalid request body." }, 400);
   }
 
-  const devUser = findConfiguredDevUser(configuredDevUsers.users, body.phone);
-
-  if (!devUser || body.token !== allowedCode) {
+  if (body.token !== allowedCode) {
     return json({ error: "Invalid verification code." }, 401);
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const serviceRoleKey = Deno.env.get("FIELD_SUPABASE_SECRET_KEY") ??
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+  if (!anonKey || !serviceRoleKey) {
     return json({ error: "Missing Supabase function secrets." }, 500);
   }
 
@@ -82,26 +97,48 @@ Deno.serve(async (request) => {
   }) as SupabaseAnyClient;
 
   try {
-    const userId = await ensureDevUser({
-      admin,
-      phone: devUser.phone,
-      password: devPassword,
-      displayName: devUser.displayName,
-    });
+    const requestedPhone = body.phone?.trim() ?? "";
+    const localUser = isLocal
+      ? await findUserByPhone(admin, requestedPhone)
+      : null;
+    const devUser = isLocal
+      ? {
+        phone: localUser?.phone ?? requestedPhone,
+        displayName: normalizeDisplayName(
+          String(
+            localUser?.user_metadata?.display_name ??
+              localUser?.user_metadata?.name ??
+              "Local Player",
+          ),
+        ),
+      }
+      : findConfiguredDevUser(configuredDevUsers.users, requestedPhone);
 
-    const { error: profileError } = await admin.from("profiles").upsert(
-      {
-        id: userId,
-        phone: devUser.phone,
-        display_name: devUser.displayName,
-        date_of_birth: devDateOfBirth,
-      },
-      { onConflict: "id" },
-    );
-
-    if (profileError) {
-      return json({ error: profileError.message }, 500);
+    if (!devUser || (isLocal && !localUser)) {
+      return json(
+        {
+          error: isLocal
+            ? "That player is not in the local seed data."
+            : "Invalid verification code.",
+        },
+        401,
+      );
     }
+
+    const userId = isLocal
+      ? localUser!.id
+      : await retryTransientAuthFailure(() =>
+        ensureDevUser({
+          admin,
+          phone: devUser.phone,
+          password: devPassword,
+          displayName: devUser.displayName,
+        })
+      );
+
+    // Login proves identity only. Fieldrush completion owns profile creation,
+    // public initials and private DOB. Never restore a full name or birthday
+    // into a public profile when a test user signs in again.
 
     const { data: signInData, error: signInError } =
       await signInDevUserWithPassword({
@@ -143,6 +180,11 @@ async function ensureDevUser({
     phone,
     password,
     phone_confirm: true,
+    ...(phone === "+97339009098"
+      ? {
+        app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "bootstrap" },
+      }
+      : {}),
     user_metadata: {
       display_name: displayName,
       name: displayName,
@@ -161,6 +203,11 @@ async function ensureDevUser({
   const existingUser = await findUserByPhone(admin, phone);
   if (!existingUser) {
     throw new Error("Dev user already exists, but could not be found.");
+  }
+  if (phone === "+97339009098" && !isProtectedBootstrapFixture(existingUser)) {
+    throw new Error(
+      "The reserved E2E bootstrap number belongs to an unmarked account.",
+    );
   }
 
   const { error: updateError } = await admin.auth.admin.updateUserById(
@@ -324,6 +371,35 @@ function isAlreadyRegisteredError(message?: string) {
     normalized.includes("already exists") ||
     normalized.includes("duplicate")
   );
+}
+
+async function retryTransientAuthFailure<T>(action: () => Promise<T>) {
+  const delaysMs = [1000, 2000, 4000, 8000];
+
+  for (let attempt = 0; attempt <= delaysMs.length; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      if (!isSigningKeyCacheMiss(error) || attempt === delaysMs.length) {
+        throw error;
+      }
+
+      console.warn(
+        `Supabase Auth signing-key cache miss; retrying dev login (${
+          attempt + 1
+        }/${delaysMs.length}).`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
+  }
+
+  throw new Error("Could not create dev login.");
+}
+
+function isSigningKeyCacheMiss(error: unknown) {
+  const message = toErrorMessage(error);
+  return message.includes("unrecognized JWT kid") &&
+    message.includes("token is unverifiable");
 }
 
 function toErrorMessage(error: unknown) {

@@ -1,6 +1,11 @@
 -- Run after 20260715000005_create_reviewable_clan_forfeits.sql inside a
--- transaction that will be rolled back. This exercises both admin outcomes and
--- verifies retry/idempotency and SR deferral.
+-- transaction that is rolled back by this script. This exercises both admin
+-- outcomes and verifies retry/idempotency, Clan SR deferral, and the policy
+-- rule that an abandoned match does not award Player SR.
+\set ON_ERROR_STOP on
+
+begin;
+
 do $$
 declare
   admin_id uuid;
@@ -22,6 +27,8 @@ declare
   overturn_away_rating_before integer;
   previous_home_score integer;
   previous_away_score integer;
+  confirm_participants uuid[];
+  overturn_participants uuid[];
 begin
   select referee.profile_id into admin_id
   from public.referee_profiles referee
@@ -70,18 +77,28 @@ begin
     referee_id = excluded.referee_id,
     assigned_by = excluded.assigned_by;
 
-  insert into public.fixture_clock_states (
-    fixture_id, status, started_at, accumulated_seconds, duration_seconds
-  ) values (
-    confirm_fixture.id, 'RUNNING', now() - interval '5 minutes', 0, 3600
-  ) on conflict (fixture_id) do update set
-    status = 'RUNNING',
-    started_at = excluded.started_at,
-    accumulated_seconds = 0,
-    duration_seconds = 3600;
-  update public.fixtures set status = 'LIVE' where id = confirm_fixture.id;
-  update public.fixture_player_appearances
-  set played = true
+  perform public.ensure_match_attendance_records('CLAN', confirm_fixture.id);
+  perform public.initialize_fixture_reliability_roster(confirm_fixture.id);
+  update public.match_attendance_records attendance
+  set
+    checked_in_at = attendance.check_in_deadline_at - interval '1 minute',
+    checked_in_by = admin_id
+  where attendance.fixture_id = confirm_fixture.id
+    and attendance.expected_for_match
+    and attendance.outcome is null;
+  select array_agg(attendance.profile_id order by attendance.profile_id)
+  into confirm_participants
+  from public.match_attendance_records attendance
+  where attendance.fixture_id = confirm_fixture.id
+    and attendance.expected_for_match
+    and attendance.checked_in_at is not null;
+  perform public.referee_start_fixture_atomic(
+    confirm_fixture.id,
+    confirm_participants,
+    3600
+  );
+  update public.fixture_clock_states
+  set started_at = clock_timestamp() - interval '5 minutes'
   where fixture_id = confirm_fixture.id;
 
   select skill_rating into confirm_home_rating_before
@@ -179,14 +196,16 @@ begin
       and fixture.away_score = 3
       and fixture.home_sr_change is not null
       and fixture.away_sr_change is not null
+      and fixture.cancellation_context ->> 'rating_policy'
+        = 'CLAN_SR_ONLY_NO_PLAYER_SR'
   ) or not exists (
     select 1 from public.match_forfeit_decisions decision
     where decision.id = confirm_decision_id and decision.state = 'CONFIRMED'
   ) then
     raise exception 'Admin confirmation did not finalize the 0-3 result.';
   end if;
-  if confirmed_player_events = 0 then
-    raise exception 'Admin confirmation did not run normal player SR finalization.';
+  if confirmed_player_events <> 0 then
+    raise exception 'A confirmed abandonment incorrectly awarded Player SR.';
   end if;
 
   retry_payload := public.admin_review_clan_forfeit(
@@ -219,18 +238,28 @@ begin
     referee_id = excluded.referee_id,
     assigned_by = excluded.assigned_by;
 
-  insert into public.fixture_clock_states (
-    fixture_id, status, started_at, accumulated_seconds, duration_seconds
-  ) values (
-    overturn_fixture.id, 'RUNNING', now() - interval '3 minutes', 0, 3600
-  ) on conflict (fixture_id) do update set
-    status = 'RUNNING',
-    started_at = excluded.started_at,
-    accumulated_seconds = 0,
-    duration_seconds = 3600;
-  update public.fixtures set status = 'LIVE' where id = overturn_fixture.id;
-  update public.fixture_player_appearances
-  set played = true
+  perform public.ensure_match_attendance_records('CLAN', overturn_fixture.id);
+  perform public.initialize_fixture_reliability_roster(overturn_fixture.id);
+  update public.match_attendance_records attendance
+  set
+    checked_in_at = attendance.check_in_deadline_at - interval '1 minute',
+    checked_in_by = admin_id
+  where attendance.fixture_id = overturn_fixture.id
+    and attendance.expected_for_match
+    and attendance.outcome is null;
+  select array_agg(attendance.profile_id order by attendance.profile_id)
+  into overturn_participants
+  from public.match_attendance_records attendance
+  where attendance.fixture_id = overturn_fixture.id
+    and attendance.expected_for_match
+    and attendance.checked_in_at is not null;
+  perform public.referee_start_fixture_atomic(
+    overturn_fixture.id,
+    overturn_participants,
+    3600
+  );
+  update public.fixture_clock_states
+  set started_at = clock_timestamp() - interval '3 minutes'
   where fixture_id = overturn_fixture.id;
 
   previous_home_score := overturn_fixture.home_score;
@@ -283,3 +312,5 @@ begin
   end if;
 end;
 $$;
+
+rollback;

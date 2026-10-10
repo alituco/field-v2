@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../clans/clan_widgets.dart';
+import '../support/contact_support_sheet.dart';
+import '../support/support.dart';
+import '../support/support_repository.dart';
 import 'moderation.dart';
 
 class ModerationStatusLoadingScreen extends StatelessWidget {
@@ -83,10 +85,12 @@ class RestrictedAccountScreen extends StatefulWidget {
     super.key,
     required this.status,
     required this.onSignOut,
+    this.supportRepository,
   });
 
   final ModerationStatus status;
   final Future<void> Function() onSignOut;
+  final SupportRepository? supportRepository;
 
   @override
   State<RestrictedAccountScreen> createState() =>
@@ -95,8 +99,16 @@ class RestrictedAccountScreen extends StatefulWidget {
 
 class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
   bool _isSigningOut = false;
+  late final SupportRepository _supportRepository;
 
   bool get _isBanned => widget.status.state == ModerationState.banned;
+
+  @override
+  void initState() {
+    super.initState();
+    _supportRepository =
+        widget.supportRepository ?? SupabaseSupportRepository();
+  }
 
   Future<void> _signOut() async {
     if (_isSigningOut) return;
@@ -116,13 +128,26 @@ class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
     }
   }
 
-  void _openSupport() {
-    showModalBottomSheet<void>(
+  Future<void> _openSupport() async {
+    final receipt = await showContactSupportSheet(
       context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) => _RestrictionSupportSheet(status: widget.status),
+      repository: _supportRepository,
+      initialCategory: SupportRequestCategory.accountOrProfile,
+      surfaceKey: const ValueKey('restricted-account-support-sheet'),
+      requestContext: {
+        'entry_point': 'restricted_account',
+        'moderation_state': widget.status.state.name.toUpperCase(),
+        'moderation_scope': widget.status.scope.name.toUpperCase(),
+        'moderation_message': widget.status.message,
+        'moderation_ends_at': widget.status.endsAt?.toUtc().toIso8601String(),
+        'warning_count': widget.status.warningCount,
+      },
+    );
+    if (!mounted || receipt == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Request sent · reference ${receipt.shortReference}'),
+      ),
     );
   }
 
@@ -168,35 +193,43 @@ class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
                               size: 25,
                             ),
                             const SizedBox(width: 10),
-                            const Text(
-                              'FIELD',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: 2.4,
-                              ),
-                            ),
-                            const Spacer(),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 7,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.09),
-                                borderRadius: BorderRadius.circular(99),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.12),
+                            const Expanded(
+                              child: Text(
+                                'FIELD',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2.4,
                                 ),
                               ),
-                              child: Text(
-                                statusLabel,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 1.2,
+                            ),
+                            const SizedBox(width: 10),
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.09),
+                                  borderRadius: BorderRadius.circular(99),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.12),
+                                  ),
+                                ),
+                                child: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    statusLabel,
+                                    maxLines: 1,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1.2,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
@@ -375,104 +408,6 @@ class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
             },
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _RestrictionSupportSheet extends StatelessWidget {
-  const _RestrictionSupportSheet({required this.status});
-
-  final ModerationStatus status;
-
-  @override
-  Widget build(BuildContext context) {
-    final details = [
-      'Account status: ${status.state.name.toUpperCase()}',
-      if (status.message.isNotEmpty) 'Message: ${status.message}',
-      if (status.endsAt != null)
-        'Ends: ${status.endsAt!.toUtc().toIso8601String()}',
-    ].join('\n');
-
-    return Container(
-      key: const Key('restricted-account-support-sheet'),
-      padding: EdgeInsets.fromLTRB(
-        22,
-        12,
-        22,
-        22 + MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Center(
-            child: Container(
-              width: 42,
-              height: 4,
-              decoration: BoxDecoration(
-                color: fieldGray200,
-                borderRadius: BorderRadius.circular(99),
-              ),
-            ),
-          ),
-          const SizedBox(height: 22),
-          const Row(
-            children: [
-              Icon(Icons.support_agent_rounded, color: fieldEmerald600),
-              SizedBox(width: 10),
-              Text(
-                'Contact support',
-                style: TextStyle(
-                  color: fieldGray900,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'If you believe this is a mistake, contact your Field or league administrator and include your account details below.',
-            style: TextStyle(
-              color: fieldGray600,
-              fontSize: 15,
-              height: 1.45,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: 18),
-          OutlinedButton.icon(
-            key: const Key('restricted-account-copy-details'),
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: details));
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Account details copied.')),
-              );
-            },
-            icon: const Icon(Icons.copy_rounded),
-            label: const Text('Copy account details'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: fieldGray900,
-              side: const BorderSide(color: fieldGray200),
-              minimumSize: const Size.fromHeight(52),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(15),
-              ),
-              textStyle: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
-          ),
-        ],
       ),
     );
   }

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../auth/auth_repository.dart';
+import '../auth/fieldrush_account.dart';
+import '../auth/fieldrush_account_screen.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
@@ -13,6 +15,8 @@ import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../reliability/reliability_repository.dart';
+import '../support/support_repository.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
 
@@ -20,13 +24,19 @@ class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.authRepository,
+    required this.supportRepository,
+    this.accountRepository,
     this.moderationStatus,
     this.isDev = false,
+    this.profileSwitcherEnabled = false,
   });
 
   final AuthRepository authRepository;
+  final SupportRepository supportRepository;
+  final FieldrushAccountRepository? accountRepository;
   final ModerationStatus? moderationStatus;
   final bool isDev;
+  final bool profileSwitcherEnabled;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -40,7 +50,10 @@ class _HomeScreenState extends State<HomeScreen> {
       SupabaseLeaderboardRepository();
   final OpenQueueRepository _openQueueRepository =
       SupabaseOpenQueueRepository();
+  final ReliabilityRepository _reliabilityRepository =
+      SupabaseReliabilityRepository();
   int _selectedIndex = 0;
+  int _homeActivationTick = 0;
   int _clansActivationTick = 0;
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
@@ -99,6 +112,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _selectTab(int index) {
     setState(() {
+      if (index == 0) {
+        _homeActivationTick++;
+      }
       if (index == 2) {
         _clansActivationTick++;
       }
@@ -136,6 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final pages = [
       DashboardHome(
+        activationTick: _homeActivationTick,
         profileRepository: _profileRepository,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
@@ -170,14 +187,29 @@ class _HomeScreenState extends State<HomeScreen> {
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
-        devModeEnabled: widget.isDev,
+        reliabilityRepository: _reliabilityRepository,
+        supportRepository: widget.supportRepository,
+        profileSwitcherEnabled: widget.profileSwitcherEnabled,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
+        onOpenAccount: widget.accountRepository == null
+            ? null
+            : () async {
+                await Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => FieldrushAccountScreen(
+                      authRepository: widget.authRepository,
+                      accountRepository: widget.accountRepository!,
+                    ),
+                  ),
+                );
+              },
       ),
     ];
 
     return Scaffold(
+      key: const ValueKey('home-screen'),
       extendBody: true,
       backgroundColor: fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),

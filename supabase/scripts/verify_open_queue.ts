@@ -2,6 +2,7 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
 
 type ProfileRow = { id: string; phone: string | null };
 
@@ -9,80 +10,58 @@ const url = requireEnv("SUPABASE_URL");
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");
+assertLocalSupabase(url);
 const admin = createClient(url, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-const testGameIds: string[] = [];
-const testUserIds: string[] = [];
+const testSlotSeed = 3650 +
+  crypto.getRandomValues(new Uint32Array(1))[0] % 1000;
 let first: ProfileRow;
 let second: ProfileRow;
 let participants: ProfileRow[];
 let firstClient: SupabaseClient;
 let secondClient: SupabaseClient;
 
-try {
-  participants = [];
-  for (let index = 1; index <= 12; index += 1) {
-    participants.push(await createVerificationProfile(String(index)));
-  }
-  [first, second] = participants;
-
-  firstClient = await signedInClient(first.phone!);
-  secondClient = await signedInClient(second.phone!);
-
-  const { data: ownRatings, error: ownRatingError } = await firstClient.rpc(
-    "get_my_player_rating",
-  );
-  if (ownRatingError) throw ownRatingError;
-  assert(
-    ownRatings.length === 1 && ownRatings[0].profile_id === first.id,
-    "The current-player rating RPC must return the signed-in player's row.",
-  );
-
-  await verifyFinalRoleRace();
-  await verifyWaitlistStateIsRejected();
-  await verifyFullGameReopensWithHalfRefund();
-  const gameDayRefundVerified = await verifyGameDayCancellationHasNoRefund();
-  console.log(
-    gameDayRefundVerified
-      ? "Open Queue verified: atomic final spot, no waitlist state, hard caps, FULL→OPEN, 50% before game day, and 0% on game day."
-      : "Open Queue verified: atomic final spot, no waitlist state, hard caps, FULL→OPEN, and 50% before game day. The game-day 0% case was skipped.",
-  );
-} finally {
-  if (testGameIds.length > 0) {
-    const { error } = await admin.from("open_queue_games").delete().in(
-      "id",
-      testGameIds,
-    );
-    if (error) {
-      console.error(
-        "Could not clean up Open Queue verification games:",
-        error.message,
-      );
-    }
-  }
-  for (const userId of testUserIds) {
-    const { error } = await admin.auth.admin.deleteUser(userId);
-    if (error) {
-      console.error(
-        "Could not clean up Open Queue verification user:",
-        error.message,
-      );
-    }
-  }
+participants = [];
+for (let index = 1; index <= 12; index += 1) {
+  participants.push(await createVerificationProfile(String(index)));
 }
+[first, second] = participants;
+
+firstClient = await signedInClient(first.phone!);
+secondClient = await signedInClient(second.phone!);
+
+const { data: ownRatings, error: ownRatingError } = await firstClient.rpc(
+  "get_my_player_rating",
+);
+if (ownRatingError) throw ownRatingError;
+assert(
+  ownRatings.length === 1 && ownRatings[0].profile_id === first.id,
+  "The current-player rating RPC must return the signed-in player's row.",
+);
+
+await verifyFinalRoleRace();
+await verifyWaitlistStateIsRejected();
+await verifyFullGameReopensWithPolicyRefund();
+console.log(
+  "Open Queue verified locally: atomic final spot, no waitlist state, hard caps, policy-backed cancellation/refund, wallet credit, and FULL→OPEN.",
+);
 
 async function verifyFinalRoleRace() {
   const game = await createGame(futureBahrainOpenQueueStart(0), "RACE");
   await insertBooking(game.id, participants[2], "GK", "verify-race-existing");
 
-  const calls = [firstClient, secondClient].map((client) =>
+  const paymentReferences = await Promise.all([
+    prepareCapturedPayment(firstClient, first.id, game.id, "GK"),
+    prepareCapturedPayment(secondClient, second.id, game.id, "GK"),
+  ]);
+  const calls = [firstClient, secondClient].map((client, index) =>
     client.rpc("book_open_queue_game", {
       game_id_to_book: game.id,
       role_to_book: "GK",
-      payment_method_to_use: "MOCK",
-      payment_reference_to_use: crypto.randomUUID(),
+      payment_method_to_use: "CARD",
+      payment_reference_to_use: paymentReferences[index],
     })
   );
   const results = await Promise.all(calls);
@@ -102,7 +81,41 @@ async function verifyFinalRoleRace() {
   );
 }
 
-async function verifyFullGameReopensWithHalfRefund() {
+async function prepareCapturedPayment(
+  client: SupabaseClient,
+  profileId: string,
+  gameId: string,
+  role: string,
+) {
+  const { data: quote, error: quoteError } = await client.rpc(
+    "preview_open_queue_booking_cost",
+    { game_id_to_book: gameId, role_to_book: role },
+  );
+  if (quoteError) throw quoteError;
+
+  const id = crypto.randomUUID();
+  const compactId = id.replaceAll("-", "");
+  const chargeId = `chg_verify_${compactId}`;
+  const { error } = await admin.from("tap_payment_intents").insert({
+    id,
+    profile_id: profileId,
+    purpose: "SOLO_BOOKING",
+    status: "CAPTURED",
+    currency: "BHD",
+    amount_fils: Number(quote.total_fils),
+    payload: { game_id: gameId, role },
+    quote_snapshot: quote,
+    transaction_reference: `field_verify_${compactId}`,
+    tap_charge_id: chargeId,
+    tap_payment_method: "CARD",
+    tap_status: "CAPTURED",
+    captured_at: new Date().toISOString(),
+  });
+  if (error) throw error;
+  return chargeId;
+}
+
+async function verifyFullGameReopensWithPolicyRefund() {
   const game = await createGame(futureBahrainOpenQueueStart(2), "FULL");
   const roles = [
     "GK",
@@ -144,9 +157,25 @@ async function verifyFullGameReopensWithHalfRefund() {
     { booking_id_to_preview: booking.id },
   );
   if (previewError) throw previewError;
+  const preview = previews[0];
   assert(
-    previews[0].refund_percent === 50,
-    "A pre-game-day cancellation must refund 50%.",
+    preview.can_cancel === true,
+    "A future confirmed booking must be cancellable.",
+  );
+  assert(
+    preview.outcome_code === "CANCELLED_EARLY",
+    "A far-future cancellation must use the active policy's early band.",
+  );
+  assert(
+    Number.isInteger(preview.refund_bps) &&
+      preview.refund_bps >= 0 &&
+      preview.refund_bps <= 10000,
+    "The active policy must quote a valid refund basis-points value.",
+  );
+  assert(
+    preview.refund_amount_fils ===
+      Math.floor(3000 * preview.refund_bps / 10000),
+    "The quoted refund must be calculated from the stored base price.",
   );
 
   const { data: cancelled, error: cancelError } = await firstClient.rpc(
@@ -155,8 +184,9 @@ async function verifyFullGameReopensWithHalfRefund() {
   );
   if (cancelError) throw cancelError;
   assert(
-    cancelled.refund_percent === 50,
-    "The stored refund must be 50% before game day.",
+    cancelled.refund_bps === preview.refund_bps &&
+      cancelled.refund_amount_fils === preview.refund_amount_fils,
+    "The applied refund must exactly match the policy-backed preview.",
   );
 
   const { data: reopened, error: reopenedError } = await admin
@@ -169,6 +199,20 @@ async function verifyFullGameReopensWithHalfRefund() {
     reopened.status === "OPEN",
     "Cancelling from a full game must reopen the slot.",
   );
+
+  if (preview.refund_amount_fils > 0) {
+    const { data: walletCredit, error: walletError } = await admin
+      .from("field_wallet_transactions")
+      .select("amount_fils,transaction_type")
+      .eq("booking_id", booking.id)
+      .eq("transaction_type", "BOOKING_REFUND")
+      .single();
+    if (walletError) throw walletError;
+    assert(
+      walletCredit.amount_fils === preview.refund_amount_fils,
+      "A refundable cancellation must credit the quoted amount to Field Wallet.",
+    );
+  }
 }
 
 async function verifyWaitlistStateIsRejected() {
@@ -182,6 +226,7 @@ async function verifyWaitlistStateIsRejected() {
     .eq("profile_id", first.id)
     .single();
   if (ratingError) throw ratingError;
+  const policyVersionId = await policyVersionForGame(game.id);
 
   const { error } = await admin.from("open_queue_bookings").insert({
     game_id: game.id,
@@ -190,93 +235,18 @@ async function verifyWaitlistStateIsRejected() {
     status: "WAITLIST",
     player_rating_at_booking: rating.skill_rating,
     amount_paid_fils: 3000,
+    base_amount_fils: 3000,
+    discount_bps: 0,
+    reliability_deposit_fils: 0,
+    reliability_deposit_status: "NOT_REQUIRED",
+    reliability_policy_version_id: policyVersionId,
     payment_method: "MOCK",
   });
   assert(
-    error !== null,
-    "The database must reject every waitlist booking state.",
+    error !== null &&
+      error.message.includes("open_queue_bookings_status_check"),
+    "The database must reject WAITLIST specifically at the booking-status constraint.",
   );
-}
-
-async function verifyGameDayCancellationHasNoRefund() {
-  const nowInBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000);
-  const weekday = nowInBahrain.getUTCDay();
-  const startsAt = new Date(Date.UTC(
-    nowInBahrain.getUTCFullYear(),
-    nowInBahrain.getUTCMonth(),
-    nowInBahrain.getUTCDate(),
-    17,
-    30,
-  ));
-  if (
-    (weekday !== 2 && weekday !== 5) || startsAt.getTime() <= Date.now()
-  ) {
-    console.log(
-      "Skipped game-day 0% refund verification: this case only runs on Tuesday or Friday before 8:30 PM Bahrain.",
-    );
-    return false;
-  }
-
-  const game = await findOrCreateGameDayGame(startsAt);
-  if (!game) return false;
-  const bookingId = await bookAvailableGameDayRole(game.id);
-
-  const { data: previews, error: previewError } = await firstClient.rpc(
-    "preview_open_queue_cancellation",
-    { booking_id_to_preview: bookingId },
-  );
-  if (previewError) throw previewError;
-  assert(
-    previews[0].refund_percent === 0,
-    "A game-day cancellation must have no refund.",
-  );
-
-  const { data: cancelled, error: cancelError } = await firstClient.rpc(
-    "cancel_open_queue_booking",
-    { booking_id_to_cancel: bookingId },
-  );
-  if (cancelError) throw cancelError;
-  assert(
-    cancelled.refund_percent === 0,
-    "A game-day cancellation must store a 0% refund.",
-  );
-  return true;
-}
-
-async function findOrCreateGameDayGame(startsAt: Date) {
-  const { data, error } = await admin
-    .from("open_queue_games")
-    .select("id,status")
-    .eq("starts_at", startsAt.toISOString())
-    .neq("status", "CANCELLED")
-    .maybeSingle();
-  if (error) throw error;
-  if (data) {
-    if (data.status !== "OPEN") {
-      console.log(
-        `Skipped game-day 0% refund verification: today's Open Queue slot is ${data.status} and cannot accept a test booking.`,
-      );
-      return null;
-    }
-    return data as { id: string };
-  }
-  return await createGame(startsAt, "GAME-DAY");
-}
-
-async function bookAvailableGameDayRole(gameId: string) {
-  let lastError: { message: string } | null = null;
-  for (const role of ["MID", "DEF", "ATT", "GK"]) {
-    const { data, error } = await firstClient.rpc("book_open_queue_game", {
-      game_id_to_book: gameId,
-      role_to_book: role,
-      payment_method_to_use: "MOCK",
-      payment_reference_to_use: crypto.randomUUID(),
-    });
-    if (!error) return data as string;
-    lastError = error;
-    if (!error.message.includes("position just filled")) throw error;
-  }
-  throw lastError ?? new Error("The game-day Open Queue slot is full.");
 }
 
 async function createGame(startsAt: Date, suffix: string) {
@@ -291,7 +261,6 @@ async function createGame(startsAt: Date, suffix: string) {
     .select("id")
     .single();
   if (error) throw error;
-  testGameIds.push(data.id);
   return data as { id: string };
 }
 
@@ -307,16 +276,32 @@ async function insertBooking(
     .eq("profile_id", profile.id)
     .single();
   if (ratingError) throw ratingError;
+  const policyVersionId = await policyVersionForGame(gameId);
   const { error } = await admin.from("open_queue_bookings").insert({
     game_id: gameId,
     profile_id: profile.id,
     role,
     player_rating_at_booking: rating.skill_rating,
     amount_paid_fils: 3000,
+    base_amount_fils: 3000,
+    discount_bps: 0,
+    reliability_deposit_fils: 0,
+    reliability_deposit_status: "NOT_REQUIRED",
+    reliability_policy_version_id: policyVersionId,
     payment_method: "MOCK",
     payment_reference: paymentReference,
   });
   if (error) throw error;
+}
+
+async function policyVersionForGame(gameId: string) {
+  const { data, error } = await admin
+    .from("match_reliability_terms")
+    .select("policy_version_id")
+    .eq("open_queue_game_id", gameId)
+    .single();
+  if (error) throw error;
+  return data.policy_version_id as string;
 }
 
 async function ownBooking(
@@ -355,16 +340,17 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
     },
   });
   if (error) throw error;
-  testUserIds.push(data.user.id);
 
-  const { error: profileError } = await admin.from("profiles").upsert({
-    id: data.user.id,
+  await completeLocalFieldrushFixture({
+    url,
+    publishableKey,
     phone,
-    display_name: `Open Queue Verify ${label}`,
-    date_of_birth: "2000-01-01",
+    password,
+    firstName: "Open Queue",
+    lastName: `Verify ${label}`,
+    dateOfBirth: "2000-01-01",
     username: `oq_verify_${digits}`,
   });
-  if (profileError) throw profileError;
   return { id: data.user.id, phone };
 }
 
@@ -375,7 +361,11 @@ function futureBahrainOpenQueueStart(slotOffset: number) {
   );
   const nowInBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000);
   let matchingSlot = 0;
-  for (let daysAhead = 3650; daysAhead < 4020; daysAhead += 1) {
+  for (
+    let daysAhead = testSlotSeed;
+    daysAhead < testSlotSeed + 370;
+    daysAhead += 1
+  ) {
     const localDate = new Date(Date.UTC(
       nowInBahrain.getUTCFullYear(),
       nowInBahrain.getUTCMonth(),
@@ -397,6 +387,15 @@ function futureBahrainOpenQueueStart(slotOffset: number) {
     ));
   }
   throw new Error("Could not find a future Tuesday/Friday Open Queue slot.");
+}
+
+function assertLocalSupabase(rawUrl: string) {
+  const hostname = new URL(rawUrl).hostname;
+  assert(
+    hostname === "127.0.0.1" || hostname === "localhost" ||
+      hostname === "::1",
+    "This destructive integration verification can only run against local Supabase.",
+  );
 }
 
 function requireEnv(name: string) {

@@ -6,12 +6,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
-  test('player eligibility uses the exact sixteenth birthday', () {
+  test('player eligibility uses the exact eighteenth birthday', () {
     final today = DateTime(2026, 7, 14);
 
-    expect(isEligibleDateOfBirth(DateTime(2010, 7, 14), today: today), isTrue);
-    expect(isEligibleDateOfBirth(DateTime(2010, 7, 15), today: today), isFalse);
+    expect(isEligibleDateOfBirth(DateTime(2008, 7, 14), today: today), isTrue);
+    expect(isEligibleDateOfBirth(DateTime(2008, 7, 15), today: today), isFalse);
     expect(dateOfBirthToIso(DateTime(2002, 3, 9)), '2002-03-09');
+  });
+
+  test('DOB parsing rejects calendar overflow and unsupported dates', () {
+    expect(parseDateOfBirth('2000-02-30'), isNull);
+    expect(parseDateOfBirth('2001-02-29'), isNull);
+    expect(parseDateOfBirth('2000-13-01'), isNull);
+    expect(parseDateOfBirth('1899-01-01'), isNull);
+    expect(parseDateOfBirth('2000-02-29'), DateTime(2000, 2, 29));
+    expect(isEligibleDateOfBirth(DateTime(1800, 1, 1)), isFalse);
+    expect(
+      latestEligibleDateOfBirth(today: DateTime(2028, 2, 29)),
+      DateTime(2010, 2, 28),
+    );
   });
 
   testWidgets('DOB is required as the final onboarding step', (tester) async {
@@ -35,7 +48,7 @@ void main() {
 
     expect(find.text('When were you born?'), findsOneWidget);
     expect(find.text('Choose your birthday'), findsOneWidget);
-    expect(find.textContaining('16 or older'), findsOneWidget);
+    expect(find.textContaining('18 or older'), findsOneWidget);
 
     await tester.tap(find.text('FINISH SETUP'));
     await tester.pump();

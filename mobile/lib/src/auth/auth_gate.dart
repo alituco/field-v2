@@ -7,6 +7,7 @@ import '../home/home_screen.dart';
 import '../moderation/account_restriction_screen.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
+import '../support/support_repository.dart';
 import 'auth_flow_screen.dart';
 import 'auth_repository.dart';
 import 'onboarding_status.dart';
@@ -19,14 +20,18 @@ class AuthGate extends StatefulWidget {
     super.key,
     required this.authRepository,
     this.moderationRepository,
+    this.supportRepository,
     this.authenticatedAppBuilder,
     this.isDev = false,
+    this.profileSwitcherEnabled = false,
   });
 
   final AuthRepository authRepository;
   final ModerationRepository? moderationRepository;
+  final SupportRepository? supportRepository;
   final AuthenticatedAppBuilder? authenticatedAppBuilder;
   final bool isDev;
+  final bool profileSwitcherEnabled;
 
   @override
   State<AuthGate> createState() => _AuthGateState();
@@ -35,6 +40,7 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   StreamSubscription<AuthState>? _authSubscription;
   late final ModerationRepository _moderationRepository;
+  late final SupportRepository _supportRepository;
   Session? _session;
   ModerationStatus? _moderationStatus;
   bool _isLoadingModerationStatus = false;
@@ -46,6 +52,8 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _moderationRepository =
         widget.moderationRepository ?? SupabaseModerationRepository();
+    _supportRepository =
+        widget.supportRepository ?? SupabaseSupportRepository();
     _session = widget.authRepository.currentSession;
     if (_session != null) {
       _isLoadingModerationStatus = true;
@@ -144,6 +152,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     if (_session != null && moderationStatus?.blocksAccount == true) {
       return RestrictedAccountScreen(
         status: moderationStatus!,
+        supportRepository: _supportRepository,
         onSignOut: widget.authRepository.signOut,
       );
     }
@@ -158,8 +167,10 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
       return HomeScreen(
         key: ValueKey(_session!.user.id),
         authRepository: widget.authRepository,
+        supportRepository: _supportRepository,
         moderationStatus: moderationStatus,
         isDev: widget.isDev,
+        profileSwitcherEnabled: widget.profileSwitcherEnabled,
       );
     }
 

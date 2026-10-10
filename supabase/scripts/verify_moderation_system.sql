@@ -1,6 +1,10 @@
--- Run after the moderation migration in a transaction that will be rolled back.
--- This exercises the report, discipline, cancellation, and score-revision paths
--- against representative rows without retaining any changes.
+-- Run after the moderation migration. This script wraps the report, discipline,
+-- cancellation, and score-revision checks in a rollback-only transaction so no
+-- representative-row changes are retained.
+\set ON_ERROR_STOP on
+
+begin;
+
 do $$
 declare
   reporter_id uuid;
@@ -130,6 +134,7 @@ begin
     role,
     player_rating_at_booking,
     amount_paid_fils,
+    base_amount_fils,
     payment_method,
     payment_status
   ) values (
@@ -141,6 +146,7 @@ begin
       from public.player_ratings rating
       where rating.profile_id = target_id
     ), 1200),
+    3000,
     3000,
     'MOCK',
     'PAID'
@@ -394,3 +400,5 @@ begin
   end if;
 end;
 $$;
+
+rollback;

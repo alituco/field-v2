@@ -286,6 +286,7 @@ class FixtureStatusFilters extends StatelessWidget {
       (status: FixtureStatus.scheduled, label: 'Scheduled'),
       (status: FixtureStatus.live, label: 'Live'),
       (status: FixtureStatus.finalResult, label: 'Final'),
+      (status: FixtureStatus.cancelled, label: 'Cancelled'),
     ];
 
     return SizedBox(
@@ -637,9 +638,7 @@ class SoloFixtureCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final fixtureStatus = _soloFixtureStatus(game);
     final status = _statusColors(fixtureStatus);
-    final showScore =
-        fixtureStatus == FixtureStatus.live ||
-        fixtureStatus == FixtureStatus.finalResult;
+    final showScore = game.shouldDisplayScore;
 
     return Material(
       key: ValueKey('solo-fixture-${game.id}'),
@@ -719,7 +718,14 @@ class SoloFixtureCard extends StatelessWidget {
                         ),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: showScore
+                          child: game.hasPendingOperationalResolution
+                              ? _OperationalStateCenter(
+                                  key: ValueKey(
+                                    'solo-operational-state-${game.id}',
+                                  ),
+                                  label: game.statusLabel,
+                                )
+                              : showScore
                               ? _SoloScore(
                                   whiteScore: game.whiteScore ?? 0,
                                   blackScore: game.blackScore ?? 0,
@@ -1077,7 +1083,14 @@ class _FixtureCenter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (fixture.isFinal || fixture.isLive) {
+    if (fixture.hasPendingOperationalResolution) {
+      return _OperationalStateCenter(
+        key: ValueKey('fixture-operational-state-${fixture.id}'),
+        label: fixture.statusLabel,
+      );
+    }
+
+    if (fixture.shouldDisplayScore) {
       return Text(
         '${fixture.homeScore ?? 0} - ${fixture.awayScore ?? 0}',
         style: const TextStyle(
@@ -1094,6 +1107,32 @@ class _FixtureCenter extends StatelessWidget {
         color: fieldGray400,
         fontSize: 17,
         fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _OperationalStateCenter extends StatelessWidget {
+  const _OperationalStateCenter({super.key, required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 64),
+      child: Text(
+        label.toUpperCase(),
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: fieldGray600,
+          fontSize: 9,
+          height: 1.1,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 0.5,
+        ),
       ),
     );
   }
@@ -1175,15 +1214,7 @@ FixtureStatus _soloFixtureStatus(OpenQueueGame game) {
 }
 
 String _soloStatusLabel(OpenQueueGame game) {
-  return switch (game.status.toUpperCase()) {
-    'OPEN' when game.isFull => 'Full',
-    'OPEN' => 'Spots available',
-    'FULL' => 'Full',
-    'LIVE' => 'Live Now',
-    'FINAL' => 'Final',
-    'CANCELLED' => 'Cancelled',
-    _ => 'Scheduled',
-  };
+  return game.statusLabel;
 }
 
 String _soloMonthDay(OpenQueueGame game) {

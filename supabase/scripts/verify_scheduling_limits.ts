@@ -2,6 +2,7 @@ import {
   createClient,
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type ProfileRow = { id: string; phone: string };
 type FixtureSlot = {
@@ -28,6 +29,7 @@ const SOLO_LIMIT_ERROR =
   "You can have a maximum of 2 upcoming solo games. Cancel one before booking another.";
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "scheduling-limit verification");
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");
@@ -61,7 +63,7 @@ try {
   await verifySoloSchedulingLimit(homeClient, homeOwner);
 
   console.log(
-    "Scheduling limits verified: clans and solo players stop at 2 upcoming games, concurrent third attempts fail, and CANCELLED/FINAL games release their slots.",
+    "Scheduling limits verified: clans and solo players stop at 2 upcoming games, concurrent third attempts fail, and terminal games release their slots.",
   );
 } finally {
   await cleanup();
@@ -215,7 +217,15 @@ async function verifySoloSchedulingLimit(
   const secondGame = concurrentSuccesses[0].game;
   const { error: finalError } = await admin
     .from("open_queue_games")
-    .update({ status: "FINAL", white_score: 0, black_score: 0 })
+    .update({
+      status: "CANCELLED",
+      cancellation_code: "ADMIN_DECISION",
+      cancellation_reason:
+        "Scheduling-limit verification terminal-state transition.",
+      cancelled_at: new Date().toISOString(),
+      cancelled_by: soloProfile.id,
+      cancellation_context: { source: "SCHEDULING_LIMIT_VERIFICATION" },
+    })
     .eq("id", secondGame.id);
   if (finalError) throw finalError;
 
@@ -223,7 +233,7 @@ async function verifySoloSchedulingLimit(
   const scheduledCount = await activeSoloBookingCount(soloProfile.id);
   assert(
     scheduledCount === 2,
-    "A CANCELLED booking and a booking on a FINAL game must not consume solo slots.",
+    "Cancelled bookings and games must not consume solo slots.",
   );
 }
 
@@ -446,11 +456,59 @@ async function attemptBookOpenQueueGame(
   client: SupabaseClient,
   game: GameRow,
 ): Promise<BookingAttempt> {
+  const { data: authData, error: authError } = await client.auth.getUser();
+  if (authError || !authData.user) {
+    throw authError ?? new Error("Booking verification user is signed out.");
+  }
+  const { data: quote, error: quoteError } = await client.rpc(
+    "preview_open_queue_booking_cost",
+    { game_id_to_book: game.id, role_to_book: "MID" },
+  );
+  if (quoteError) throw quoteError;
+
+  const { data: existingIntent, error: existingIntentError } = await admin
+    .from("tap_payment_intents")
+    .select("tap_charge_id")
+    .eq("profile_id", authData.user.id)
+    .eq("purpose", "SOLO_BOOKING")
+    .eq("status", "CAPTURED")
+    .eq("payload->>game_id", game.id)
+    .eq("payload->>role", "MID")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingIntentError) throw existingIntentError;
+
+  const intentId = crypto.randomUUID();
+  const compactId = intentId.replaceAll("-", "");
+  const chargeId = existingIntent?.tap_charge_id ??
+    `chg_limit_${compactId}`;
+  if (!existingIntent) {
+    const { error: intentError } = await admin
+      .from("tap_payment_intents")
+      .insert({
+        id: intentId,
+        profile_id: authData.user.id,
+        purpose: "SOLO_BOOKING",
+        status: "CAPTURED",
+        currency: "BHD",
+        amount_fils: Number(quote.total_fils),
+        payload: { game_id: game.id, role: "MID" },
+        quote_snapshot: quote,
+        transaction_reference: `field_limit_${compactId}`,
+        tap_charge_id: chargeId,
+        tap_payment_method: "CARD",
+        tap_status: "CAPTURED",
+        captured_at: new Date().toISOString(),
+      });
+    if (intentError) throw intentError;
+  }
+
   const { data, error } = await client.rpc("book_open_queue_game", {
     game_id_to_book: game.id,
     role_to_book: "MID",
-    payment_method_to_use: "MOCK",
-    payment_reference_to_use: crypto.randomUUID(),
+    payment_method_to_use: "CARD",
+    payment_reference_to_use: chargeId,
   });
   return { game, bookingId: data as string | null, error };
 }

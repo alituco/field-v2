@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type ProfileRow = {
   id: string;
@@ -111,6 +112,7 @@ if (!Deno.args.includes("--confirm")) {
 const clearOnly = Deno.args.includes("--clear-only");
 const skipCloudflare = Deno.args.includes("--skip-cloudflare");
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "game schedule reset/seed");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const admin = createClient(url, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },

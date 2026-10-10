@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type GameRow = {
   id: string;
@@ -26,6 +27,7 @@ type PlannedGoal = {
 };
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "Open Queue match-history seed");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const SCHEDULE_SEED_PREFIX = "[SCHEDULE SEED]";
 const admin = createClient(url, serviceRoleKey, {

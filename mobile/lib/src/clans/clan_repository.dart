@@ -2,6 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../fixtures/fixture.dart';
 import 'clan.dart';
+import 'clan_reliability.dart';
 
 abstract class ClanRepository {
   Future<List<Clan>> listClans();
@@ -63,12 +64,20 @@ abstract class ClanRepository {
   Future<void> archiveClan(String clanId);
 }
 
-class SupabaseClanRepository implements ClanRepository {
+abstract interface class ClanReliabilityRepository {
+  Future<ClanReliabilitySummary> getClanReliabilitySummary(String clanId);
+}
+
+class SupabaseClanRepository
+    implements ClanRepository, ClanReliabilityRepository {
   SupabaseClient get _client => Supabase.instance.client;
 
   static const _fixtureSelect = '''
     id,
     status,
+    operational_state,
+    operational_state_updated_at,
+    operational_reason_code,
     home_clan_id,
     away_clan_id,
     venue,
@@ -139,6 +148,23 @@ class SupabaseClanRepository implements ClanRepository {
   }
 
   @override
+  Future<ClanReliabilitySummary> getClanReliabilitySummary(
+    String clanId,
+  ) async {
+    final response = await _client.rpc(
+      'get_clan_reliability_summary',
+      params: {'clan_id_to_use': clanId},
+    );
+    final row = switch (response) {
+      final Map value => Map<String, dynamic>.from(value),
+      final List value when value.isNotEmpty && value.first is Map =>
+        Map<String, dynamic>.from(value.first as Map),
+      _ => throw StateError('Clan reliability details are unavailable.'),
+    };
+    return ClanReliabilitySummary.fromJson(row);
+  }
+
+  @override
   Future<ClanMembership?> getMyClanMembership() async {
     final userId = _client.auth.currentUser?.id;
     if (userId == null) return null;
@@ -162,7 +188,7 @@ class SupabaseClanRepository implements ClanRepository {
           profile_id,
           role,
           created_at,
-          profiles!clan_members_profile_id_fkey(display_name, phone)
+          profiles!clan_members_profile_id_fkey(display_name)
         ''')
         .eq('clan_id', clanId)
         .isFilter('left_at', null)
@@ -400,13 +426,6 @@ class SupabaseClanRepository implements ClanRepository {
   }
 
   Future<void> _ensureProfile(User user) async {
-    final metadata = user.userMetadata;
-    final metadataName = metadata?['display_name'] ?? metadata?['name'];
-    final fallbackName =
-        metadataName is String && _isValidDisplayName(metadataName)
-        ? metadataName.trim()
-        : 'Player';
-
     final existing = await _client
         .from('profiles')
         .select('id')
@@ -415,15 +434,9 @@ class SupabaseClanRepository implements ClanRepository {
 
     if (existing != null) return;
 
-    await _client.from('profiles').insert({
-      'id': user.id,
-      'phone': user.phone,
-      'display_name': fallbackName,
-    });
-  }
-
-  bool _isValidDisplayName(String value) {
-    final length = value.trim().length;
-    return length >= 2 && length <= 24;
+    throw const AuthException(
+      'Finish setting up your account before creating a clan. '
+      'Return to onboarding to complete your details.',
+    );
   }
 }

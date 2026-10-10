@@ -5,11 +5,11 @@ import { type Division, type Rank } from '../types';
  * Ratings stay internal to the prototype; players only see their clan division.
  */
 export const DIVISION_CONFIGS: Record<Division, { division: Division; minRating: number; maxRating: number; label: string; description: string }> = {
-  5: { division: 5, minRating: 0, maxRating: 699, label: 'Division 5', description: 'Build your clan record' },
-  4: { division: 4, minRating: 700, maxRating: 1299, label: 'Division 4', description: 'Find your rhythm' },
-  3: { division: 3, minRating: 1300, maxRating: 1899, label: 'Division 3', description: 'Compete with the best local clans' },
-  2: { division: 2, minRating: 1900, maxRating: 2499, label: 'Division 2', description: 'One step from the top' },
-  1: { division: 1, minRating: 2500, maxRating: Infinity, label: 'Division 1', description: 'The top division' },
+  5: { division: 5, minRating: 0, maxRating: 999, label: 'Division 5', description: 'Build your record' },
+  4: { division: 4, minRating: 1000, maxRating: 1299, label: 'Division 4', description: 'Find your rhythm' },
+  3: { division: 3, minRating: 1300, maxRating: 1599, label: 'Division 3', description: 'Establish yourself' },
+  2: { division: 2, minRating: 1600, maxRating: 1799, label: 'Division 2', description: 'One step from the top' },
+  1: { division: 1, minRating: 1800, maxRating: Infinity, label: 'Division 1', description: 'The top division' },
 };
 
 export function getRankFromRating(rating: number): Rank {

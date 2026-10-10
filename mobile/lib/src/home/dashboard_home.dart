@@ -26,6 +26,7 @@ import '../profile/profile_repository.dart';
 class DashboardHome extends StatefulWidget {
   const DashboardHome({
     super.key,
+    this.activationTick = 0,
     required this.profileRepository,
     required this.clanRepository,
     required this.fixtureRepository,
@@ -38,6 +39,7 @@ class DashboardHome extends StatefulWidget {
     required this.onNavigateTab,
   });
 
+  final int activationTick;
   final ProfileRepository profileRepository;
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
@@ -80,6 +82,14 @@ class _DashboardHomeState extends State<DashboardHome> {
     super.initState();
     _watchPartyNotifications();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(covariant DashboardHome oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.activationTick != widget.activationTick) {
+      unawaited(_load());
+    }
   }
 
   @override
@@ -666,22 +676,9 @@ class _PlayerRatingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final value = rating?.skillRating ?? 1200;
     final ratingChange = rating?.lastChange ?? 0;
-    final tier = playerRatingTier(value);
-    final next = playerRatingNextTierTarget(value);
-    final isMaxTier = value >= next;
-    final progressStart = next == 800
-        ? 0
-        : next == 1200
-        ? 800
-        : next == 1600
-        ? 1200
-        : next == 2000
-        ? 1600
-        : 2000;
-    final progress = ((value - progressStart) / (next - progressStart)).clamp(
-      0.0,
-      1.0,
-    );
+    final division = divisionFromRating(value);
+    final next = division.nextDivisionRating;
+    final progress = division.progressFor(value);
     final gamesNeeded =
         rating?.gamesNeededToRank ?? minimumPlayerLeaderboardMatches;
     final rankLabel = rating?.isRanked == true
@@ -763,26 +760,9 @@ class _PlayerRatingCard extends StatelessWidget {
                           ),
                         ),
                         Positioned(
-                          right: -2,
-                          bottom: 0,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 3,
-                            ),
-                            decoration: BoxDecoration(
-                              color: fieldGray900,
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              tier.toUpperCase(),
-                              style: const TextStyle(
-                                color: Color(0xFFFCD34D),
-                                fontSize: 7,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
+                          right: -5,
+                          bottom: -5,
+                          child: DivisionCrest(division: division, size: 32),
                         ),
                       ],
                     ),
@@ -881,22 +861,27 @@ class _PlayerRatingCard extends StatelessWidget {
               Row(
                 children: [
                   Text(
-                    tier,
+                    division.label,
                     style: const TextStyle(
                       color: fieldGray400,
                       fontSize: 9,
                       fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const Spacer(),
-                  Text(
-                    isMaxTier
-                        ? 'Max tier'
-                        : 'Next tier · ${next - value} to go',
-                    style: const TextStyle(
-                      color: fieldGray400,
-                      fontSize: 9,
-                      fontWeight: FontWeight.w800,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      next == null
+                          ? 'Top division'
+                          : '${next - value} SR to next division',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(
+                        color: fieldGray400,
+                        fontSize: 9,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ],
@@ -907,7 +892,7 @@ class _PlayerRatingCard extends StatelessWidget {
                 child: LinearProgressIndicator(
                   minHeight: 6,
                   value: progress,
-                  color: const Color(0xFFF59E0B),
+                  color: division.colors[1],
                   backgroundColor: fieldGray100,
                 ),
               ),
@@ -1628,6 +1613,7 @@ class _ConfirmedQueueHero extends StatelessWidget {
                   else
                     _PendingHomeKitSummary(
                       assignmentDue: game.isTeamAssignmentDue,
+                      assignmentLeadLabel: game.teamAssignmentLeadLabel,
                     ),
                   const Spacer(),
                   Text(
@@ -1649,9 +1635,13 @@ class _ConfirmedQueueHero extends StatelessWidget {
 }
 
 class _PendingHomeKitSummary extends StatelessWidget {
-  const _PendingHomeKitSummary({required this.assignmentDue});
+  const _PendingHomeKitSummary({
+    required this.assignmentDue,
+    required this.assignmentLeadLabel,
+  });
 
   final bool assignmentDue;
+  final String assignmentLeadLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -1698,7 +1688,7 @@ class _PendingHomeKitSummary extends StatelessWidget {
                 Text(
                   assignmentDue
                       ? 'Assigned when match is full'
-                      : 'Assigned 3 hours before kickoff',
+                      : 'Assigned $assignmentLeadLabel',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -2085,6 +2075,9 @@ class _HomeActivityItem {
   }
 
   FixtureStatus get status {
+    if (hasPendingOperationalResolution) {
+      return FixtureStatus.finalResult;
+    }
     final clanFixture = fixture;
     if (clanFixture != null) {
       if (clanFixture.isLive) return FixtureStatus.live;
@@ -2119,6 +2112,10 @@ class _HomeActivityItem {
   bool get isCompleted => status == FixtureStatus.finalResult;
   bool get isCancelled => status == FixtureStatus.cancelled;
   bool get isLive => status == FixtureStatus.live;
+  bool get hasPendingOperationalResolution =>
+      fixture?.hasPendingOperationalResolution ??
+      soloGame?.hasPendingOperationalResolution ??
+      false;
   bool get isRelevantLive => isMyMatch || isMyClanMatch || isSolo;
 
   bool get isUpcomingForViewer {
@@ -2148,6 +2145,7 @@ class _HomeActivityItem {
   bool get shouldOpenWatch => isLive || highlightsReady || hasFullMatch;
 
   FixturePlayerRatingUpdate? get fixturePlayerRatingUpdate {
+    if (hasPendingOperationalResolution) return null;
     final event = ratingEvent;
     if (event != null) {
       return FixturePlayerRatingUpdate(
@@ -2200,6 +2198,13 @@ class _HomeActivityItem {
   }
 
   String get matchup {
+    if (hasPendingOperationalResolution) {
+      final clanFixture = fixture;
+      if (clanFixture != null) {
+        return '${clanFixture.homeClan.tag} vs ${clanFixture.awayClan?.tag ?? 'TBD'}';
+      }
+      return 'WHITE vs BLACK';
+    }
     final played = previousGame;
     if (played != null) {
       return '${played.homeTag}  ${played.homeScore}–${played.awayScore}  ${played.awayTag}';
@@ -2247,6 +2252,9 @@ class _HomeActivityItem {
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
 
   String get eyebrowLabel {
+    final operationalLabel =
+        fixture?.operationalStatusLabel ?? soloGame?.operationalStatusLabel;
+    if (operationalLabel != null) return operationalLabel.toUpperCase();
     return switch (status) {
       FixtureStatus.live => 'LIVE NOW',
       FixtureStatus.finalResult when previousGame != null => 'YOUR RESULT',
@@ -2261,6 +2269,20 @@ class _HomeActivityItem {
 
   String get detailLabel {
     if (!isCompleted) return '';
+    if (hasPendingOperationalResolution) {
+      final isNoData =
+          fixture?.operationalState == MatchOperationalState.noData ||
+          soloGame?.operationalState == MatchOperationalState.noData;
+      if (!isNoData) return 'Result is being reviewed';
+      final reasonCode =
+          fixture?.operationalReasonCode ?? soloGame?.operationalReasonCode;
+      if (reasonCode == null || reasonCode.trim().isEmpty) {
+        return 'Awaiting admin resolution';
+      }
+      return fixture?.operationalStatusDetail ??
+          soloGame?.operationalStatusDetail ??
+          'Awaiting admin resolution';
+    }
 
     final ratingUpdate = fixturePlayerRatingUpdate;
     final parts = <String>[
@@ -2467,7 +2489,9 @@ class _ActivityRow extends StatelessWidget {
     final icon = item.isLive || isWatch
         ? Icons.play_arrow_rounded
         : item.isCompleted
-        ? Icons.sports_score_rounded
+        ? item.hasPendingOperationalResolution
+              ? Icons.pending_actions_rounded
+              : Icons.sports_score_rounded
         : item.isSolo
         ? Icons.person_rounded
         : Icons.shield_rounded;

@@ -9,6 +9,7 @@ import type {
   RefereeFixture,
 } from "./types";
 import { nullableSr, persistedOpenQueueTeam } from "./open-queue-ratings";
+import { loadMatchReliabilityContext } from "./match-reliability";
 import {
   loadRefereeRiskSignals,
   riskContextFor,
@@ -33,6 +34,8 @@ const BLACK = {
 const gameSelect = `
   id,
   status,
+  operational_state,
+  operational_state_updated_at,
   venue,
   starts_at,
   ends_at,
@@ -43,6 +46,7 @@ const gameSelect = `
   black_average_sr,
   match_average_sr,
   team_sr_spread,
+  teams_assigned_at,
   cancellation_code,
   cancellation_reason,
   cancelled_at,
@@ -72,7 +76,11 @@ export async function loadRefereeOpenQueueGames(
     .order("starts_at");
 
   if (error) throw error;
-  return hydrateOpenQueueRows(db, (data ?? []) as Record<string, unknown>[]);
+  return hydrateOpenQueueRows(
+    db,
+    (data ?? []) as Record<string, unknown>[],
+    true,
+  );
 }
 
 export async function loadAdminOpenQueueGames(
@@ -88,22 +96,34 @@ export async function loadAdminOpenQueueGames(
     .limit(300);
 
   if (error) throw error;
-  return hydrateOpenQueueRows(db, (data ?? []) as Record<string, unknown>[]);
+  return hydrateOpenQueueRows(
+    db,
+    (data ?? []) as Record<string, unknown>[],
+    false,
+  );
 }
 
 async function hydrateOpenQueueRows(
   db: SupabaseClient,
   rows: Record<string, unknown>[],
+  includeReliabilityContext: boolean,
 ): Promise<RefereeFixture[]> {
   if (rows.length === 0) return [];
   const gameIds = rows.map((row) => String(row.id));
 
-  const [players, clocks, goals, events, blueCards] = await Promise.all([
+  const [players, clocks, goals, events, blueCards, reliabilityContexts] = await Promise.all([
     loadPlayers(db, gameIds),
     loadClocks(db, gameIds),
     loadGoals(db, gameIds),
     loadEvents(db, gameIds),
     loadBlueCards(db, gameIds),
+    includeReliabilityContext
+      ? Promise.all(
+          gameIds.map((gameId) =>
+            loadMatchReliabilityContext(db, "SOLO", gameId)
+          ),
+        )
+      : Promise.resolve(gameIds.map(() => null)),
   ]);
   const riskSignals = await loadRefereeRiskSignals(
     db,
@@ -111,7 +131,7 @@ async function hydrateOpenQueueRows(
     [],
   );
 
-  return rows.map((row) => {
+  return rows.map((row, rowIndex) => {
     const id = String(row.id);
     const startsAt = String(row.starts_at);
     const endsAt = String(row.ends_at);
@@ -128,6 +148,8 @@ async function hydrateOpenQueueRows(
       matchKind: "SOLO",
       id,
       status: String(row.status) as RefereeFixture["status"],
+      operationalState: nullableString(row.operational_state),
+      operationalStateUpdatedAt: nullableString(row.operational_state_updated_at),
       venue: String(row.venue ?? ""),
       day: zonedPart(startsAt, timezone, "weekday").toUpperCase(),
       timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,
@@ -142,6 +164,7 @@ async function hydrateOpenQueueRows(
       blackAverageSr: nullableSr(row.black_average_sr),
       matchAverageSr: nullableSr(row.match_average_sr),
       teamSrSpread: nullableSr(row.team_sr_spread),
+      teamsAssignedAt: nullableString(row.teams_assigned_at),
       homeClan: WHITE,
       awayClan: BLACK,
       players: gamePlayers.map(
@@ -155,6 +178,7 @@ async function hydrateOpenQueueRows(
       events: events.filter((event) => event.fixtureId === id),
       blueCards: blueCards.filter((card) => card.fixtureId === id),
       riskContext: riskContextFor(riskSignals, [], relevantPlayerIds),
+      reliabilityContext: reliabilityContexts[rowIndex] ?? null,
     } satisfies RefereeFixture;
   });
 }

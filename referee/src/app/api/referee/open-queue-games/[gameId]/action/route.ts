@@ -7,8 +7,15 @@ import {
   parseAdminCancellationInput,
   parseAdminScoreOverrideInput,
   parseMatchStoppageInput,
+  parseRefereeBulkCheckInInput,
+  parseRefereeCheckInInput,
+  parseRefereeRemoveCheckInInput,
+  parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
+  parseRefereeStartShorthandedInput,
+  parseRefereeVerifiedInjuryInput,
 } from "@/lib/match-action-input";
+import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
@@ -24,16 +31,25 @@ type ActionBody = {
     | "expire_blue_card"
     | "finish"
     | "report"
+    | "check_in_player"
+    | "remove_check_in"
+    | "check_in_players"
+    | "finalize_attendance"
+    | "record_verified_injury"
+    | "start_shorthanded"
+    | "end_shorthanded"
     | "stop"
     | "cancel"
     | "override_score";
   durationSeconds?: number;
   clanId?: string;
   profileId?: string;
+  checkInTiming?: string;
   assistProfileId?: string | null;
   blueCardId?: string;
   elapsedSeconds?: number;
   participantIds?: string[];
+  profileIds?: string[];
   subjectType?: string;
   subjectId?: string;
   category?: string;
@@ -46,6 +62,13 @@ type ActionBody = {
   note?: string;
   homeScore?: number;
   awayScore?: number;
+  unableToContinue?: boolean;
+  replacementAvailable?: boolean;
+  matchContinued?: boolean;
+  side?: string;
+  causedByProfileId?: string | null;
+  periodId?: string;
+  replacementProfileId?: string | null;
 } & Record<string, unknown>;
 
 type GameRow = { id: string; status: string };
@@ -73,12 +96,43 @@ export async function POST(request: NextRequest, context: RouteContext) {
       refereeContext.referee.role,
     );
     const body = (await request.json()) as ActionBody;
+    const { data: operationalGame, error: operationalError } = await db
+      .from("open_queue_games")
+      .select("operational_state")
+      .eq("id", gameId)
+      .single();
+    if (operationalError) {
+      throw new Error(
+        `Could not verify the match review state: ${operationalError.message}`,
+      );
+    }
+    if (
+      !canRefereePerformOperationalAction(
+        operationalGame.operational_state,
+        body.action,
+      )
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This match is locked for admin review. You can still submit a report, but attendance, clock, score, and result changes are paused.",
+        },
+        { status: 409 },
+      );
+    }
 
     let result: Record<string, unknown> = {};
 
     switch (body.action) {
       case "start":
-        await startGame(db, gameId, body.durationSeconds, body.participantIds);
+        await startGame(
+          db,
+          gameId,
+          body.durationSeconds,
+          body.participantIds,
+          refereeContext.referee.profileId,
+          refereeContext.referee.role === "admin",
+        );
         break;
       case "pause":
         await pauseGame(db, gameId);
@@ -126,6 +180,131 @@ export async function POST(request: NextRequest, context: RouteContext) {
         });
         if (error) throw new Error(`Could not submit report: ${error.message}`);
         result = { reportId: String(data) };
+        break;
+      }
+      case "check_in_player": {
+        const checkIn = parseRefereeCheckInInput(body);
+        const { data, error } = await db.rpc("referee_check_in_player_with_timing", {
+          actor_referee_id: refereeContext.referee.profileId,
+          match_kind_to_use: "SOLO",
+          match_id_to_use: gameId,
+          profile_id_to_check_in: checkIn.profileId,
+          check_in_timing_to_use: checkIn.timing,
+        });
+        if (error) throw new Error(`Could not check in player: ${error.message}`);
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "remove_check_in": {
+        const correction = parseRefereeRemoveCheckInInput(body);
+        const { data, error } = await db.rpc(
+          "referee_remove_player_check_in",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            profile_id_to_remove: correction.profileId,
+            expected_revision_to_use: correction.expectedRevision,
+            reason_code_to_use: correction.reasonCode,
+            reason_note_to_use: correction.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not remove check-in: ${error.message}`);
+        }
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "check_in_players": {
+        const checkIn = parseRefereeBulkCheckInInput(body);
+        let reliabilityContext: unknown = null;
+        for (const profileId of checkIn.profileIds) {
+          const { data, error } = await db.rpc("referee_check_in_player_with_timing", {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            profile_id_to_check_in: profileId,
+            check_in_timing_to_use: "EARLY",
+          });
+          if (error) {
+            throw new Error(`Could not check in all players: ${error.message}`);
+          }
+          reliabilityContext = data;
+        }
+        result = { reliabilityContext };
+        break;
+      }
+      case "finalize_attendance": {
+        const { data, error } = await db.rpc(
+          "referee_finalize_match_attendance",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not finalize attendance: ${error.message}`);
+        }
+        result = { reliabilityContext: data };
+        break;
+      }
+      case "record_verified_injury": {
+        const injury = parseRefereeVerifiedInjuryInput(body);
+        const { data, error } = await db.rpc(
+          "referee_record_verified_injury",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            injured_profile_id_to_use: injury.profileId,
+            unable_to_continue_to_use: injury.unableToContinue,
+            replacement_available_to_use: injury.replacementAvailable,
+            match_continued_to_use: injury.matchContinued,
+            note_to_use: injury.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not record verified injury: ${error.message}`);
+        }
+        result = { evidence: data };
+        break;
+      }
+      case "start_shorthanded": {
+        const period = parseRefereeStartShorthandedInput(body, "SOLO");
+        const { data, error } = await db.rpc(
+          "referee_start_shorthanded_period",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            match_kind_to_use: "SOLO",
+            match_id_to_use: gameId,
+            side_to_use: period.side,
+            reason_to_use: period.reason,
+            caused_by_profile_id_to_use: period.causedByProfileId,
+            note_to_use: period.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not start shorthanded period: ${error.message}`);
+        }
+        result = { periodId: String(data) };
+        break;
+      }
+      case "end_shorthanded": {
+        const period = parseRefereeEndShorthandedInput(body);
+        const { data, error } = await db.rpc(
+          "referee_end_shorthanded_period",
+          {
+            actor_referee_id: refereeContext.referee.profileId,
+            period_id_to_end: period.periodId,
+            replacement_profile_id_to_use: period.replacementProfileId,
+            note_to_use: period.note || null,
+          },
+        );
+        if (error) {
+          throw new Error(`Could not end shorthanded period: ${error.message}`);
+        }
+        result = { evidence: data };
         break;
       }
       case "stop": {
@@ -223,8 +402,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
 async function startGame(
   db: SupabaseClient,
   gameId: string,
-  durationSeconds = 3600,
+  durationSeconds: number | undefined,
   participantIds: string[] | undefined,
+  actorRefereeId: string,
+  actorIsAdmin: boolean,
 ) {
   if (!Array.isArray(participantIds)) {
     throw new Error("Confirm the players taking part before starting.");
@@ -234,7 +415,62 @@ async function startGame(
   if (selectedIds.length === 0) {
     throw new Error("Select at least one player from each team.");
   }
-  const safeDuration = clamp(Math.round(durationSeconds), 600, 7200);
+  const safeDuration = clamp(Math.round(durationSeconds ?? 3600), 600, 7200);
+
+  const { data: game, error: gameError } = await db
+    .from("open_queue_games")
+    .select("status,starts_at,teams_assigned_at,capacity")
+    .eq("id", gameId)
+    .single();
+  if (gameError || !game) {
+    throw new Error(`Could not load solo game: ${gameError?.message ?? "Game not found."}`);
+  }
+
+  const scheduledStartMs = new Date(String(game.starts_at)).getTime();
+  const isEarlyStart = Number.isFinite(scheduledStartMs) &&
+    Date.now() < scheduledStartMs;
+
+  if (isEarlyStart) {
+    if (!actorIsAdmin) {
+      throw new Error(
+        "This match has not reached its scheduled kickoff. Only an admin can start an early test match.",
+      );
+    }
+
+    const { data: confirmedBookings, error: bookingsError } = await db
+      .from("open_queue_bookings")
+      .select("profile_id")
+      .eq("game_id", gameId)
+      .eq("status", "CONFIRMED");
+    if (bookingsError) {
+      throw new Error(`Could not verify the early-start roster: ${bookingsError.message}`);
+    }
+    const confirmedIds = new Set(
+      (confirmedBookings ?? []).map((booking) => String(booking.profile_id)),
+    );
+    const expectedCount = Number(game.capacity ?? confirmedIds.size);
+    if (
+      confirmedIds.size !== expectedCount ||
+      selectedIds.length !== confirmedIds.size ||
+      selectedIds.some((profileId) => !confirmedIds.has(profileId))
+    ) {
+      throw new Error(
+        `Check in and select all ${expectedCount} booked players before starting this match early.`,
+      );
+    }
+
+    const { error: assignmentError } = await db.rpc(
+      "admin_force_assign_open_queue_teams",
+      {
+        actor_admin_id: actorRefereeId,
+        game_id_to_assign: gameId,
+        reason_to_use: "Admin started this assigned match early from the referee console.",
+      },
+    );
+    if (assignmentError) {
+      throw new Error(`Could not prepare teams for the early start: ${assignmentError.message}`);
+    }
+  }
 
   await assertNoError(
     db.rpc("referee_start_open_queue_game", {

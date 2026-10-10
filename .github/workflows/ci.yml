@@ -1,0 +1,846 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - staging
+      - prod
+  push:
+    branches:
+      - staging
+      - prod
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Never interrupt a staging migration midway through a deploy. Pull-request
+  # and production checks can still be superseded by newer runs.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/staging' }}
+
+jobs:
+  flutter:
+    name: Flutter Android, analyze, and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Reserve disk space for Android builds
+        working-directory: .
+        run: bash .github/scripts/prepare-android-runner.sh
+
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      # Tap's published checkout_flutter 1.0.4 still calls the repository
+      # method removed by AGP 9. Keep this version-pinned patch explicit and
+      # fail closed if Tap changes the package contents.
+      - name: Patch Tap Checkout for AGP 9
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_dir="$PUB_CACHE/hosted/pub.dev/checkout_flutter-1.0.4"
+          patch_file="$PWD/patches/checkout_flutter-1.0.4-agp9.patch"
+
+          if patch --batch --dry-run --forward --strip=1 \
+            --directory="$package_dir" < "$patch_file"; then
+            patch --batch --forward --strip=1 \
+              --directory="$package_dir" < "$patch_file"
+          elif patch --batch --dry-run --reverse --strip=1 \
+            --directory="$package_dir" < "$patch_file"; then
+            echo "Tap Checkout AGP 9 patch is already applied in the restored cache."
+          else
+            echo "Tap Checkout 1.0.4 no longer matches the reviewed AGP 9 patch." >&2
+            exit 1
+          fi
+
+      - name: Analyze Flutter app
+        run: flutter analyze
+
+      - name: Run Flutter tests
+        run: flutter test
+
+      - name: Build Android staging flavor
+        run: >-
+          flutter build apk
+          --debug
+          --flavor staging
+          --dart-define=APP_ENV=staging
+          --dart-define=SUPABASE_URL=https://nfdkdhdevpstfspazbfn.supabase.co
+          --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
+          --dart-define=DEV=true
+          --dart-define=PROFILE_SWITCHER_ENABLED=true
+
+      - name: Build Android production flavor
+        run: >-
+          flutter build apk
+          --release
+          --flavor production
+          --dart-define=APP_ENV=production
+          --dart-define=SUPABASE_URL=https://zjsjuuhborxrlmdcpvlj.supabase.co
+          --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
+          --dart-define=DEV=false
+          --dart-define=PROFILE_SWITCHER_ENABLED=false
+
+  flutter-ios:
+    name: Flutter iOS flavor builds
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Install Flutter dependencies
+        run: flutter pub get
+
+      - name: Validate iOS privacy purpose strings
+        shell: bash
+        run: |
+          set -euo pipefail
+          plutil -lint ios/Runner/Info.plist
+          camera_description="$(/usr/libexec/PlistBuddy -c 'Print :NSCameraUsageDescription' ios/Runner/Info.plist)"
+          if [[ -z "${camera_description//[[:space:]]/}" ]]; then
+            echo "::error::NSCameraUsageDescription must explain why Field may access the camera."
+            exit 1
+          fi
+
+      - name: Build iOS staging simulator flavor
+        run: >-
+          flutter build ios
+          --simulator
+          --debug
+          --flavor staging
+          --dart-define=APP_ENV=staging
+          --dart-define=SUPABASE_URL=https://nfdkdhdevpstfspazbfn.supabase.co
+          --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
+          --dart-define=DEV=true
+          --dart-define=PROFILE_SWITCHER_ENABLED=true
+
+      - name: Build iOS production release flavor
+        run: >-
+          flutter build ios
+          --release
+          --no-codesign
+          --flavor production
+          --dart-define=APP_ENV=production
+          --dart-define=SUPABASE_URL=https://zjsjuuhborxrlmdcpvlj.supabase.co
+          --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
+          --dart-define=DEV=false
+          --dart-define=PROFILE_SWITCHER_ENABLED=false
+
+  referee:
+    name: Referee web checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: referee
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      # Build-only values. CI must not connect to either hosted Supabase project.
+      NEXT_PUBLIC_APP_ENV: staging
+      NEXT_PUBLIC_SUPABASE_URL: https://nfdkdhdevpstfspazbfn.supabase.co
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_placeholder
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-not-a-secret
+      CLOUDFLARE_ACCOUNT_ID: ci-placeholder
+      CLOUDFLARE_STREAM_API_TOKEN: ci-placeholder-not-a-secret
+      CLOUDFLARE_STREAM_CUSTOMER_CODE: customer-ci-placeholder.example
+      BROADCAST_AGENT_TOKEN: ci-placeholder-not-a-secret
+      BROADCAST_OVERLAY_TOKEN: ci-placeholder-not-a-secret
+      BROADCAST_DEVICE_KEY: ci-main-pitch
+      BROADCAST_DEVICE_NAME: CI Main Pitch
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Install referee dependencies
+        run: npm ci
+
+      - name: Type-check referee app
+        run: npm run typecheck
+
+      - name: Run referee tests
+        run: npm test
+
+      - name: Build referee app
+        run: npm run build
+
+  broadcaster:
+    name: Broadcaster checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: broadcaster
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: broadcaster/package-lock.json
+
+      - name: Install broadcaster dependencies
+        run: npm ci
+
+      - name: Syntax-check broadcaster agent
+        run: node --check src/index.mjs
+
+  database:
+    name: Supabase schema and behavior
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # config.toml references these values, but the corresponding local
+      # integrations are disabled. These are deliberately non-secret values.
+      OPENAI_API_KEY: ci-placeholder
+      SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN: ci-placeholder
+      SUPABASE_AUTH_EXTERNAL_APPLE_SECRET: ci-placeholder
+      S3_HOST: ci-placeholder
+      S3_REGION: ci-placeholder
+      S3_ACCESS_KEY: ci-placeholder
+      S3_SECRET_KEY: ci-placeholder
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.105.0
+          github-token: ${{ github.token }}
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Check deployment safety scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n .github/scripts/configure-staging-e2e-auth.sh
+          bash -n .github/scripts/deploy-supabase.sh
+          bash -n .github/scripts/run-staging-android-e2e.sh
+          bash -n .github/scripts/upload-staging-testflight.sh
+          node --check .github/scripts/smoke-supabase.mjs
+          grep -q "deploy_function dev-phone-login --no-verify-jwt" \
+            .github/scripts/deploy-supabase.sh
+          grep -q "Hosted schema has no published reliability policy" \
+            .github/scripts/verify-hosted-schema.sql
+          if SUPABASE_ACCESS_TOKEN=dummy SUPABASE_DB_PASSWORD=dummy \
+            .github/scripts/deploy-supabase.sh \
+              production nfdkdhdevpstfspazbfn; then
+            echo "The production deploy accepted the staging project ref." >&2
+            exit 1
+          fi
+
+      - name: Check Edge Functions and database verifier
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' script_files < <(
+            find supabase/scripts -type f -name '*.ts' -print0
+          )
+          deno fmt --check supabase/functions "${script_files[@]}"
+          deno check supabase/functions/*/index.ts "${script_files[@]}"
+          deno test \
+            supabase/functions/_shared/staging_guard_test.ts \
+            supabase/functions/fieldrush-delete-account/request_test.ts \
+            supabase/functions/dev-switch-user/fixture_test.ts \
+            supabase/scripts/_shared/environment_guard_test.ts \
+            supabase/scripts/e2e/_shared_test.ts
+
+      - name: Replay migrations on a fresh local Supabase stack
+        run: >-
+          supabase start
+          --exclude
+          studio,imgproxy,mailpit,logflare,vector,realtime,storage-api,edge-runtime,postgres-meta,supavisor
+
+      - name: Lint the local database
+        run: supabase db lint --local --level error
+
+      - name: Show local migration status
+        run: supabase migration list --local
+
+      - name: Verify Fieldrush account security and lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_fieldrush_accounts.sql
+
+      - name: Verify reliability schema contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          for verifier in \
+            supabase/scripts/verify_reliability_match_effects.sql \
+            supabase/scripts/verify_reliability_policy_system.sql
+          do
+            docker exec -i supabase_db_field_v2 \
+              psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+              <"$verifier"
+          done
+
+      - name: Verify Open Queue booking and cancellation behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          env_file="$RUNNER_TEMP/field-local-supabase.env"
+          supabase status -o env \
+            --override-name api.url=SUPABASE_URL \
+            --override-name auth.anon_key=SUPABASE_PUBLISHABLE_KEY \
+            --override-name auth.service_role_key=SUPABASE_SERVICE_ROLE_KEY \
+            >"$env_file"
+          printf '\nDEV_SEED_PASSWORD=LocalVerify_Only_42!\n' >>"$env_file"
+          chmod 600 "$env_file"
+          deno run \
+            --allow-env \
+            --allow-net \
+            --env-file="$env_file" \
+            supabase/scripts/verify_open_queue.ts
+
+      - name: Verify fake local seed and admin workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEV_SEED_PASSWORD='LocalVerify_Only_42!' \
+            ./supabase/scripts/seed_local.sh
+
+          docker exec supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c "insert into public.referee_profiles (
+                  profile_id, display_name, phone, role
+                )
+                select id, 'CI Admin', phone, 'admin'
+                from public.profiles
+                where phone is not null
+                order by created_at
+                limit 1
+                on conflict (profile_id) do update
+                  set role = 'admin', is_active = true"
+
+          for verifier in \
+            supabase/scripts/verify_admin_game_reserves.sql \
+            supabase/scripts/verify_clan_attendance_flexibility.sql \
+            supabase/scripts/verify_clan_forfeit_workflow.sql \
+            supabase/scripts/verify_match_resolution_control_plane.sql \
+            supabase/scripts/verify_moderation_system.sql \
+            supabase/scripts/verify_support_ticket_system.sql \
+            supabase/scripts/verify_tap_payment_system.sql
+          do
+            docker exec -i supabase_db_field_v2 \
+              psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+              <"$verifier"
+          done
+
+  deploy-staging:
+    name: Deploy and end-to-end test staging
+    needs:
+      - flutter
+      - flutter-ios
+      - referee
+      - broadcaster
+      - database
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      deployments: write
+    environment:
+      name: staging
+    env:
+      SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+      OTHER_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+      E2E_BOOTSTRAP_PHONE: "+97339009098"
+      E2E_DEV_OTP_CODE: "000000"
+      E2E_ONBOARDING_PHONE: "+97339009100"
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+      TAP_PUBLIC_KEY: ${{ vars.TAP_PUBLIC_KEY }}
+      TAP_MERCHANT_ID: ${{ vars.TAP_MERCHANT_ID }}
+      TAP_APPLE_PAY_ENABLED: ${{ vars.TAP_APPLE_PAY_ENABLED }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Verify staging target
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/staging" ]]; then
+            echo "::error::Staging deployments must run from the staging branch."
+            exit 1
+          fi
+          if [[ -z "$SUPABASE_PROJECT_REF" || -z "$OTHER_SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::Configure both Supabase project-ref repository variables."
+            exit 1
+          fi
+          if [[ "$SUPABASE_PROJECT_REF" == "$OTHER_SUPABASE_PROJECT_REF" ]]; then
+            echo "::error::Staging and production cannot use the same Supabase project."
+            exit 1
+          fi
+          if [[ "$SUPABASE_PROJECT_REF" != "nfdkdhdevpstfspazbfn" || "$OTHER_SUPABASE_PROJECT_REF" != "zjsjuuhborxrlmdcpvlj" ]]; then
+            echo "::error::The configured project refs are not Field Staging and Field Production."
+            exit 1
+          fi
+          if [[ -z "$SUPABASE_ACCESS_TOKEN" || -z "$SUPABASE_DB_PASSWORD" || -z "$SUPABASE_PUBLISHABLE_KEY" || -z "$SUPABASE_SERVICE_ROLE_KEY" ]]; then
+            echo "::error::The staging GitHub environment is missing Supabase credentials."
+            exit 1
+          fi
+          if [[ -z "$TAP_SECRET_KEY" || -z "$TAP_PUBLIC_KEY" || -z "$TAP_MERCHANT_ID" ]]; then
+            echo "::error::The staging GitHub environment is missing Tap credentials."
+            exit 1
+          fi
+
+      - name: Reserve disk space for Android E2E
+        run: bash .github/scripts/prepare-android-runner.sh
+
+      - name: Set up Supabase CLI
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.105.0
+          github-token: ${{ github.token }}
+
+      - name: Deploy staging database and functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
+        run: .github/scripts/deploy-supabase.sh staging "$SUPABASE_PROJECT_REF"
+
+      - name: Smoke-test hosted staging
+        run: node .github/scripts/smoke-supabase.mjs
+
+      - name: Set up Java for Android E2E
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter for Android E2E
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Set up Node.js for referee E2E
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Set up Deno for E2E fixtures
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Prepare isolated staging E2E run
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          {
+            echo "E2E_RUN_ID=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "E2E_TEST_PASSWORD=$password"
+            echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-manifest.json"
+          } >>"$GITHUB_ENV"
+          mkdir -p \
+            "$GITHUB_WORKSPACE/mobile/build/e2e-artifacts" \
+            "$GITHUB_WORKSPACE/referee/e2e-artifacts"
+
+      - name: Configure and verify staging E2E authentication
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: .github/scripts/configure-staging-e2e-auth.sh
+
+      - name: Install staging E2E dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd mobile && flutter pub get)
+          (cd referee && npm ci)
+
+      - name: Install Playwright Chromium
+        working-directory: referee
+        run: npx playwright install --with-deps chromium
+
+      - name: Create isolated staging E2E fixtures
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: >-
+          deno run
+          --allow-env
+          --allow-net
+          --allow-write
+          supabase/scripts/e2e/setup_staging.ts
+
+      - name: Export non-secret E2E fixture identifiers
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$E2E_MANIFEST_PATH"
+          {
+            echo "E2E_MAIN_PHONE=$(jq -r '.accounts.main.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_MAIN_PROFILE_ID=$(jq -r '.accounts.main.profileId' "$E2E_MANIFEST_PATH")"
+            echo "E2E_PARTY_TARGET_PHONE=$(jq -r '.accounts.partyTarget.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_PARTY_TARGET_PROFILE_ID=$(jq -r '.accounts.partyTarget.profileId' "$E2E_MANIFEST_PATH")"
+            echo "E2E_ADMIN_PHONE=$(jq -r '.accounts.admin.phone' "$E2E_MANIFEST_PATH")"
+            echo "E2E_ONBOARDING_PROFILE_ID=$(jq -r '.accounts.onboarding.profileId' "$E2E_MANIFEST_PATH")"
+            echo "E2E_MATCH_GAME_ID=$(jq -r '.games.match.id' "$E2E_MANIFEST_PATH")"
+            echo "E2E_CANCELLATION_GAME_ID=$(jq -r '.games.cancellation.id' "$E2E_MANIFEST_PATH")"
+            echo "E2E_REPORT_DETAILS=$(jq -r '.markers.reportDetails' "$E2E_MANIFEST_PATH")"
+            echo "E2E_SUPPORT_DETAILS=$(jq -r '.markers.supportDetails' "$E2E_MANIFEST_PATH")"
+          } >>"$GITHUB_ENV"
+
+      - name: Verify prepared staging E2E fixtures
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: >-
+          deno run
+          --allow-env
+          --allow-net
+          --allow-read
+          supabase/scripts/e2e/verify_staging.ts
+          --phase=prepared
+
+      - name: Prebuild staging player journey
+        timeout-minutes: 15
+        run: bash .github/scripts/run-staging-android-e2e.sh build-only
+
+      - name: Enable KVM for the Android emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Run staging player journey on Android
+        timeout-minutes: 25
+        uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        with:
+          api-level: 34
+          # ATD images are purpose-built for headless automated tests and use
+          # substantially fewer runner resources than the full Google APIs
+          # image. This journey only talks to Supabase, so Play services are
+          # neither required nor useful here.
+          target: aosp_atd
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 4096M
+          disable-animations: true
+          emulator-boot-timeout: 600
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -feature -Vulkan
+            -no-snapshot
+            -noaudio
+            -no-boot-anim
+            -no-metrics
+            -camera-back none
+          script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh"
+
+      - name: Build staging referee app
+        working-directory: referee
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_APP_ENV: staging
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ci-placeholder
+          CLOUDFLARE_STREAM_API_TOKEN: ci-placeholder-not-a-secret
+          CLOUDFLARE_STREAM_CUSTOMER_CODE: customer-ci-placeholder.example
+          BROADCAST_AGENT_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_OVERLAY_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_DEVICE_KEY: ci-main-pitch
+          BROADCAST_DEVICE_NAME: CI Main Pitch
+        run: npm run build
+
+      - name: Start staging referee app
+        shell: bash
+        working-directory: referee
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_APP_ENV: staging
+          NEXT_PUBLIC_SUPABASE_URL: ${{ env.SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ env.SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ci-placeholder
+          CLOUDFLARE_STREAM_API_TOKEN: ci-placeholder-not-a-secret
+          CLOUDFLARE_STREAM_CUSTOMER_CODE: customer-ci-placeholder.example
+          BROADCAST_AGENT_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_OVERLAY_TOKEN: ci-placeholder-not-a-secret
+          BROADCAST_DEVICE_KEY: ci-main-pitch
+          BROADCAST_DEVICE_NAME: CI Main Pitch
+        run: |
+          set -euo pipefail
+          nohup npm start -- --hostname 127.0.0.1 --port 3000 \
+            >e2e-artifacts/referee-server.log 2>&1 &
+          echo "$!" >"$RUNNER_TEMP/field-referee-e2e.pid"
+          for attempt in {1..60}; do
+            if curl --fail --silent --show-error \
+              "$PLAYWRIGHT_BASE_URL" >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::The referee E2E server did not become ready."
+          exit 1
+
+      - name: Run referee and admin browser journey
+        working-directory: referee
+        run: npm run test:e2e
+
+      - name: Verify staging E2E outcomes
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: >-
+          deno run
+          --allow-env
+          --allow-net
+          --allow-read
+          supabase/scripts/e2e/verify_staging.ts
+          --phase=complete
+
+      - name: Clean up mutable staging E2E fixtures
+        if: always()
+        shell: bash
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${E2E_MANIFEST_PATH:-}" || ! -s "$E2E_MANIFEST_PATH" ]]; then
+            echo "No E2E manifest was created; cleanup is not required."
+            exit 0
+          fi
+          deno run \
+            --allow-env \
+            --allow-net \
+            --allow-read \
+            supabase/scripts/e2e/cleanup_staging.ts
+
+      - name: Stop staging referee app
+        if: always()
+        shell: bash
+        run: |
+          if [[ -s "$RUNNER_TEMP/field-referee-e2e.pid" ]]; then
+            kill "$(cat "$RUNNER_TEMP/field-referee-e2e.pid")" || true
+          fi
+
+      - name: Upload staging E2E failure diagnostics
+        if: failure() || cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            mobile/build/e2e-artifacts/
+            referee/e2e-artifacts/
+            referee/playwright-report/
+            referee/test-results/
+
+      - name: Record successful staging deployment
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          deployment_payload="$(
+            jq -n \
+              --arg ref "$GITHUB_SHA" \
+              '{
+                ref: $ref,
+                environment: "staging",
+                description: "Field staging Supabase deployment",
+                auto_merge: false,
+                required_contexts: [],
+                transient_environment: false,
+                production_environment: false
+              }'
+          )"
+          deployment_id="$(
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/deployments" \
+              --input - \
+              --jq '.id' <<<"$deployment_payload"
+          )"
+          status_payload="$(
+            jq -n \
+              '{
+                state: "success",
+                description: "Migrations, smoke, Android, referee, and admin E2E passed",
+                environment: "staging",
+                auto_inactive: false
+              }'
+          )"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+            --input - <<<"$status_payload" >/dev/null
+
+  upload-testflight-staging:
+    name: Upload staging build to TestFlight
+    needs: deploy-staging
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.deploy-staging.result == 'success'
+    runs-on: macos-26
+    timeout-minutes: 45
+    environment:
+      name: staging
+    env:
+      FIELD_ENVIRONMENT: staging
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_STAGING_BUNDLE_ID: ${{ vars.IOS_STAGING_BUNDLE_ID }}
+      TESTFLIGHT_INTERNAL_GROUP: ${{ vars.TESTFLIGHT_INTERNAL_GROUP }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Require Xcode 26
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / {split($2, version, "."); print version[1]}')"
+          if [[ -z "$xcode_major" || "$xcode_major" -lt 26 ]]; then
+            echo "::error::TestFlight uploads require Xcode 26 or newer."
+            exit 1
+          fi
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Build, sign, and upload Field Staging
+        shell: bash
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_STAGING_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_STAGING_PROVISIONING_PROFILE_BASE64 }}
+        run: .github/scripts/upload-staging-testflight.sh
+
+      - name: Upload TestFlight failure diagnostics
+        if: failure() || cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-testflight-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: mobile/build/testflight-artifacts/
+
+  deploy-referee-staging:
+    name: Deploy Field Ops staging PWA
+    needs: deploy-staging
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.deploy-staging.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: https://ops-staging.field.bh
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Deploy and verify Field Ops Staging
+        id: deploy
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: .github/scripts/deploy-referee-staging.sh

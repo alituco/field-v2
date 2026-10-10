@@ -3,7 +3,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../ranking/division_crest.dart';
 import 'clan.dart';
+
+export '../ranking/division_crest.dart';
 
 const fieldBackground = Color(0xFFF9FAFB);
 const fieldGray900 = Color(0xFF111827);
@@ -923,7 +926,7 @@ class ClanCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 12),
-              TierBadge(rank: rank, small: true),
+              DivisionCrest(division: rank, size: 36),
             ],
           ),
         ),
@@ -962,142 +965,6 @@ class _MiniMetric extends StatelessWidget {
       ],
     );
   }
-}
-
-class TierBadge extends StatelessWidget {
-  const TierBadge({super.key, required this.rank, this.small = false});
-
-  final ClanRank rank;
-  final bool small;
-
-  @override
-  Widget build(BuildContext context) {
-    final size = small ? 36.0 : 52.0;
-    final icon = rank.tier == ClanTier.champion
-        ? Icons.workspace_premium_rounded
-        : Icons.shield_rounded;
-    return Tooltip(
-      message: rank.label,
-      child: Container(
-        width: size,
-        height: size,
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [
-              tierStartColor(rank.tier),
-              tierMiddleColor(rank.tier),
-              tierEndColor(rank.tier),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(small ? 10 : 14),
-          boxShadow: [
-            BoxShadow(
-              color: tierMiddleColor(rank.tier).withValues(alpha: 0.30),
-              blurRadius: small ? 8 : 14,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Icon(icon, color: Colors.white, size: small ? 19 : 28),
-            if (rank.division != null)
-              Positioned(
-                bottom: small ? 3 : 5,
-                child: Text(
-                  switch (rank.division) {
-                    3 => 'III',
-                    2 => 'II',
-                    1 => 'I',
-                    _ => '',
-                  },
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: small ? 7 : 9,
-                    height: 1,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class TierLabelBadge extends StatelessWidget {
-  const TierLabelBadge({super.key, required this.rank, this.small = false});
-
-  final ClanRank rank;
-  final bool small;
-
-  @override
-  Widget build(BuildContext context) {
-    final foreground = _tierLabelForeground(rank.tier);
-    final background = _tierLabelBackground(rank.tier);
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: small ? 8 : 10,
-        vertical: small ? 5 : 7,
-      ),
-      decoration: BoxDecoration(
-        color: background,
-        border: Border.all(color: foreground.withValues(alpha: 0.28)),
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: [
-          BoxShadow(
-            color: foreground.withValues(alpha: 0.10),
-            blurRadius: small ? 8 : 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            rank.tier == ClanTier.champion
-                ? Icons.workspace_premium_rounded
-                : Icons.shield_rounded,
-            color: foreground,
-            size: small ? 13 : 15,
-          ),
-          SizedBox(width: small ? 4 : 6),
-          Text(
-            rank.label.toUpperCase(),
-            style: TextStyle(
-              color: foreground,
-              fontSize: small ? 10 : 12,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-Color _tierLabelForeground(ClanTier tier) {
-  return switch (tier) {
-    ClanTier.silver => const Color(0xFF475569),
-    ClanTier.gold => const Color(0xFFD97706),
-    ClanTier.diamond => const Color(0xFF0284C7),
-    ClanTier.champion => const Color(0xFFE11D48),
-  };
-}
-
-Color _tierLabelBackground(ClanTier tier) {
-  return switch (tier) {
-    ClanTier.silver => const Color(0xFFF1F5F9),
-    ClanTier.gold => const Color(0xFFFFFBEB),
-    ClanTier.diamond => const Color(0xFFECFEFF),
-    ClanTier.champion => const Color(0xFFFFF1F2),
-  };
 }
 
 class KitCard extends StatelessWidget {

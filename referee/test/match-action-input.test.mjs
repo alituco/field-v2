@@ -4,10 +4,18 @@ import test from "node:test";
 import {
   parseAdminCancellationInput,
   parseAdminForfeitReviewInput,
+  parseAdminMatchResolutionInput,
+  parseAdminMatchResolutionReopenInput,
   parseAdminScoreOverrideInput,
   parseMatchStoppageInput,
+  parseRefereeBulkCheckInInput,
+  parseRefereeCheckInInput,
+  parseRefereeRemoveCheckInInput,
   parseRefereeClanForfeitInput,
+  parseRefereeEndShorthandedInput,
   parseRefereeReportInput,
+  parseRefereeStartShorthandedInput,
+  parseRefereeVerifiedInjuryInput,
 } from "../src/lib/match-action-input.ts";
 
 const MATCH_ID = "11111111-1111-4111-8111-111111111111";
@@ -224,5 +232,236 @@ test("admin match mutations require bounded values and meaningful reasons", () =
         reason: "typo",
       }),
     /official score/,
+  );
+});
+
+test("admin no-data resolutions whitelist outcomes and consequence overrides", () => {
+  assert.deepEqual(
+    parseAdminMatchResolutionInput({
+      expectedRevision: 2,
+      resolutionType: "recorded_result",
+      reason: "Verified against the complete venue recording.",
+      payload: {
+        home_score: 4,
+        away_score: 3,
+        home_refund_bps: 2500,
+        away_refund_bps: 10_000,
+        home_sr_delta: -15,
+        away_sr_delta: 15,
+        home_strikes: 1,
+        away_strikes: 0,
+        attendance: { HOME: "PRESENT", AWAY: "PRESENT" },
+        ignored_client_field: "not forwarded",
+      },
+    }),
+    {
+      expectedRevision: 2,
+      resolutionType: "RECORDED_RESULT",
+      reason: "Verified against the complete venue recording.",
+      payload: {
+        home_score: 4,
+        away_score: 3,
+        home_refund_bps: 2500,
+        away_refund_bps: 10_000,
+        home_sr_delta: -15,
+        away_sr_delta: 15,
+        home_strikes: 1,
+        away_strikes: 0,
+        attendance: { HOME: "PRESENT", AWAY: "PRESENT" },
+      },
+    },
+  );
+
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 0,
+      resolutionType: "RECORDED_RESULT",
+      reason: "A result was reportedly available but no scores were entered.",
+      payload: {},
+    }),
+    /both final scores/i,
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 0,
+      resolutionType: "AUTOMATIC_NO_SHOW",
+      reason: "The system should never invent an attendance outcome.",
+    }),
+    /supported match resolution/i,
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 1,
+      resolutionType: "HOME_NO_SHOW",
+      reason: "The away side was present and the home side did not appear.",
+      payload: { away_refund_bps: 10_001 },
+    }),
+    /refund percentages/i,
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionInput({
+      expectedRevision: 0,
+      resolutionType: "ADMINISTRATIVE_VOID",
+      reason: "The match must be voided without assigning team blame.",
+      payload: ["unexpected"],
+    }),
+    /details must be an object/i,
+  );
+});
+
+test("reopening a match resolution requires its case and an audited reason", () => {
+  assert.deepEqual(
+    parseAdminMatchResolutionReopenInput({
+      caseId: MATCH_ID.toUpperCase(),
+      reason: "New evidence requires a corrected resolution.",
+    }),
+    {
+      caseId: MATCH_ID,
+      reason: "New evidence requires a corrected resolution.",
+    },
+  );
+  assert.throws(
+    () => parseAdminMatchResolutionReopenInput({
+      caseId: MATCH_ID,
+      reason: "short",
+    }),
+    /correction reason/i,
+  );
+});
+
+test("referee check-ins require a player and an explicit arrival category", () => {
+  assert.deepEqual(
+    parseRefereeCheckInInput({
+      profileId: PLAYER_ID.toUpperCase(),
+      checkInTiming: "after_kickoff",
+    }),
+    { profileId: PLAYER_ID, timing: "AFTER_KICKOFF" },
+  );
+  assert.deepEqual(
+    parseRefereeBulkCheckInInput({
+      profileIds: [PLAYER_ID, PLAYER_ID, MATCH_ID],
+    }),
+    { profileIds: [PLAYER_ID, MATCH_ID] },
+  );
+  assert.throws(
+    () => parseRefereeCheckInInput({
+      profileId: "someone-else",
+      checkInTiming: "EARLY",
+    }),
+    /choose a player/i,
+  );
+  assert.throws(
+    () => parseRefereeCheckInInput({ profileId: PLAYER_ID }),
+    /arrived early, late, or after kickoff/i,
+  );
+  assert.throws(
+    () => parseRefereeBulkCheckInInput({ profileIds: [] }),
+    /between 1 and 50/i,
+  );
+});
+
+test("remove check-in corrections require a fresh revision and audited reason", () => {
+  assert.deepEqual(
+    parseRefereeRemoveCheckInInput({
+      profileId: PLAYER_ID,
+      expectedRevision: 3,
+      reasonCode: "wrong_player",
+      note: "Tapped the row below the intended player.",
+    }),
+    {
+      profileId: PLAYER_ID,
+      expectedRevision: 3,
+      reasonCode: "WRONG_PLAYER",
+      note: "Tapped the row below the intended player.",
+    },
+  );
+  assert.throws(
+    () => parseRefereeRemoveCheckInInput({
+      profileId: PLAYER_ID,
+      expectedRevision: 1,
+      reasonCode: "other",
+      note: "",
+    }),
+    /short note/i,
+  );
+  assert.throws(
+    () => parseRefereeRemoveCheckInInput({
+      profileId: PLAYER_ID,
+      reasonCode: "operator_error",
+    }),
+    /refresh the player list/i,
+  );
+});
+
+test("verified injury evidence requires a player and explicit boolean facts", () => {
+  assert.deepEqual(
+    parseRefereeVerifiedInjuryInput({
+      profileId: PLAYER_ID.toUpperCase(),
+      unableToContinue: true,
+      replacementAvailable: false,
+      matchContinued: true,
+      note: "Player left the pitch after treatment.",
+    }),
+    {
+      profileId: PLAYER_ID,
+      unableToContinue: true,
+      replacementAvailable: false,
+      matchContinued: true,
+      note: "Player left the pitch after treatment.",
+    },
+  );
+  assert.throws(
+    () => parseRefereeVerifiedInjuryInput({
+      profileId: PLAYER_ID,
+      unableToContinue: "yes",
+      replacementAvailable: false,
+      matchContinued: true,
+    }),
+    /confirm whether the player was unable/i,
+  );
+});
+
+test("shorthanded evidence is constrained to the match kind and known reasons", () => {
+  assert.deepEqual(
+    parseRefereeStartShorthandedInput({
+      side: "white",
+      reason: "late_arrival",
+      causedByProfileId: PLAYER_ID,
+      note: "Play started one player short.",
+    }, "SOLO"),
+    {
+      side: "WHITE",
+      reason: "LATE_ARRIVAL",
+      causedByProfileId: PLAYER_ID,
+      note: "Play started one player short.",
+    },
+  );
+  assert.throws(
+    () => parseRefereeStartShorthandedInput({
+      side: "HOME",
+      reason: "NO_SHOW",
+    }, "SOLO"),
+    /choose a team/i,
+  );
+  assert.throws(
+    () => parseRefereeStartShorthandedInput({
+      side: "AWAY",
+      reason: "OTHER",
+      note: "why",
+    }, "CLAN"),
+    /concise factual note/i,
+  );
+
+  assert.deepEqual(
+    parseRefereeEndShorthandedInput({
+      periodId: MATCH_ID,
+      replacementProfileId: PLAYER_ID,
+      note: "Replacement entered the field.",
+    }),
+    {
+      periodId: MATCH_ID,
+      replacementProfileId: PLAYER_ID,
+      note: "Replacement entered the field.",
+    },
   );
 });

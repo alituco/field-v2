@@ -9,12 +9,15 @@ import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
-import '../leaderboard/leaderboard.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_repository.dart';
+import '../reliability/reliability_repository.dart';
+import '../reliability/reliability_status_card.dart';
+import '../support/contact_support_sheet.dart';
+import '../support/support_repository.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'profile.dart';
@@ -30,11 +33,14 @@ class ProfileScreen extends StatefulWidget {
     this.fixtureRepository,
     this.openQueueRepository,
     this.moderationRepository,
+    this.reliabilityRepository,
+    this.supportRepository,
     this.profileId,
-    this.devModeEnabled = false,
+    this.profileSwitcherEnabled = false,
     this.onSwitchUser,
     this.isSigningOut = false,
     this.onSignOut,
+    this.onOpenAccount,
   });
 
   final ProfileRepository profileRepository;
@@ -42,11 +48,14 @@ class ProfileScreen extends StatefulWidget {
   final FixtureRepository? fixtureRepository;
   final OpenQueueRepository? openQueueRepository;
   final ModerationRepository? moderationRepository;
+  final ReliabilityRepository? reliabilityRepository;
+  final SupportRepository? supportRepository;
   final String? profileId;
-  final bool devModeEnabled;
+  final bool profileSwitcherEnabled;
   final Future<void> Function(String profileId)? onSwitchUser;
   final bool isSigningOut;
   final VoidCallback? onSignOut;
+  final Future<void> Function()? onOpenAccount;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -58,6 +67,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   late final FixtureRepository _fixtureRepository;
   late final OpenQueueRepository _openQueueRepository;
   late final ModerationRepository _moderationRepository;
+  late final SupportRepository _supportRepository;
   PlayerProfile? _latestProfile;
   String? _openingGameId;
   bool _isOpeningClan = false;
@@ -87,6 +97,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
         widget.openQueueRepository ?? SupabaseOpenQueueRepository();
     _moderationRepository =
         widget.moderationRepository ?? SupabaseModerationRepository();
+    _supportRepository =
+        widget.supportRepository ?? SupabaseSupportRepository();
     _profileFuture = _loadProfile();
   }
 
@@ -272,6 +284,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         builder: (_) => ProfileConnectionsScreen(
           profileRepository: widget.profileRepository,
           initialTab: tab,
+          onOpenProfile: _openPlayerProfile,
         ),
       ),
     );
@@ -293,6 +306,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
     setState(() {
       _profileFuture = next;
     });
+  }
+
+  Future<void> _openPlayerProfile(String profileId) async {
+    final targetProfileId = profileId.trim();
+    final currentUserId = widget.profileRepository.currentUserId?.trim();
+    if (targetProfileId.isEmpty || targetProfileId == currentUserId) return;
+
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => ProfileScreen(
+          profileRepository: widget.profileRepository,
+          clanRepository: _clanRepository,
+          fixtureRepository: _fixtureRepository,
+          openQueueRepository: _openQueueRepository,
+          moderationRepository: _moderationRepository,
+          reliabilityRepository: widget.reliabilityRepository,
+          supportRepository: _supportRepository,
+          profileId: targetProfileId,
+        ),
+      ),
+    );
   }
 
   Future<void> _openEditProfile() async {
@@ -352,6 +386,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Future<void> _openSupport() async {
+    final receipt = await showContactSupportSheet(
+      context: context,
+      repository: _supportRepository,
+      requestContext: const {'entry_point': 'profile'},
+    );
+    if (!mounted || receipt == null) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Request sent · reference ${receipt.shortReference}'),
+      ),
+    );
+  }
+
   void _handleViewedProfileAction(_ViewedProfileAction action) {
     switch (action) {
       case _ViewedProfileAction.share:
@@ -364,6 +412,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return FieldHeaderOverlay(
+      key: const ValueKey('profile-screen'),
       header: FieldPageHeader(
         title: 'Profile',
         showBack: !_isCurrentProfile,
@@ -372,10 +421,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             if (_isCurrentProfile) ...[
-              if (widget.devModeEnabled && widget.onSwitchUser != null) ...[
+              if (widget.profileSwitcherEnabled &&
+                  widget.onSwitchUser != null) ...[
                 _HeaderIconButton(
                   icon: Icons.switch_account_rounded,
-                  tooltip: 'Switch dev user',
+                  tooltip: 'Swap profile',
                   onPressed: _openDevUserSwitcher,
                 ),
                 const SizedBox(width: 8),
@@ -385,9 +435,20 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 tooltip: 'Edit profile',
                 onPressed: _openEditProfile,
               ),
-              if (widget.onSignOut != null) ...[
+              if (widget.onOpenAccount != null) ...[
                 const SizedBox(width: 8),
                 _HeaderIconButton(
+                  icon: Icons.settings_outlined,
+                  tooltip: 'Account settings',
+                  onPressed: () async {
+                    await widget.onOpenAccount!();
+                    if (mounted) await _refresh();
+                  },
+                ),
+              ] else if (widget.onSignOut != null) ...[
+                const SizedBox(width: 8),
+                _HeaderIconButton(
+                  key: const ValueKey('profile-sign-out'),
                   icon: Icons.logout_rounded,
                   tooltip: 'Sign out',
                   isLoading: widget.isSigningOut,
@@ -409,11 +470,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
         future: _profileFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState != ConnectionState.done) {
-            return const _ProfileLoadingView();
+            return const _ProfileLoadingView(key: ValueKey('profile-loading'));
           }
 
           if (snapshot.hasError || !snapshot.hasData) {
             return _ProfileErrorView(
+              key: const ValueKey('profile-error'),
               message: userFacingError(
                 snapshot.error,
                 fallback: 'We could not load this profile. Try again.',
@@ -432,6 +494,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             color: fieldEmerald600,
             onRefresh: _refresh,
             child: ListView(
+              key: const ValueKey('profile-content'),
               physics: const AlwaysScrollableScrollPhysics(),
               padding: fieldHeaderAwarePadding(
                 context,
@@ -471,6 +534,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     },
                   ),
                 ],
+                if (_isCurrentProfile &&
+                    widget.reliabilityRepository != null) ...[
+                  const SizedBox(height: 16),
+                  ReliabilityStatusCard(
+                    repository: widget.reliabilityRepository!,
+                  ),
+                ],
                 if (_isCurrentProfile || profile.highlights.isNotEmpty) ...[
                   const SizedBox(height: 16),
                   _HighlightsCard(
@@ -486,6 +556,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     openingMatchId: _openingGameId,
                     onOpenGame: _openPreviousGame,
                   ),
+                ],
+                if (_isCurrentProfile) ...[
+                  const SizedBox(height: 16),
+                  _ProfileSupportCard(onTap: _openSupport),
                 ],
               ],
             ),
@@ -788,88 +862,138 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = rating.lastChange;
+    final division = divisionFromRating(rating.skillRating);
+    final nextRating = division.nextDivisionRating;
+    final nextDivision = nextRating == null
+        ? null
+        : divisionFromRating(nextRating);
     final changeColor = change > 0
-        ? fieldEmerald600
+        ? const Color(0xFF35BD69)
         : change < 0
         ? const Color(0xFFEF4444)
-        : fieldGray400;
-    return _ProfileCard(
-      borderRadius: 22,
-      padding: const EdgeInsets.all(18),
-      child: Row(
+        : const Color(0xFF9A9AA6);
+    return Container(
+      key: const ValueKey('profile-player-rating-card'),
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1D1E21),
+        border: Border.all(color: const Color(0xFF303136)),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 52,
-            height: 52,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [fieldEmerald500, fieldBlue600],
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(
-              Icons.insights_rounded,
-              color: Colors.white,
-              size: 25,
-            ),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Expanded(
+                child: Text(
                   'PLAYER RATING',
                   style: TextStyle(
-                    color: fieldEmerald600,
-                    fontSize: 10,
+                    color: Color(0xFF9999A8),
+                    fontSize: 11,
                     fontWeight: FontWeight.w900,
-                    letterSpacing: 1.1,
+                    letterSpacing: 1.35,
                   ),
                 ),
-                const SizedBox(height: 3),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '${rating.skillRating}',
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF303136),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      division.label.toUpperCase(),
                       style: const TextStyle(
-                        color: fieldGray900,
-                        fontSize: 28,
-                        height: 1,
+                        color: Color(0xFFAAAAB4),
+                        fontSize: 11,
                         fontWeight: FontWeight.w900,
+                        letterSpacing: 0.7,
                       ),
                     ),
-                    const SizedBox(width: 7),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 2),
-                      child: Text(
-                        '${change > 0 ? '+' : ''}$change',
-                        style: TextStyle(
-                          color: changeColor,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+                  ),
+                  const SizedBox(height: 9),
+                  Text(
+                    '${rating.matchesPlayed} rated ${rating.matchesPlayed == 1 ? 'game' : 'games'}',
+                    style: const TextStyle(
+                      color: Color(0xFF9999A8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
                     ),
-                  ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '${rating.skillRating}',
+                style: const TextStyle(
+                  color: Color(0xFF35BD69),
+                  fontSize: 58,
+                  height: 0.98,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -4,
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  '${playerRatingTier(rating.skillRating)} · ${rating.recordLabel} · ${rating.matchesPlayed} rated games',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: fieldGray500,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w700,
+              ),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 5),
+                child: Text(
+                  '${change > 0 ? '+' : ''}$change',
+                  style: TextStyle(
+                    color: changeColor,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
                   ),
                 ),
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              key: const ValueKey('profile-player-rating-progress'),
+              value: division.progressFor(rating.skillRating),
+              minHeight: 7,
+              color: const Color(0xFF35BD69),
+              backgroundColor: const Color(0xFF292A2E),
             ),
+          ),
+          const SizedBox(height: 9),
+          Row(
+            children: [
+              Text(
+                '${division.minimumRating}',
+                style: const TextStyle(
+                  color: Color(0xFF9999A8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                nextRating == null
+                    ? 'TOP DIVISION'
+                    : '${nextDivision!.label} · $nextRating',
+                style: const TextStyle(
+                  color: Color(0xFF9999A8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
           ),
         ],
       ),
@@ -1772,6 +1896,90 @@ class _ProfileCard extends StatelessWidget {
   }
 }
 
+class _ProfileSupportCard extends StatelessWidget {
+  const _ProfileSupportCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProfileCard(
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(24),
+        child: InkWell(
+          key: const ValueKey('profile-support-action'),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(24),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+            child: Row(
+              children: [
+                _SupportIcon(),
+                SizedBox(width: 13),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Help & support',
+                        style: TextStyle(
+                          color: fieldGray900,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      SizedBox(height: 3),
+                      Text(
+                        'Report an app, booking, payment, match, account, or safety issue',
+                        style: TextStyle(
+                          color: fieldGray500,
+                          fontSize: 12,
+                          height: 1.35,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: 8),
+                Icon(
+                  Icons.chevron_right_rounded,
+                  color: fieldGray400,
+                  size: 22,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SupportIcon extends StatelessWidget {
+  const _SupportIcon();
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: fieldEmerald50,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: fieldEmerald100),
+      ),
+      child: const SizedBox.square(
+        dimension: 44,
+        child: Icon(
+          Icons.support_agent_rounded,
+          color: fieldEmerald700,
+          size: 23,
+        ),
+      ),
+    );
+  }
+}
+
 class _SectionCard extends StatelessWidget {
   const _SectionCard({required this.child});
 
@@ -1788,6 +1996,7 @@ class _SectionCard extends StatelessWidget {
 
 class _HeaderIconButton extends StatelessWidget {
   const _HeaderIconButton({
+    super.key,
     required this.icon,
     required this.tooltip,
     required this.onPressed,
@@ -2101,7 +2310,7 @@ class _ProfileClanLoadError extends StatelessWidget {
 }
 
 class _ProfileLoadingView extends StatelessWidget {
-  const _ProfileLoadingView();
+  const _ProfileLoadingView({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -2220,7 +2429,11 @@ class _ProfileLoadingView extends StatelessWidget {
 }
 
 class _ProfileErrorView extends StatelessWidget {
-  const _ProfileErrorView({required this.message, required this.onRetry});
+  const _ProfileErrorView({
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
 
   final String message;
   final VoidCallback onRetry;

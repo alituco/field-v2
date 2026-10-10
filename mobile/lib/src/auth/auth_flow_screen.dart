@@ -341,7 +341,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     final dateOfBirth = _dateOfBirth;
     if (dateOfBirth == null || !isEligibleDateOfBirth(dateOfBirth)) {
       setState(() {
-        _errorText = 'You must be at least 16 years old to play.';
+        _errorText = 'You must be at least 18 years old to play.';
       });
       return;
     }
@@ -734,7 +734,7 @@ class _WelcomeStep extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               const Text(
-                'Form your clan. Challenge rivals. Climb the ladder from Silver to Champion.',
+                'Form your clan. Challenge rivals. Climb from Division 5 to Division 1.',
                 style: TextStyle(
                   color: Color(0xCCD1FAE5),
                   fontSize: 18,
@@ -759,7 +759,11 @@ class _WelcomeStep extends StatelessWidget {
           ),
           child: Column(
             children: [
-              _PrimaryButton(label: 'Get started', onPressed: onStart),
+              _PrimaryButton(
+                key: const ValueKey('auth-get-started'),
+                label: 'Get started',
+                onPressed: onStart,
+              ),
               const SizedBox(height: 16),
               Text(
                 'By continuing you agree to our Terms'.toUpperCase(),
@@ -986,6 +990,7 @@ class _PhoneStepBody extends StatelessWidget {
               const SizedBox(width: 12),
               Expanded(
                 child: TextField(
+                  key: const ValueKey('auth-phone-field'),
                   controller: controller,
                   focusNode: focusNode,
                   keyboardType: TextInputType.phone,
@@ -1040,6 +1045,7 @@ class _PhoneStepBody extends StatelessWidget {
         ),
         const SizedBox(height: 32),
         _PrimaryButton(
+          key: const ValueKey('auth-send-code'),
           label: isSubmitting ? 'Sending code' : 'Send code',
           disabled: !isValid || isSubmitting,
           isLoading: isSubmitting,
@@ -1064,6 +1070,7 @@ class _CountryPickerButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<_PhoneCountry>(
+      key: const ValueKey('auth-country-picker'),
       initialValue: country,
       tooltip: 'Country code',
       color: const Color(0xFF064E3B),
@@ -1193,6 +1200,7 @@ class _OtpStepBody extends StatelessWidget {
                 child: Opacity(
                   opacity: 0.01,
                   child: TextField(
+                    key: const ValueKey('auth-otp-field'),
                     controller: controller,
                     focusNode: focusNode,
                     enabled: !isVerifying,
@@ -1369,6 +1377,7 @@ class _NameStepBody extends StatelessWidget {
       children: [
         _GlassField(
           child: TextField(
+            key: const ValueKey('auth-name-field'),
             controller: controller,
             focusNode: focusNode,
             textInputAction: TextInputAction.done,
@@ -1405,6 +1414,7 @@ class _NameStepBody extends StatelessWidget {
         ),
         const SizedBox(height: 32),
         _PrimaryButton(
+          key: const ValueKey('auth-save-name'),
           label: isSaving ? 'Saving' : 'Enter the pitch',
           disabled: !isValid || isSaving,
           isLoading: isSaving,
@@ -1511,7 +1521,7 @@ class _DateOfBirthStepBody extends StatelessWidget {
             SizedBox(width: 8),
             Expanded(
               child: Text(
-                'You must be 16 or older. Your full birthday stays private.',
+                'You must be 18 or older. Your full birthday stays private.',
                 style: TextStyle(
                   color: Color(0x99FFFFFF),
                   fontSize: 12,
@@ -1524,6 +1534,7 @@ class _DateOfBirthStepBody extends StatelessWidget {
         ),
         const SizedBox(height: 30),
         _PrimaryButton(
+          key: const ValueKey('auth-save-date-of-birth'),
           label: isSaving ? 'Saving' : 'Finish setup',
           disabled: !isValid || isSaving,
           isLoading: isSaving,
@@ -1556,6 +1567,7 @@ class _GlassField extends StatelessWidget {
 
 class _PrimaryButton extends StatefulWidget {
   const _PrimaryButton({
+    super.key,
     required this.label,
     required this.onPressed,
     this.disabled = false,

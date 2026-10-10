@@ -1,5 +1,6 @@
 import 'package:field/src/app.dart';
 import 'package:field/src/auth/phone_number.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -10,9 +11,20 @@ void main() {
 
     expect(find.text('Supabase config missing'), findsOneWidget);
     expect(
-      find.textContaining('--dart-define-from-file=.env.mobile'),
+      find.textContaining('--dart-define-from-file=.env.local'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('shows the environment ribbon outside production', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const FieldApp(hasSupabaseConfig: false, environmentLabel: 'STAGING'),
+    );
+
+    final banner = tester.widget<Banner>(find.byType(Banner));
+    expect(banner.message, 'STAGING');
   });
 
   group('normalizePhoneNumber', () {

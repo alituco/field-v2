@@ -1,24 +1,8 @@
 import 'dart:ui';
 
-enum ClanTier { silver, gold, diamond, champion }
+import '../ranking/rating_division.dart';
 
-class ClanRank {
-  const ClanRank({required this.tier, this.division});
-
-  final ClanTier tier;
-  final int? division;
-
-  String get label {
-    final tierName = switch (tier) {
-      ClanTier.silver => 'Silver',
-      ClanTier.gold => 'Gold',
-      ClanTier.diamond => 'Diamond',
-      ClanTier.champion => 'Champion',
-    };
-    final divisionLabel = division == null ? '' : ' $division';
-    return '$tierName$divisionLabel';
-  }
-}
+export '../ranking/rating_division.dart';
 
 class ClanTheme {
   const ClanTheme({
@@ -240,9 +224,9 @@ class Clan {
   int get winRate =>
       matchesPlayed == 0 ? 0 : ((wins / matchesPlayed) * 100).round();
 
-  double get ratingProgress => (skillRating / 5000).clamp(0, 1).toDouble();
+  double get ratingProgress => (skillRating / 1800).clamp(0, 1).toDouble();
 
-  ClanRank get rank => rankFromRating(skillRating);
+  RatingDivision get rank => divisionFromRating(skillRating);
 
   ClanTheme get theme => clanThemeById(themeId);
 
@@ -355,52 +339,6 @@ ClanPattern clanPatternById(String id) {
     (pattern) => pattern.id == id,
     orElse: () => clanPatterns.first,
   );
-}
-
-ClanRank rankFromRating(int rating) {
-  if (rating >= 2700) return const ClanRank(tier: ClanTier.champion);
-
-  final tier = rating < 900
-      ? ClanTier.silver
-      : rating < 1800
-      ? ClanTier.gold
-      : ClanTier.diamond;
-
-  final minRating = switch (tier) {
-    ClanTier.silver => 0,
-    ClanTier.gold => 900,
-    ClanTier.diamond => 1800,
-    ClanTier.champion => 2700,
-  };
-  final index = ((rating - minRating) / 300).floor().clamp(0, 2);
-  return ClanRank(tier: tier, division: 3 - index);
-}
-
-Color tierStartColor(ClanTier tier) {
-  return switch (tier) {
-    ClanTier.silver => const Color(0xFFF1F5F9),
-    ClanTier.gold => const Color(0xFFFEF3C7),
-    ClanTier.diamond => const Color(0xFFCFFAFE),
-    ClanTier.champion => const Color(0xFFFDE68A),
-  };
-}
-
-Color tierMiddleColor(ClanTier tier) {
-  return switch (tier) {
-    ClanTier.silver => const Color(0xFF94A3B8),
-    ClanTier.gold => const Color(0xFFF59E0B),
-    ClanTier.diamond => const Color(0xFF0EA5E9),
-    ClanTier.champion => const Color(0xFFEF4444),
-  };
-}
-
-Color tierEndColor(ClanTier tier) {
-  return switch (tier) {
-    ClanTier.silver => const Color(0xFF334155),
-    ClanTier.gold => const Color(0xFF7C2D12),
-    ClanTier.diamond => const Color(0xFF0C2D6B),
-    ClanTier.champion => const Color(0xFF581C87),
-  };
 }
 
 Map<String, dynamic> _profileFromJson(Object? value) {

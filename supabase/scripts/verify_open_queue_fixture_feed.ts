@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type FeedRow = {
   id: string;
@@ -38,6 +39,7 @@ type BookingRow = {
 };
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "Open Queue fixture-feed verification");
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");
@@ -87,7 +89,7 @@ async function verifyFeed(verifierUserId: string) {
         authenticated.rpc("list_open_queue_fixture_games"),
         admin.from("open_queue_games").select(
           "id,status,starts_at,white_score,black_score,goalkeeper_capacity,defender_capacity,midfielder_capacity,attacker_capacity",
-        ).neq("status", "CANCELLED").order("starts_at"),
+        ).order("starts_at"),
         admin.from("open_queue_bookings").select(
           "id,game_id,profile_id,role,team,status",
         ).eq("status", "CONFIRMED"),
@@ -115,7 +117,7 @@ async function verifyFeed(verifierUserId: string) {
 
   assert(
     feed.length === games.length,
-    "The feed omitted a non-cancelled game.",
+    "The feed omitted a game.",
   );
   assert(feed.length > 0, "The solo Fixtures feed is empty.");
   assert(
@@ -126,9 +128,12 @@ async function verifyFeed(verifierUserId: string) {
     feed.some((row) => row.status === "OPEN" || row.status === "FULL"),
     "The feed does not include upcoming solo games.",
   );
+  const cancelledGames = games.filter((row) => row.status === "CANCELLED");
   assert(
-    feed.every((row) => row.status !== "CANCELLED"),
-    "The feed exposed a cancelled solo game.",
+    cancelledGames.every((game) =>
+      feed.some((row) => row.id === game.id && row.status === "CANCELLED")
+    ),
+    "The feed did not label every cancelled solo game as CANCELLED.",
   );
 
   for (let index = 1; index < feed.length; index++) {
@@ -178,7 +183,10 @@ async function verifyFeed(verifierUserId: string) {
     `Verified ${feed.length} solo Fixtures games (${
       feed.filter((row) => row.status === "FINAL").length
     } final, ${
-      feed.filter((row) => row.status !== "FINAL").length
+      feed.filter((row) => row.status === "CANCELLED").length
+    } cancelled, ${
+      feed.filter((row) => row.status !== "FINAL" && row.status !== "CANCELLED")
+        .length
     } upcoming/live).`,
   );
 }

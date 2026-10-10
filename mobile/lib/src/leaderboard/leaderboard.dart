@@ -1,3 +1,5 @@
+import '../ranking/rating_division.dart';
+
 const minimumClanLeaderboardMatches = 4;
 const minimumPlayerLeaderboardMatches = 2;
 
@@ -36,7 +38,9 @@ class PlayerRatingLeaderboardEntry {
   int get gamesNeededToRank => (minimumPlayerLeaderboardMatches - matchesPlayed)
       .clamp(0, minimumPlayerLeaderboardMatches);
 
-  String get tierLabel => playerRatingTier(skillRating);
+  RatingDivision get division => divisionFromRating(skillRating);
+
+  String get divisionLabel => division.label;
 
   String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
 
@@ -66,27 +70,6 @@ class PlayerRatingLeaderboardEntry {
       region: json['region'] as String? ?? 'bahrain',
     );
   }
-}
-
-String playerRatingTier(int rating) {
-  final tier = switch (rating) {
-    >= 2000 => ('Diamond', 2000, 2600),
-    >= 1600 => ('Platinum', 1600, 2000),
-    >= 1200 => ('Gold', 1200, 1600),
-    >= 800 => ('Silver', 800, 1200),
-    _ => ('Bronze', 0, 800),
-  };
-  final span = (tier.$3 - tier.$2) / 3;
-  final subdivision = ((rating - tier.$2) / span).floor().clamp(0, 2).toInt();
-  return '${tier.$1} ${const ['III', 'II', 'I'][subdivision]}';
-}
-
-int playerRatingNextTierTarget(int rating) {
-  if (rating < 800) return 800;
-  if (rating < 1200) return 1200;
-  if (rating < 1600) return 1600;
-  if (rating < 2000) return 2000;
-  return 2600;
 }
 
 int _leaderboardInt(Object? value, {int fallback = 0}) {

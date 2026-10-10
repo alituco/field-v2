@@ -268,7 +268,6 @@ class SupabaseProfileRepository implements ProfileRepository {
       displayName: profile.displayName,
       username: profile.username,
       bio: profile.bio,
-      phone: profile.phone,
       avatarUrl: profile.avatarUrl,
       clan: clan,
       followingCount: connectionCounts.following,
@@ -368,7 +367,7 @@ class SupabaseProfileRepository implements ProfileRepository {
 
     final response = await _client
         .from('profiles')
-        .select('id, display_name, username, phone, avatar_url')
+        .select('id, display_name, username, avatar_url')
         .order('display_name')
         .order('username');
     final rows = [
@@ -384,7 +383,6 @@ class SupabaseProfileRepository implements ProfileRepository {
           id: row['id'] as String,
           displayName: (row['display_name'] as String? ?? 'Player').trim(),
           username: (row['username'] as String? ?? '').trim(),
-          phone: (row['phone'] as String?)?.trim(),
           avatarUrl: (row['avatar_url'] as String?)?.trim(),
           clan: clansByProfileId[row['id']],
         ),
@@ -429,8 +427,6 @@ class SupabaseProfileRepository implements ProfileRepository {
     await _client
         .from('profiles')
         .update({
-          'display_name': update.displayName.trim(),
-          'username': update.username.trim().toLowerCase(),
           'bio': update.bio.trim(),
           'avatar_url': update.avatarUrl.trim().isEmpty
               ? null
@@ -470,7 +466,6 @@ class SupabaseProfileRepository implements ProfileRepository {
         .from('profiles')
         .select('''
           id,
-          phone,
           display_name,
           username,
           bio,
@@ -671,13 +666,6 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<void> _ensureProfile(User user) async {
-    final metadata = user.userMetadata;
-    final metadataName = metadata?['display_name'] ?? metadata?['name'];
-    final fallbackName =
-        metadataName is String && _isValidDisplayName(metadataName)
-        ? metadataName.trim()
-        : 'Player';
-
     final existing = await _client
         .from('profiles')
         .select('id')
@@ -686,16 +674,10 @@ class SupabaseProfileRepository implements ProfileRepository {
 
     if (existing != null) return;
 
-    await _client.from('profiles').insert({
-      'id': user.id,
-      'phone': user.phone,
-      'display_name': fallbackName,
-    });
-  }
-
-  bool _isValidDisplayName(String value) {
-    final length = value.trim().length;
-    return length >= 2 && length <= 24;
+    throw const AuthException(
+      'Finish setting up your account before opening your profile. '
+      'Return to onboarding to complete your details.',
+    );
   }
 }
 
@@ -704,14 +686,12 @@ class _ProfileRow {
     required this.displayName,
     required this.username,
     required this.bio,
-    this.phone,
     this.avatarUrl,
   });
 
   final String displayName;
   final String username;
   final String bio;
-  final String? phone;
   final String? avatarUrl;
 
   factory _ProfileRow.fromJson(Map<String, dynamic> json) {
@@ -724,7 +704,6 @@ class _ProfileRow {
           ? _usernameFromDisplayName(displayName)
           : username,
       bio: (json['bio'] as String? ?? '').trim(),
-      phone: json['phone'] as String?,
       avatarUrl: json['avatar_url'] as String?,
     );
   }

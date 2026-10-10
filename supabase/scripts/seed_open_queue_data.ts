@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 
 type ProfileRow = { id: string; phone: string | null };
 type PlayerRatingRow = { profile_id: string; skill_rating: number };
@@ -12,6 +13,7 @@ type FlowEdge = {
 const maxUpcomingBookingsPerProfile = 2;
 
 const url = requireEnv("SUPABASE_URL");
+assertSafeDevDataTarget(url, "Open Queue data seed");
 const key = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const admin = createClient(url, key, {
   auth: { autoRefreshToken: false, persistSession: false },
@@ -102,7 +104,9 @@ const rolePlans = [
 
 const { data: upcomingBookingRows, error: upcomingBookingsError } = await admin
   .from("open_queue_bookings")
-  .select("profile_id,open_queue_games!inner(status,starts_at)")
+  .select(
+    "profile_id,open_queue_games!open_queue_bookings_game_id_fkey!inner(status,starts_at)",
+  )
   .eq("status", "CONFIRMED")
   .in("open_queue_games.status", ["OPEN", "FULL"])
   .gt("open_queue_games.starts_at", new Date().toISOString());
@@ -190,6 +194,7 @@ for (let gameIndex = 0; gameIndex < insertedGames.length; gameIndex += 1) {
       role: roles[bookingIndex],
       player_rating_at_booking: rating,
       amount_paid_fils: game.price_fils,
+      base_amount_fils: game.price_fils,
       payment_method: "MOCK",
       payment_reference: `open-queue-seed-${gameIndex}-${bookingIndex}`,
     });

@@ -1,8 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+import type {
+  AdminGameParticipant,
+  AdminGameParticipants,
+} from "@/lib/admin-game-participants";
+import {
+  filterAdminWaitlist,
+  WAITLIST_INTERESTS,
+  WAITLIST_POSITIONS,
+  WAITLIST_STATUSES,
+  type AdminWaitlistApplicant,
+  type WaitlistInterest,
+  type WaitlistPosition,
+  type WaitlistStatus,
+} from "@/lib/admin-waitlist";
 import type {
   BroadcastControlResponse,
   RefereeAssignmentsResponse,
@@ -11,8 +26,20 @@ import type {
 } from "@/lib/types";
 
 import forfeitStyles from "./forfeit-review.module.css";
+import { ReliabilitySection } from "./reliability-section";
 
-type AdminSection = "overview" | "games" | "reports" | "people" | "audit";
+type AdminSection =
+  | "overview"
+  | "games"
+  | "reliability"
+  | "support"
+  | "reports"
+  | "waitlist"
+  | "people"
+  | "staff"
+  | "audit";
+type AdminGamesView = "SCHEDULED" | "FINAL";
+type AdminGamesDisplay = "LIST" | "CALENDAR";
 type JsonRecord = Record<string, unknown>;
 
 type OverviewMetric = {
@@ -30,6 +57,10 @@ type AttentionItem = {
   severity: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
   kind: string;
   createdAt: string | null;
+  matchKind: "SOLO" | "CLAN" | null;
+  gameId: string | null;
+  resolution: string | null;
+  dismissible: boolean;
 };
 
 type AuditItem = {
@@ -58,6 +89,27 @@ type AdminReport = {
   replayOffsetSeconds: number | null;
   assignedTo: string | null;
   resolutionNote: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+type AdminSupportTicket = {
+  id: string;
+  reference: string;
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED" | "DUPLICATE";
+  priority: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+  category: string;
+  subject: string;
+  description: string;
+  source: string;
+  requesterId: string | null;
+  requesterName: string;
+  requesterUsername: string | null;
+  requesterAvatarUrl: string | null;
+  assignedTo: string | null;
+  resolutionNote: string | null;
+  adminNote: string | null;
+  revision: number;
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -128,6 +180,16 @@ type FlaggedSubject = {
   lastReportedAt: string | null;
 };
 
+type AdminStaffMember = {
+  profileId: string;
+  displayName: string;
+  phone: string;
+  role: "admin" | "referee";
+  isActive: boolean;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
 type ModerationActionType =
   | "WARNING"
   | "PLAY_SUSPENSION"
@@ -141,8 +203,20 @@ type GameDialog =
   | { kind: "score"; fixture: RefereeFixture }
   | null;
 
+type SoloGameDialog =
+  | { kind: "create" }
+  | { kind: "remove"; fixture: RefereeFixture }
+  | null;
+
 type ReportDialog =
   | { report: AdminReport; action: "RESOLVE" | "DISMISS" }
+  | null;
+
+type SupportDialog =
+  | {
+      ticket: AdminSupportTicket;
+      action: "RESOLVE" | "CLOSE" | "DUPLICATE";
+    }
   | null;
 
 type RevokeDialog = {
@@ -169,16 +243,29 @@ export default function AdminPage() {
     fixtures: [],
   });
   const [reports, setReports] = useState<AdminReport[]>([]);
+  const [supportTickets, setSupportTickets] = useState<AdminSupportTicket[]>([]);
+  const [waitlistApplicants, setWaitlistApplicants] = useState<
+    AdminWaitlistApplicant[]
+  >([]);
+  const [activeSupportCount, setActiveSupportCount] = useState(0);
   const [forfeits, setForfeits] = useState<AdminForfeit[]>([]);
   const [subjects, setSubjects] = useState<FlaggedSubject[]>([]);
+  const [staff, setStaff] = useState<AdminStaffMember[]>([]);
   const [reportStatus, setReportStatus] = useState("OPEN");
+  const [supportStatus, setSupportStatus] = useState("ACTIVE");
+  const [waitlistLoading, setWaitlistLoading] = useState(false);
+  const [waitlistLoaded, setWaitlistLoaded] = useState(false);
+  const [waitlistAttempted, setWaitlistAttempted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [reliabilityRefreshKey, setReliabilityRefreshKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [gameDialog, setGameDialog] = useState<GameDialog>(null);
+  const [soloGameDialog, setSoloGameDialog] = useState<SoloGameDialog>(null);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
+  const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
     useState<FlaggedSubject | null>(null);
   const [revokeDialog, setRevokeDialog] = useState<RevokeDialog>(null);
@@ -226,6 +313,54 @@ export default function AdminPage() {
     setReports(normalizeReports(payload));
   }, [accessToken, authHeaders, reportStatus]);
 
+  const loadSupportTickets = useCallback(async () => {
+    if (!accessToken) return;
+    const query = `?status=${encodeURIComponent(supportStatus)}`;
+    const payload = await fetchJson<{
+      tickets?: AdminSupportTicket[];
+      activeCount?: number;
+    }>(
+      `/api/referee/admin/support${query}`,
+      { headers: authHeaders(), cache: "no-store" },
+    );
+    setSupportTickets(
+      Array.isArray(payload.tickets) ? payload.tickets : [],
+    );
+    setActiveSupportCount(
+      typeof payload.activeCount === "number" ? payload.activeCount : 0,
+    );
+  }, [accessToken, authHeaders, supportStatus]);
+
+  const loadWaitlist = useCallback(
+    async (quiet = false) => {
+      if (!accessToken) return;
+      setWaitlistAttempted(true);
+      if (quiet) setRefreshing(true);
+      else setWaitlistLoading(true);
+      setError(null);
+      try {
+        const payload = await fetchJson<{
+          applicants?: AdminWaitlistApplicant[];
+        }>("/api/referee/admin/waitlist", {
+          headers: authHeaders(),
+          cache: "no-store",
+        });
+        setWaitlistApplicants(
+          Array.isArray(payload.applicants) ? payload.applicants : [],
+        );
+        setWaitlistLoaded(true);
+      } catch (loadError) {
+        setError(
+          errorMessage(loadError, "Could not load the Season Zero waitlist."),
+        );
+      } finally {
+        setWaitlistLoading(false);
+        if (quiet) setRefreshing(false);
+      }
+    },
+    [accessToken, authHeaders],
+  );
+
   const loadForfeits = useCallback(async () => {
     if (!accessToken) return;
     const payload = await fetchJson<{ forfeits?: AdminForfeit[] }>(
@@ -244,6 +379,15 @@ export default function AdminPage() {
     setSubjects(normalizeSubjects(payload));
   }, [accessToken, authHeaders]);
 
+  const loadStaff = useCallback(async () => {
+    if (!accessToken) return;
+    const payload = await fetchJson<{ staff?: AdminStaffMember[] }>(
+      "/api/referee/referees",
+      { headers: authHeaders(), cache: "no-store" },
+    );
+    setStaff(Array.isArray(payload.staff) ? payload.staff : []);
+  }, [accessToken, authHeaders]);
+
   const loadAll = useCallback(
     async (quiet = false) => {
       if (!accessToken) return;
@@ -254,9 +398,11 @@ export default function AdminPage() {
         const results = await Promise.allSettled([
           loadOverview(),
           loadGames(),
+          loadSupportTickets(),
           loadReports(),
           loadSubjects(),
           loadForfeits(),
+          loadStaff(),
         ]);
         const failure = results.find(
           (result): result is PromiseRejectedResult => result.status === "rejected",
@@ -269,7 +415,16 @@ export default function AdminPage() {
         setRefreshing(false);
       }
     },
-    [accessToken, loadForfeits, loadGames, loadOverview, loadReports, loadSubjects],
+    [
+      accessToken,
+      loadForfeits,
+      loadGames,
+      loadOverview,
+      loadReports,
+      loadSubjects,
+      loadSupportTickets,
+      loadStaff,
+    ],
   );
 
   useEffect(() => {
@@ -287,6 +442,13 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("section");
+    if (adminNavItems.some((item) => item.id === requested)) {
+      setSection(requested as AdminSection);
+    }
+  }, []);
+
+  useEffect(() => {
     if (accessToken) void loadAll();
   }, [accessToken, loadAll]);
 
@@ -296,6 +458,39 @@ export default function AdminPage() {
       setError(errorMessage(loadError, "Could not refresh reports."));
     });
   }, [accessToken, loadReports, loading, reportStatus]);
+
+  useEffect(() => {
+    if (!accessToken || loading) return;
+    void loadSupportTickets().catch((loadError) => {
+      setError(errorMessage(loadError, "Could not refresh support tickets."));
+    });
+  }, [accessToken, loadSupportTickets, loading, supportStatus]);
+
+  useEffect(() => {
+    setWaitlistApplicants([]);
+    setWaitlistLoaded(false);
+    setWaitlistAttempted(false);
+  }, [accessToken]);
+
+  useEffect(() => {
+    if (
+      section !== "waitlist" ||
+      !accessToken ||
+      waitlistAttempted ||
+      waitlistLoaded ||
+      waitlistLoading
+    ) {
+      return;
+    }
+    void loadWaitlist();
+  }, [
+    accessToken,
+    loadWaitlist,
+    section,
+    waitlistAttempted,
+    waitlistLoaded,
+    waitlistLoading,
+  ]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -328,6 +523,125 @@ export default function AdminPage() {
     }
   }
 
+  async function createSoloGame(input: {
+    venue: string;
+    matchDate: string;
+    priceBhd: string;
+    ageLabel: string;
+  }) {
+    setSubmitting("create-solo-game");
+    setError(null);
+    try {
+      await fetchJson("/api/referee/admin/solo-games", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(input),
+      });
+      setSoloGameDialog(null);
+      setNotice("Solo game created and opened for bookings.");
+      await Promise.all([loadGames(), loadOverview()]);
+    } catch (actionError) {
+      setError(errorMessage(actionError, "Could not create the solo game."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function removeSoloGame(fixture: RefereeFixture, reason: string) {
+    setSubmitting("remove-solo-game");
+    setError(null);
+    try {
+      await fetchJson(`/api/referee/admin/solo-games/${fixture.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ reason }),
+      });
+      setSoloGameDialog(null);
+      setNotice("Empty solo game removed. The admin action remains audited.");
+      await Promise.all([loadGames(), loadOverview()]);
+    } catch (actionError) {
+      setError(errorMessage(actionError, "Could not remove the solo game."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function assignReferee(
+    fixture: RefereeFixture,
+    refereeId: string,
+  ) {
+    setSubmitting(`assign-${fixture.matchKind}-${fixture.id}`);
+    setError(null);
+    try {
+      await fetchJson("/api/referee/assignments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          fixtureId: fixture.id,
+          matchKind: fixture.matchKind,
+          refereeId: refereeId || null,
+        }),
+      });
+      setNotice(refereeId ? "Referee assigned." : "Game is now unassigned.");
+      await loadGames();
+      return true;
+    } catch (assignError) {
+      setError(errorMessage(assignError, "Could not update the referee assignment."));
+      return false;
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function createReferee(input: { displayName: string; phone: string }) {
+    setSubmitting("create-referee");
+    setError(null);
+    try {
+      const result = await fetchJson<{ warning?: string | null }>("/api/referee/referees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          displayName: input.displayName,
+          phone: input.phone,
+          role: "referee",
+          sendOtp: true,
+        }),
+      });
+      setNotice(result.warning ?? `Referee account created for ${input.displayName}.`);
+      await Promise.all([loadGames(), loadStaff()]);
+      return true;
+    } catch (createError) {
+      setError(errorMessage(createError, "Could not create the referee account."));
+      return false;
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function createStaff(input: {
+    displayName: string;
+    phone: string;
+    role: "admin" | "referee";
+  }) {
+    setSubmitting("create-staff");
+    setError(null);
+    try {
+      const result = await fetchJson<{ warning?: string | null }>("/api/referee/referees", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ ...input, sendOtp: true }),
+      });
+      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} account created and a login code was requested.`);
+      await Promise.all([loadStaff(), loadGames()]);
+      return true;
+    } catch (createError) {
+      setError(errorMessage(createError, "Could not create the staff account."));
+      return false;
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
   async function runReportAction(
     report: AdminReport,
     action: "TRIAGE" | "INVESTIGATE" | "RESOLVE" | "DISMISS",
@@ -354,6 +668,49 @@ export default function AdminPage() {
       await Promise.all([loadReports(), loadOverview(), loadSubjects()]);
     } catch (actionError) {
       setError(errorMessage(actionError, "Could not update the report."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  async function runSupportAction(
+    ticket: AdminSupportTicket,
+    action: "START" | "RESOLVE" | "CLOSE" | "REOPEN" | "DUPLICATE",
+    input: {
+      resolutionNote?: string;
+      adminNote?: string;
+    } = {},
+  ) {
+    setSubmitting(`support-${ticket.id}-${action}`);
+    setError(null);
+    try {
+      await fetchJson(`/api/referee/admin/support/${ticket.id}/action`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          action,
+          expectedRevision: ticket.revision,
+          resolutionNote: input.resolutionNote,
+          adminNote: input.adminNote,
+        }),
+      });
+      setSupportDialog(null);
+      setNotice(
+        action === "START"
+          ? `${ticket.reference} is now being handled.`
+          : action === "REOPEN"
+            ? `${ticket.reference} reopened.`
+            : action === "DUPLICATE"
+              ? `${ticket.reference} closed as a duplicate.`
+              : action === "CLOSE"
+                ? `${ticket.reference} closed.`
+                : `${ticket.reference} resolved and the player was notified.`,
+      );
+      await loadSupportTickets();
+    } catch (actionError) {
+      setError(
+        errorMessage(actionError, "Could not update the support ticket."),
+      );
     } finally {
       setSubmitting(null);
     }
@@ -493,6 +850,7 @@ export default function AdminPage() {
         me={me}
         counts={{
           reports: overview.openReports,
+          support: activeSupportCount,
           attention:
             overview.attention.length +
             forfeits.filter((decision) => decision.status === "PENDING_REVIEW").length,
@@ -513,7 +871,15 @@ export default function AdminPage() {
             <button
               className="admin-icon-button"
               disabled={refreshing}
-              onClick={() => void loadAll(true)}
+              onClick={() => {
+                if (section === "reliability") {
+                  setReliabilityRefreshKey((value) => value + 1);
+                } else if (section === "waitlist") {
+                  void loadWaitlist(true);
+                } else {
+                  void loadAll(true);
+                }
+              }}
               title="Refresh admin data"
               type="button"
             >
@@ -568,8 +934,14 @@ export default function AdminPage() {
               assignments={assignments}
               games={games}
               submitting={submitting}
+              onAssignReferee={assignReferee}
               onCancel={(fixture) => setGameDialog({ kind: "cancel", fixture })}
+              onCreateSoloGame={() => setSoloGameDialog({ kind: "create" })}
+              onCreateReferee={createReferee}
               onOverrideScore={(fixture) => setGameDialog({ kind: "score", fixture })}
+              onRemoveSoloGame={(fixture) =>
+                setSoloGameDialog({ kind: "remove", fixture })
+              }
             />
           ) : section === "reports" ? (
             <ReportsSection
@@ -601,11 +973,48 @@ export default function AdminPage() {
                 setForfeitDialog({ decision, action })
               }
             />
+          ) : section === "support" ? (
+            <SupportSection
+              status={supportStatus}
+              submitting={submitting}
+              tickets={supportTickets}
+              onStatus={setSupportStatus}
+              onAction={(ticket, action) => {
+                if (
+                  action === "RESOLVE" ||
+                  action === "CLOSE" ||
+                  action === "DUPLICATE"
+                ) {
+                  setSupportDialog({ ticket, action });
+                } else {
+                  void runSupportAction(ticket, action);
+                }
+              }}
+            />
+          ) : section === "waitlist" ? (
+            waitlistLoading && !waitlistLoaded ? (
+              <AdminPageSkeleton />
+            ) : (
+              <WaitlistSection applicants={waitlistApplicants} />
+            )
           ) : section === "people" ? (
             <PeopleSection
               subjects={subjects}
               onModerate={setModerationSubject}
               onRevoke={(subject, action) => setRevokeDialog({ subject, action })}
+            />
+          ) : section === "staff" ? (
+            <StaffSection
+              staff={staff}
+              submitting={submitting}
+              onCreate={createStaff}
+            />
+          ) : section === "reliability" ? (
+            <ReliabilitySection
+              accessToken={accessToken}
+              refreshKey={reliabilityRefreshKey}
+              onError={setError}
+              onNotice={setNotice}
             />
           ) : (
             <AuditSection audit={overview.audit} />
@@ -623,6 +1032,15 @@ export default function AdminPage() {
           }
         />
       ) : null}
+      {soloGameDialog ? (
+        <SoloGameManagementDialog
+          dialog={soloGameDialog}
+          submitting={submitting !== null}
+          onClose={() => setSoloGameDialog(null)}
+          onCreate={(input) => void createSoloGame(input)}
+          onRemove={(fixture, reason) => void removeSoloGame(fixture, reason)}
+        />
+      ) : null}
       {reportDialog ? (
         <ReportResolutionDialog
           dialog={reportDialog}
@@ -633,6 +1051,20 @@ export default function AdminPage() {
               reportDialog.report,
               reportDialog.action,
               note,
+            )
+          }
+        />
+      ) : null}
+      {supportDialog ? (
+        <SupportActionDialog
+          dialog={supportDialog}
+          submitting={submitting !== null}
+          onClose={() => setSupportDialog(null)}
+          onSubmit={(input) =>
+            void runSupportAction(
+              supportDialog.ticket,
+              supportDialog.action,
+              input,
             )
           }
         />
@@ -690,8 +1122,12 @@ const adminNavItems: Array<{
 }> = [
   { id: "overview", label: "Overview", shortLabel: "Home", icon: "overview" },
   { id: "games", label: "Games", shortLabel: "Games", icon: "games" },
+  { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
+  { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
+  { id: "waitlist", label: "Season Zero waitlist", shortLabel: "Waitlist", icon: "waitlist" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
+  { id: "staff", label: "Admins & referees", shortLabel: "Staff", icon: "referee" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
 ];
 
@@ -704,7 +1140,7 @@ function AdminSidebar({
 }: {
   section: AdminSection;
   me: RefereeFixturesResponse["me"] | null;
-  counts: { reports: number; attention: number };
+  counts: { reports: number; support: number; attention: number };
   onSection: (section: AdminSection) => void;
   onSignOut: () => void;
 }) {
@@ -722,9 +1158,11 @@ function AdminSidebar({
         {adminNavItems.map((item) => {
           const badge = item.id === "reports"
             ? counts.reports
-            : item.id === "overview"
-              ? counts.attention
-              : 0;
+            : item.id === "support"
+              ? counts.support
+              : item.id === "overview"
+                ? counts.attention
+                : 0;
           return (
             <button
               className={section === item.id ? "active" : ""}
@@ -779,12 +1217,27 @@ function OverviewSection({
   forfeits: AdminForfeit[];
   onNavigate: (section: AdminSection) => void;
 }) {
+  const router = useRouter();
+  const now = Date.now();
   const upcoming = games
-    .filter((game) => ["OPEN", "FULL", "SCHEDULED", "LIVE"].includes(game.status))
-    .sort((left, right) =>
-      `${left.matchDate} ${left.timeSlot}`.localeCompare(`${right.matchDate} ${right.timeSlot}`),
+    .filter((game) =>
+      isScheduledAdminGame(game) &&
+      (game.status === "LIVE" || adminGameStartTimestamp(game) >= now)
     )
-    .slice(0, 5);
+    .sort(sortScheduledAdminGames)
+    .slice(0, 2);
+  const completedGames = games.filter((game) =>
+    isFinalAdminGame(game) && adminGameStartTimestamp(game) <= now
+  );
+  const lastMatchdayDate = completedGames
+    .map((game) => game.matchDate)
+    .sort((left, right) => right.localeCompare(left))[0] ?? null;
+  const lastMatchday = lastMatchdayDate
+    ? completedGames
+        .filter((game) => game.matchDate === lastMatchdayDate)
+        .sort(sortFinalAdminGames)
+        .slice(0, 2)
+    : [];
   const urgentReports = reports
     .filter((report) => ["HIGH", "CRITICAL", "URGENT"].includes(report.priority))
     .slice(0, 4);
@@ -830,15 +1283,32 @@ function OverviewSection({
           ) : (
             <div className="admin-attention-list">
               {overview.attention.slice(0, 7).map((item) => (
-                <article key={item.id}>
+                <article className={item.gameId ? "actionable" : ""} key={item.id}>
                   <span className={`admin-severity-dot ${item.severity.toLowerCase()}`} />
                   <div>
                     <strong>{item.title}</strong>
                     <p>{item.detail}</p>
+                    {!item.dismissible ? (
+                      <small className="admin-required-resolution">
+                        {item.resolution === "RESOLVE_NO_DATA"
+                          ? "Admin resolution required · cannot dismiss"
+                          : "Assignment required · cannot dismiss"}
+                      </small>
+                    ) : null}
                   </div>
                   <div className="admin-attention-meta">
                     <span>{humanize(item.kind)}</span>
                     <time>{relativeTime(item.createdAt)}</time>
+                    {item.gameId && item.matchKind ? (
+                      <button
+                        onClick={() => router.push(`/admin/games/${item.matchKind!.toLowerCase()}/${item.gameId}`)}
+                        type="button"
+                      >
+                        Resolve or cancel →
+                      </button>
+                    ) : item.kind === "REPORT" || item.kind.includes("STOPPAGE") || item.kind.includes("FORFEIT") ? (
+                      <button onClick={() => onNavigate("reports")} type="button">Review →</button>
+                    ) : null}
                   </div>
                 </article>
               ))}
@@ -849,28 +1319,32 @@ function OverviewSection({
         <section className="admin-card">
           <AdminCardHeader
             eyebrow="Schedule"
-            title="Upcoming games"
+            title="Games snapshot"
             actionLabel="All games"
             onAction={() => onNavigate("games")}
           />
-          {upcoming.length === 0 ? (
-            <AdminEmpty icon="games" title="No upcoming games" detail="The schedule is clear." />
-          ) : (
-            <div className="admin-compact-game-list">
-              {upcoming.map((game) => (
-                <article key={`${game.matchKind}-${game.id}`}>
-                  <div className={`admin-game-emblem ${game.matchKind.toLowerCase()}`}>
-                    {game.matchKind === "SOLO" ? "S" : game.homeClan.emblem}
-                  </div>
-                  <div>
-                    <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
-                    <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
-                  </div>
-                  <StatusBadge status={game.status} />
-                </article>
-              ))}
+          <div className="admin-game-snapshot-section">
+            <div className="admin-game-snapshot-label">
+              <span>Next 2 games</span>
+              <small>Closest first</small>
             </div>
-          )}
+            {upcoming.length === 0 ? (
+              <p className="admin-game-snapshot-empty">No upcoming games scheduled.</p>
+            ) : (
+              <CompactGameList games={upcoming} />
+            )}
+          </div>
+          <div className="admin-game-snapshot-section recent">
+            <div className="admin-game-snapshot-label">
+              <span>Last matchday</span>
+              <small>{lastMatchdayDate ? formatAdminDate(lastMatchdayDate) : "No history"}</small>
+            </div>
+            {lastMatchday.length === 0 ? (
+              <p className="admin-game-snapshot-empty">No completed or cancelled games yet.</p>
+            ) : (
+              <CompactGameList games={lastMatchday} />
+            )}
+          </div>
         </section>
       </div>
 
@@ -910,6 +1384,25 @@ function OverviewSection({
           <CompactAuditList items={overview.audit.slice(0, 5)} />
         </section>
       </div>
+    </div>
+  );
+}
+
+function CompactGameList({ games }: { games: RefereeFixture[] }) {
+  return (
+    <div className="admin-compact-game-list">
+      {games.map((game) => (
+        <article key={`${game.matchKind}-${game.id}`}>
+          <div className={`admin-game-emblem ${game.matchKind.toLowerCase()}`}>
+            {game.matchKind === "SOLO" ? "S" : game.homeClan.emblem}
+          </div>
+          <div>
+            <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
+            <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
+          </div>
+          <StatusBadge status={adminDisplayStatus(game)} />
+        </article>
+      ))}
     </div>
   );
 }
@@ -1125,40 +1618,89 @@ function GamesSection({
   assignments,
   games,
   submitting,
+  onAssignReferee,
   onCancel,
+  onCreateSoloGame,
+  onCreateReferee,
   onOverrideScore,
+  onRemoveSoloGame,
 }: {
   accessToken: string;
   assignments: RefereeAssignmentsResponse;
   games: RefereeFixture[];
   submitting: string | null;
+  onAssignReferee: (fixture: RefereeFixture, refereeId: string) => Promise<boolean>;
   onCancel: (fixture: RefereeFixture) => void;
+  onCreateSoloGame: () => void;
+  onCreateReferee: (input: { displayName: string; phone: string }) => Promise<boolean>;
   onOverrideScore: (fixture: RefereeFixture) => void;
+  onRemoveSoloGame: (fixture: RefereeFixture) => void;
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
+  const [view, setView] = useState<AdminGamesView>("SCHEDULED");
+  const [display, setDisplay] = useState<AdminGamesDisplay>("LIST");
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  });
   const [status, setStatus] = useState("ALL");
   const [kind, setKind] = useState("ALL");
+  const [refereeFilter, setRefereeFilter] = useState("ALL");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [broadcast, setBroadcast] = useState<BroadcastControlResponse | null>(null);
   const [broadcastLoading, setBroadcastLoading] = useState(false);
   const [broadcastError, setBroadcastError] = useState<string | null>(null);
+  const [participants, setParticipants] = useState<AdminGameParticipants | null>(null);
+  const [participantsLoading, setParticipantsLoading] = useState(false);
+  const [participantsError, setParticipantsError] = useState<string | null>(null);
+  const [newRefereeName, setNewRefereeName] = useState("");
+  const [newRefereePhone, setNewRefereePhone] = useState("");
+
+  useEffect(() => {
+    const requestedGameId = new URLSearchParams(window.location.search).get("gameId");
+    if (!requestedGameId) return;
+    const requested = games.find((game) => game.id === requestedGameId);
+    if (!requested) return;
+    setView(isFinalAdminGame(requested) ? "FINAL" : "SCHEDULED");
+    setStatus("ALL");
+    setKind("ALL");
+    setRefereeFilter("ALL");
+    setQuery("");
+    setActiveId(`${requested.matchKind}-${requested.id}`);
+  }, [games]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    return games.filter((game) => {
-      if (status !== "ALL" && game.status !== status) return false;
-      if (kind !== "ALL" && game.matchKind !== kind) return false;
-      if (!needle) return true;
-      return [
-        game.homeClan.name,
-        game.homeClan.tag,
-        game.awayClan.name,
-        game.awayClan.tag,
-        game.venue,
-        game.matchDate,
-      ].some((value) => value.toLowerCase().includes(needle));
-    });
-  }, [games, kind, query, status]);
+    return games
+      .filter((game) => {
+        if (view === "SCHEDULED" ? !isScheduledAdminGame(game) : !isFinalAdminGame(game)) {
+          return false;
+        }
+        if (status !== "ALL" && adminDisplayStatus(game) !== status) return false;
+        if (kind !== "ALL" && game.matchKind !== kind) return false;
+        const assignedId = assignedRefereeId(assignments, game);
+        if (refereeFilter === "UNASSIGNED" && assignedId) return false;
+        if (
+          refereeFilter !== "ALL" &&
+          refereeFilter !== "UNASSIGNED" &&
+          assignedId !== refereeFilter
+        ) return false;
+        if (!needle) return true;
+        return [
+          game.homeClan.name,
+          game.homeClan.tag,
+          game.awayClan.name,
+          game.awayClan.tag,
+          game.venue,
+          game.matchDate,
+        ].some((value) => value.toLowerCase().includes(needle));
+      })
+      .sort(view === "SCHEDULED" ? sortScheduledAdminGames : sortFinalAdminGames);
+  }, [assignments, games, kind, query, refereeFilter, status, view]);
+
+  const scheduledCount = games.filter(isScheduledAdminGame).length;
+  const finalCount = games.filter(isFinalAdminGame).length;
 
   const active = filtered.find((game) => `${game.matchKind}-${game.id}` === activeId) ??
     filtered[0] ??
@@ -1174,6 +1716,34 @@ function GamesSection({
     setBroadcast(null);
     setBroadcastError(null);
   }, [active?.id, active?.matchKind]);
+
+  useEffect(() => {
+    if (!active) {
+      setParticipants(null);
+      setParticipantsError(null);
+      return;
+    }
+    let cancelled = false;
+    setParticipants(null);
+    setParticipantsError(null);
+    setParticipantsLoading(true);
+    const path = `/api/referee/admin/games/${active.matchKind.toLowerCase()}/${active.id}/players`;
+    void fetchJson<{ participants: AdminGameParticipants }>(path, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    }).then((payload) => {
+      if (!cancelled) setParticipants(payload.participants);
+    }).catch((loadError) => {
+      if (!cancelled) {
+        setParticipantsError(errorMessage(loadError, "Could not load signed-up players."));
+      }
+    }).finally(() => {
+      if (!cancelled) setParticipantsLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken, active?.id, active?.matchKind]);
 
   async function loadReplay() {
     if (!active) return;
@@ -1195,9 +1765,78 @@ function GamesSection({
     }
   }
 
+  async function submitNewReferee(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const created = await onCreateReferee({
+      displayName: newRefereeName.trim(),
+      phone: newRefereePhone.trim(),
+    });
+    if (created) {
+      setNewRefereeName("");
+      setNewRefereePhone("");
+    }
+  }
+
   return (
     <div className="admin-games-layout">
       <section className="admin-card admin-games-browser">
+        <div className="admin-games-browser-head">
+          <div>
+            <span className="admin-eyebrow">Match operations</span>
+            <h2>Games</h2>
+          </div>
+          <div className="admin-games-head-actions">
+            <div className="admin-display-switch" aria-label="Games display" role="group">
+              <button className={display === "LIST" ? "active" : ""} onClick={() => setDisplay("LIST")} type="button">List</button>
+              <button className={display === "CALENDAR" ? "active" : ""} onClick={() => {
+                setDisplay("CALENDAR");
+                const closest = filtered[0]?.matchDate;
+                if (closest) {
+                  const [year, month] = closest.split("-").map(Number);
+                  if (year && month) setCalendarMonth(new Date(Date.UTC(year, month - 1, 1)));
+                }
+              }} type="button">Calendar</button>
+            </div>
+            <button
+              className="admin-primary-button"
+              disabled={submitting !== null}
+              onClick={onCreateSoloGame}
+              type="button"
+            >
+              <span aria-hidden="true">＋</span> Create solo game
+            </button>
+          </div>
+        </div>
+        <div className="admin-game-view-tabs" role="tablist" aria-label="Game timing">
+          <button
+            aria-selected={view === "SCHEDULED"}
+            className={view === "SCHEDULED" ? "active" : ""}
+            onClick={() => {
+              setView("SCHEDULED");
+              setStatus("ALL");
+              setActiveId(null);
+            }}
+            role="tab"
+            type="button"
+          >
+            <span>Scheduled <b>{scheduledCount}</b></span>
+            <small>Upcoming and live</small>
+          </button>
+          <button
+            aria-selected={view === "FINAL"}
+            className={view === "FINAL" ? "active" : ""}
+            onClick={() => {
+              setView("FINAL");
+              setStatus("ALL");
+              setActiveId(null);
+            }}
+            role="tab"
+            type="button"
+          >
+            <span>Final <b>{finalCount}</b></span>
+            <small>Completed and cancelled</small>
+          </button>
+        </div>
         <div className="admin-table-toolbar">
           <label className="admin-search-field">
             <AdminIcon name="search" />
@@ -1213,18 +1852,48 @@ function GamesSection({
             <option value="SOLO">Solo</option>
           </select>
           <select onChange={(event) => setStatus(event.target.value)} value={status}>
-            <option value="ALL">All statuses</option>
-            <option value="LIVE">Live</option>
-            <option value="SCHEDULED">Scheduled</option>
-            <option value="FULL">Full</option>
-            <option value="OPEN">Open</option>
-            <option value="FINAL">Final</option>
-            <option value="CANCELLED">Cancelled</option>
+            <option value="ALL">All {view === "SCHEDULED" ? "scheduled" : "final"} statuses</option>
+            <option value="NO_DATA">No data</option>
+            <option value="UNDER_REVIEW">Under review</option>
+            {view === "SCHEDULED" ? (
+              <>
+                <option value="LIVE">Live</option>
+                <option value="SCHEDULED">Scheduled</option>
+                <option value="FULL">Full</option>
+                <option value="OPEN">Open</option>
+              </>
+            ) : (
+              <>
+                <option value="FINAL">Final</option>
+                <option value="CANCELLED">Cancelled</option>
+              </>
+            )}
+          </select>
+          <select
+            aria-label="Filter by referee"
+            onChange={(event) => setRefereeFilter(event.target.value)}
+            value={refereeFilter}
+          >
+            <option value="ALL">All referees</option>
+            <option value="UNASSIGNED">Unassigned</option>
+            {assignments.referees.map((referee) => (
+              <option key={referee.profileId} value={referee.profileId}>
+                {referee.displayName}
+              </option>
+            ))}
           </select>
         </div>
         <div className="admin-table-count">{filtered.length} games</div>
         {filtered.length === 0 ? (
           <AdminEmpty icon="games" title="No matching games" detail="Try a different status or search." />
+        ) : display === "CALENDAR" ? (
+          <AdminGamesCalendar
+            assignments={assignments}
+            games={filtered}
+            month={calendarMonth}
+            onMonth={setCalendarMonth}
+            onOpen={(game) => router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`)}
+          />
         ) : (
           <div className="admin-game-table-wrap">
             <table className="admin-data-table admin-games-table">
@@ -1245,7 +1914,14 @@ function GamesSection({
                     <tr
                       className={active && key === `${active.matchKind}-${active.id}` ? "active" : ""}
                       key={key}
-                      onClick={() => setActiveId(key)}
+                      onClick={() => router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          router.push(`/admin/games/${game.matchKind.toLowerCase()}/${game.id}`);
+                        }
+                      }}
+                      tabIndex={0}
                     >
                       <td>
                         <div className="admin-match-cell">
@@ -1261,7 +1937,7 @@ function GamesSection({
                         <small>{game.timeSlot} · {game.venue}</small>
                       </td>
                       <td>{assignedRefereeName(assignments, game)}</td>
-                      <td><StatusBadge status={game.status} /></td>
+                      <td><StatusBadge status={adminDisplayStatus(game)} /></td>
                       <td className="admin-score-cell">{displayScore(game)}</td>
                       <td><AdminIcon name="arrow" /></td>
                     </tr>
@@ -1280,8 +1956,15 @@ function GamesSection({
               <span className="admin-eyebrow">{active.matchKind === "SOLO" ? "Solo queue" : "Clan fixture"}</span>
               <h2>{active.homeClan.name} <span>vs</span> {active.awayClan.name}</h2>
             </div>
-            <StatusBadge status={active.status} />
+            <StatusBadge status={adminDisplayStatus(active)} />
           </div>
+          <button
+            className="admin-open-game-overview"
+            onClick={() => router.push(`/admin/games/${active.matchKind.toLowerCase()}/${active.id}`)}
+            type="button"
+          >
+            Open full game overview <AdminIcon name="arrow" />
+          </button>
           <div className="admin-detail-score">
             <div><span>{active.homeClan.emblem}</span><strong>{active.homeClan.tag}</strong></div>
             <b>{displayScore(active)}</b>
@@ -1293,6 +1976,64 @@ function GamesSection({
             <div><dt>Venue</dt><dd>{active.venue}</dd></div>
             <div><dt>Referee</dt><dd>{assignedRefereeName(assignments, active)}</dd></div>
           </dl>
+
+          {isScheduledAdminGame(active) ? (
+            <div className="admin-detail-section admin-referee-assignment">
+              <div className="admin-detail-section-title">
+                <div><AdminIcon name="referee" /><span>Referee assignment</span></div>
+              </div>
+              <label>
+                <span>Assigned official</span>
+                <select
+                  disabled={submitting !== null || active.status === "LIVE"}
+                  onChange={(event) => void onAssignReferee(active, event.target.value)}
+                  value={assignedRefereeId(assignments, active)}
+                >
+                  <option value="">Unassigned</option>
+                  {assignments.referees.map((referee) => (
+                    <option key={referee.profileId} value={referee.profileId}>
+                      {referee.displayName} · {referee.phone}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {active.status === "LIVE" ? (
+                <p className="admin-detail-hint">Live assignments are locked to avoid an accidental handoff.</p>
+              ) : null}
+              <details className="admin-add-referee">
+                <summary>+ Add a new referee</summary>
+                <form onSubmit={submitNewReferee}>
+                  <input
+                    placeholder="Full name"
+                    required
+                    value={newRefereeName}
+                    onChange={(event) => setNewRefereeName(event.target.value)}
+                  />
+                  <input
+                    inputMode="tel"
+                    placeholder="Phone number"
+                    required
+                    value={newRefereePhone}
+                    onChange={(event) => setNewRefereePhone(event.target.value)}
+                  />
+                  <button
+                    className="admin-secondary-button"
+                    disabled={submitting !== null}
+                    type="submit"
+                  >
+                    {submitting === "create-referee" ? "Creating…" : "Create and send login"}
+                  </button>
+                </form>
+              </details>
+            </div>
+          ) : null}
+
+          <AdminGamePlayersPanel
+            fixture={active}
+            participants={participants}
+            error={participantsError}
+            loading={participantsLoading}
+          />
           {active.status === "CANCELLED" ? (
             <div className="admin-cancellation-note">
               <AdminIcon name="alert" />
@@ -1354,12 +2095,712 @@ function GamesSection({
               <AdminIcon name="cancel" /> Cancel game
             </button>
           </div>
+          {active.matchKind === "SOLO" && active.status === "OPEN" ? (
+            <button
+              className="admin-remove-empty-game"
+              disabled={submitting !== null}
+              onClick={() => onRemoveSoloGame(active)}
+              type="button"
+            >
+              Remove empty game
+            </button>
+          ) : null}
           <p className="admin-audit-hint">
-            <AdminIcon name="audit" /> Every admin change requires a reason and is permanently audited.
+            <AdminIcon name="audit" /> Creation, removal, score corrections and cancellations are permanently audited.
           </p>
         </aside>
       ) : null}
     </div>
+  );
+}
+
+function AdminGamesCalendar({
+  assignments,
+  games,
+  month,
+  onMonth,
+  onOpen,
+}: {
+  assignments: RefereeAssignmentsResponse;
+  games: RefereeFixture[];
+  month: Date;
+  onMonth: (month: Date) => void;
+  onOpen: (game: RefereeFixture) => void;
+}) {
+  const year = month.getUTCFullYear();
+  const monthIndex = month.getUTCMonth();
+  const firstDay = new Date(Date.UTC(year, monthIndex, 1));
+  const mondayOffset = (firstDay.getUTCDay() + 6) % 7;
+  const gridStart = new Date(firstDay);
+  gridStart.setUTCDate(firstDay.getUTCDate() - mondayOffset);
+  const days = Array.from({ length: 42 }, (_, index) => {
+    const date = new Date(gridStart);
+    date.setUTCDate(gridStart.getUTCDate() + index);
+    return date;
+  });
+  const gamesByDay = new Map<string, RefereeFixture[]>();
+  for (const game of games) {
+    const bucket = gamesByDay.get(game.matchDate) ?? [];
+    bucket.push(game);
+    gamesByDay.set(game.matchDate, bucket);
+  }
+  const monthLabel = new Intl.DateTimeFormat("en-BH", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(month);
+
+  function shiftMonth(delta: number) {
+    onMonth(new Date(Date.UTC(year, monthIndex + delta, 1)));
+  }
+
+  return (
+    <div className="admin-calendar">
+      <header>
+        <button aria-label="Previous month" onClick={() => shiftMonth(-1)} type="button">←</button>
+        <div><strong>{monthLabel}</strong><small>{games.length} filtered games</small></div>
+        <button aria-label="Next month" onClick={() => shiftMonth(1)} type="button">→</button>
+      </header>
+      <div className="admin-calendar-weekdays">
+        {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => <span key={day}>{day}</span>)}
+      </div>
+      <div className="admin-calendar-grid">
+        {days.map((date) => {
+          const key = date.toISOString().slice(0, 10);
+          const dayGames = gamesByDay.get(key) ?? [];
+          const outside = date.getUTCMonth() !== monthIndex;
+          return (
+            <section className={outside ? "outside" : ""} key={key}>
+              <time dateTime={key}>{date.getUTCDate()}</time>
+              <div>
+                {dayGames.map((game) => (
+                  <button
+                    className={`admin-calendar-game ${game.matchKind.toLowerCase()}`}
+                    key={`${game.matchKind}-${game.id}`}
+                    onClick={() => onOpen(game)}
+                    title={`${game.homeClan.name} vs ${game.awayClan.name}`}
+                    type="button"
+                  >
+                    <span>{game.timeSlot}</span>
+                    <strong>{game.homeClan.tag} vs {game.awayClan.tag}</strong>
+                    <small>{assignedRefereeName(assignments, game)}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AdminGamePlayersPanel({
+  fixture,
+  participants,
+  error,
+  loading,
+}: {
+  fixture: RefereeFixture;
+  participants: AdminGameParticipants | null;
+  error: string | null;
+  loading: boolean;
+}) {
+  const actualPlayers = participants?.actualPlayers ?? [];
+  const usingClanActualFallback = participants?.matchKind === "CLAN" &&
+    participants.plannedPlayers.length === 0 && actualPlayers.length > 0;
+  const signedUpPlayers = participants?.matchKind === "SOLO"
+    ? participants.registeredPlayers
+    : usingClanActualFallback
+      ? actualPlayers
+      : participants?.plannedPlayers ?? [];
+  const historyPlayers = participants?.matchKind === "SOLO"
+    ? participants.withdrawnPlayers
+    : participants?.removedPlayers ?? [];
+  const groups = participantGroups(fixture, signedUpPlayers);
+  const signedUpLabel = participants?.matchKind === "SOLO"
+    ? `${participants.counts.registered} / ${participants.capacity} booked`
+    : participants?.matchKind === "CLAN"
+      ? usingClanActualFallback
+        ? `${participants.counts.actual} recorded`
+        : `${participants.counts.plannedHome} home · ${participants.counts.plannedAway} away`
+      : "";
+
+  return (
+    <div className="admin-detail-section admin-game-players">
+      <div className="admin-detail-section-title">
+        <div><AdminIcon name="people" /><span>Signed-up players</span></div>
+        {participants ? <b>{signedUpLabel}</b> : null}
+      </div>
+      {loading ? (
+        <div className="admin-player-loading" aria-label="Loading signed-up players">
+          <i /><i /><i />
+        </div>
+      ) : error ? (
+        <p className="admin-inline-error">{error}</p>
+      ) : !participants || signedUpPlayers.length === 0 ? (
+        <div className="admin-player-empty">
+          <AdminIcon name="people" />
+          <span>
+            <strong>No players confirmed yet</strong>
+            <small>The roster will appear here as bookings or clan selections are confirmed.</small>
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="admin-player-groups">
+            {groups.map((group) => (
+              <section key={group.key}>
+                <header>
+                  <span>{group.emblem}</span>
+                  <strong>{group.label}</strong>
+                  <b>{group.players.length}</b>
+                </header>
+                <div>
+                  {group.players.map((player) => (
+                    <AdminGamePlayerRow key={`${group.key}-${player.profileId}`} player={player} />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+          {actualPlayers.length > 0 ? (
+            <p className="admin-player-footnote">
+              <AdminIcon name="check" /> {actualPlayers.length} players checked in or recorded as playing
+            </p>
+          ) : null}
+          {historyPlayers.length > 0 ? (
+            <details className="admin-player-history">
+              <summary>{participants.matchKind === "SOLO" ? "Withdrawn bookings" : "Removed or replaced players"} · {historyPlayers.length}</summary>
+              <div>
+                {historyPlayers.map((player) => (
+                  <AdminGamePlayerRow key={`history-${player.profileId}`} player={player} muted />
+                ))}
+              </div>
+            </details>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+function AdminGamePlayerRow({
+  player,
+  muted = false,
+}: {
+  player: AdminGameParticipant;
+  muted?: boolean;
+}) {
+  return (
+    <div className={`admin-game-player-row ${muted ? "muted" : ""}`}>
+      {player.avatarUrl ? (
+        <img alt="" src={player.avatarUrl} />
+      ) : (
+        <span className="admin-game-player-avatar">{initials(player.displayName)}</span>
+      )}
+      <span>
+        <strong>{player.displayName}</strong>
+        <small>
+          {player.username ? `@${player.username.replace(/^@/, "")} · ` : ""}
+          {player.role ? humanize(player.role) : "Player"}
+        </small>
+      </span>
+      <span className="admin-game-player-badges">
+        {player.checkedInAt ? <b>Checked in</b> : null}
+        {player.played ? <b>Played</b> : null}
+        {player.ratingAtTeamAssignment !== null ? <em>{player.ratingAtTeamAssignment} SR</em> : null}
+      </span>
+    </div>
+  );
+}
+
+function participantGroups(
+  fixture: RefereeFixture,
+  players: AdminGameParticipant[],
+) {
+  const definitions = fixture.matchKind === "SOLO"
+    ? [
+        { key: "WHITE", label: "White team", emblem: "⚪" },
+        { key: "BLACK", label: "Black team", emblem: "⚫" },
+        { key: "UNASSIGNED", label: "Team not assigned", emblem: "○" },
+      ]
+    : [
+        { key: "HOME", label: fixture.homeClan.name, emblem: fixture.homeClan.emblem },
+        { key: "AWAY", label: fixture.awayClan.name, emblem: fixture.awayClan.emblem },
+        { key: "UNASSIGNED", label: "Side not recorded", emblem: "○" },
+      ];
+  return definitions.map((definition) => ({
+    ...definition,
+    players: players.filter((player) =>
+      definition.key === "UNASSIGNED"
+        ? player.side === null
+        : player.side === definition.key
+    ),
+  })).filter((group) => group.players.length > 0);
+}
+
+function SupportSection({
+  tickets,
+  status,
+  submitting,
+  onStatus,
+  onAction,
+}: {
+  tickets: AdminSupportTicket[];
+  status: string;
+  submitting: string | null;
+  onStatus: (status: string) => void;
+  onAction: (
+    ticket: AdminSupportTicket,
+    action: "START" | "RESOLVE" | "CLOSE" | "REOPEN" | "DUPLICATE",
+  ) => void;
+}) {
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const filtered = tickets.filter((ticket) =>
+    !needle ||
+    [
+      ticket.reference,
+      ticket.requesterName,
+      ticket.requesterUsername ?? "",
+      ticket.category,
+      ticket.subject,
+      ticket.description,
+    ].some((value) => value.toLowerCase().includes(needle))
+  );
+  const active =
+    filtered.find((ticket) => ticket.id === activeId) ??
+      filtered[0] ??
+      null;
+
+  useEffect(() => {
+    if (active && active.id !== activeId) setActiveId(active.id);
+  }, [active, activeId]);
+
+  return (
+    <div className="admin-reports-layout admin-support-layout">
+      <section className="admin-card admin-report-inbox admin-support-inbox">
+        <div className="admin-inbox-head">
+          <div>
+            <span className="admin-eyebrow">Private customer help</span>
+            <h2>Support inbox</h2>
+          </div>
+          <span>{filtered.length}</span>
+        </div>
+        <div className="admin-report-filters">
+          <label className="admin-search-field">
+            <AdminIcon name="search" />
+            <input
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search tickets"
+              value={query}
+            />
+          </label>
+          <select
+            onChange={(event) => onStatus(event.target.value)}
+            value={status}
+          >
+            <option value="ACTIVE">Needs attention</option>
+            <option value="OPEN">Open</option>
+            <option value="IN_PROGRESS">In progress</option>
+            <option value="RESOLVED">Resolved</option>
+            <option value="CLOSED">Closed</option>
+            <option value="DUPLICATE">Duplicates</option>
+            <option value="ALL">All tickets</option>
+          </select>
+        </div>
+        {filtered.length === 0 ? (
+          <AdminEmpty
+            detail={
+              status === "ACTIVE"
+                ? "New player requests will appear here."
+                : "Try another status or search."
+            }
+            icon="support"
+            title="No support tickets here"
+          />
+        ) : (
+          <div className="admin-report-list admin-support-list">
+            {filtered.map((ticket) => (
+              <button
+                className={active?.id === ticket.id ? "active" : ""}
+                key={ticket.id}
+                onClick={() => setActiveId(ticket.id)}
+                type="button"
+              >
+                <div className="admin-report-list-top">
+                  <PriorityBadge priority={ticket.priority} />
+                  <time>{relativeTime(ticket.createdAt)}</time>
+                </div>
+                <strong>{ticket.requesterName}</strong>
+                <p>{humanize(ticket.category)}</p>
+                <small>{truncate(ticket.description, 110)}</small>
+                <span className="admin-report-state">
+                  {humanize(ticket.status)}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {active ? (
+        <section className="admin-card admin-report-detail admin-support-detail">
+          <div className="admin-report-detail-head">
+            <div>
+              <PriorityBadge priority={active.priority} />
+              <StatusBadge status={active.status} />
+            </div>
+            <span>{active.reference}</span>
+          </div>
+
+          <div className="admin-reported-subject admin-support-requester">
+            <div className="admin-subject-avatar">
+              {initials(active.requesterName)}
+            </div>
+            <div>
+              <span>Support request from</span>
+              <h2>{active.requesterName}</h2>
+              <p>
+                {active.requesterUsername
+                  ? `@${active.requesterUsername}`
+                  : "Player account"}
+              </p>
+            </div>
+            <b>{humanize(active.category)}</b>
+          </div>
+
+          <div className="admin-report-description">
+            <span>What the player told us</span>
+            <p>{active.description}</p>
+          </div>
+
+          <dl className="admin-report-facts">
+            <div>
+              <dt>Submitted</dt>
+              <dd>{formatDateTime(active.createdAt)}</dd>
+            </div>
+            <div>
+              <dt>Source</dt>
+              <dd>{humanize(active.source)}</dd>
+            </div>
+            <div>
+              <dt>Assigned to</dt>
+              <dd>{active.assignedTo ?? "Unassigned"}</dd>
+            </div>
+            <div>
+              <dt>Last updated</dt>
+              <dd>{formatDateTime(active.updatedAt)}</dd>
+            </div>
+          </dl>
+
+          {active.resolutionNote ? (
+            <div className="admin-resolution-note">
+              <strong>Player-facing response</strong>
+              <p>{active.resolutionNote}</p>
+            </div>
+          ) : null}
+          {active.adminNote ? (
+            <div className="admin-support-internal-note">
+              <strong>Private admin note</strong>
+              <p>{active.adminNote}</p>
+            </div>
+          ) : null}
+
+          <div className="admin-report-actions admin-support-actions">
+            {active.status === "OPEN" ? (
+              <button
+                className="admin-primary-button"
+                disabled={submitting !== null}
+                onClick={() => onAction(active, "START")}
+                type="button"
+              >
+                Start handling
+              </button>
+            ) : null}
+            {["OPEN", "IN_PROGRESS"].includes(active.status) ? (
+              <>
+                <button
+                  className={
+                    active.status === "OPEN"
+                      ? "admin-secondary-button"
+                      : "admin-primary-button"
+                  }
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "RESOLVE")}
+                  type="button"
+                >
+                  Resolve
+                </button>
+                <button
+                  className="admin-text-danger"
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "DUPLICATE")}
+                  type="button"
+                >
+                  Duplicate
+                </button>
+              </>
+            ) : active.status === "RESOLVED" ? (
+              <>
+                <button
+                  className="admin-secondary-button"
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "REOPEN")}
+                  type="button"
+                >
+                  Reopen
+                </button>
+                <button
+                  className="admin-primary-button"
+                  disabled={submitting !== null}
+                  onClick={() => onAction(active, "CLOSE")}
+                  type="button"
+                >
+                  Close ticket
+                </button>
+              </>
+            ) : (
+              <button
+                className="admin-secondary-button"
+                disabled={submitting !== null}
+                onClick={() => onAction(active, "REOPEN")}
+                type="button"
+              >
+                Reopen ticket
+              </button>
+            )}
+          </div>
+
+          <p className="admin-privacy-note">
+            <AdminIcon name="lock" /> Internal notes stay private. Resolution
+            messages may be sent to the player.
+          </p>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function WaitlistSection({
+  applicants,
+}: {
+  applicants: AdminWaitlistApplicant[];
+}) {
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<WaitlistStatus | "ALL">("ALL");
+  const [interest, setInterest] = useState<WaitlistInterest | "ALL">("ALL");
+  const [position, setPosition] = useState<WaitlistPosition | "ALL">("ALL");
+
+  const filtered = useMemo(
+    () =>
+      filterAdminWaitlist(applicants, {
+        query,
+        status,
+        interest,
+        position,
+      }),
+    [applicants, interest, position, query, status],
+  );
+
+  const waitingCount = applicants.filter(
+    (applicant) => applicant.status === "WAITING",
+  ).length;
+  const selectedCount = applicants.filter(
+    (applicant) => applicant.status === "SELECTED",
+  ).length;
+  const onboardedCount = applicants.filter(
+    (applicant) => applicant.status === "ONBOARDED",
+  ).length;
+
+  return (
+    <section className="admin-card admin-waitlist-card">
+      <div className="admin-waitlist-head">
+        <div>
+          <span className="admin-eyebrow">Season Zero pipeline</span>
+          <h2>Waitlist applications</h2>
+          <p>
+            Review private applications collected through field.bh. Contact
+            details stay inside the admin workspace.
+          </p>
+        </div>
+        <span className="admin-waitlist-total">
+          <strong>{applicants.length}</strong>
+          <small>Applications loaded</small>
+        </span>
+      </div>
+
+      <div className="admin-waitlist-summary" aria-label="Waitlist summary">
+        <div>
+          <span>Waiting</span>
+          <strong>{waitingCount}</strong>
+        </div>
+        <div>
+          <span>Selected</span>
+          <strong>{selectedCount}</strong>
+        </div>
+        <div>
+          <span>Onboarded</span>
+          <strong>{onboardedCount}</strong>
+        </div>
+        <div>
+          <span>Other</span>
+          <strong>
+            {Math.max(
+              0,
+              applicants.length -
+                waitingCount -
+                selectedCount -
+                onboardedCount,
+            )}
+          </strong>
+        </div>
+      </div>
+
+      <div className="admin-waitlist-controls">
+        <label className="admin-search-field">
+          <AdminIcon name="search" />
+          <input
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search name, email or phone"
+            type="search"
+            value={query}
+          />
+        </label>
+        <select
+          aria-label="Filter waitlist by status"
+          onChange={(event) =>
+            setStatus(event.target.value as WaitlistStatus | "ALL")
+          }
+          value={status}
+        >
+          <option value="ALL">All statuses</option>
+          {WAITLIST_STATUSES.map((value) => (
+            <option key={value} value={value}>
+              {humanize(value)}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filter waitlist by interest"
+          onChange={(event) =>
+            setInterest(event.target.value as WaitlistInterest | "ALL")
+          }
+          value={interest}
+        >
+          <option value="ALL">All interests</option>
+          {WAITLIST_INTERESTS.map((value) => (
+            <option key={value} value={value}>
+              {waitlistInterestLabel(value)}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filter waitlist by position"
+          onChange={(event) =>
+            setPosition(event.target.value as WaitlistPosition | "ALL")
+          }
+          value={position}
+        >
+          <option value="ALL">All positions</option>
+          {WAITLIST_POSITIONS.map((value) => (
+            <option key={value} value={value}>
+              {humanize(value)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="admin-table-count">
+        {filtered.length} of {applicants.length} loaded applications
+      </div>
+
+      {filtered.length === 0 ? (
+        <AdminEmpty
+          detail={
+            applicants.length === 0
+              ? "New Season Zero applications will appear here."
+              : "Try changing the search or filters."
+          }
+          icon="waitlist"
+          title={
+            applicants.length === 0
+              ? "No applications yet"
+              : "No matching applications"
+          }
+        />
+      ) : (
+        <div className="admin-waitlist-table-wrap">
+          <table className="admin-data-table admin-waitlist-table">
+            <thead>
+              <tr>
+                <th>Applicant</th>
+                <th>Contact</th>
+                <th>Player details</th>
+                <th>Interested in</th>
+                <th>Status</th>
+                <th>Applied</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((applicant) => (
+                <tr key={applicant.id}>
+                  <td>
+                    <div className="admin-person-cell">
+                      <div className="admin-subject-avatar small">
+                        {initials(applicant.fullName)}
+                      </div>
+                      <div>
+                        <strong>{applicant.fullName}</strong>
+                        <small>{humanize(applicant.source)}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td>
+                    <a href={`mailto:${applicant.email}`}>
+                      {applicant.email}
+                    </a>
+                    {applicant.phone ? (
+                      <a href={`tel:${applicant.phone}`}>{applicant.phone}</a>
+                    ) : (
+                      <small>Phone not provided</small>
+                    )}
+                  </td>
+                  <td>
+                    <strong>
+                      {applicant.age !== null
+                        ? `Age ${applicant.age}`
+                        : "Age not recorded"}
+                    </strong>
+                    <small>
+                      {applicant.preferredPosition
+                        ? humanize(applicant.preferredPosition)
+                        : "No preferred position"}
+                    </small>
+                  </td>
+                  <td>{waitlistInterestLabel(applicant.interest)}</td>
+                  <td>
+                    <StatusBadge status={applicant.status} />
+                  </td>
+                  <td>
+                    <strong>{formatDateTime(applicant.createdAt)}</strong>
+                    <small>{relativeTime(applicant.createdAt)}</small>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="admin-waitlist-privacy">
+        <AdminIcon name="lock" />
+        This table contains private application data. Use it only for Season
+        Zero selection and player contact.
+      </p>
+    </section>
   );
 }
 
@@ -1549,6 +2990,132 @@ function ReportsSection({
   );
 }
 
+function StaffSection({
+  staff,
+  submitting,
+  onCreate,
+}: {
+  staff: AdminStaffMember[];
+  submitting: string | null;
+  onCreate: (input: {
+    displayName: string;
+    phone: string;
+    role: "admin" | "referee";
+  }) => Promise<boolean>;
+}) {
+  const [displayName, setDisplayName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [role, setRole] = useState<"admin" | "referee">("referee");
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const created = await onCreate({
+      displayName: displayName.trim(),
+      phone: phone.trim(),
+      role,
+    });
+    if (created) {
+      setDisplayName("");
+      setPhone("");
+      setRole("referee");
+    }
+  }
+
+  return (
+    <div className="admin-staff-layout">
+      <section className="admin-card admin-staff-create">
+        <span className="admin-eyebrow">Controlled access</span>
+        <h2>Add an admin or referee</h2>
+        <p>
+          Register their phone number, create their Field account, and send the
+          first one-time login code in one step.
+        </p>
+        <form onSubmit={(event) => void submit(event)}>
+          <label>
+            <span>Full name</span>
+            <input
+              autoComplete="name"
+              maxLength={80}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="Mohamed Ali"
+              required
+              value={displayName}
+            />
+          </label>
+          <label>
+            <span>Phone number</span>
+            <input
+              autoComplete="tel"
+              inputMode="tel"
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="+973 3XXX XXXX"
+              required
+              value={phone}
+            />
+            <small>This exact number becomes their login identity.</small>
+          </label>
+          <fieldset>
+            <legend>Access level</legend>
+            <button
+              className={role === "referee" ? "active" : ""}
+              onClick={() => setRole("referee")}
+              type="button"
+            >
+              <AdminIcon name="referee" />
+              <span><strong>Referee</strong><small>Assigned games and matchday controls</small></span>
+            </button>
+            <button
+              className={role === "admin" ? "active" : ""}
+              onClick={() => setRole("admin")}
+              type="button"
+            >
+              <AdminIcon name="shield" />
+              <span><strong>Admin</strong><small>Full operations and moderation access</small></span>
+            </button>
+          </fieldset>
+          <div className="admin-staff-warning">
+            <AdminIcon name="lock" />
+            <span><strong>Admin access is sensitive.</strong> Only grant it to people who should see private reports and change official records.</span>
+          </div>
+          <button
+            className="admin-primary-button"
+            disabled={submitting !== null || displayName.trim().length < 2 || phone.trim().length < 8}
+            type="submit"
+          >
+            {submitting === "create-staff" ? "Creating account…" : `Create ${role} account`}
+          </button>
+        </form>
+      </section>
+
+      <section className="admin-card admin-staff-directory">
+        <header>
+          <div><span className="admin-eyebrow">Access directory</span><h2>Registered staff</h2></div>
+          <b>{staff.filter((member) => member.isActive).length} active</b>
+        </header>
+        {staff.length === 0 ? (
+          <AdminEmpty icon="referee" title="No staff accounts found" detail="Create the first referee or administrator." />
+        ) : (
+          <div className="admin-staff-list">
+            {staff.map((member) => (
+              <article key={member.profileId}>
+                <span className="admin-subject-avatar small">{initials(member.displayName)}</span>
+                <div>
+                  <strong>{member.displayName}</strong>
+                  <small>{member.phone} · Added {member.createdAt ? formatAdminDate(member.createdAt) : "date unavailable"}</small>
+                </div>
+                <span className={`admin-staff-role ${member.role}`}>{member.role}</span>
+                <span className={member.isActive ? "admin-clear-status" : "admin-action-status"}>
+                  {member.isActive ? <><i /> Active</> : "Inactive"}
+                </span>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function PeopleSection({
   subjects,
   onModerate,
@@ -1558,6 +3125,7 @@ function PeopleSection({
   onModerate: (subject: FlaggedSubject) => void;
   onRevoke: (subject: FlaggedSubject, action: ActiveModerationAction) => void;
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [type, setType] = useState("ALL");
   const filtered = subjects.filter((subject) => {
@@ -1606,7 +3174,18 @@ function PeopleSection({
             </thead>
             <tbody>
               {filtered.map((subject, index) => (
-                <tr key={`${subject.subjectType}-${subject.subjectId}`}>
+                <tr
+                  className="admin-clickable-row"
+                  key={`${subject.subjectType}-${subject.subjectId}`}
+                  onClick={() => router.push(`/admin/people/${subject.subjectType.toLowerCase()}/${subject.subjectId}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      router.push(`/admin/people/${subject.subjectType.toLowerCase()}/${subject.subjectId}`);
+                    }
+                  }}
+                  tabIndex={0}
+                >
                   <td>
                     <div className="admin-person-cell">
                       <span className="admin-rank">#{index + 1}</span>
@@ -1642,14 +3221,20 @@ function PeopleSection({
                       {subject.activeActions[0] ? (
                         <button
                           className="admin-row-revoke"
-                          onClick={() => onRevoke(subject, subject.activeActions[0])}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onRevoke(subject, subject.activeActions[0]);
+                          }}
                           type="button"
                         >
                           Revoke
                         </button>
                       ) : null}
-                      <button className="admin-row-action" onClick={() => onModerate(subject)} type="button">
-                        Review <AdminIcon name="arrow" />
+                      <button className="admin-row-action" onClick={(event) => {
+                        event.stopPropagation();
+                        router.push(`/admin/people/${subject.subjectType.toLowerCase()}/${subject.subjectId}`);
+                      }} type="button">
+                        Full record <AdminIcon name="arrow" />
                       </button>
                     </div>
                   </td>
@@ -1692,6 +3277,165 @@ function AuditSection({ audit }: { audit: AuditItem[] }) {
         </div>
       )}
     </section>
+  );
+}
+
+function SoloGameManagementDialog({
+  dialog,
+  submitting,
+  onClose,
+  onCreate,
+  onRemove,
+}: {
+  dialog: NonNullable<SoloGameDialog>;
+  submitting: boolean;
+  onClose: () => void;
+  onCreate: (input: {
+    venue: string;
+    matchDate: string;
+    priceBhd: string;
+    ageLabel: string;
+  }) => void;
+  onRemove: (fixture: RefereeFixture, reason: string) => void;
+}) {
+  const [venue, setVenue] = useState("TFA, Saar");
+  const [matchDate, setMatchDate] = useState(nextSoloMatchDate());
+  const [priceBhd, setPriceBhd] = useState("3.000");
+  const [ageLabel, setAgeLabel] = useState("16+");
+  const [reason, setReason] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const creating = dialog.kind === "create";
+  const createReady =
+    venue.trim().length >= 2 &&
+    matchDate.length === 10 &&
+    /^\d{1,3}(?:\.\d{1,3})?$/.test(priceBhd.trim()) &&
+    ageLabel.trim().length >= 2;
+  const removeReady =
+    reason.trim().length >= 8 &&
+    confirmation.trim().toUpperCase() === "REMOVE";
+
+  return (
+    <AdminModal onClose={onClose}>
+      <div className={`admin-modal-icon ${creating ? "good" : "danger"}`}>
+        <AdminIcon name={creating ? "games" : "cancel"} />
+      </div>
+      <span className="admin-eyebrow">
+        {creating ? "Open Queue schedule" : "Permanent audit record"}
+      </span>
+      <h2>{creating ? "Create a solo game" : "Remove this empty game?"}</h2>
+      {creating ? (
+        <>
+          <p className="admin-modal-lead">
+            The game opens for player bookings as soon as it is created.
+          </p>
+          <div className="admin-modal-warning">
+            Solo Queue has a permanent slot: Tuesday or Friday · 8:30–9:30 PM Bahrain time.
+          </div>
+          <label className="admin-modal-field">
+            <span>Venue</span>
+            <input
+              maxLength={80}
+              onChange={(event) => setVenue(event.target.value)}
+              placeholder="TFA, Saar"
+              value={venue}
+            />
+          </label>
+          <div className="admin-solo-game-fields">
+            <label className="admin-modal-field">
+              <span>Match date</span>
+              <input
+                onChange={(event) => setMatchDate(event.target.value)}
+                type="date"
+                value={matchDate}
+              />
+              <small>Tuesday or Friday</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Price (BHD)</span>
+              <input
+                inputMode="decimal"
+                onChange={(event) => setPriceBhd(event.target.value)}
+                placeholder="3.000"
+                value={priceBhd}
+              />
+              <small>Up to 3 decimals</small>
+            </label>
+          </div>
+          <label className="admin-modal-field">
+            <span>Age label</span>
+            <input
+              maxLength={40}
+              onChange={(event) => setAgeLabel(event.target.value)}
+              placeholder="16+"
+              value={ageLabel}
+            />
+          </label>
+        </>
+      ) : (
+        <>
+          <p className="admin-modal-lead">
+            {dialog.fixture.homeClan.tag} vs {dialog.fixture.awayClan.tag} ·{" "}
+            {formatAdminDate(dialog.fixture.matchDate)}
+          </p>
+          <div className="admin-modal-warning danger">
+            Removal is only allowed while this future game is open and has no booking or matchday history.
+            If anyone has joined, cancel the game instead so refunds and player records are preserved.
+          </div>
+          <label className="admin-modal-field">
+            <span>Reason for removal</span>
+            <textarea
+              maxLength={1000}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Why was this empty game created by mistake?"
+              rows={4}
+              value={reason}
+            />
+            <small>{reason.trim().length}/8 minimum</small>
+          </label>
+          <label className="admin-modal-field">
+            <span>Type REMOVE to confirm</span>
+            <input
+              onChange={(event) => setConfirmation(event.target.value)}
+              placeholder="REMOVE"
+              value={confirmation}
+            />
+          </label>
+        </>
+      )}
+      <div className="admin-modal-actions">
+        <button
+          className="admin-secondary-button"
+          disabled={submitting}
+          onClick={onClose}
+          type="button"
+        >
+          Go back
+        </button>
+        <button
+          className={creating ? "admin-primary-button" : "admin-danger-solid"}
+          disabled={submitting || (creating ? !createReady : !removeReady)}
+          onClick={() => {
+            if (creating) {
+              onCreate({
+                venue: venue.trim(),
+                matchDate,
+                priceBhd: priceBhd.trim(),
+                ageLabel: ageLabel.trim(),
+              });
+            } else {
+              onRemove(dialog.fixture, reason.trim());
+            }
+          }}
+          type="button"
+        >
+          {submitting
+            ? "Saving…"
+            : creating
+              ? "Create and open game"
+              : "Remove empty game"}
+        </button>
+      </div>
+    </AdminModal>
   );
 }
 
@@ -1828,6 +3572,132 @@ function ReportResolutionDialog({
           type="button"
         >
           {submitting ? "Saving…" : dismissing ? "Dismiss report" : "Resolve report"}
+        </button>
+      </div>
+    </AdminModal>
+  );
+}
+
+function SupportActionDialog({
+  dialog,
+  submitting,
+  onClose,
+  onSubmit,
+}: {
+  dialog: NonNullable<SupportDialog>;
+  submitting: boolean;
+  onClose: () => void;
+  onSubmit: (input: {
+    resolutionNote?: string;
+    adminNote?: string;
+  }) => void;
+}) {
+  const resolving = dialog.action === "RESOLVE";
+  const closing = dialog.action === "CLOSE";
+  const duplicate = dialog.action === "DUPLICATE";
+  const [resolutionNote, setResolutionNote] = useState(
+    duplicate
+      ? "We closed this request because it duplicates another support ticket."
+      : "",
+  );
+  const [adminNote, setAdminNote] = useState("");
+  const canSubmit = resolving
+    ? resolutionNote.trim().length >= 8
+    : adminNote.trim().length >= 8;
+
+  return (
+    <AdminModal onClose={onClose}>
+      <div
+        className={`admin-modal-icon ${
+          resolving ? "good" : duplicate ? "neutral" : "warning"
+        }`}
+      >
+        <AdminIcon
+          name={resolving ? "check" : duplicate ? "dismiss" : "support"}
+        />
+      </div>
+      <span className="admin-eyebrow">
+        {dialog.ticket.reference} · private support workflow
+      </span>
+      <h2>
+        {resolving
+          ? "Resolve this support ticket"
+          : duplicate
+            ? "Mark this as a duplicate?"
+            : "Close this ticket?"}
+      </h2>
+      <p className="admin-modal-lead">
+        {dialog.ticket.requesterName} · {humanize(dialog.ticket.category)}
+      </p>
+
+      {!closing ? (
+        <label className="admin-modal-field">
+          <span>Message for the player</span>
+          <textarea
+            maxLength={2000}
+            onChange={(event) => setResolutionNote(event.target.value)}
+            placeholder="Explain clearly what was done and what happens next…"
+            rows={4}
+            value={resolutionNote}
+          />
+          <small>
+            {resolving
+              ? "This may be delivered to the player's private notifications."
+              : "The player will see why this request was closed."}
+          </small>
+        </label>
+      ) : null}
+
+      <label className="admin-modal-field">
+        <span>
+          {resolving ? "Private admin note · optional" : "Private admin note"}
+        </span>
+        <textarea
+          maxLength={2000}
+          onChange={(event) => setAdminNote(event.target.value)}
+          placeholder={
+            resolving
+              ? "Add evidence or operational context that should stay internal…"
+              : "Explain the closure or identify the original ticket…"
+          }
+          rows={4}
+          value={adminNote}
+        />
+      </label>
+
+      <div className="admin-modal-warning">
+        The transition, admin identity, before/after state, and private note are
+        permanently audited.
+      </div>
+      <div className="admin-modal-actions">
+        <button
+          className="admin-secondary-button"
+          disabled={submitting}
+          onClick={onClose}
+          type="button"
+        >
+          Go back
+        </button>
+        <button
+          className={
+            resolving ? "admin-primary-button" : "admin-danger-button"
+          }
+          disabled={submitting || !canSubmit}
+          onClick={() =>
+            onSubmit({
+              resolutionNote: resolutionNote.trim() || undefined,
+              adminNote: adminNote.trim() || undefined,
+            })
+          }
+          type="button"
+        >
+          {submitting
+            ? "Saving…"
+            : resolving
+              ? "Resolve ticket"
+              : duplicate
+                ? "Mark duplicate"
+                : "Close ticket"}
         </button>
       </div>
     </AdminModal>
@@ -2262,7 +4132,7 @@ function AdminPageSkeleton() {
 }
 
 type AdminIconName =
-  | "overview" | "games" | "reports" | "people" | "audit" | "referee"
+  | "overview" | "games" | "policy" | "support" | "reports" | "waitlist" | "people" | "audit" | "referee"
   | "logout" | "refresh" | "alert" | "check" | "arrow" | "search"
   | "replay" | "external" | "edit" | "cancel" | "lock" | "dismiss"
   | "close" | "live" | "shield";
@@ -2271,7 +4141,10 @@ function AdminIcon({ name }: { name: AdminIconName }) {
   const paths: Record<AdminIconName, React.ReactNode> = {
     overview: <><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></>,
     games: <><path d="M5 5h14v14H5z" /><path d="M8 3v4M16 3v4M5 10h14" /></>,
+    policy: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="M8 9h8M8 13h5M8 17h3" /></>,
+    support: <><path d="M4 13v-2a8 8 0 0 1 16 0v2" /><path d="M4 13H3a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h2v-6H4ZM20 13h1a2 2 0 0 1 2 2v2a2 2 0 0 1-2 2h-2v-6h1ZM19 19c0 2-2 3-5 3" /></>,
     reports: <><path d="M6 3h9l3 3v15H6z" /><path d="M14 3v4h4M9 11h6M9 15h6" /></>,
+    waitlist: <><path d="M9 5h10v16H5V9" /><path d="M9 3v6H3M9 3 3 9M9 13h6M9 17h6" /></>,
     people: <><path d="M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M22 20v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" /></>,
     audit: <><path d="M12 22a10 10 0 1 0-10-10" /><path d="M2 4v6h6M12 6v6l4 2" /></>,
     referee: <><path d="M4 5h16v14H4z" /><path d="m8 9 3 3-3 3M13 15h3" /></>,
@@ -2370,6 +4243,7 @@ function normalizeOverview(
 }
 
 function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
+  const rawMatchKind = stringFrom(row.matchKind ?? row.match_kind)?.toUpperCase();
   return {
     id: stringFrom(row.id) ?? `attention-${index}`,
     title: stringFrom(row.title ?? row.label) ?? "Admin review needed",
@@ -2377,6 +4251,10 @@ function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
     severity: enumValue(row.severity ?? row.priority, ["LOW", "MEDIUM", "HIGH", "CRITICAL"], "MEDIUM"),
     kind: stringFrom(row.kind ?? row.type ?? row.category) ?? "OPERATIONS",
     createdAt: stringFrom(row.createdAt ?? row.created_at ?? row.occurredAt ?? row.occurred_at),
+    matchKind: rawMatchKind === "SOLO" || rawMatchKind === "CLAN" ? rawMatchKind : null,
+    gameId: stringFrom(row.gameId ?? row.game_id ?? row.fixtureId ?? row.fixture_id),
+    resolution: stringFrom(row.resolution),
+    dismissible: row.dismissible !== false,
   };
 }
 
@@ -2555,8 +4433,12 @@ function sectionTitle(section: AdminSection) {
   return {
     overview: "Good overview. Fast decisions.",
     games: "Games control",
+    reliability: "Reliability policy",
+    support: "Player support",
     reports: "Reports inbox",
+    waitlist: "Season Zero waitlist",
     people: "Players & clans",
+    staff: "Admins & referees",
     audit: "Audit log",
   }[section];
 }
@@ -2565,14 +4447,19 @@ function sectionSubtitle(section: AdminSection) {
   return {
     overview: "See what needs attention across Field today.",
     games: "Review, correct, cancel and watch every match.",
+    reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
+    support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",
+    waitlist: "Review the players and clan leaders asking to join the private pilot.",
     people: "Understand patterns before taking proportionate action.",
+    staff: "Register trusted phone numbers and control who can operate Field.",
     audit: "A permanent trail of sensitive admin decisions.",
   }[section];
 }
 
 function metricIcon(key: string): AdminIconName {
   if (key.includes("report")) return "reports";
+  if (key.includes("support")) return "support";
   if (key.includes("live")) return "live";
   if (key.includes("restriction")) return "shield";
   return "alert";
@@ -2583,6 +4470,7 @@ function auditIcon(action: string): AdminIconName {
   if (value.includes("SCORE")) return "edit";
   if (value.includes("CANCEL")) return "cancel";
   if (value.includes("REPORT")) return "reports";
+  if (value.includes("SUPPORT")) return "support";
   if (value.includes("BAN") || value.includes("SUSPEND") || value.includes("WARN")) return "shield";
   return "audit";
 }
@@ -2617,18 +4505,85 @@ function assignedRefereeName(
   assignments: RefereeAssignmentsResponse,
   fixture: RefereeFixture,
 ) {
-  const assignment = assignments.fixtures.find(
-    (candidate) => candidate.id === fixture.id && candidate.matchKind === fixture.matchKind,
-  );
-  if (!assignment?.assignedRefereeId) return "Unassigned";
+  const refereeId = assignedRefereeId(assignments, fixture);
+  if (!refereeId) return "Unassigned";
   return assignments.referees.find(
-    (referee) => referee.profileId === assignment.assignedRefereeId,
+    (referee) => referee.profileId === refereeId,
   )?.displayName ?? "Assigned referee";
 }
 
+function assignedRefereeId(
+  assignments: RefereeAssignmentsResponse,
+  fixture: RefereeFixture,
+) {
+  const assignment = assignments.fixtures.find(
+    (candidate) => candidate.id === fixture.id && candidate.matchKind === fixture.matchKind,
+  );
+  return assignment?.assignedRefereeId ?? "";
+}
+
 function displayScore(fixture: RefereeFixture) {
+  if (fixture.operationalState === "NO_DATA") return "No data";
+  if (fixture.operationalState === "UNDER_REVIEW") return "Under review";
   if (fixture.homeScore === null && fixture.awayScore === null) return "—";
   return `${fixture.homeScore ?? 0} – ${fixture.awayScore ?? 0}`;
+}
+
+function adminDisplayStatus(fixture: RefereeFixture) {
+  const operationalState = fixture.operationalState?.toUpperCase();
+  return operationalState === "NO_DATA" || operationalState === "UNDER_REVIEW"
+    ? operationalState
+    : fixture.status;
+}
+
+function isScheduledAdminGame(fixture: RefereeFixture) {
+  if (["NO_DATA", "UNDER_REVIEW"].includes(adminDisplayStatus(fixture))) {
+    return false;
+  }
+  return ["OPEN", "FULL", "SCHEDULED", "LIVE"].includes(fixture.status);
+}
+
+function isFinalAdminGame(fixture: RefereeFixture) {
+  if (["NO_DATA", "UNDER_REVIEW"].includes(adminDisplayStatus(fixture))) {
+    return true;
+  }
+  return ["FINAL", "CANCELLED"].includes(fixture.status);
+}
+
+function adminGameStartTimestamp(fixture: RefereeFixture) {
+  const dateMatch = fixture.matchDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const timeMatch = fixture.timeSlot.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (dateMatch && timeMatch) {
+    const [, year, month, day] = dateMatch;
+    const rawHour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    const period = timeMatch[3].toUpperCase();
+    const hour = rawHour % 12 + (period === "PM" ? 12 : 0);
+    const timestamp = Date.parse(
+      `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00+03:00`,
+    );
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+
+  const fallback = Date.parse(`${fixture.matchDate}T12:00:00+03:00`);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
+function sortScheduledAdminGames(left: RefereeFixture, right: RefereeFixture) {
+  if (left.status === "LIVE" && right.status !== "LIVE") return -1;
+  if (right.status === "LIVE" && left.status !== "LIVE") return 1;
+
+  const now = Date.now();
+  const leftTime = adminGameStartTimestamp(left);
+  const rightTime = adminGameStartTimestamp(right);
+  const leftUpcoming = leftTime >= now;
+  const rightUpcoming = rightTime >= now;
+  if (leftUpcoming !== rightUpcoming) return leftUpcoming ? -1 : 1;
+  return leftUpcoming ? leftTime - rightTime : rightTime - leftTime;
+}
+
+function sortFinalAdminGames(left: RefereeFixture, right: RefereeFixture) {
+  return adminGameStartTimestamp(right) - adminGameStartTimestamp(left);
 }
 
 function forfeitHomeClan(decision: AdminForfeit) {
@@ -2670,6 +4625,14 @@ function humanize(value: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
+function waitlistInterestLabel(value: WaitlistInterest) {
+  return {
+    SOLO_PLAYER: "Solo player",
+    CLAN_PLAYER: "Clan player",
+    CLAN_LEADER: "Clan leader",
+  }[value];
+}
+
 function initials(value: string) {
   const letters = value.trim().split(/\s+/).slice(0, 2).map((part) => part[0]?.toUpperCase() ?? "").join("");
   return letters || "F";
@@ -2677,6 +4640,32 @@ function initials(value: string) {
 
 function truncate(value: string, limit: number) {
   return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+}
+
+function nextSoloMatchDate() {
+  const now = new Date();
+  const bahrainCalendar = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const candidate = new Date(Date.UTC(
+    bahrainCalendar.getUTCFullYear(),
+    bahrainCalendar.getUTCMonth(),
+    bahrainCalendar.getUTCDate(),
+  ));
+
+  for (let offset = 0; offset < 14; offset += 1) {
+    const weekday = candidate.getUTCDay();
+    const value = [
+      candidate.getUTCFullYear(),
+      String(candidate.getUTCMonth() + 1).padStart(2, "0"),
+      String(candidate.getUTCDate()).padStart(2, "0"),
+    ].join("-");
+    const kickoff = new Date(`${value}T20:30:00+03:00`);
+    if ((weekday === 2 || weekday === 5) && kickoff.getTime() > now.getTime()) {
+      return value;
+    }
+    candidate.setUTCDate(candidate.getUTCDate() + 1);
+  }
+
+  return "";
 }
 
 function formatAdminDate(value: string) {

@@ -46,6 +46,17 @@ export const FORFEIT_STOP_REASON_CODES = [
 
 export const FORFEIT_REVIEW_ACTIONS = ["CONFIRM", "OVERTURN"] as const;
 
+export const MATCH_RESOLUTION_TYPES = [
+  "RECORDED_RESULT",
+  "HOME_NO_SHOW",
+  "AWAY_NO_SHOW",
+  "BOTH_NO_SHOW",
+  "FIELD_OR_VENUE_CANCELLATION",
+  "MUTUAL_CANCELLATION",
+  "BOTH_AT_FAULT",
+  "ADMINISTRATIVE_VOID",
+] as const;
+
 export const CANCELLATION_REASON_CODES = [
   "WEATHER_OR_VENUE",
   "SAFETY",
@@ -56,6 +67,29 @@ export const CANCELLATION_REASON_CODES = [
   "OTHER",
 ] as const;
 
+export const SHORTHANDED_REASONS = [
+  "LATE_ARRIVAL",
+  "NO_SHOW",
+  "INJURY",
+  "OTHER",
+] as const;
+
+export const CHECK_IN_REMOVAL_REASON_CODES = [
+  "WRONG_PLAYER",
+  "PLAYER_NOT_PRESENT",
+  "OPERATOR_ERROR",
+  "OTHER",
+] as const;
+
+export const CHECK_IN_TIMINGS = [
+  "EARLY",
+  "LATE",
+  "AFTER_KICKOFF",
+] as const;
+
+export const SOLO_RELIABILITY_SIDES = ["WHITE", "BLACK"] as const;
+export const CLAN_RELIABILITY_SIDES = ["HOME", "AWAY"] as const;
+
 export type MatchKind = "CLAN" | "SOLO";
 export type ReportSubjectType = (typeof REPORT_SUBJECT_TYPES)[number];
 export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
@@ -64,6 +98,8 @@ export type StopMode = (typeof STOP_MODES)[number];
 export type StopReasonCode = (typeof STOP_REASON_CODES)[number];
 export type ForfeitStopReasonCode = (typeof FORFEIT_STOP_REASON_CODES)[number];
 export type ForfeitReviewAction = (typeof FORFEIT_REVIEW_ACTIONS)[number];
+export type MatchResolutionType = (typeof MATCH_RESOLUTION_TYPES)[number];
+export type ShorthandedReason = (typeof SHORTHANDED_REASONS)[number];
 
 type InputRecord = Record<string, unknown>;
 
@@ -240,6 +276,243 @@ export function parseAdminScoreOverrideInput(body: InputRecord) {
   return { homeScore, awayScore, reason };
 }
 
+export function parseAdminMatchResolutionInput(body: InputRecord) {
+  const expectedRevision = requiredInteger(
+    body.expectedRevision,
+    "Refresh this match before resolving it.",
+    0,
+    1_000_000,
+  );
+  const resolutionType = enumValue(
+    body.resolutionType,
+    MATCH_RESOLUTION_TYPES,
+    "Choose a supported match resolution.",
+  );
+  const reason = boundedText(
+    body.reason,
+    "Record a clear reason between 10 and 2,000 characters.",
+    10,
+    2000,
+  );
+  if (body.payload != null && !isRecord(body.payload)) {
+    throw new Error("Resolution details must be an object.");
+  }
+  const rawPayload = isRecord(body.payload) ? body.payload : {};
+  const payload: Record<string, unknown> = {};
+
+  copyOptionalInteger(
+    rawPayload,
+    payload,
+    "home_score",
+    "Home score must be between 0 and 99.",
+    0,
+    99,
+  );
+  copyOptionalInteger(
+    rawPayload,
+    payload,
+    "away_score",
+    "Away score must be between 0 and 99.",
+    0,
+    99,
+  );
+  for (const key of ["home_refund_bps", "away_refund_bps"] as const) {
+    copyOptionalInteger(
+      rawPayload,
+      payload,
+      key,
+      "Refund percentages must be between 0 and 100%.",
+      0,
+      10_000,
+    );
+  }
+  for (const key of ["home_sr_delta", "away_sr_delta"] as const) {
+    copyOptionalInteger(
+      rawPayload,
+      payload,
+      key,
+      "SR adjustments must be whole numbers between -10,000 and 10,000.",
+      -10_000,
+      10_000,
+    );
+  }
+  for (const key of ["home_strikes", "away_strikes"] as const) {
+    copyOptionalInteger(
+      rawPayload,
+      payload,
+      key,
+      "Strike adjustments must be between 0 and 20.",
+      0,
+      20,
+    );
+  }
+
+  if (rawPayload.attendance != null) {
+    if (
+      !Array.isArray(rawPayload.attendance) &&
+      !isRecord(rawPayload.attendance)
+    ) {
+      throw new Error("Attendance must be a JSON map or list.");
+    }
+    payload.attendance = rawPayload.attendance;
+  }
+
+  if (resolutionType === "RECORDED_RESULT") {
+    if (payload.home_score == null || payload.away_score == null) {
+      throw new Error("Enter both final scores for a recorded result.");
+    }
+  }
+
+  return {
+    expectedRevision,
+    resolutionType,
+    reason,
+    payload,
+  };
+}
+
+export function parseAdminMatchResolutionReopenInput(body: InputRecord) {
+  return {
+    caseId: uuidValue(
+      body.caseId,
+      "Choose the match resolution case to reopen.",
+    ),
+    reason: boundedText(
+      body.reason,
+      "Record a clear correction reason between 10 and 2,000 characters.",
+      10,
+      2000,
+    ),
+  };
+}
+
+export function parseRefereeCheckInInput(body: InputRecord) {
+  return {
+    profileId: uuidValue(
+      body.profileId,
+      "Choose a player from this match to check in.",
+    ),
+    timing: enumValue(
+      body.checkInTiming,
+      CHECK_IN_TIMINGS,
+      "Choose whether the player arrived early, late, or after kickoff.",
+    ),
+  };
+}
+
+export function parseRefereeRemoveCheckInInput(body: InputRecord) {
+  const reasonCode = enumValue(
+    body.reasonCode,
+    CHECK_IN_REMOVAL_REASON_CODES,
+    "Choose why this check-in is being removed.",
+  );
+  const note = optionalBoundedText(body.note ?? body.reason, 500);
+  if (reasonCode === "OTHER" && note.length < 5) {
+    throw new Error("Add a short note explaining this attendance correction.");
+  }
+
+  return {
+    profileId: uuidValue(
+      body.profileId,
+      "Choose a checked-in player from this match.",
+    ),
+    expectedRevision: requiredInteger(
+      body.expectedRevision,
+      "Refresh the player list before removing this check-in.",
+      0,
+      10_000,
+    ),
+    reasonCode,
+    note,
+  };
+}
+
+export function parseRefereeBulkCheckInInput(body: InputRecord) {
+  if (!Array.isArray(body.profileIds)) {
+    throw new Error("Choose at least one player from this match to check in.");
+  }
+  const profileIds = [
+    ...new Set(
+      body.profileIds.map((profileId) =>
+        uuidValue(profileId, "Every check-in must belong to a valid player."),
+      ),
+    ),
+  ];
+  if (profileIds.length === 0 || profileIds.length > 50) {
+    throw new Error("Choose between 1 and 50 players to check in.");
+  }
+  return { profileIds };
+}
+
+export function parseRefereeVerifiedInjuryInput(body: InputRecord) {
+  return {
+    profileId: uuidValue(
+      body.profileId,
+      "Choose a checked-in player from this match.",
+    ),
+    unableToContinue: booleanValue(
+      body.unableToContinue,
+      "Confirm whether the player was unable to continue.",
+    ),
+    replacementAvailable: booleanValue(
+      body.replacementAvailable,
+      "Confirm whether a replacement was available.",
+    ),
+    matchContinued: booleanValue(
+      body.matchContinued,
+      "Confirm whether the match continued.",
+    ),
+    note: optionalBoundedText(body.note, 1000),
+  };
+}
+
+export function parseRefereeStartShorthandedInput(
+  body: InputRecord,
+  matchKind: MatchKind,
+) {
+  const allowedSides = matchKind === "SOLO"
+    ? SOLO_RELIABILITY_SIDES
+    : CLAN_RELIABILITY_SIDES;
+  const side = enumValue(
+    body.side,
+    allowedSides,
+    "Choose a team from this match.",
+  );
+  const reason = enumValue(
+    body.reason,
+    SHORTHANDED_REASONS,
+    "Choose why this team is playing short.",
+  );
+  const note = optionalBoundedText(body.note, 1000);
+  if (reason === "OTHER" && note.length < 5) {
+    throw new Error("Add a concise factual note for the other reason.");
+  }
+
+  return {
+    side,
+    reason,
+    causedByProfileId: optionalUuidValue(
+      body.causedByProfileId,
+      "Choose a player from this team or leave it blank.",
+    ),
+    note,
+  };
+}
+
+export function parseRefereeEndShorthandedInput(body: InputRecord) {
+  return {
+    periodId: uuidValue(
+      body.periodId,
+      "Choose an active shorthanded period.",
+    ),
+    replacementProfileId: optionalUuidValue(
+      body.replacementProfileId,
+      "Choose a replacement from this match or leave it blank.",
+    ),
+    note: optionalBoundedText(body.note, 1000),
+  };
+}
+
 function enumValue<const T extends readonly string[]>(
   value: unknown,
   allowed: T,
@@ -254,6 +527,32 @@ function uuidValue(value: unknown, message: string) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (!UUID_PATTERN.test(normalized)) throw new Error(message);
   return normalized;
+}
+
+function optionalUuidValue(value: unknown, message: string) {
+  if (value == null || String(value).trim() === "") return null;
+  return uuidValue(value, message);
+}
+
+function isRecord(value: unknown): value is InputRecord {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function copyOptionalInteger(
+  source: InputRecord,
+  target: Record<string, unknown>,
+  key: string,
+  message: string,
+  minimum: number,
+  maximum: number,
+) {
+  if (source[key] == null || source[key] === "") return;
+  target[key] = requiredInteger(source[key], message, minimum, maximum);
+}
+
+function booleanValue(value: unknown, message: string) {
+  if (typeof value !== "boolean") throw new Error(message);
+  return value;
 }
 
 function boundedText(

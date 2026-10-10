@@ -1,17 +1,21 @@
 # Supabase Dev Data
 
-This project uses the hosted Supabase dev project for fake users, profiles,
-follows, clans, fixtures, and scorer stats. Keep service-role secrets only in
-the repo-root `.env`. Never put a service-role key in `mobile/.env.mobile` or
-any Flutter build config.
+Field Staging contains fake users, profiles, follows, clans, fixtures, and
+scorer stats. Local Supabase is disposable. Field Production contains real
+data only. Dev seed/reset scripts reject Field Production even if a production
+env file is supplied accidentally.
+
+Keep service-role secrets only in ignored server-side env files. Never put a
+service-role key in a Flutter env/build config.
 
 Profile photos use Supabase Storage bucket `profile-avatars`. The migration
 creates the bucket and storage policies. Users can upload only into a folder
 named after their own auth user id.
 
-## Root `.env`
+## Server-side environment files
 
-From the repo root, create or update `.env` with:
+The legacy root `.env` and `.env.staging` point to Field Staging. Create them
+from `.env.example` with:
 
 ```sh
 SUPABASE_URL=
@@ -22,23 +26,32 @@ DEV_SEED_PASSWORD=
 `DEV_SEED_PASSWORD` can be any strong throwaway password with at least 6
 characters. It is only used for the fake auth users created by the seed script.
 
-## Seed Fake Users And App Data
+`.env.production` points to Field Production. Never pass it to a seed, reset,
+or verifier command. The scripts also hard-deny the exact production ref as a
+second safety layer.
 
-Apply migrations before seeding:
+For local verification, start/reset Docker Supabase and use the credentials
+from `supabase status -o env`; CI performs this automatically.
+
+## Seed fake users in local Supabase
+
+The complete fake history seed is intentionally local-only. It creates rated
+fixtures and immutable reliability audit rows, so start from a clean local
+database and run it once:
 
 ```sh
-supabase db push
+supabase db reset
+./supabase/scripts/seed_local.sh
 ```
 
-Run from the repo root:
+The seed refuses hosted staging and production, and it refuses a second local
+run instead of trying to delete rated or audited history. Run `supabase db
+reset` whenever you want a fresh copy. Hosted staging keeps its own test
+scenarios and uses targeted, non-destructive verifier scripts.
 
-```sh
-deno run --allow-env --allow-net --env-file=.env supabase/scripts/seed_dev_data.ts
-```
-
-The seed command is idempotent. It reuses existing fake auth users by phone,
-refreshes their profiles, removes seeded follows, profile highlights, career
-rows, fake clan data, fixture scorer rows, and recreates the seeded app data.
+Historical matches are seeded through referee-authoritative attendance,
+atomic lineup start, and atomic completion. This produces real ON_TIME
+attendance, Player SR events, and match history without fake no-show strikes.
 
 ## Reset All Game Schedule Data (Destructive)
 
@@ -138,9 +151,12 @@ MMAV  Mint Mavericks
 CDRF  Crimson Drift
 ```
 
-Seeded fake fixtures include open, scheduled, live, and final match states.
-Final fixtures include scorers and assists so the profile stats and future
-leaderboard data have real rows to read immediately.
+Seeded fake fixtures include open, scheduled, and final match states. Final
+fixtures include audited check-ins, played lineups, scorers, and assists so
+profile stats, Player SR, and future leaderboard data have real rows to read
+immediately. Each fake clan's configured rating and record is its background
+history baseline; the visible seeded fixtures are then applied chronologically
+through the normal rating path.
 
 Seeded fake follows connect the fake users so the Profile screen's Following
 and Fans counts open populated People lists.
