@@ -83,7 +83,7 @@ jobs:
 
   flutter-ios:
     name: Flutter iOS flavor builds
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 35
     defaults:
       run:
@@ -92,6 +92,17 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Require Xcode 26 for Stripe SDK builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / {split($2, version, "."); print version[1]}')"
+          if [[ -z "$xcode_major" || "$xcode_major" -lt 26 ]]; then
+            echo "::error::The Stripe iOS SDK requires Xcode 26 or newer."
+            exit 1
+          fi
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
