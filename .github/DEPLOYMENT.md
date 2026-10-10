@@ -47,8 +47,11 @@ journey to succeed. CI infrastructure PRs also boot a secret-free Android emulat
 
 PRs select relevant checks from changed paths: referee-only changes do not build
 iOS/Android, native-platform changes check that platform, and mobile test-only
-changes run Flutter tests. Backend, workflow, shared, or unrecognized changes
-conservatively run all baseline checks. Every staging push runs the full release
+changes run Flutter tests. An exact allowlist of CI/deploy files covered by the
+fast contract suite does not rebuild unchanged apps on the PR; the full staging
+push tests the release pipeline once after merge. Backend, other workflow/native
+tooling, shared, or unrecognized changes conservatively run all baseline checks.
+Every staging push runs the full release
 plan. Intentionally skipped checks are distinguished from failures by the required
 aggregate gate; a skipped required check is a failure.
 

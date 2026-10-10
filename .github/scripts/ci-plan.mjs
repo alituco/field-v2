@@ -11,6 +11,26 @@ export const CI_OUTPUTS = Object.freeze([
 const BASELINE_CHECKS = CI_OUTPUTS.slice(0, 6);
 const MODES = new Set(['full', 'backend', 'player', 'journey']);
 const COMMIT_SHA = /^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$/;
+const CONTRACT_ONLY_PR_PATHS = new Set([
+  '.github/workflows/ci.yml',
+  '.github/actions/cleanup-staging-e2e/action.yml',
+  '.github/scripts/check-ci.sh',
+  '.github/scripts/ci-plan.mjs',
+  '.github/scripts/ci-plan.test.mjs',
+  '.github/scripts/ci-results.mjs',
+  '.github/scripts/ci-results.test.mjs',
+  '.github/scripts/deploy-supabase.sh',
+  '.github/scripts/deploy-supabase.test.mjs',
+  '.github/scripts/staging-e2e-workflow.test.mjs',
+  '.github/scripts/configure-stripe-staging.mjs',
+  '.github/scripts/configure-stripe-staging.test.mjs',
+  '.github/scripts/smoke-supabase.mjs',
+  '.github/scripts/smoke-supabase.test.mjs',
+  '.github/scripts/staging-e2e-handoff.mjs',
+  '.github/scripts/staging-e2e-handoff.test.mjs',
+  '.github/scripts/staging-diagnostics.mjs',
+  '.github/scripts/staging-diagnostics.test.mjs',
+]);
 
 function emptyPlan() {
   return Object.fromEntries(CI_OUTPUTS.map((name) => [name, 'false']));
@@ -29,6 +49,10 @@ function selectPathChecks(plan, filename) {
   // Markdown and the dedicated documentation tree have no executable CI input.
   // Do not inspect whether the file currently exists: deleted paths count too.
   if (isDocumentation(filename)) return;
+  // This exact infrastructure allowlist is exercised by the always-run fast
+  // contracts. Native builds test the new wiring once on the full merged push.
+  // Unknown workflow inputs and native/TestFlight tooling stay conservative.
+  if (CONTRACT_ONLY_PR_PATHS.has(filename)) return;
   if (filename.startsWith('supabase/')) {
     // Backend contracts are consumed by every client, including native builds.
     enable(plan, BASELINE_CHECKS);
@@ -46,8 +70,8 @@ function selectPathChecks(plan, filename) {
   } else if (filename.startsWith('broadcaster/')) {
     enable(plan, ['broadcaster']);
   } else {
-    // Workflow/scripts and unknown or shared inputs fail conservatively to all
-    // local checks. Path selection must never authorize a hosted mutation.
+    // Unknown/shared inputs fail conservatively to all local checks. Path
+    // selection must never authorize a hosted mutation.
     enable(plan, BASELINE_CHECKS);
   }
 }

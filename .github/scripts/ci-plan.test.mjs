@@ -78,10 +78,42 @@ test('PR paths select the relevant app checks, including platform-only inputs', 
   for (const [paths, expected] of matrix) assert.deepEqual(enabled(pullRequest(paths)), expected, paths.join(', '));
 });
 
-test('shared workflow and unknown paths conservatively select every baseline check', () => {
+test('exact contract-covered CI infrastructure paths need only the always-run PR preflight', () => {
+  const paths = [
+    '.github/workflows/ci.yml',
+    '.github/actions/cleanup-staging-e2e/action.yml',
+    '.github/scripts/check-ci.sh',
+    '.github/scripts/ci-plan.mjs',
+    '.github/scripts/ci-plan.test.mjs',
+    '.github/scripts/ci-results.mjs',
+    '.github/scripts/ci-results.test.mjs',
+    '.github/scripts/deploy-supabase.sh',
+    '.github/scripts/deploy-supabase.test.mjs',
+    '.github/scripts/staging-e2e-workflow.test.mjs',
+    '.github/scripts/configure-stripe-staging.mjs',
+    '.github/scripts/configure-stripe-staging.test.mjs',
+    '.github/scripts/smoke-supabase.mjs',
+    '.github/scripts/smoke-supabase.test.mjs',
+    '.github/scripts/staging-e2e-handoff.mjs',
+    '.github/scripts/staging-e2e-handoff.test.mjs',
+    '.github/scripts/staging-diagnostics.mjs',
+    '.github/scripts/staging-diagnostics.test.mjs',
+  ];
+  for (const filename of paths) assert.deepEqual(enabled(pullRequest([filename])), [], filename);
+  // The CI-refactor PR is contract-only; the merged staging push still executes
+  // every baseline build and journey before it may publish a release.
+  assert.deepEqual(enabled(pullRequest([...paths, 'docs/development/ci.md'])), []);
+  assert.deepEqual(enabled(createCiPlan({ eventName: 'push', ref: staging })), CI_OUTPUTS);
+  assert.deepEqual(enabled(pullRequest([...paths, 'mobile/pubspec.yaml'])), ['flutter', 'android', 'ios']);
+});
+
+test('unknown infrastructure, native tooling and shared paths still select every baseline check', () => {
   for (const filename of [
-    '.github/workflows/ci.yml', '.github/scripts/ci-plan.mjs',
+    '.github/workflows/new-ci.yml', '.github/workflows/deploy-supabase-production.yml',
+    '.github/scripts/ci-plan.test.mjs.bak', '.github/scripts/unknown.mjs',
     '.github/actions/staging-android-emulator/action.yml', '.gitignore',
+    '.github/scripts/run-staging-android-e2e.sh', '.github/scripts/prepare-android-runner.sh',
+    '.github/scripts/upload-staging-testflight.sh', '.github/scripts/stripe-android-config.test.mjs',
     'package.json', 'new-client/index.js', 'field.bh',
   ]) assert.deepEqual(enabled(pullRequest([filename])), checks, filename);
 });
