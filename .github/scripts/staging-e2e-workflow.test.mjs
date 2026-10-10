@@ -91,6 +91,23 @@ test("backend deploy starts after fast app and database checks, not native build
   assert.match(job("prepare-staging-e2e"), /if: needs\.preflight\.outputs\.player == 'true'/);
 });
 
+test("each Supabase caller installs the CLI on its own runner before first use", () => {
+  for (const [id, firstUse] of [
+    ["database", "supabase start"],
+    ["backend-staging", ".github/scripts/deploy-supabase.sh staging"],
+    ["prepare-staging-e2e", ".github/scripts/configure-staging-e2e-auth.sh"],
+  ]) {
+    const source = job(id);
+    const setup = stepContaining(source, "uses: supabase/setup-cli@");
+    assert.match(setup, /version: 2\.105\.0/);
+    assert.doesNotMatch(setup, /if:|continue-on-error/);
+    assert.ok(source.indexOf(setup) < source.indexOf(firstUse), `${id} must install its own CLI before ${firstUse}`);
+  }
+  const prepare = job("prepare-staging-e2e");
+  assert.ok(prepare.indexOf("run: supabase --version") > prepare.indexOf("uses: supabase/setup-cli@"));
+  assert.ok(prepare.indexOf("run: supabase --version") < prepare.indexOf("uses: actions/setup-java@"));
+});
+
 test("every planned journey has successful planned prerequisites despite skipped native jobs", () => {
   const cases = [
     { eventName: "push", ref: "refs/heads/staging" },
