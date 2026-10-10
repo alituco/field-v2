@@ -60,6 +60,21 @@ production_function_list() {
     --output-format json
 }
 
+staging_secret_list() {
+  local inventory
+  # CLI 2.105.0 --output json preserves the raw array; --output-format json
+  # instead wraps it in a success event. Never treat a failed list as empty.
+  inventory="$(supabase secrets list --project-ref "$project_ref" --output json)" || return $?
+  if ! jq -e -s '
+    length == 1 and (.[0] | type == "array" and all(.[];
+      type == "object" and (.name | type == "string" and length > 0)))
+  ' >/dev/null 2>&1 <<<"$inventory"; then
+    echo "Supabase returned an invalid secret inventory; refusing retired-secret cleanup." >&2
+    return 1
+  fi
+  printf '%s\n' "$inventory"
+}
+
 if [[ "$target" == "production" ]]; then
   # Remove known development backdoors before touching the production schema.
   # The exact project-ref guard above makes this cleanup target-specific.
@@ -143,8 +158,28 @@ if [[ "$target" == "staging" ]]; then
       supabase functions delete "$retired_function" --project-ref "$project_ref" --yes
     fi
   done
-  supabase secrets unset TAP_SECRET_KEY TAP_PUBLIC_KEY TAP_MERCHANT_ID \
-    TAP_APPLE_PAY_ENABLED TAP_WEBHOOK_URL --project-ref "$project_ref" --yes
+  # Repeated deployments may find none or only some of these retired secrets.
+  # Keep the exact allowlist and fail on real listing/deletion errors.
+  retired_secret_names=(TAP_SECRET_KEY TAP_PUBLIC_KEY TAP_MERCHANT_ID TAP_APPLE_PAY_ENABLED TAP_WEBHOOK_URL)
+  present_retired_secrets=()
+  secret_list="$(staging_secret_list)"
+  for retired_secret in "${retired_secret_names[@]}"; do
+    if jq -e --arg name "$retired_secret" 'any(.[]; .name == $name)' \
+      >/dev/null <<<"$secret_list"; then
+      present_retired_secrets+=("$retired_secret")
+    fi
+  done
+  if [[ ${#present_retired_secrets[@]} -gt 0 ]]; then
+    supabase secrets unset "${present_retired_secrets[@]}" --project-ref "$project_ref" --yes
+  fi
+  secret_list="$(staging_secret_list)"
+  for retired_secret in "${retired_secret_names[@]}"; do
+    if jq -e --arg name "$retired_secret" 'any(.[]; .name == $name)' \
+      >/dev/null <<<"$secret_list"; then
+      echo "Retired payment secrets remain after cleanup; refusing to complete deployment." >&2
+      exit 1
+    fi
+  done
 
   # The handler validates Auth tokens and recent authentication itself. It is
   # additionally disabled until FIELDRUSH_ACCOUNT_DELETION_ENABLED is set.

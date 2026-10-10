@@ -1,0 +1,39 @@
+name: Clean up staging E2E fixtures
+description: Restore encrypted fixture state if an earlier setup step failed, then clean staging.
+inputs:
+  handoff-artifact-id:
+    description: Encrypted handoff artifact from this run's successful preparation
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Recover encrypted cleanup state when normal restoration did not finish
+      if: always() && env.E2E_MANIFEST_PATH == ''
+      uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      with:
+        artifact-ids: ${{ inputs.handoff-artifact-id }}
+        path: ${{ runner.temp }}/field-e2e-cleanup-download
+        merge-multiple: true
+    - name: Restore cleanup manifest
+      if: always() && env.E2E_MANIFEST_PATH == ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        node .github/scripts/staging-e2e-handoff.mjs unpack \
+          --file "$RUNNER_TEMP/field-e2e-cleanup-download/field-e2e-handoff.bin" \
+          --output-dir "$RUNNER_TEMP/field-e2e-cleanup-restored"
+        test -s "$RUNNER_TEMP/field-e2e-cleanup-restored/manifest.json"
+        echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-cleanup-restored/manifest.json" >>"$GITHUB_ENV"
+    - name: Ensure cleanup runtime is available
+      if: always()
+      uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+      with:
+        deno-version: v2.8.2
+    - name: Clean transient fixtures and retain audit history
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        test -s "$E2E_MANIFEST_PATH"
+        deno run --allow-env --allow-net --allow-read \
+          supabase/scripts/e2e/cleanup_staging.ts

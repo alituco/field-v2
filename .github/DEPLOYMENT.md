@@ -38,11 +38,22 @@ build fails closed.
 - a signed staging iOS build uploaded to TestFlight after every successful
   hosted-staging deployment and E2E run
 
-The five verification jobs contain placeholders only and cannot read or
-modify a hosted database. The conditional, protected staging jobs receive
-staging credentials only after every verification job succeeds on a real
-`staging` push. CI infrastructure PRs also boot a secret-free Android emulator
-using the same configuration as the protected player journey.
+Fast deployment/workflow contract tests run before any expensive jobs. The six
+verification jobs use placeholders only and cannot access hosted data. On a
+`staging` push, protected backend deployment starts after fast contracts, Flutter
+analysis/tests, and database verification; Android/iOS flavor builds run in
+parallel. The final release gate still requires every verification and hosted
+journey to succeed. CI infrastructure PRs also boot a secret-free Android emulator.
+
+PRs select relevant checks from changed paths: referee-only changes do not build
+iOS/Android, native-platform changes check that platform, and mobile test-only
+changes run Flutter tests. An exact allowlist of CI/deploy files covered by the
+fast contract suite does not rebuild unchanged apps on the PR; the full staging
+push tests the release pipeline once after merge. Backend, other workflow/native
+tooling, shared, or unrecognized changes conservatively run all baseline checks.
+Every staging push runs the full release
+plan. Intentionally skipped checks are distinguished from failures by the required
+aggregate gate; a skipped required check is a failure.
 
 The marketing site is the separate
 [`alituco/field-bh`](https://github.com/alituco/field-bh) repository. Its own
@@ -51,8 +62,9 @@ target.
 
 ## Staging deployment
 
-After all five checks succeed on a `staging` push, the conditional
-`prepare-staging-e2e` job in the same `CI` run performs the idempotent deployment.
+After fast contracts, Flutter tests, and database checks pass, `backend-staging`
+deploys and smoke-tests the backend. `prepare-staging-e2e` then creates fixtures
+and builds the player APK, without waiting for the parallel native flavor builds.
 Keeping the deploy on the real `staging` ref makes GitHub's protected
 environment branch rule effective. Staging runs are not canceled midway
 through a migration. GitHub may replace an older queued run, but the latest
@@ -63,7 +75,8 @@ It:
 1. accepts only branch `staging` and Field's exact staging ref;
 2. dry-runs, applies, and dry-runs migrations again;
 3. checks critical tables/RPCs and requires a published reliability policy;
-4. deploys the recording/clip functions and staging-only login functions;
+4. deploys Stripe and recording/clip functions plus staging-only login functions;
+   retired payment secrets are removed only if present, with absence verified;
 5. runs a read-only hosted health/schema smoke;
 6. proves private waitlist and policy tables return explicit authorization
    failures to anonymous users;
@@ -74,16 +87,22 @@ It:
 9. runs referee and admin workflows against a local production build connected
    to hosted staging;
 10. verifies the resulting database state and removes mutable test fixtures;
-11. requires deployment/build, Android, browser verification, and cleanup to
-    succeed in the final `deploy-staging` gate before recording a successful
-    GitHub `staging` deployment for production promotion;
+11. requires every baseline check, deployment, Android/browser journey, and
+    inline cleanup to succeed in `deploy-staging`; a separate staging-push-only
+    job records the verified deployment (PR jobs have no deployment-write token);
 12. builds Field Staging with Xcode 26, signs it for App Store distribution,
     and uploads it to App Store Connect for the `admins` internal TestFlight
     group.
 
 It never resets hosted staging or touches ordinary staging users and games.
-E2E records are tagged with the run id. Mutable records are cleaned after every
-run; immutable attendance, wallet, reliability, and match audit facts remain
+E2E records are tagged with the run id. Started jobs clean mutable records inside
+their existing approval: preparation on failure, Android on failure or completion
+of player-only diagnostics, and browser always. Cleanup can recover the encrypted
+manifest after dependency setup or normal restoration fails. It does not need a
+separate deployment approval. A hard runner termination or cancellation between
+protected jobs can still prevent cleanup; the next approved preparation recovers
+stale tagged state. The encrypted handoff also remains available for approved
+manual cleanup for one day. Immutable attendance, wallet, reliability, and match audit facts remain
 tagged when database policy correctly prevents their deletion. Test logs,
 failure screenshots, Playwright reports/traces, and the local referee server
 log are retained for seven days. Cross-job APK, manifest, and temporary test
@@ -91,11 +110,43 @@ password transfers are authenticated/encrypted with AES-256-GCM using a
 run-scoped key derived from the protected staging credential, with one-day
 artifact retention. Plaintext fixture credentials are never uploaded.
 
-To retry a failed hosted journey after cleanup, rerun the **Deploy staging and
-build player E2E** job (and its dependent jobs), not just Android. This creates
-fresh fixtures and a matching APK without rerunning the five successful base
-verification jobs. A failed or skipped journey never qualifies for TestFlight,
-PWA deployment, or production promotion.
+### Short feedback loop
+
+Before pushing CI/deploy edits, run the same credential-free contract suite locally:
+
+```sh
+bash .github/scripts/check-ci.sh
+```
+
+For a focused hosted retry, choose **Actions → CI → Run workflow → staging**:
+
+| Mode | What runs | Native flavor builds / publishing |
+| --- | --- | --- |
+| `backend` | Contracts, deploy, hosted smoke; no fixtures | Neither |
+| `player` | Contracts, Flutter tests, DB verification, deploy, fresh Android player journey, cleanup | Neither |
+| `journey` | Player scope plus referee checks and sequential browser journey | Neither |
+| `full` | All baseline checks and hosted journeys | Builds, but no publishing |
+
+For example:
+
+```sh
+gh workflow run ci.yml --ref staging -f mode=backend
+gh workflow run ci.yml --ref staging -f mode=player
+```
+
+These commands are alternatives; run only the scope needed. Diagnostics use the
+reviewed commit selected on `staging`, never arbitrary unmerged candidate code,
+and retain the protected environment approval. They share the automatic staging
+run's concurrency lock, so shared test accounts/migrations cannot overlap. A queued
+diagnostic waits for an active staging run; never cancel a migration to jump ahead.
+
+For an unchanged commit, GitHub's rerun-job option avoids repeating successful
+prerequisites. After fixture cleanup, restart **Prepare and build staging player
+E2E** with its dependents, not Android alone. New fixtures require a new APK because
+run IDs, game IDs, and credentials are compiled into it. Dependency caches are
+reused; fixture-bearing APKs are not reused across new runs. Reruns use the original
+commit, so a code fix needs a new staging commit/run. A diagnostic, failed journey,
+or skipped required check never qualifies for TestFlight/PWA or production promotion.
 
 The daily **Staging smoke** repeats the non-mutating hosted check at 05:15 UTC.
 
@@ -197,21 +248,18 @@ environment; do not add the production service-role key to this CI workflow.
 Runtime secrets such as Cloudflare credentials, webhook secrets, and staging
 OTP configuration belong in each Supabase project's Edge Function secrets.
 
-The repository default branch is `prod`; `staging` shares the real project
-history. Repository settings protect both branches, block force
-pushes/deletion, require pull requests, and require these checks:
-
-- `Flutter Android, analyze, and test`
-- `Flutter iOS flavor builds`
-- `Referee web checks`
-- `Broadcaster checks`
-- `Supabase schema and behavior`
+The repository default branch is `prod`; `staging` shares the real project history.
+Recommended branch protection requires **Required checks and staging release gate**
+and blocks force pushes/deletion. This always-reported aggregate validates every
+check selected by the change plan, including intentional skips; do not require an
+obsolete renamed job. These workflow changes do not modify repository protection
+or environment reviewer settings.
 
 ## Promotion flow
 
 1. Branch from `staging`.
 2. Open a pull request into `staging`.
-3. Merge only after all five CI jobs pass.
+3. Merge only after the required check plan passes.
 4. Approve the protected staging deployment.
 5. Wait for the staging deployment, Android journey, and referee/admin browser
    journey to pass.

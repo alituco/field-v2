@@ -10,6 +10,17 @@ on:
       - staging
       - prod
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Staging diagnostic scope (never publishes TestFlight or the PWA)"
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - backend
+          - player
+          - journey
 
 permissions:
   contents: read
@@ -21,10 +32,42 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/staging' }}
 
 jobs:
-  flutter:
-    name: Flutter Android, analyze, and test
+  preflight:
+    name: Fast CI contracts and change plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      flutter: ${{ steps.plan.outputs.flutter }}
+      android: ${{ steps.plan.outputs.android }}
+      ios: ${{ steps.plan.outputs.ios }}
+      referee: ${{ steps.plan.outputs.referee }}
+      broadcaster: ${{ steps.plan.outputs.broadcaster }}
+      database: ${{ steps.plan.outputs.database }}
+      backend: ${{ steps.plan.outputs.backend }}
+      player: ${{ steps.plan.outputs.player }}
+      browser: ${{ steps.plan.outputs.browser }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - name: Test deployment and workflow contracts before expensive jobs
+        run: bash .github/scripts/check-ci.sh
+      - name: Select checks and staging diagnostic scope
+        id: plan
+        env:
+          CI_MODE: ${{ inputs.mode || 'full' }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/ci-plan.mjs
+
+  flutter:
+    name: Flutter analyze and test
+    needs: preflight
+    if: needs.preflight.outputs.flutter == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: mobile
@@ -32,20 +75,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Reserve disk space for Android builds
-        working-directory: .
-        run: bash .github/scripts/prepare-android-runner.sh
-
-      - name: Set up Java
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-          cache-dependency-path: |
-            mobile/android/**/*.gradle*
-            mobile/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -62,6 +91,39 @@ jobs:
 
       - name: Run Flutter tests
         run: flutter test
+
+  android-builds:
+    name: Flutter Android flavor builds
+    needs: preflight
+    if: needs.preflight.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Reserve disk space for Android builds
+        working-directory: .
+        run: bash .github/scripts/prepare-android-runner.sh
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - name: Install Flutter dependencies
+        run: flutter pub get
 
       - name: Build Android staging flavor
         run: >-
@@ -87,6 +149,8 @@ jobs:
 
   flutter-ios:
     name: Flutter iOS flavor builds
+    needs: preflight
+    if: needs.preflight.outputs.ios == 'true'
     runs-on: macos-26
     timeout-minutes: 35
     defaults:
@@ -155,6 +219,8 @@ jobs:
 
   referee:
     name: Referee web checks
+    needs: preflight
+    if: needs.preflight.outputs.referee == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -200,6 +266,8 @@ jobs:
 
   broadcaster:
     name: Broadcaster checks
+    needs: preflight
+    if: needs.preflight.outputs.broadcaster == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -225,6 +293,8 @@ jobs:
 
   database:
     name: Supabase schema and behavior
+    needs: preflight
+    if: needs.preflight.outputs.database == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -252,32 +322,6 @@ jobs:
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
           deno-version: v2.8.2
-
-      - name: Check deployment safety scripts
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash -n .github/scripts/configure-staging-e2e-auth.sh
-          bash -n .github/scripts/deploy-supabase.sh
-          bash -n .github/scripts/run-staging-android-e2e.sh
-          bash -n .github/scripts/prepare-android-emulator.sh
-          bash -n .github/scripts/check-android-emulator.sh
-          bash -n .github/scripts/upload-staging-testflight.sh
-          node --check .github/scripts/smoke-supabase.mjs
-          node --test .github/scripts/smoke-supabase.test.mjs
-          node --test .github/scripts/configure-stripe-staging.test.mjs
-          node --test .github/scripts/deploy-supabase.test.mjs
-          node --test .github/scripts/*android*.test.mjs .github/scripts/staging-e2e-handoff.test.mjs .github/scripts/staging-e2e-workflow.test.mjs .github/scripts/staging-diagnostics.test.mjs
-          grep -q "deploy_function dev-phone-login --no-verify-jwt" \
-            .github/scripts/deploy-supabase.sh
-          grep -q "Hosted schema has no published reliability policy" \
-            .github/scripts/verify-hosted-schema.sql
-          if SUPABASE_ACCESS_TOKEN=dummy SUPABASE_DB_PASSWORD=dummy \
-            .github/scripts/deploy-supabase.sh \
-              production nfdkdhdevpstfspazbfn; then
-            echo "The production deploy accepted the staging project ref." >&2
-            exit 1
-          fi
 
       - name: Check Edge Functions and database verifier
         shell: bash
@@ -391,19 +435,19 @@ jobs:
               <"$verifier"
           done
 
-  prepare-staging-e2e:
-    name: Deploy staging and build player E2E
-    needs:
-      - flutter
-      - flutter-ios
-      - referee
-      - broadcaster
-      - database
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+  backend-staging:
+    name: Deploy and smoke-test staging backend
+    needs: [preflight, flutter, database]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.backend == 'true' &&
+      (needs.flutter.result == 'success' ||
+        (inputs.mode == 'backend' && needs.flutter.result == 'skipped')) &&
+      (needs.database.result == 'success' ||
+        (inputs.mode == 'backend' && needs.database.result == 'skipped'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    outputs:
-      handoff-artifact-id: ${{ steps.handoff-upload.outputs.artifact-id }}
+    timeout-minutes: 15
     environment:
       name: staging
     env:
@@ -460,9 +504,6 @@ jobs:
             exit 1
           fi
 
-      - name: Reserve disk space for Android E2E
-        run: bash .github/scripts/prepare-android-runner.sh
-
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
         with:
@@ -480,6 +521,33 @@ jobs:
 
       - name: Smoke-test hosted staging
         run: node .github/scripts/smoke-supabase.mjs
+
+  prepare-staging-e2e:
+    name: Prepare and build staging player E2E
+    needs: [preflight, backend-staging]
+    if: needs.preflight.outputs.player == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      handoff-artifact-id: ${{ steps.handoff-upload.outputs.artifact-id }}
+    environment:
+      name: staging
+    env:
+      SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+      E2E_BOOTSTRAP_PHONE: "+97339009098"
+      E2E_DEV_OTP_CODE: "000000"
+      E2E_ONBOARDING_PHONE: "+97339009100"
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Reserve disk space for Android E2E
+        run: bash .github/scripts/prepare-android-runner.sh
 
       - name: Set up Java for Android E2E
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
@@ -607,8 +675,8 @@ jobs:
           retention-days: 1
           compression-level: 0
 
-      - name: Clean up fixtures if handoff could not be saved
-        if: (failure() || cancelled()) && steps.handoff-upload.outcome != 'success'
+      - name: Clean up fixtures after preparation failure
+        if: failure() || cancelled()
         shell: bash
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -621,7 +689,7 @@ jobs:
 
   android-staging-e2e:
     name: Staging Android player E2E
-    needs: prepare-staging-e2e
+    needs: [preflight, prepare-staging-e2e]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     environment:
@@ -657,6 +725,7 @@ jobs:
           node .github/scripts/staging-e2e-handoff.mjs unpack \
             --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
             --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-restored/manifest.json" >>"$GITHUB_ENV"
           test -s "$RUNNER_TEMP/field-e2e-restored/player-journey.apk"
           echo "E2E_APK_PATH=$RUNNER_TEMP/field-e2e-restored/player-journey.apk" >>"$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/field-e2e-restored/password.txt"
@@ -701,9 +770,22 @@ jobs:
           retention-days: 7
           compression-level: 0
 
+      - name: Clean up failed or player-only diagnostic fixtures
+        if: always() && (failure() || cancelled() || needs.preflight.outputs.browser != 'true')
+        uses: ./.github/actions/cleanup-staging-e2e
+        with:
+          handoff-artifact-id: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FIELD_ENVIRONMENT: staging
+          E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+
   browser-staging-e2e:
     name: Staging referee and admin E2E
-    needs: [prepare-staging-e2e, android-staging-e2e]
+    needs: [preflight, prepare-staging-e2e, android-staging-e2e]
+    if: needs.preflight.outputs.browser == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     environment:
@@ -746,6 +828,7 @@ jobs:
           node .github/scripts/staging-e2e-handoff.mjs unpack \
             --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
             --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-restored/manifest.json" >>"$GITHUB_ENV"
           password="$(cat "$RUNNER_TEMP/field-e2e-restored/password.txt")"
           echo "::add-mask::$password"
           {
@@ -874,68 +957,50 @@ jobs:
           path: ${{ runner.temp }}/field-browser-diagnostics.bin
           compression-level: 0
 
+      - name: Clean up staging E2E fixtures
+        if: always()
+        uses: ./.github/actions/cleanup-staging-e2e
+        with:
+          handoff-artifact-id: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+
   deploy-staging:
-    name: Deploy and end-to-end test staging
-    needs: [prepare-staging-e2e, android-staging-e2e, browser-staging-e2e]
-    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    name: Required checks and staging release gate
+    needs: [preflight, flutter, android-builds, flutter-ios, referee, broadcaster, database, backend-staging, prepare-staging-e2e, android-staging-e2e, browser-staging-e2e]
+    if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
-      deployments: write
-    environment:
-      name: staging
-    env:
-      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
-      FIELD_ENVIRONMENT: staging
-      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Set up Deno for fixture cleanup
-        if: needs.prepare-staging-e2e.outputs.handoff-artifact-id != ''
-        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
-        with:
-          deno-version: v2.8.2
-
-      - name: Download encrypted cleanup manifest
-        if: needs.prepare-staging-e2e.outputs.handoff-artifact-id != ''
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
-          path: ${{ runner.temp }}/field-e2e-download
-          merge-multiple: true
-
-      - name: Restore and clean up mutable staging E2E fixtures
-        if: needs.prepare-staging-e2e.outputs.handoff-artifact-id != ''
-        shell: bash
+      # This gate has no staging secrets or protected environment. It cannot
+      # require another deployment approval just to report an earlier failure.
+      - name: Require every planned check to pass
         env:
-          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          set -euo pipefail
-          node .github/scripts/staging-e2e-handoff.mjs unpack \
-            --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
-            --output-dir "$RUNNER_TEMP/field-e2e-restored"
-          E2E_MANIFEST_PATH="$RUNNER_TEMP/field-e2e-restored/manifest.json" \
-            deno run --allow-env --allow-net --allow-read \
-              supabase/scripts/e2e/cleanup_staging.ts
+          CI_PLAN: ${{ toJSON(needs.preflight.outputs) }}
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-results.mjs
 
-      # Cleanup runs even when Android/browser failed or was skipped, but a
-      # successful cleanup must never turn a failed journey into a green gate.
-      - name: Require every staging E2E stage to pass
-        env:
-          PREPARE_RESULT: ${{ needs.prepare-staging-e2e.result }}
-          ANDROID_RESULT: ${{ needs.android-staging-e2e.result }}
-          BROWSER_RESULT: ${{ needs.browser-staging-e2e.result }}
-        run: |
-          set -euo pipefail
-          if [[ "$PREPARE_RESULT" != success || "$ANDROID_RESULT" != success || "$BROWSER_RESULT" != success ]]; then
-            echo "::error::Staging E2E did not pass: prepare=$PREPARE_RESULT, Android=$ANDROID_RESULT, browser=$BROWSER_RESULT."
-            exit 1
-          fi
-
+  record-staging:
+    name: Record verified staging release
+    needs: [preflight, deploy-staging]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.preflight.outputs.release == 'true' &&
+      needs.deploy-staging.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      # Never check out PR-controlled code in a job with a deployment-write token.
       - name: Record successful staging deployment
         shell: bash
         env:
@@ -978,11 +1043,11 @@ jobs:
 
   upload-testflight-staging:
     name: Upload staging build to TestFlight
-    needs: deploy-staging
+    needs: record-staging
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/staging' &&
-      needs.deploy-staging.result == 'success'
+      needs.record-staging.result == 'success'
     runs-on: macos-26
     timeout-minutes: 45
     environment:
@@ -1042,11 +1107,11 @@ jobs:
 
   deploy-referee-staging:
     name: Deploy Field Ops staging PWA
-    needs: deploy-staging
+    needs: record-staging
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/staging' &&
-      needs.deploy-staging.result == 'success'
+      needs.record-staging.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
