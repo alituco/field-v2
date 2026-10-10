@@ -467,9 +467,10 @@ Future<void> _bookGameThroughUi(
     tester,
     find.byKey(ValueKey('open-queue-main-role-$roleSlug')),
   );
-  await tapWhenVisible(
+  await _tapEnabledFilledButton(
     tester,
     find.byKey(const ValueKey('open-queue-see-matching-games')),
+    reason: 'Open Queue availability never enabled matching games.',
   );
 
   final joinAction = find.byKey(
@@ -665,13 +666,11 @@ Future<void> _submitModerationReport(
       );
   await tester.pump();
 
-  await pumpUntilFound(
+  await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('profile-options-menu')),
     reason: 'The party target profile did not load its options menu.',
   );
-  await tester.tap(find.byKey(const ValueKey('profile-options-menu')));
-  await tester.pump();
   await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('profile-report-action')),

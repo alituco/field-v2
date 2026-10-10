@@ -195,10 +195,7 @@ Future<void> tapWhenVisible(
   Duration timeout = const Duration(seconds: 25),
   String? reason,
 }) async {
-  await pumpUntilFound(tester, finder, timeout: timeout, reason: reason);
-  await _centerInScrollable(tester, finder);
-  await tester.tap(finder);
-  await tester.pump();
+  await _tapWhenHittable(tester, finder, timeout: timeout, reason: reason);
 }
 
 Future<void> scrollUntilFound(
@@ -267,7 +264,9 @@ Future<void> scrollUntilFound(
 }
 
 Future<void> _centerInScrollable(WidgetTester tester, Finder finder) async {
-  final element = finder.first.evaluate().first;
+  final elements = finder.evaluate();
+  if (elements.isEmpty) return;
+  final element = elements.first;
   // Integration tests drive Flutter frames manually. Awaiting an animated
   // ensureVisible before pumping a frame deadlocks whenever scrolling is
   // actually required, so center the target synchronously instead.
@@ -283,6 +282,7 @@ Future<void> tapAfterScroll(
   WidgetTester tester,
   Finder finder, {
   int maxScrolls = 18,
+  Duration timeout = const Duration(seconds: 25),
   String? reason,
 }) async {
   await scrollUntilFound(
@@ -291,10 +291,38 @@ Future<void> tapAfterScroll(
     maxScrolls: maxScrolls,
     reason: reason,
   );
-  // Capture the resolved target geometry synchronously. This avoids a second
-  // finder evaluation between scrolling and the tap when an async page
-  // refresh replaces the same keyed control.
-  final center = tester.getCenter(finder.first);
-  await tester.tapAt(center);
-  await tester.pump();
+  await _tapWhenHittable(tester, finder, timeout: timeout, reason: reason);
+}
+
+Future<void> _tapWhenHittable(
+  WidgetTester tester,
+  Finder finder, {
+  required Duration timeout,
+  String? reason,
+}) async {
+  const interval = Duration(milliseconds: 100);
+  final deadline = DateTime.now().add(timeout);
+  var pumpedTime = Duration.zero;
+
+  // A route can have built its controls while a slide transition still places
+  // them outside the screen. Async list refreshes can also replace a target
+  // after ensureVisible. Re-resolve and hit-test the live layout on each frame;
+  // never tap geometry captured before the frame or wait for every animation.
+  while (DateTime.now().isBefore(deadline) && pumpedTime < timeout) {
+    if (finder.evaluate().isNotEmpty) {
+      await _centerInScrollable(tester, finder);
+      final hittable = finder.hitTestable();
+      if (hittable.evaluate().isNotEmpty) {
+        final center = tester.getCenter(hittable.first);
+        await tester.tapAt(center);
+        await tester.pump();
+        return;
+      }
+    }
+    await tester.pump(interval);
+    pumpedTime += interval;
+  }
+  throw TestFailure(
+    reason ?? 'Timed out waiting for the expected widget to become tappable.',
+  );
 }
