@@ -33,6 +33,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Reserve disk space for Android builds
+        working-directory: .
+        run: bash .github/scripts/prepare-android-runner.sh
+
       - name: Set up Java
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
@@ -446,6 +450,9 @@ jobs:
             echo "::error::The staging GitHub environment is missing Tap credentials."
             exit 1
           fi
+
+      - name: Reserve disk space for Android E2E
+        run: bash .github/scripts/prepare-android-runner.sh
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
