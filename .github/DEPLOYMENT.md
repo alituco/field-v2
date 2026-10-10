@@ -39,9 +39,10 @@ build fails closed.
   hosted-staging deployment and E2E run
 
 The five verification jobs contain placeholders only and cannot read or
-modify a hosted database. Only the conditional, protected `deploy-staging`
-job receives staging credentials, and only after every verification job
-succeeds on a real `staging` push.
+modify a hosted database. The conditional, protected staging jobs receive
+staging credentials only after every verification job succeeds on a real
+`staging` push. CI infrastructure PRs also boot a secret-free Android emulator
+using the same configuration as the protected player journey.
 
 The marketing site is the separate
 [`alituco/field-bh`](https://github.com/alituco/field-bh) repository. Its own
@@ -51,7 +52,7 @@ target.
 ## Staging deployment
 
 After all five checks succeed on a `staging` push, the conditional
-`deploy-staging` job in the same `CI` run performs the idempotent deployment.
+`prepare-staging-e2e` job in the same `CI` run performs the idempotent deployment.
 Keeping the deploy on the real `staging` ref makes GitHub's protected
 environment branch rule effective. Staging runs are not canceled midway
 through a migration. GitHub may replace an older queued run, but the latest
@@ -67,11 +68,15 @@ It:
 6. proves private waitlist and policy tables return explicit authorization
    failures to anonymous users;
 7. creates a uniquely tagged, isolated E2E account and match fixture;
-8. runs the player journey on an Android emulator;
+8. builds the player-journey APK, then runs it without recompilation on a fresh
+   Android runner with a 2 GiB userdata partition and a disk-space check after
+   SDK installation and AVD creation, immediately before boot;
 9. runs referee and admin workflows against a local production build connected
    to hosted staging;
 10. verifies the resulting database state and removes mutable test fixtures;
-11. records a successful GitHub `staging` deployment for production promotion.
+11. requires deployment/build, Android, browser verification, and cleanup to
+    succeed in the final `deploy-staging` gate before recording a successful
+    GitHub `staging` deployment for production promotion;
 12. builds Field Staging with Xcode 26, signs it for App Store distribution,
     and uploads it to App Store Connect for the `admins` internal TestFlight
     group.
@@ -79,10 +84,18 @@ It:
 It never resets hosted staging or touches ordinary staging users and games.
 E2E records are tagged with the run id. Mutable records are cleaned after every
 run; immutable attendance, wallet, reliability, and match audit facts remain
-tagged when database policy correctly prevents their deletion. Runs upload only
-test logs, failure screenshots, Playwright reports/traces, and the local
-referee server log for seven days. The fixture manifest, credentials, and
-generated password are never uploaded.
+tagged when database policy correctly prevents their deletion. Test logs,
+failure screenshots, Playwright reports/traces, and the local referee server
+log are retained for seven days. Cross-job APK, manifest, and temporary test
+password transfers are authenticated/encrypted with AES-256-GCM using a
+run-scoped key derived from the protected staging credential, with one-day
+artifact retention. Plaintext fixture credentials are never uploaded.
+
+To retry a failed hosted journey after cleanup, rerun the **Deploy staging and
+build player E2E** job (and its dependent jobs), not just Android. This creates
+fresh fixtures and a matching APK without rerunning the five successful base
+verification jobs. A failed or skipped journey never qualifies for TestFlight,
+PWA deployment, or production promotion.
 
 The daily **Staging smoke** repeats the non-mutating hosted check at 05:15 UTC.
 
