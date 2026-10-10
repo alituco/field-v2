@@ -5,6 +5,7 @@ import 'package:field/src/moderation/moderation_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue_review_screen.dart';
+import 'package:field/src/profile/fieldrush_you_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
 import 'package:flutter/material.dart';
@@ -110,7 +111,7 @@ void main() {
       label: 'main player',
     );
     expect(_currentUserId(), mainId);
-    _logStage('submit support request from Profile');
+    _logStage('submit support request from You');
     await _submitSupportRequest(tester, details: config.supportDetails);
     _logStage('submit moderation report for another player');
     await _submitModerationReport(
@@ -557,7 +558,7 @@ Future<void> _createAndSendPartyInvite(
 }
 
 Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
-  await tapWhenVisible(
+  await tapAfterScroll(
     tester,
     find.byKey(ValueKey('home-party-invite-$gameId')),
     timeout: const Duration(seconds: 35),
@@ -593,31 +594,28 @@ Future<void> _submitSupportRequest(
 
   await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('profile-screen')),
-    reason: 'The Profile tab did not become active.',
+    find.byType(FieldrushYouScreen),
+    reason: 'The You tab did not become active.',
   );
-  final profileContent = find.byKey(const ValueKey('profile-content'));
-  final profileError = find.byKey(const ValueKey('profile-error'));
+  final profileContent = find.byKey(const ValueKey('you-content'));
+  final profileError = find.text('Could not load your profile');
   await pumpUntilAny(
     tester,
     [profileContent, profileError],
     timeout: const Duration(seconds: 45),
-    reason: 'Profile did not finish loading.',
+    reason: 'You did not finish loading.',
   );
   if (profileError.evaluate().isNotEmpty) {
-    throw TestFailure('Profile returned its load-error state.');
+    throw TestFailure('You returned its load-error state.');
   }
 
   await scrollUntilFound(
     tester,
-    find.byKey(const ValueKey('profile-support-action')),
+    find.text('Help & support'),
     maxScrolls: 60,
-    reason: 'Profile did not expose Help & support.',
+    reason: 'You did not expose Help & support.',
   );
-  await tapAfterScroll(
-    tester,
-    find.byKey(const ValueKey('profile-support-action')),
-  );
+  await tapAfterScroll(tester, find.text('Help & support'));
   await pumpUntilFound(
     tester,
     find.byKey(const ValueKey('contact-support-sheet')),
