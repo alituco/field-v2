@@ -15,6 +15,10 @@ runs:
           | sudo tee /etc/udev/rules.d/99-kvm4all.rules
         sudo udevadm control --reload-rules
         sudo udevadm trigger --name-match=kvm
+        sudo udevadm settle
+        # Udev delivery can race this step on hosted VMs. Set the disposable
+        # device permissions explicitly before testing or starting QEMU.
+        sudo chmod 666 /dev/kvm
         test -r /dev/kvm && test -w /dev/kvm
 
     - name: Boot Android and run the supplied check

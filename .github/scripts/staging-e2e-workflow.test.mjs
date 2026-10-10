@@ -46,6 +46,8 @@ test("preflight and protected Android job share late-guarded 2 GiB emulator", ()
   assert.match(preflight, /uses: \.\/\.github\/actions\/staging-android-emulator/);
   assert.match(emulator, /disk-size: 2048M/);
   assert.match(emulator, /pre-emulator-launch-script: .*prepare-android-emulator\.sh/);
+  assert.ok(emulator.indexOf("sudo udevadm settle") < emulator.indexOf("test -r /dev/kvm"));
+  assert.ok(emulator.indexOf("sudo chmod 666 /dev/kvm") < emulator.indexOf("test -r /dev/kvm"));
   assert.doesNotMatch(preflight, /secrets\.|environment:\s*staging|deploy-supabase/);
 });
 

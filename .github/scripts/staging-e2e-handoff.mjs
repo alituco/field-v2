@@ -23,9 +23,10 @@ const NONCE_BYTES = 12;
 const TAG_BYTES = 16;
 const HEADER_BYTES = MAGIC.length + NONCE_BYTES;
 const MAX_METADATA_BYTES = 4_096;
+const MAX_PASSWORD_BYTES = 4_096;
 const MAX_FILE_BYTES = {
   "manifest.json": 2 * 1_024 * 1_024,
-  "password.txt": 4_096,
+  "password.txt": MAX_PASSWORD_BYTES,
   "player-journey.apk": 300 * 1_024 * 1_024,
 };
 const MAX_CONTAINER_BYTES =
