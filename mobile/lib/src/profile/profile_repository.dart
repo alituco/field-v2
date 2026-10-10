@@ -59,9 +59,13 @@ abstract class ProfileRepository {
 }
 
 class SupabaseProfileRepository implements ProfileRepository {
+  SupabaseProfileRepository({SupabaseClient? client})
+    : _injectedClient = client;
+
   static const _avatarBucket = 'profile-avatars';
 
-  SupabaseClient get _client => Supabase.instance.client;
+  final SupabaseClient? _injectedClient;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
 
   @override
   String? get currentUserId => _client.auth.currentUser?.id;
@@ -581,7 +585,7 @@ class SupabaseProfileRepository implements ProfileRepository {
         .select(
           'id, title, thumbnail_url, video_url, duration, views, clan_tag, '
           'download_url, source_type, source_match_id, source_event_id, '
-          'is_public, provider_video_id, processing_status, processing_error',
+          'is_public, provider_video_id, processing_status, processing_error, created_at',
         )
         .eq('profile_id', userId)
         .order('sort_order')
@@ -644,9 +648,46 @@ class SupabaseProfileRepository implements ProfileRepository {
       final Map value => [value],
       _ => const <dynamic>[],
     };
+    final records = [
+      for (final row in rows) Map<String, dynamic>.from(row as Map),
+    ];
+    final games = [
+      for (final row in records) ProfilePreviousGame.fromJson(row),
+    ];
+    final soloIds = games
+        .where((game) => game.isSolo && game.id.trim().isNotEmpty)
+        .map((game) => game.id)
+        .toSet()
+        .toList();
+    final timezones = <String, String>{};
+    // The historical RPC does not return timezone. Fetch only public game
+    // metadata in bounded batches, without changing its database signature.
+    // Date metadata is optional: an outage must not hide the whole profile.
+    for (var start = 0; start < soloIds.length; start += 100) {
+      final end = start + 100 < soloIds.length ? start + 100 : soloIds.length;
+      try {
+        final metadata = await _client
+            .from('open_queue_games')
+            .select('id,timezone')
+            .inFilter('id', soloIds.sublist(start, end));
+        for (final row in metadata) {
+          final timezone = row['timezone'];
+          if (timezone is String && timezone.trim().isNotEmpty) {
+            timezones[row['id'] as String] = timezone.trim();
+          }
+        }
+      } catch (_) {
+        // The screen labels unknown solo dates rather than guessing a market.
+      }
+    }
     return [
-      for (final row in rows)
-        ProfilePreviousGame.fromJson(Map<String, dynamic>.from(row as Map)),
+      for (var index = 0; index < records.length; index++)
+        ProfilePreviousGame.fromJson({
+          ...records[index],
+          'timezone': games[index].isSolo
+              ? timezones[games[index].id]
+              : 'Asia/Bahrain',
+        }),
     ];
   }
 

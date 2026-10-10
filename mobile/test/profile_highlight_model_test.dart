@@ -20,6 +20,7 @@ void main() {
         'is_public': false,
         'status': 'READY',
         'error_message': null,
+        'created_at': '2026-10-09T21:30:00Z',
       });
 
       expect(highlight.id, 'clip-one');
@@ -37,6 +38,8 @@ void main() {
       expect(highlight.errorMessage, isNull);
       expect(highlight.views, 42);
       expect(highlight.clanTag, 'PEARL');
+      expect(highlight.createdAt, DateTime.utc(2026, 10, 9, 21, 30));
+      expect(highlight.copyWith(views: 43).createdAt, highlight.createdAt);
     });
 
     test('parses a processing solo goal before media URLs are ready', () {

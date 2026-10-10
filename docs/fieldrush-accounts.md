@@ -20,6 +20,14 @@ New Phoenix solo games are 7v7: one goalkeeper, three defenders and three attack
 
 Existing 6v6 games, midfielder bookings and historical clan games retain their original rules and BHD currency. Previously rated accounts retain their market and history. Only completed, unrated Fieldrush accounts without legacy game, payment or wallet obligations move to Phoenix. This is not a database reset.
 
+## You and profile settings
+
+The private You tab now follows the prototype: identity and Edit, Following/Fans, the division or placement card, current-season results, last five results, real clips, reliability, and grouped settings. Public player profiles remain separate and do not load private account or wallet information. Social rows open actual profiles; clips and match history open their existing detail screens. Unavailable data stays visibly unavailable rather than becoming invented zeroes or lifetime statistics.
+
+Notification preferences use the existing authenticated settings RPCs and wait for server confirmation before changing a switch. The wallet displays exact, separate currency balances through `get_my_fieldrush_wallet` from the pending USD migration below. Payment methods explains the existing checkout flow; it does not pretend to store cards, support wallet spending, or provide a transaction ledger. Support, sign-out confirmation and the staging-only profile switcher remain accessible.
+
+You-page verification: all 378 Flutter tests and Flutter analysis passed. Ranked and placement layouts were rendered with the bundled fonts, including 320px/large-text checks; real profile, notification preferences and match history were checked in the staging iOS simulator. Hosted rating and wallet still require the pending backend rollout below. Nothing was deployed by this UI extension.
+
 ### Deployment order for this extension
 
 The following changes are local until explicitly deployed. Apply the October 10 migrations in timestamp order, deploy the updated `tap-payment` and `tap-payment-webhook` functions, then release the matching admin and mobile clients:
