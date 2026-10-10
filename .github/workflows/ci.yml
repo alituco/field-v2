@@ -267,7 +267,7 @@ jobs:
           node --test .github/scripts/smoke-supabase.test.mjs
           node --test .github/scripts/configure-stripe-staging.test.mjs
           node --test .github/scripts/deploy-supabase.test.mjs
-          node --test .github/scripts/*android*.test.mjs .github/scripts/staging-e2e-handoff.test.mjs .github/scripts/staging-e2e-workflow.test.mjs
+          node --test .github/scripts/*android*.test.mjs .github/scripts/staging-e2e-handoff.test.mjs .github/scripts/staging-e2e-workflow.test.mjs .github/scripts/staging-diagnostics.test.mjs
           grep -q "deploy_function dev-phone-login --no-verify-jwt" \
             .github/scripts/deploy-supabase.sh
           grep -q "Hosted schema has no published reliability policy" \
@@ -668,15 +668,38 @@ jobs:
         with:
           script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh" run-prebuilt
 
-      - name: Upload Android failure diagnostics
+      - name: Encrypt Android failure diagnostics
+        id: android-diagnostics
         if: failure() || cancelled()
+        continue-on-error: true
+        shell: bash
+        env:
+          STAGING_DIAGNOSTICS_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ ! -d mobile/build/e2e-artifacts ]]; then
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/field-android-diagnostics.tar.gz"
+          trap 'rm -f "$archive"' EXIT
+          tar -czf "$archive" -- mobile/build/e2e-artifacts
+          node .github/scripts/staging-diagnostics.mjs encrypt \
+            --input "$archive" \
+            --output "$RUNNER_TEMP/field-android-diagnostics.bin" \
+            --context "$GITHUB_RUN_ID:android"
+          echo "created=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload encrypted Android failure diagnostics
+        if: always() && steps.android-diagnostics.outputs.created == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: staging-android-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-          path: mobile/build/e2e-artifacts/
+          path: ${{ runner.temp }}/field-android-diagnostics.bin
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   browser-staging-e2e:
     name: Staging referee and admin E2E
@@ -810,18 +833,46 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/field-referee-e2e.pid")" || true
           fi
 
-      - name: Upload staging E2E failure diagnostics
+      # Traces contain Authorization headers and session state. Log masking does
+      # not sanitize artifact contents, especially in a public repository.
+      - name: Encrypt staging browser failure diagnostics
+        id: browser-diagnostics
         if: failure() || cancelled()
+        continue-on-error: true
+        shell: bash
+        env:
+          STAGING_DIAGNOSTICS_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          paths=()
+          for directory in referee/e2e-artifacts referee/playwright-report referee/test-results; do
+            if [[ -d "$directory" ]]; then
+              paths+=("$directory")
+            fi
+          done
+          if [[ ${#paths[@]} -eq 0 ]]; then
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/field-browser-diagnostics.tar.gz"
+          trap 'rm -f "$archive"' EXIT
+          tar -czf "$archive" -- "${paths[@]}"
+          node .github/scripts/staging-diagnostics.mjs encrypt \
+            --input "$archive" \
+            --output "$RUNNER_TEMP/field-browser-diagnostics.bin" \
+            --context "$GITHUB_RUN_ID:browser"
+          echo "created=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload encrypted staging browser failure diagnostics
+        if: always() && steps.browser-diagnostics.outputs.created == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: staging-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            referee/e2e-artifacts/
-            referee/playwright-report/
-            referee/test-results/
+          path: ${{ runner.temp }}/field-browser-diagnostics.bin
+          compression-level: 0
 
   deploy-staging:
     name: Deploy and end-to-end test staging
