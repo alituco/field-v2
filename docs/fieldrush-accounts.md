@@ -24,9 +24,9 @@ Existing 6v6 games, midfielder bookings and historical clan games retain their o
 
 The private You tab now follows the prototype: identity and Edit, Following/Fans, the division or placement card, current-season results, last five results, real clips, reliability, and grouped settings. Public player profiles remain separate and do not load private account or wallet information. Social rows open actual profiles; clips and match history open their existing detail screens. Unavailable data stays visibly unavailable rather than becoming invented zeroes or lifetime statistics.
 
-Notification preferences use the existing authenticated settings RPCs and wait for server confirmation before changing a switch. The wallet displays exact, separate currency balances through `get_my_fieldrush_wallet` from the pending USD migration below. Payment methods explains the existing checkout flow; it does not pretend to store cards, support wallet spending, or provide a transaction ledger. Support, sign-out confirmation and the staging-only profile switcher remain accessible.
+Notification preferences use the existing authenticated settings RPCs and wait for server confirmation before changing a switch. The wallet displays exact, separate currency balances through `get_my_fieldrush_wallet`, now deployed to staging. Payment methods explains the existing checkout flow; it does not pretend to store cards, support wallet spending, or provide a transaction ledger. Support, sign-out confirmation and the staging-only profile switcher remain accessible.
 
-You-page verification: all 378 Flutter tests and Flutter analysis passed. Ranked and placement layouts were rendered with the bundled fonts, including 320px/large-text checks; real profile, notification preferences and match history were checked in the staging iOS simulator. Nothing was deployed by that UI extension. The later ranking reset below enables hosted placement against the player's existing market; Phoenix market migration and wallet still require the pending rollout below.
+You-page verification: all 378 Flutter tests and Flutter analysis passed. Ranked and placement layouts were rendered with the bundled fonts, including 320px/large-text checks; real profile, notification preferences and match history were checked in the staging iOS simulator. The later ranking reset below enables hosted placement against the player's existing market. Phoenix market and wallet migrations were subsequently deployed in the October 10 rollout below.
 
 ### Player ranking resets
 
@@ -40,16 +40,27 @@ On October 10, 2026 (UTC), this migration and one explicit reset were applied to
 
 Verification: 385 Flutter tests, Flutter analysis, 63 isolated PostgreSQL checks, a hosted rollback rehearsal with all 121 player season RPCs, post-commit database comparisons, and the staging simulator placement display passed. Run the targeted SQL fixture with `PGLITE_MODULE=/path/to/node_modules/@electric-sql/pglite node supabase/scripts/test_player_rating_reset.mjs`. This fixture is not a complete Supabase migration replay.
 
-### Deployment order for this extension
+### Staging rollout and payment boundary
 
-The following changes are local until explicitly deployed. Apply the October 10 migrations in timestamp order, deploy the updated `tap-payment` and `tap-payment-webhook` functions, then release the matching admin and mobile clients:
+The following October 10 migrations were applied to hosted staging in timestamp order, inside one transaction, after a private backup and rollback-only rehearsal:
 
 - `20261010000000_fieldrush_phoenix_game_format.sql`: versioned solo formats, Phoenix schedule, team allocation, account market and policy snapshots.
 - `20261010000100_fieldrush_usd_wallet_isolation.sql`: currency-safe payment intent checks and separate USD wallet accounting.
 - `20261010000200_move_fresh_fieldrush_accounts_to_phoenix.sql`: guarded migration of eligible fresh accounts only.
 - `20261010000500_fieldrush_home_activity.sql`: recipient-only notification read acknowledgements.
 
-Coordinate this as a staging rollout: do not create USD games while old BHD-only payment functions are still deployed. Verify that the Tap staging merchant accepts USD and the requested payment methods before end-to-end checkout testing. Client tests do not establish merchant currency activation. BenefitPay remains BHD-only; USD uses card and Apple Pay where the merchant supports them.
+The rehearsal exercised actual admin game creation, USD quoting, 7v7 policy snapshots, rejection of MID bookings, market-isolated feeds and account/wallet RPCs. Its synthetic game was rolled back. Post-commit comparisons verified all 163 existing games, 1,054 bookings, 482 rating events, historical policy snapshots, published policies and BHD balances were preserved. No games were seeded and no production data was changed. Private backup and verification records are under the gitignored `scratch/phoenix-rollout/2026-10-10/`.
+
+**Stripe will replace Tap completely for Fieldrush.** The updated Tap functions from the earlier implementation were deliberately not deployed in this rollout. The existing hosted Tap checkout rejects USD quotes before creating a charge; paid USD booking is unavailable until the Stripe integration is implemented and verified. Do not enable a Tap USD merchant as a workaround. Preserve historical payment/refund records when retiring the provider; removing old financial tables is not part of this deployment.
+
+The admin PWA can be deployed independently, without triggering TestFlight:
+
+```sh
+gh workflow run smoke-supabase-staging.yml \
+  --repo alituco/field-v2 --ref staging -f deploy_admin=true
+```
+
+That manual workflow runs hosted staging API smoke checks and admin tests/type-checking, then publishes only the configured `field-ops-staging` Vercel project. It does not apply migrations or build/upload a mobile binary. This source promotion uses an explicit `[skip ci]` merge marker to avoid the ordinary push workflow's automatic TestFlight path; normal future staging pushes retain their existing CI behavior.
 
 USD and BHD wallet credits are never converted or combined. Database amount fields retain their existing integer-thousandths contract (`13000` means USD 13.00 for USD games). Card charges use whole cents; policy refunds preserve exact ledger values, including fractional cents, and the wallet displays that precision. This extension does not add wallet spending.
 
