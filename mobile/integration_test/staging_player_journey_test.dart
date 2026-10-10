@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:field/main.dart' as app;
 import 'package:field/src/moderation/moderation_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/open_queue_booking_screen.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/fieldrush_you_screen.dart';
@@ -560,9 +561,25 @@ Future<void> _createAndSendPartyInvite(
 Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
   await tapAfterScroll(
     tester,
-    find.byKey(ValueKey('home-party-invite-$gameId')),
+    find.descendant(
+      of: find.byKey(ValueKey('home-party-invite-$gameId')),
+      matching: find.byType(FilledButton),
+    ),
     timeout: const Duration(seconds: 35),
     reason: 'The invited player did not receive the party alert on Home.',
+  );
+  await pumpUntilFound(
+    tester,
+    find.byType(OpenQueueBookingScreen),
+    reason: 'View invitation did not open the invited player\'s booking.',
+  );
+  expect(
+    tester
+        .widget<OpenQueueBookingScreen>(find.byType(OpenQueueBookingScreen))
+        .booking
+        .gameId,
+    gameId,
+    reason: 'The party alert opened a different game.',
   );
   await tapAfterScroll(
     tester,

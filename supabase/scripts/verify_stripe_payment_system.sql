@@ -2,6 +2,85 @@
 -- Provider responses are supplied only through the service-only capture RPC;
 -- the real domain booking, capacity, cancellation and refund functions run.
 begin;
+
+-- Test real PostgreSQL client roles, not only the JWT claims used by the
+-- service-side payment scenarios below. LIMIT 0 still checks column ACLs and
+-- avoids depending on existing fixtures or bypassing paused clan checkout.
+set local role authenticated;
+do $fixture_pricing_acl$
+declare
+  column_name text;
+  rejected boolean;
+begin
+  if has_table_privilege(current_user,'public.fixtures','SELECT') then
+    raise exception 'Authenticated clients have unrestricted fixture SELECT.';
+  end if;
+  foreach column_name in array array['currency','base_price_fils'] loop
+    if not has_column_privilege(current_user,'public.fixtures',column_name,'SELECT') then
+      raise exception 'Authenticated clients cannot read public fixture pricing column %.',column_name;
+    end if;
+  end loop;
+  perform currency,base_price_fils from public.fixtures limit 0;
+
+  foreach column_name in array array[
+    'home_base_amount_fils','away_base_amount_fils',
+    'home_reliability_deposit_fils','away_reliability_deposit_fils',
+    'home_amount_paid_fils','away_amount_paid_fils',
+    'home_charge_policy_version_id','away_charge_policy_version_id',
+    'home_refund_bps','away_refund_bps',
+    'home_refund_amount_fils','away_refund_amount_fils',
+    'home_deposit_status','away_deposit_status',
+    'home_payment_intent_id','away_payment_intent_id',
+    'home_provider_payment_id','away_provider_payment_id'
+  ] loop
+    if has_column_privilege(current_user,'public.fixtures',column_name,'SELECT') then
+      raise exception 'Authenticated clients can read private fixture finance column %.',column_name;
+    end if;
+    rejected:=false;
+    begin
+      execute format('select %I from public.fixtures limit 0',column_name);
+    exception when insufficient_privilege then rejected:=true;
+    end;
+    if not rejected then
+      raise exception 'Authenticated fixture finance query unexpectedly succeeded for %.',column_name;
+    end if;
+  end loop;
+
+  rejected:=false;
+  begin perform * from public.fixtures limit 0;
+  exception when insufficient_privilege then rejected:=true;
+  end;
+  if not rejected then raise exception 'Authenticated clients can select all fixture columns.'; end if;
+end;
+$fixture_pricing_acl$;
+reset role;
+
+set local role anon;
+do $anonymous_fixture_pricing_acl$
+declare
+  column_name text;
+  rejected boolean;
+begin
+  if has_table_privilege(current_user,'public.fixtures','SELECT') then
+    raise exception 'Anonymous clients have unrestricted fixture SELECT.';
+  end if;
+  foreach column_name in array array['currency','base_price_fils'] loop
+    if has_column_privilege(current_user,'public.fixtures',column_name,'SELECT') then
+      raise exception 'Anonymous clients can read fixture pricing column %.',column_name;
+    end if;
+    rejected:=false;
+    begin
+      execute format('select %I from public.fixtures limit 0',column_name);
+    exception when insufficient_privilege then rejected:=true;
+    end;
+    if not rejected then
+      raise exception 'Anonymous fixture pricing query unexpectedly succeeded for %.',column_name;
+    end if;
+  end loop;
+end;
+$anonymous_fixture_pricing_acl$;
+reset role;
+
 do $verify$
 declare
   players uuid[]:=array[gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid()];
@@ -237,7 +316,7 @@ begin
   update public.payment_webhook_events set status='PROCESSED',processed_at=now(),locked_until=null where event_id='evt_verify_'||game;
   lease:=public.claim_payment_webhook('evt_verify_'||game,'payment_intent.succeeded','pi_verify_'||intents[1]);
   if lease->>'claimed'<>'false' or lease->>'status'<>'PROCESSED' then raise exception 'Processed webhook was replayed.'; end if;
-  raise notice 'Stripe SQL verified: permissions, paused clans, admin pricing, immutable USD quotes, idempotency, capacity, cancellation, refund rounding, retry generations, external-refund review, account deletion guard, staging E2E, free checkout and webhook lease.';
+  raise notice 'Stripe SQL verified: fixture pricing column ACLs, permissions, paused clans, admin pricing, immutable USD quotes, idempotency, capacity, cancellation, refund rounding, retry generations, external-refund review, account deletion guard, staging E2E, free checkout and webhook lease.';
 end;
 $verify$;
 rollback;
