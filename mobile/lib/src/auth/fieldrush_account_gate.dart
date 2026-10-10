@@ -216,16 +216,22 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         account.completed &&
         account.phoneVerified &&
         _status != null) {
-      return widget.authenticatedAppBuilder?.call(context, _status!) ??
-          HomeScreen(
-            key: ValueKey(_userId),
-            authRepository: widget.authRepository,
-            accountRepository: widget.accountRepository,
-            supportRepository: _support,
-            moderationStatus: _status,
-            isDev: widget.isDev,
-            profileSwitcherEnabled: widget.profileSwitcherEnabled,
-          );
+      // Keep the authenticated subtree tied to a non-null user identity. A
+      // nullable ValueKey<String?> does not equal ValueKey<String>, and custom
+      // app builders must also be remounted when the active account changes.
+      return KeyedSubtree(
+        key: ValueKey<String>(_userId!),
+        child:
+            widget.authenticatedAppBuilder?.call(context, _status!) ??
+            HomeScreen(
+              authRepository: widget.authRepository,
+              accountRepository: widget.accountRepository,
+              supportRepository: _support,
+              moderationStatus: _status,
+              isDev: widget.isDev,
+              profileSwitcherEnabled: widget.profileSwitcherEnabled,
+            ),
+      );
     }
     return FieldrushAuthScreen(
       key: ValueKey(_screenGeneration),

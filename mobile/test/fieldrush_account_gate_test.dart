@@ -84,6 +84,26 @@ void main() {
     expect(find.text('AUTHENTICATED APP'), findsOneWidget);
   });
 
+  testWidgets('switching accounts remounts the authenticated user subtree', (
+    tester,
+  ) async {
+    await showGate(tester);
+    final firstUser = find.byKey(const ValueKey<String>('player-a'));
+    expect(firstUser, findsOneWidget);
+    final firstElement = tester.element(firstUser);
+
+    auth.session = _session(userId: 'player-b');
+    auth.events.add(AuthState(AuthChangeEvent.signedIn, auth.currentSession));
+    await tester.pumpAndSettle();
+
+    final nextUser = find.byKey(const ValueKey<String>('player-b'));
+    expect(firstUser, findsNothing);
+    expect(nextUser, findsOneWidget);
+    expect(tester.element(nextUser), isNot(same(firstElement)));
+    expect(find.text('AUTHENTICATED APP'), findsOneWidget);
+    expect(moderation.calls, 2);
+  });
+
   testWidgets(
     'initial account load failure stays closed and retry can recover',
     (tester) async {
@@ -175,11 +195,11 @@ void main() {
   });
 }
 
-Session _session() => Session(
+Session _session({String userId = 'player-a'}) => Session(
   accessToken: 'local-test-token',
   tokenType: 'bearer',
-  user: const User(
-    id: 'player-a',
+  user: User(
+    id: userId,
     appMetadata: {},
     userMetadata: {
       'onboarding_completed': true,
