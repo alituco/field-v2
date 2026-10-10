@@ -8,6 +8,7 @@ import 'package:field/src/home/home_discovery_repository.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/open_queue_booking_screen.dart';
 import 'package:field/src/open_queue/open_queue_party.dart';
 import 'package:field/src/open_queue/open_queue_party_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
@@ -15,6 +16,8 @@ import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../integration_test/helpers/staging_test_helpers.dart';
 
 void main() {
   testWidgets(
@@ -203,6 +206,41 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('Sami invited'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'View invitation opens the invited game and exposes its response controls',
+    (tester) async {
+      final invitedBooking = _booking(_game('invited', days: 3));
+      final repo = _Invites(
+        bookings: [_booking(_game('first')), invitedBooking],
+      );
+      await _pump(tester, repo);
+      final alert = find.byKey(const ValueKey('home-party-invite-invited'));
+      // Use the same scoped action finder as the hosted journey. The card's
+      // container is hit-testable, but only this button opens the booking.
+      await tapAfterScroll(
+        tester,
+        find.descendant(of: alert, matching: find.byType(FilledButton)),
+      );
+      await pumpUntilFound(tester, find.byType(OpenQueueBookingScreen));
+      expect(
+        tester
+            .widget<OpenQueueBookingScreen>(find.byType(OpenQueueBookingScreen))
+            .booking
+            .id,
+        invitedBooking.id,
+      );
+      await tapAfterScroll(
+        tester,
+        find.byKey(const ValueKey('open-queue-party-invite-indicator')),
+      );
+      await pumpUntilFound(
+        tester,
+        find.byKey(const ValueKey('accept-open-queue-party-invite')),
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 
