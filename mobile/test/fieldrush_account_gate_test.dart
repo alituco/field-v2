@@ -74,16 +74,13 @@ void main() {
     expect(moderation.calls, 1);
   });
 
-  testWidgets('completed account must persist welcome tour completion', (
+  testWidgets('completed account opens Home without a welcome tour', (
     tester,
   ) async {
     accounts.account = _account(tourCompleted: false);
     await showGate(tester);
-    expect(find.text('AUTHENTICATED APP'), findsNothing);
-    expect(find.text('You’re in,\nAlex.'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('fieldrush-continue')));
-    await tester.pumpAndSettle();
-    expect(accounts.tourCalls, 1);
+    expect(find.text('You’re in,\nAlex.'), findsNothing);
+    expect(accounts.tourCalls, 0);
     expect(find.text('AUTHENTICATED APP'), findsOneWidget);
   });
 

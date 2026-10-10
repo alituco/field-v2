@@ -9,12 +9,12 @@ This foundation replaces the mobile app’s signup and account entry flow with t
 - Server-persisted onboarding drafts. Completion is authoritative database state, never an editable auth metadata flag.
 - Private first name, last name, birthday and contact email. Public names are first name plus last initial, for example `Alex R.`. Public profile queries cannot read phone or birthday.
 - Unique lowercase usernames of 3–20 letters, digits, dots or underscores. Reserved staff, brand and technical names include separator-obfuscated and numeric-suffix variants; ordinary names such as `devin` remain usable.
-- Backend 18+ validation, versioned Terms and Privacy acceptance, and a persisted signup handoff. The full Home coachmark tour belongs to the later Home redesign.
+- Backend 18+ validation and versioned Terms and Privacy acceptance. Finishing signup opens Home immediately; no welcome confirmation or tour-completion step is required.
 - Account settings, Google linking, verified phone change, recovery and guarded deletion. Birthday corrections after signup require support.
 
 ## Hosted staging setup
 
-The local code does not deploy itself, erase staging or migrate existing users automatically. Before running this branch against hosted staging:
+The account migration was applied to hosted staging on October 9, 2026 and account loading was verified in the simulator. Deployments do not erase staging or automatically complete onboarding for existing users. For another environment, or to finish optional staging features:
 
 1. Review and apply `supabase/migrations/20261009000000_create_fieldrush_accounts.sql` to **staging only**, after the existing migrations. It deliberately stops if a different PostgREST pre-request hook exists; compose the hooks before deployment rather than overwriting one.
 2. Deploy `fieldrush-delete-account`. The function accepts only the exact existing staging project or local Supabase, validates the bearer token through Auth, and then calls an authenticated database RPC. Keep `verify_jwt = false` in its function configuration for ES256 compatibility; this does not remove handler authentication.

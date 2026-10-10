@@ -17,17 +17,7 @@ import 'fieldrush_phone_field.dart';
 import 'fieldrush_recovery_screen.dart';
 import 'fieldrush_welcome_painter.dart';
 
-enum _Step {
-  welcome,
-  phone,
-  code,
-  name,
-  username,
-  birthday,
-  email,
-  review,
-  ready,
-}
+enum _Step { welcome, phone, code, name, username, birthday, email, review }
 
 class FieldrushAuthScreen extends StatefulWidget {
   const FieldrushAuthScreen({
@@ -149,7 +139,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     if (!account.phoneVerified) {
       _step = _Step.phone;
     } else if (account.completed) {
-      _step = _Step.ready;
+      _step = _Step.review;
     } else if (account.draft.firstName.isEmpty ||
         account.draft.lastName.isEmpty) {
       _step = _Step.name;
@@ -214,7 +204,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       _Step.birthday => _Step.username,
       _Step.email => _Step.birthday,
       _Step.review => _Step.email,
-      _Step.ready => _Step.ready,
     });
   }
 
@@ -303,7 +292,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         _editingReview = false;
       }
     });
-    if (account.completed && account.phoneVerified && account.tourCompleted) {
+    if (account.completed && account.phoneVerified) {
       widget.onOnboardingCompleted();
     }
   }
@@ -478,19 +467,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         throw StateError('Your account is not complete yet. Please try again.');
       }
       setState(() => _account = account);
-      _go(_Step.ready);
+      widget.onOnboardingCompleted();
     });
   }
-
-  Future<void> _finish() => _run(() async {
-    if (_account?.completed != true || _account?.phoneVerified != true) {
-      throw StateError(
-        'Verify your phone and finish your account details first.',
-      );
-    }
-    await widget.accountRepository.markTourCompleted();
-    if (mounted) widget.onOnboardingCompleted();
-  });
 
   Future<void> _openPolicy(String path) async {
     try {
@@ -679,7 +658,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            if (_step != _Step.ready) _progress(),
+                            _progress(),
                             const SizedBox(height: 42),
                             Text(
                               _title,
@@ -730,7 +709,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _Step.birthday => 'When’s your\nbirthday?',
     _Step.email => 'And your\nemail?',
     _Step.review => 'Look\nright?',
-    _Step.ready => 'You’re in,\n${_firstName.text.trim()}.',
     _Step.welcome => 'Fieldrush',
   };
 
@@ -746,7 +724,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       'Only you can see this. Fieldrush is for players 18 and older.',
     _Step.email => 'For receipts and game reminders. You can verify it later.',
     _Step.review => 'Tap Edit to change anything.',
-    _Step.ready => 'Your account is ready. Every game counts.',
     _Step.welcome => '',
   };
 
@@ -1027,50 +1004,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         ],
       ),
     ],
-    _Step.ready => [
-      const Align(
-        alignment: Alignment.centerLeft,
-        child: Icon(
-          Icons.check_circle,
-          color: FieldrushAuthTheme.forest,
-          size: 64,
-        ),
-      ),
-      const SizedBox(height: 26),
-      Text(
-        _publicName,
-        style: const TextStyle(
-          fontFamily: 'Outfit',
-          fontSize: 28,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-      Text(
-        '@${_draft.username}',
-        style: const TextStyle(color: FieldrushAuthTheme.muted),
-      ),
-      const SizedBox(height: 24),
-      const Text(
-        'Your phone is verified. You can manage your details and '
-        'connect Google in Account settings.',
-        style: TextStyle(height: 1.6),
-      ),
-      if (_account?.emailVerified != true) ...[
-        const SizedBox(height: 16),
-        const Text(
-          'Your email still needs verification. Keep access to your '
-          'verified phone number for sign-in.',
-          style: TextStyle(color: FieldrushAuthTheme.muted, height: 1.6),
-        ),
-      ],
-    ],
     _Step.welcome => [],
   };
-
-  String get _publicName {
-    final last = _lastName.text.trim();
-    return '${_firstName.text.trim()}${last.isEmpty ? '' : ' ${last.characters.first}.'}';
-  }
 
   Future<void> _signOutForPhone() => _run(() async {
     await widget.authRepository.signOut();
@@ -1097,7 +1032,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
               _Step.phone => _sendCode,
               _Step.code => _verifyCode,
               _Step.review => _complete,
-              _Step.ready => _finish,
               _ => _saveStep,
             },
       child: _busy
@@ -1115,7 +1049,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
           : Text(switch (_step) {
               _Step.code => _awaitingAccount ? 'Finish signing in' : 'Verify',
               _Step.review => 'Create account',
-              _Step.ready => 'Let’s go',
               _ => _editingReview ? 'Save changes' : 'Continue',
             }),
     ),

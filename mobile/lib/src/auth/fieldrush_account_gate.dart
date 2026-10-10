@@ -215,7 +215,6 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         account != null &&
         account.completed &&
         account.phoneVerified &&
-        account.tourCompleted &&
         _status != null) {
       return widget.authenticatedAppBuilder?.call(context, _status!) ??
           HomeScreen(

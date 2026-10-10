@@ -388,12 +388,6 @@ Future<void> _completeOnboarding(
   await _continueOnboarding(tester);
   await pumpUntilFound(
     tester,
-    find.text('Let’s go'),
-    reason: 'The server did not complete the reviewed Fieldrush account.',
-  );
-  await _continueOnboarding(tester);
-  await pumpUntilFound(
-    tester,
     find.byKey(const ValueKey('home-screen')),
     reason: 'Completing onboarding did not open Home.',
   );
@@ -415,7 +409,6 @@ Future<void> _verifyCompletedAccount(StagingE2EConfig config) async {
   expect(data['phone_verified'], isTrue);
   expect(data['email_verified'], isFalse);
   expect(data['onboarding_completed'], isTrue);
-  expect(data['tour_completed'], isTrue);
 
   final profile = await _boundedRemoteStep(
     'verify public name protects the full last name',

@@ -197,10 +197,8 @@ void main() {
     await _tap(tester, 'fieldrush-accept-policies');
     await _tap(tester, 'fieldrush-continue');
     expect(repo.completedCount, 1);
-    expect(find.text('Jordan A.'), findsOneWidget);
-    expect(completed, 0);
-    await _tap(tester, 'fieldrush-continue');
-    expect(repo.tourCompletions, 1);
+    expect(find.text('Let’s go'), findsNothing);
+    expect(repo.tourCompletions, 0);
     expect(completed, 1);
     await _dispose(tester);
   });
