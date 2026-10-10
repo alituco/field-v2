@@ -61,12 +61,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     final bio = _bioController.text.trim();
     var avatarUrl = _avatarUrlController.text.trim();
 
-    final validationError = _validate(
-      displayName: displayName,
-      username: username,
-      bio: bio,
-      avatarUrl: avatarUrl,
-    );
+    final validationError = _validate(bio: bio, avatarUrl: avatarUrl);
     if (validationError != null) {
       ScaffoldMessenger.of(
         context,
@@ -236,25 +231,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   _ProfileTextField(
                     controller: _displayNameController,
                     label: 'Name',
-                    maxLength: 24,
-                    textInputAction: TextInputAction.next,
+                    readOnly: true,
                   ),
                   const SizedBox(height: 14),
                   _ProfileTextField(
                     controller: _usernameController,
                     label: 'Username',
                     prefixText: '@',
-                    maxLength: 24,
-                    textInputAction: TextInputAction.next,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.allow(RegExp('[a-z0-9_]')),
-                      TextInputFormatter.withFunction((oldValue, newValue) {
-                        return newValue.copyWith(
-                          text: newValue.text.toLowerCase(),
-                          selection: newValue.selection,
-                        );
-                      }),
-                    ],
+                    readOnly: true,
+                  ),
+                  const SizedBox(height: 10),
+                  const Text(
+                    'Manage your name and username in Account settings. '
+                    'Your public name uses your first name and last initial.',
+                    style: TextStyle(color: fieldGray500, fontSize: 12),
                   ),
                   const SizedBox(height: 14),
                   _ProfileTextField(
@@ -386,7 +376,7 @@ class _ProfileTextField extends StatelessWidget {
     this.maxLength,
     this.maxLines = 1,
     this.textInputAction,
-    this.inputFormatters,
+    this.readOnly = false,
   });
 
   final TextEditingController controller;
@@ -395,7 +385,7 @@ class _ProfileTextField extends StatelessWidget {
   final int? maxLength;
   final int maxLines;
   final TextInputAction? textInputAction;
-  final List<TextInputFormatter>? inputFormatters;
+  final bool readOnly;
 
   @override
   Widget build(BuildContext context) {
@@ -404,7 +394,7 @@ class _ProfileTextField extends StatelessWidget {
       maxLength: maxLength,
       maxLines: maxLines,
       textInputAction: textInputAction,
-      inputFormatters: inputFormatters,
+      readOnly: readOnly,
       style: const TextStyle(
         color: fieldGray900,
         fontSize: 15,
@@ -429,18 +419,7 @@ class _ProfileTextField extends StatelessWidget {
   }
 }
 
-String? _validate({
-  required String displayName,
-  required String username,
-  required String bio,
-  required String avatarUrl,
-}) {
-  if (displayName.length < 2 || displayName.length > 24) {
-    return 'Name must be 2 to 24 characters.';
-  }
-  if (!RegExp(r'^[a-z0-9_]{2,24}$').hasMatch(username)) {
-    return 'Username must be 2 to 24 lowercase letters, numbers, or underscores.';
-  }
+String? _validate({required String bio, required String avatarUrl}) {
   if (bio.length > 160) return 'Bio must be 160 characters or fewer.';
   final parsedAvatarUrl = Uri.tryParse(avatarUrl);
   if (avatarUrl.isNotEmpty &&

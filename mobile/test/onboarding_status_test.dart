@@ -55,21 +55,21 @@ void main() {
       );
     });
 
-    test('requires date of birth when the player is under 16', () {
+    test('requires date of birth when the player is under 18', () {
       expect(
         onboardingRequirementForMetadata(const {
           'display_name': 'Ali',
-          'date_of_birth': '2010-07-16',
+          'date_of_birth': '2008-07-16',
         }, today: today),
         OnboardingRequirement.dateOfBirth,
       );
     });
 
-    test('is complete on the exact sixteenth birthday', () {
+    test('is complete on the exact eighteenth birthday', () {
       expect(
         onboardingRequirementForMetadata(const {
           'display_name': 'Ali',
-          'date_of_birth': '2010-07-15',
+          'date_of_birth': '2008-07-15',
         }, today: today),
         OnboardingRequirement.complete,
       );

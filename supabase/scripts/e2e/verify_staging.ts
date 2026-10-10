@@ -1,4 +1,9 @@
-import { createAdminClient, loadManifestConfig, logStep } from "./_shared.ts";
+import {
+  createAdminClient,
+  createE2EUserClient,
+  loadManifestConfig,
+  logStep,
+} from "./_shared.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -53,14 +58,13 @@ async function verifyProfiles(): Promise<void> {
     .in("id", allProfileIds);
   if (error) throw new Error(`verify E2E profiles: ${error.message}`);
   assert(
-    (data ?? []).length === 14,
-    "Expected 12 match players, one onboarding player, and one E2E admin.",
+    (data ?? []).length === (phase === "prepared" ? 13 : 14),
+    "Expected 12 match players and one admin; the signup profile exists only after completion.",
   );
 
   const onboardingProfile = (data ?? []).find((row) =>
     row.id === manifest.accounts.onboarding.profileId
   );
-  assert(onboardingProfile != null, "The E2E onboarding profile is missing.");
   assert(
     (data ?? []).filter((row) =>
       row.id !== manifest.accounts.onboarding.profileId
@@ -69,38 +73,31 @@ async function verifyProfiles(): Promise<void> {
   );
   if (phase === "prepared") {
     assert(
-      onboardingProfile.date_of_birth == null,
-      "The prepared onboarding profile must not have a date of birth.",
+      onboardingProfile == null,
+      "An incomplete signup must not create a publicly discoverable profile.",
     );
   } else {
     assert(
-      isEligiblePlayerBirthDate(onboardingProfile.date_of_birth),
-      "The onboarding journey did not persist an eligible date of birth.",
+      onboardingProfile?.display_name === "E2E O." &&
+        onboardingProfile.date_of_birth == null,
+      "Signup must create a first-name/last-initial profile without a public birthday.",
     );
   }
 
-  const { data: authData, error: authError } = await admin.auth.admin
-    .getUserById(manifest.accounts.onboarding.profileId);
-  if (authError || !authData.user) {
-    throw new Error(
-      `verify onboarding auth metadata: ${
-        authError?.message ?? "user missing"
-      }`,
-    );
-  }
-  const metadata = authData.user.user_metadata ?? {};
+  const signupAccount = await readAccount(manifest.accounts.onboarding.phone);
   if (phase === "prepared") {
     assert(
-      !hasNonEmptyString(metadata.display_name) &&
-        !hasNonEmptyString(metadata.name) &&
-        !hasNonEmptyString(metadata.date_of_birth),
-      "The prepared onboarding auth user must require both name and DOB.",
+      signupAccount.onboarding_completed === false &&
+        !hasNonEmptyString(signupAccount.first_name) &&
+        signupAccount.date_of_birth == null,
+      "The prepared signup actor must have a blank server-owned onboarding state.",
     );
   } else {
     assert(
-      hasNonEmptyString(metadata.display_name) &&
-        isEligiblePlayerBirthDate(metadata.date_of_birth),
-      "The onboarding journey did not persist complete auth metadata.",
+      signupAccount.onboarding_completed === true &&
+        signupAccount.phone_verified === true &&
+        isEligiblePlayerBirthDate(signupAccount.date_of_birth),
+      "The onboarding journey did not persist a verified-phone,18+ server-completed account.",
     );
   }
 
@@ -110,8 +107,15 @@ async function verifyProfiles(): Promise<void> {
   assert(
     mainProfile != null &&
       hasNonEmptyString(mainProfile.display_name) &&
-      isEligiblePlayerBirthDate(mainProfile.date_of_birth),
+      mainProfile.date_of_birth == null,
     "The main match account must stay fully onboarded.",
+  );
+  const mainAccount = await readAccount(manifest.accounts.main.phone);
+  assert(
+    mainAccount.onboarding_completed === true &&
+      mainAccount.tour_completed === true &&
+      isEligiblePlayerBirthDate(mainAccount.date_of_birth),
+    "The main match account must have completed signup and tour.",
   );
 
   const { data: referee, error: refereeError } = await admin
@@ -126,6 +130,19 @@ async function verifyProfiles(): Promise<void> {
     referee.role === "admin" && referee.is_active === true,
     "The E2E admin referee is not active.",
   );
+}
+
+async function readAccount(phone: string): Promise<Record<string, unknown>> {
+  const actor = await createE2EUserClient(config.supabaseUrl, phone);
+  try {
+    const { data, error } = await actor.rpc("get_my_fieldrush_account");
+    if (error) {
+      throw new Error(`read server-owned E2E account: ${error.message}`);
+    }
+    return data as Record<string, unknown>;
+  } finally {
+    await actor.auth.signOut();
+  }
 }
 
 async function verifyPreparedGames(): Promise<void> {
@@ -569,7 +586,7 @@ function isEligiblePlayerBirthDate(value: unknown): boolean {
     return false;
   }
   const date = new Date();
-  date.setUTCFullYear(date.getUTCFullYear() - 16);
+  date.setUTCFullYear(date.getUTCFullYear() - 18);
   const latestEligible = [
     date.getUTCFullYear().toString().padStart(4, "0"),
     (date.getUTCMonth() + 1).toString().padStart(2, "0"),

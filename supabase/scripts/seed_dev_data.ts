@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
+import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
 
 type AdminClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -467,6 +468,7 @@ if (seedTarget.environment !== "local") {
   );
 }
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const seedPassword = requireEnv("DEV_SEED_PASSWORD");
 
 if (seedPassword.length < 6) {
@@ -490,6 +492,17 @@ for (const fakeUser of fakeUsers) {
     dateOfBirth: fakeUser.dateOfBirth,
   });
   usersByPhone.set(fakeUser.phone, userId);
+  const [firstName, ...lastNameParts] = fakeUser.displayName.split(/\s+/);
+  await completeLocalFieldrushFixture({
+    url: supabaseUrl,
+    publishableKey,
+    phone: fakeUser.phone,
+    password: seedPassword,
+    firstName,
+    lastName: lastNameParts.join(" ") || "Player",
+    username: fakeUser.username,
+    dateOfBirth: fakeUser.dateOfBirth,
+  });
 }
 
 await upsertProfiles(admin, usersByPhone);
@@ -595,7 +608,7 @@ function assertUpcomingFixtureLimits(fixtures: FakeFixture[]) {
 function assertSeedUserAges(users: FakeUser[]) {
   const today = new Date();
   const latestEligibleDate = new Date(Date.UTC(
-    today.getUTCFullYear() - 16,
+    today.getUTCFullYear() - 18,
     today.getUTCMonth(),
     today.getUTCDate(),
   ));
@@ -607,7 +620,7 @@ function assertSeedUserAges(users: FakeUser[]) {
 
   if (invalidUsers.length === 0) return;
   throw new Error(
-    "Every seeded user must be at least 16: " +
+    "Every seeded user must be at least 18: " +
       invalidUsers.map((user) => user.displayName).join(", "),
   );
 }
@@ -1169,7 +1182,7 @@ function buildGeneratedUsers(count: number): FakeUser[] {
         .toString()
         .padStart(2, "0")
     }`;
-    const birthYear = 1990 + (index % 19);
+    const birthYear = 1990 + (index % 15);
     const birthMonth = ((index * 5) % 12) + 1;
     const birthDay = ((index * 7) % 28) + 1;
     const paddedBirthMonth = birthMonth.toString().padStart(2, "0");
@@ -1274,22 +1287,19 @@ async function upsertProfiles(
 ) {
   const rows = fakeUsers.map((fakeUser) => ({
     id: requireUserId(userIdsByPhone, fakeUser.phone),
-    phone: fakeUser.phone,
-    display_name: fakeUser.displayName,
-    date_of_birth: fakeUser.dateOfBirth,
-    username: fakeUser.username,
+    // Identity and private birthday were written by the real signup RPC above.
     bio: fakeUser.bio,
     avatar_url: fakeUser.avatarUrl || null,
     following_count: countFollowing(fakeUser.phone),
     fans_count: countFans(fakeUser.phone),
   }));
 
-  const { error } = await admin.from("profiles").upsert(rows, {
-    onConflict: "id",
-  });
-
-  if (error) {
-    throw error;
+  for (const { id, ...attributes } of rows) {
+    const { error } = await admin.from("profiles").update(attributes).eq(
+      "id",
+      id,
+    );
+    if (error) throw error;
   }
 }
 

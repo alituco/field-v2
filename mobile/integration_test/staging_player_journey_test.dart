@@ -12,6 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'helpers/fieldrush_fixture_auth_repository.dart';
 import 'helpers/staging_test_helpers.dart';
 
 void main() {
@@ -21,7 +22,9 @@ void main() {
     final config = StagingE2EConfig.fromEnvironment()..validate();
 
     _logStage('launch app and verify signed-out state');
-    await app.main();
+    await app.runFieldApp(
+      accountRepository: FieldrushFixtureAuthRepository(config),
+    );
     await _ensureSignedOut(tester);
 
     _logStage('verify fixed OTP login');
@@ -32,17 +35,9 @@ void main() {
       profileId: config.onboardingProfileId,
       label: 'onboarding player',
       expected: _SignedInDestination.onboarding,
-      resetOnboardingMetadata: true,
     );
-    await _completeOnboarding(tester);
-    expect(
-      Supabase.instance.client.auth.currentUser?.userMetadata?['display_name'],
-      'E2E Onboarding',
-    );
-    expect(
-      Supabase.instance.client.auth.currentUser?.userMetadata?['date_of_birth'],
-      isNotNull,
-    );
+    await _completeOnboarding(tester, config);
+    await _verifyCompletedAccount(config);
 
     final repository = SupabaseOpenQueueRepository();
     _logStage('verify seeded party-target booking');
@@ -187,7 +182,7 @@ Future<void> _ensureSignedOut(WidgetTester tester) async {
   }
   await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('auth-get-started')),
+    find.byKey(const ValueKey('fieldrush-create-account')),
     reason: 'The app did not return to the signed-out welcome screen.',
   );
 }
@@ -196,33 +191,24 @@ Future<void> _verifyFixedOtpLogin(
   WidgetTester tester,
   StagingE2EConfig config,
 ) async {
-  await tapWhenVisible(tester, find.byKey(const ValueKey('auth-get-started')));
-  await pumpUntilFound(tester, find.byKey(const ValueKey('auth-phone-field')));
-  await tapWhenVisible(
-    tester,
-    find.byKey(const ValueKey('auth-country-picker')),
-  );
-  await pumpUntilFound(tester, find.text('Bahrain'));
-  await tester.pump(const Duration(milliseconds: 450));
-  await tester.tap(find.text('Bahrain').last);
-  await tester.pump(const Duration(milliseconds: 350));
-
+  await tapWhenVisible(tester, find.byKey(const ValueKey('fieldrush-log-in')));
+  await pumpUntilFound(tester, find.byKey(const ValueKey('fieldrush-phone')));
+  // A full international number works with the default US country selector.
   await tester.enterText(
-    find.byKey(const ValueKey('auth-phone-field')),
-    config.bahrainBootstrapLocalNumber,
+    find.byKey(const ValueKey('fieldrush-phone')),
+    config.bootstrapPhone,
   );
-  await tester.pump();
-  await tapWhenVisible(tester, find.byKey(const ValueKey('auth-send-code')));
+  await _continueOnboarding(tester);
   await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('auth-otp-field')),
+    find.byKey(const ValueKey('fieldrush-code')),
     reason: 'The fixed-code staging login did not reach OTP verification.',
   );
   await tester.enterText(
-    find.byKey(const ValueKey('auth-otp-field')),
+    find.byKey(const ValueKey('fieldrush-code')),
     config.devOtpCode,
   );
-  await tester.pump();
+  await _continueOnboarding(tester);
   await pumpUntilFound(
     tester,
     find.byKey(const ValueKey('home-screen')),
@@ -235,7 +221,6 @@ Future<void> _switchToProfile(
   required String profileId,
   required String label,
   _SignedInDestination expected = _SignedInDestination.home,
-  bool resetOnboardingMetadata = false,
 }) async {
   final client = Supabase.instance.client;
   final currentSession = client.auth.currentSession;
@@ -248,10 +233,7 @@ Future<void> _switchToProfile(
     client.functions.invoke(
       'dev-switch-user',
       headers: {'Authorization': 'Bearer ${currentSession.accessToken}'},
-      body: {
-        'profile_id': profileId,
-        if (resetOnboardingMetadata) 'reset_onboarding_metadata': true,
-      },
+      body: {'profile_id': profileId},
     ),
   );
   final data = response.data;
@@ -277,7 +259,7 @@ Future<void> _switchToProfile(
   final destination = switch (expected) {
     _SignedInDestination.home => find.byKey(const ValueKey('home-screen')),
     _SignedInDestination.onboarding => find.byKey(
-      const ValueKey('auth-name-field'),
+      const ValueKey('fieldrush-first-name'),
     ),
   };
   if (expected == _SignedInDestination.home) {
@@ -347,34 +329,96 @@ void _logStage(String label) {
   debugPrint('[FIELD_E2E] STAGE $label');
 }
 
-Future<void> _completeOnboarding(WidgetTester tester) async {
-  await tester.enterText(
-    find.byKey(const ValueKey('auth-name-field')),
-    'E2E Onboarding',
+String _onboardingUsername(StagingE2EConfig config) =>
+    'e2e_${config.onboardingProfileId.replaceAll('-', '').substring(0, 12)}';
+
+String _onboardingEmail(StagingE2EConfig config) =>
+    'e2e.${config.onboardingProfileId}@example.test';
+
+Future<void> _continueOnboarding(WidgetTester tester) async {
+  FocusManager.instance.primaryFocus?.unfocus();
+  await tester.pump();
+  await tapAfterScroll(
+    tester,
+    find.byKey(const ValueKey('fieldrush-continue')),
   );
-  await tester.pump();
-  await tester.testTextInput.receiveAction(TextInputAction.done);
-  await tester.pump();
+}
+
+Future<void> _completeOnboarding(
+  WidgetTester tester,
+  StagingE2EConfig config,
+) async {
+  await tester.enterText(
+    find.byKey(const ValueKey('fieldrush-first-name')),
+    'E2E',
+  );
+  await tester.enterText(
+    find.byKey(const ValueKey('fieldrush-last-name')),
+    'Onboarding',
+  );
+  await _continueOnboarding(tester);
   await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('date-of-birth-selector')),
+    find.byKey(const ValueKey('fieldrush-username')),
   );
-  await tapWhenVisible(
+  await tester.enterText(
+    find.byKey(const ValueKey('fieldrush-username')),
+    _onboardingUsername(config),
+  );
+  await _continueOnboarding(tester);
+  await pumpUntilFound(tester, find.byKey(const ValueKey('fieldrush-month')));
+  await tester.enterText(find.byKey(const ValueKey('fieldrush-month')), '01');
+  await tester.enterText(find.byKey(const ValueKey('fieldrush-day')), '01');
+  await tester.enterText(find.byKey(const ValueKey('fieldrush-year')), '2000');
+  await _continueOnboarding(tester);
+  await pumpUntilFound(tester, find.byKey(const ValueKey('fieldrush-email')));
+  await tester.enterText(
+    find.byKey(const ValueKey('fieldrush-email')),
+    _onboardingEmail(config),
+  );
+  await _continueOnboarding(tester);
+  await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('date-of-birth-selector')),
+    find.byKey(const ValueKey('fieldrush-accept-policies')),
   );
-  await pumpUntilFound(tester, find.text('OK'));
-  await tester.tap(find.text('OK'));
-  await tester.pump();
-  await tapWhenVisible(
+  await tapAfterScroll(
     tester,
-    find.byKey(const ValueKey('auth-save-date-of-birth')),
+    find.byKey(const ValueKey('fieldrush-accept-policies')),
   );
+  await _continueOnboarding(tester);
   await pumpUntilFound(
     tester,
     find.byKey(const ValueKey('home-screen')),
     reason: 'Completing onboarding did not open Home.',
   );
+}
+
+Future<void> _verifyCompletedAccount(StagingE2EConfig config) async {
+  final client = Supabase.instance.client;
+  final account = await _boundedRemoteStep(
+    'verify authoritative Fieldrush account completion',
+    client.rpc('get_my_fieldrush_account'),
+  );
+  expect(account, isA<Map>());
+  final data = Map<String, dynamic>.from(account as Map);
+  expect(data['first_name'], 'E2E');
+  expect(data['last_name'], 'Onboarding');
+  expect(data['username'], _onboardingUsername(config));
+  expect(data['date_of_birth'], '2000-01-01');
+  expect(data['email'], _onboardingEmail(config));
+  expect(data['phone_verified'], isTrue);
+  expect(data['email_verified'], isFalse);
+  expect(data['onboarding_completed'], isTrue);
+
+  final profile = await _boundedRemoteStep(
+    'verify public name protects the full last name',
+    client
+        .from('profiles')
+        .select('display_name')
+        .eq('id', config.onboardingProfileId)
+        .single(),
+  );
+  expect(profile['display_name'], 'E2E O.');
 }
 
 Future<OpenQueueGame> _gameById(

@@ -4,7 +4,7 @@ set -euo pipefail
 
 readonly staging_project_ref="nfdkdhdevpstfspazbfn"
 readonly staging_supabase_url="https://${staging_project_ref}.supabase.co"
-readonly bootstrap_phone="+97338883672"
+readonly bootstrap_phone="+97339009098"
 
 required_variables=(
   E2E_BOOTSTRAP_PHONE
@@ -49,7 +49,7 @@ if [[ "${#E2E_TEST_PASSWORD}" -lt 16 ]]; then
   exit 64
 fi
 
-readonly dev_users_json='{"+97338883670":"Dev Player","+97338883671":"Ali Hassan","+97338883672":"Omar Saleh","+97338883673":"Noor Khalid","+97338883674":"Yousef Ahmed","+97338883675":"Sami Nasser","+97338883676":"Salman Abbas","+97338883677":"Rami Darwish","+97338883678":"Hamad Mansour"}'
+readonly dev_users_json='{"+97339009098":"E2E Bootstrap Player","+97338883670":"Dev Player","+97338883671":"Ali Hassan","+97338883672":"Omar Saleh","+97338883673":"Noor Khalid","+97338883674":"Yousef Ahmed","+97338883675":"Sami Nasser","+97338883676":"Salman Abbas","+97338883677":"Rami Darwish","+97338883678":"Hamad Mansour"}'
 
 echo "Configuring the staging-only fixed-code login for this E2E run."
 supabase secrets set \

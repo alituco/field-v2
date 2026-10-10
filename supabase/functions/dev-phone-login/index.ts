@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
+import { isProtectedBootstrapFixture } from "../dev-switch-user/fixture.ts";
 import {
   isExactFieldStagingSupabaseUrl,
   isLocalSupabaseUrl,
@@ -135,23 +136,9 @@ Deno.serve(async (request) => {
         })
       );
 
-    const { error: profileError } = isLocal
-      ? await admin.from("profiles").update({
-        phone: devUser.phone,
-      }).eq("id", userId)
-      : await admin.from("profiles").upsert(
-        {
-          id: userId,
-          phone: devUser.phone,
-          display_name: devUser.displayName,
-          date_of_birth: devDateOfBirth,
-        },
-        { onConflict: "id" },
-      );
-
-    if (profileError) {
-      return json({ error: profileError.message }, 500);
-    }
+    // Login proves identity only. Fieldrush completion owns profile creation,
+    // public initials and private DOB. Never restore a full name or birthday
+    // into a public profile when a test user signs in again.
 
     const { data: signInData, error: signInError } =
       await signInDevUserWithPassword({
@@ -193,6 +180,11 @@ async function ensureDevUser({
     phone,
     password,
     phone_confirm: true,
+    ...(phone === "+97339009098"
+      ? {
+        app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "bootstrap" },
+      }
+      : {}),
     user_metadata: {
       display_name: displayName,
       name: displayName,
@@ -211,6 +203,11 @@ async function ensureDevUser({
   const existingUser = await findUserByPhone(admin, phone);
   if (!existingUser) {
     throw new Error("Dev user already exists, but could not be found.");
+  }
+  if (phone === "+97339009098" && !isProtectedBootstrapFixture(existingUser)) {
+    throw new Error(
+      "The reserved E2E bootstrap number belongs to an unmarked account.",
+    );
   }
 
   const { error: updateError } = await admin.auth.admin.updateUserById(

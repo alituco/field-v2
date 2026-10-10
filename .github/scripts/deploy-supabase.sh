@@ -116,6 +116,10 @@ if [[ "$target" == "staging" ]]; then
   deploy_function tap-payment --no-verify-jwt
   deploy_function tap-payment-webhook --no-verify-jwt
 
+  # The handler validates Auth tokens and recent authentication itself. It is
+  # additionally disabled until FIELDRUSH_ACCOUNT_DELETION_ENABLED is set.
+  deploy_function fieldrush-delete-account --no-verify-jwt
+
   # Cloudflare authenticates its webhook with Webhook-Signature, so this
   # endpoint cannot require a Supabase user JWT.
   deploy_function cloudflare-stream-webhook --no-verify-jwt

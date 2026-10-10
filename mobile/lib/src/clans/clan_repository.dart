@@ -188,7 +188,7 @@ class SupabaseClanRepository
           profile_id,
           role,
           created_at,
-          profiles!clan_members_profile_id_fkey(display_name, phone)
+          profiles!clan_members_profile_id_fkey(display_name)
         ''')
         .eq('clan_id', clanId)
         .isFilter('left_at', null)
@@ -426,13 +426,6 @@ class SupabaseClanRepository
   }
 
   Future<void> _ensureProfile(User user) async {
-    final metadata = user.userMetadata;
-    final metadataName = metadata?['display_name'] ?? metadata?['name'];
-    final fallbackName =
-        metadataName is String && _isValidDisplayName(metadataName)
-        ? metadataName.trim()
-        : 'Player';
-
     final existing = await _client
         .from('profiles')
         .select('id')
@@ -441,15 +434,9 @@ class SupabaseClanRepository
 
     if (existing != null) return;
 
-    await _client.from('profiles').insert({
-      'id': user.id,
-      'phone': user.phone,
-      'display_name': fallbackName,
-    });
-  }
-
-  bool _isValidDisplayName(String value) {
-    final length = value.trim().length;
-    return length >= 2 && length <= 24;
+    throw const AuthException(
+      'Finish setting up your account before creating a clan. '
+      'Return to onboarding to complete your details.',
+    );
   }
 }

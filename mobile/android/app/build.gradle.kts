@@ -36,11 +36,13 @@ android {
             dimension = "environment"
             applicationIdSuffix = ".staging"
             versionNameSuffix = "-staging"
-            resValue("string", "app_name", "Field Staging")
+            resValue("string", "app_name", "Fieldrush Staging")
+            manifestPlaceholders["authRedirectScheme"] = "com.alialtaraif.field.staging"
         }
         create("production") {
             dimension = "environment"
-            resValue("string", "app_name", "Field")
+            resValue("string", "app_name", "Fieldrush")
+            manifestPlaceholders["authRedirectScheme"] = "com.alialtaraif.field"
         }
     }
 

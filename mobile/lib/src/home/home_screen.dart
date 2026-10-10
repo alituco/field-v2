@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../auth/auth_repository.dart';
+import '../auth/fieldrush_account.dart';
+import '../auth/fieldrush_account_screen.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
@@ -23,6 +25,7 @@ class HomeScreen extends StatefulWidget {
     super.key,
     required this.authRepository,
     required this.supportRepository,
+    this.accountRepository,
     this.moderationStatus,
     this.isDev = false,
     this.profileSwitcherEnabled = false,
@@ -30,6 +33,7 @@ class HomeScreen extends StatefulWidget {
 
   final AuthRepository authRepository;
   final SupportRepository supportRepository;
+  final FieldrushAccountRepository? accountRepository;
   final ModerationStatus? moderationStatus;
   final bool isDev;
   final bool profileSwitcherEnabled;
@@ -189,6 +193,18 @@ class _HomeScreenState extends State<HomeScreen> {
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
+        onOpenAccount: widget.accountRepository == null
+            ? null
+            : () async {
+                await Navigator.of(context).push<void>(
+                  MaterialPageRoute(
+                    builder: (_) => FieldrushAccountScreen(
+                      authRepository: widget.authRepository,
+                      accountRepository: widget.accountRepository!,
+                    ),
+                  ),
+                );
+              },
       ),
     ];
 

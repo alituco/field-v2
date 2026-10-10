@@ -14,7 +14,7 @@ export const E2E_SCHEMA_VERSION = 1;
 export const E2E_VENUE_PREFIX = "[FIELD E2E";
 export const E2E_PROFILE_PREFIX = "[E2E]";
 export const E2E_DEFAULT_BIRTH_DATE = "2000-01-01";
-export const E2E_DEFAULT_BOOTSTRAP_PHONE = "+97338883672";
+export const E2E_DEFAULT_BOOTSTRAP_PHONE = "+97339009098";
 export const E2E_DEFAULT_OTP_CODE = "000000";
 
 const UUID_PATTERN =
@@ -184,6 +184,24 @@ export function createAdminClient(
       persistSession: false,
     },
   }) as AdminClient;
+}
+
+/** Test users still complete signup through the authenticated production RPCs. */
+export async function createE2EUserClient(supabaseUrl: string, phone: string) {
+  assertAndConfirmTarget(supabaseUrl, "authenticate isolated E2E account");
+  const client = createClient(
+    supabaseUrl,
+    requireEnv("SUPABASE_PUBLISHABLE_KEY"),
+    {
+      auth: { autoRefreshToken: false, persistSession: false },
+    },
+  );
+  const { error } = await client.auth.signInWithPassword({
+    phone,
+    password: requireEnv("E2E_TEST_PASSWORD"),
+  });
+  if (error) throw new Error(`authenticate E2E account: ${error.message}`);
+  return client;
 }
 
 export async function listAuthUsers(

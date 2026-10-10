@@ -33,6 +33,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Reserve disk space for Android builds
+        working-directory: .
+        run: bash .github/scripts/prepare-android-runner.sh
+
       - name: Set up Java
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
@@ -287,6 +291,8 @@ jobs:
           deno check supabase/functions/*/index.ts "${script_files[@]}"
           deno test \
             supabase/functions/_shared/staging_guard_test.ts \
+            supabase/functions/fieldrush-delete-account/request_test.ts \
+            supabase/functions/dev-switch-user/fixture_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts
 
@@ -301,6 +307,15 @@ jobs:
 
       - name: Show local migration status
         run: supabase migration list --local
+
+      - name: Verify Fieldrush account security and lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_fieldrush_accounts.sql
 
       - name: Verify reliability schema contracts
         shell: bash
@@ -390,7 +405,7 @@ jobs:
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
       FIELD_ENVIRONMENT: staging
       E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
-      E2E_BOOTSTRAP_PHONE: "+97338883672"
+      E2E_BOOTSTRAP_PHONE: "+97339009098"
       E2E_DEV_OTP_CODE: "000000"
       E2E_ONBOARDING_PHONE: "+97339009100"
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
@@ -435,6 +450,9 @@ jobs:
             echo "::error::The staging GitHub environment is missing Tap credentials."
             exit 1
           fi
+
+      - name: Reserve disk space for Android E2E
+        run: bash .github/scripts/prepare-android-runner.sh
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2

@@ -1,5 +1,6 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
 import { isExactFieldStagingSupabaseUrl } from "../_shared/staging_guard.ts";
+import { isAuthOnlyOnboardingFixture } from "./fixture.ts";
 
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -89,10 +90,6 @@ Deno.serve(async (request) => {
       .eq("id", body.profile_id)
       .maybeSingle();
     if (profileError) throw profileError;
-    if (!profile) {
-      return json({ error: "That app user could not be found." }, 404);
-    }
-
     const target = await findAuthUserById(
       admin,
       body.profile_id,
@@ -100,9 +97,14 @@ Deno.serve(async (request) => {
     if (!target) {
       return json({ error: "That user does not have an auth account." }, 404);
     }
+    // Only a service-created, isolated onboarding fixture can lack a profile.
+    // Editable user metadata is never sufficient to grant this exception.
+    if (!profile && !isAuthOnlyOnboardingFixture(target)) {
+      return json({ error: "That app user could not be found." }, 404);
+    }
 
     const resetOnboardingMetadata = body.reset_onboarding_metadata === true;
-    if (resetOnboardingMetadata && profile.date_of_birth !== null) {
+    if (resetOnboardingMetadata && profile?.date_of_birth != null) {
       return json(
         { error: "Only an incomplete onboarding account can be reset." },
         400,
@@ -117,9 +119,9 @@ Deno.serve(async (request) => {
       }
       : {
         ...target.user_metadata,
-        display_name: profile.display_name,
-        name: profile.display_name,
-        date_of_birth: profile.date_of_birth ??
+        display_name: profile?.display_name ?? null,
+        name: profile?.display_name ?? null,
+        date_of_birth: profile?.date_of_birth ??
           target.user_metadata?.date_of_birth ?? null,
       };
     const session = await retryTransientAuthFailure(() =>
@@ -153,8 +155,8 @@ Deno.serve(async (request) => {
       refresh_token: session.refresh_token,
       expires_at: session.expires_at,
       user_id: target.id,
-      display_name: profile.display_name,
-      username: profile.username,
+      display_name: profile?.display_name ?? null,
+      username: profile?.username ?? null,
     });
   } catch (error) {
     return json({ error: toErrorMessage(error) }, 500);
