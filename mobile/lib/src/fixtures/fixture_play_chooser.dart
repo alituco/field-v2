@@ -22,6 +22,7 @@ class FixturePlaySelection {
 Future<FixturePlaySelection?> showFixturePlayChooser({
   required BuildContext context,
   required Future<MyClanMembership?> Function() loadMembership,
+  required Future<bool> Function() loadClanAvailability,
   MyClanMembership? cachedMembership,
 }) {
   return showModalBottomSheet<FixturePlaySelection>(
@@ -33,6 +34,7 @@ Future<FixturePlaySelection?> showFixturePlayChooser({
     builder: (_) => _FixturePlayChooser(
       cachedMembership: cachedMembership,
       loadMembership: loadMembership,
+      loadClanAvailability: loadClanAvailability,
     ),
   );
 }
@@ -63,10 +65,12 @@ class _FixturePlayChooser extends StatefulWidget {
   const _FixturePlayChooser({
     required this.cachedMembership,
     required this.loadMembership,
+    required this.loadClanAvailability,
   });
 
   final MyClanMembership? cachedMembership;
   final Future<MyClanMembership?> Function() loadMembership;
+  final Future<bool> Function() loadClanAvailability;
 
   @override
   State<_FixturePlayChooser> createState() => _FixturePlayChooserState();
@@ -75,6 +79,7 @@ class _FixturePlayChooser extends StatefulWidget {
 class _FixturePlayChooserState extends State<_FixturePlayChooser> {
   MyClanMembership? _membership;
   bool _checkingClan = true;
+  bool _clanEnabled = false;
   String? _clanError;
 
   @override
@@ -90,6 +95,10 @@ class _FixturePlayChooserState extends State<_FixturePlayChooser> {
       _clanError = null;
     });
     try {
+      final enabled = await widget.loadClanAvailability();
+      if (!mounted) return;
+      setState(() => _clanEnabled = enabled);
+      if (!enabled) return;
       final membership = await widget.loadMembership();
       if (!mounted) return;
       setState(() => _membership = membership);
@@ -111,7 +120,7 @@ class _FixturePlayChooserState extends State<_FixturePlayChooser> {
   }
 
   void _chooseClan() {
-    if (_checkingClan) return;
+    if (_checkingClan || !_clanEnabled) return;
     if (_clanError != null) {
       _loadMembership();
       return;
@@ -193,7 +202,7 @@ class _FixturePlayChooserState extends State<_FixturePlayChooser> {
               ),
               const SizedBox(height: 6),
               const Text(
-                'Choose one. You can always come back and pick the other.',
+                'Join an upcoming solo game.',
                 style: TextStyle(
                   color: fieldGray500,
                   fontSize: 14,
@@ -226,10 +235,12 @@ class _FixturePlayChooserState extends State<_FixturePlayChooser> {
                     ? fieldEmerald50
                     : const Color(0xFFFFF7ED),
                 title: 'Clan game',
-                status: clanStatus,
-                message: clanMessage,
+                status: _clanEnabled ? clanStatus : 'PAUSED',
+                message: _clanEnabled
+                    ? clanMessage
+                    : 'Clan games are currently unavailable. Existing match history and refunds are still accessible.',
                 loading: _checkingClan,
-                onTap: _chooseClan,
+                onTap: _clanEnabled ? _chooseClan : null,
               ),
             ],
           ),
@@ -258,7 +269,7 @@ class _PlayChoiceCard extends StatelessWidget {
   final String title;
   final String status;
   final String message;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool loading;
 
   @override

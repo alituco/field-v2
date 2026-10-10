@@ -73,6 +73,15 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     }
 
     try {
+      if (!await clanGamesAvailable(widget.fixtureRepository)) {
+        if (!mounted) return false;
+        setState(() {
+          _accessReady = false;
+          _accessMessage =
+              'Clan games are currently unavailable. Existing bookings and refunds are unaffected.';
+        });
+        return false;
+      }
       final latest = await widget.fixtureRepository.getMyClanMembership();
       if (!mounted) return false;
 
@@ -266,16 +275,8 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
         clanId: _membership.clan.id,
       );
     }
-    // Test repositories written before policy-backed checkout keep the legacy
-    // beta amount. The production Supabase repository always uses the quote RPC.
-    return const ClanFixtureChargePreview(
-      currency: 'BHD',
-      baseAmountFils: 20000,
-      reliabilityDepositRequired: false,
-      reliabilityDepositBps: 2000,
-      reliabilityDepositFils: 0,
-      totalFils: 20000,
-      activeClanStrikes: 0,
+    throw StateError(
+      'We could not load the current match price. Please try again.',
     );
   }
 

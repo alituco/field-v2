@@ -495,7 +495,7 @@ class _YouWalletScreenState extends State<YouWalletScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
-                  'Refunds and returned reliability deposits appear here when they are credited to your Fieldrush wallet.',
+                  'Your existing Fieldrush wallet credit is shown here. Refunds for new card and Apple Pay bookings return to the original payment method.',
                   style: _body(12),
                 ),
               ),

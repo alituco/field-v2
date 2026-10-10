@@ -58,8 +58,8 @@ async function verifyProfiles(): Promise<void> {
     .in("id", allProfileIds);
   if (error) throw new Error(`verify E2E profiles: ${error.message}`);
   assert(
-    (data ?? []).length === (phase === "prepared" ? 13 : 14),
-    "Expected 12 match players and one admin; the signup profile exists only after completion.",
+    (data ?? []).length === (phase === "prepared" ? 15 : 16),
+    "Expected 14 match players and one admin; the signup profile exists only after completion.",
   );
 
   const onboardingProfile = (data ?? []).find((row) =>
@@ -148,7 +148,9 @@ async function readAccount(phone: string): Promise<Record<string, unknown>> {
 async function verifyPreparedGames(): Promise<void> {
   const { data, error } = await admin
     .from("open_queue_games")
-    .select("id,status,venue,starts_at,ends_at,capacity,created_by")
+    .select(
+      "id,status,venue,starts_at,ends_at,capacity,created_by,currency,price_fils,format_version,timezone",
+    )
     .in("id", [manifest.games.match.id, manifest.games.cancellation.id]);
   if (error) throw new Error(`verify E2E games: ${error.message}`);
   assert((data ?? []).length === 2, "Both E2E games must exist.");
@@ -161,7 +163,13 @@ async function verifyPreparedGames(): Promise<void> {
       game.created_by === manifest.accounts.admin.profileId,
       "An E2E game is not owned by the isolated test admin.",
     );
-    assert(Number(game.capacity) === 12, "E2E solo capacity must remain 12.");
+    assert(Number(game.capacity) === 14, "E2E solo capacity must be 14.");
+    assert(
+      game.currency === "USD" && Number(game.price_fils) === 13000 &&
+        game.format_version === "FIELDRUSH_7V7" &&
+        game.timezone === "America/Phoenix",
+      "E2E must exercise current Phoenix USD pricing and 7v7 rules.",
+    );
   }
 
   const { data: bookings, error: bookingError } = await admin
@@ -182,13 +190,13 @@ async function verifyPreparedGames(): Promise<void> {
     );
     assert(
       matchBookings.length === manifest.games.match.seededConfirmedCount,
-      "Prepared match must contain exactly 11 seeded bookings.",
+      "Prepared match must contain exactly 13 seeded bookings.",
     );
     assert(
       !matchBookings.some((row) =>
         row.profile_id === manifest.accounts.main.profileId
       ),
-      "The main UI player must create the twelfth booking.",
+      "The main UI player must create the fourteenth booking.",
     );
     assert(
       cancelBookings.length === 0,
@@ -196,9 +204,8 @@ async function verifyPreparedGames(): Promise<void> {
     );
     assertRoleCounts(matchBookings, {
       GK: 2,
-      DEF: 3,
-      MID: 4,
-      ATT: 2,
+      DEF: 5,
+      ATT: 6,
     });
   }
 
@@ -258,8 +265,8 @@ async function verifyCompletedMatch(): Promise<void> {
     throw new Error(`verify final E2E lineup: ${bookingsError.message}`);
   }
   assert(
-    (bookings ?? []).length === 12,
-    "Final E2E lineup must have 12 players.",
+    (bookings ?? []).length === 14,
+    "Final E2E lineup must have 14 players.",
   );
   assert(
     (bookings ?? []).every((row) =>
@@ -271,9 +278,9 @@ async function verifyCompletedMatch(): Promise<void> {
     "Every E2E player needs a played lineup and SR snapshot.",
   );
   assert(
-    (bookings ?? []).filter((row) => row.team === "WHITE").length === 6 &&
-      (bookings ?? []).filter((row) => row.team === "BLACK").length === 6,
-    "E2E teams must contain six players each.",
+    (bookings ?? []).filter((row) => row.team === "WHITE").length === 7 &&
+      (bookings ?? []).filter((row) => row.team === "BLACK").length === 7,
+    "E2E teams must contain seven players each.",
   );
 
   const { data: ratingEvents, error: ratingError } = await admin
@@ -287,7 +294,7 @@ async function verifyCompletedMatch(): Promise<void> {
     throw new Error(`verify E2E SR events: ${ratingError.message}`);
   }
   assert(
-    (ratingEvents ?? []).length === 12,
+    (ratingEvents ?? []).length === 14,
     "Final E2E match must create one immutable SR event per player.",
   );
   assert(
@@ -315,16 +322,16 @@ async function verifyCompletedMatch(): Promise<void> {
       event.side === winningSide &&
       event.result === "WIN" &&
       Number(event.rating_change) > 0
-    ).length === 6,
-    "All six winning E2E players must receive a positive SR change.",
+    ).length === 7,
+    "All seven winning E2E players must receive a positive SR change.",
   );
   assert(
     (ratingEvents ?? []).filter((event) =>
       event.side === losingSide &&
       event.result === "LOSS" &&
       Number(event.rating_change) < 0
-    ).length === 6,
-    "All six losing E2E players must receive a negative SR change.",
+    ).length === 7,
+    "All seven losing E2E players must receive a negative SR change.",
   );
 
   const { data: currentRatings, error: currentRatingsError } = await admin
@@ -356,7 +363,7 @@ async function verifyCompletedMatch(): Promise<void> {
     throw new Error(`verify E2E attendance: ${attendanceError.message}`);
   }
   assert(
-    (attendance ?? []).length === 12 &&
+    (attendance ?? []).length === 14 &&
       (attendance ?? []).every((row) =>
         row.checked_in_at != null &&
         row.outcome != null &&
@@ -385,7 +392,7 @@ async function verifyCancellation(): Promise<void> {
   const { data: bookings, error } = await admin
     .from("open_queue_bookings")
     .select(
-      "id,status,cancelled_at,refund_bps,refund_amount_fils,refund_status,payment_status,reliability_policy_version_id",
+      "id,status,cancelled_at,refund_bps,refund_amount_fils,refund_status,refund_destination,payment_intent_id,payment_status,reliability_policy_version_id",
     )
     .eq("game_id", manifest.games.cancellation.id)
     .eq("profile_id", manifest.accounts.main.profileId);
@@ -403,33 +410,48 @@ async function verifyCancellation(): Promise<void> {
     Number.isInteger(Number(booking.refund_bps)) &&
       Number(booking.refund_bps) > 0 &&
       Number(booking.refund_amount_fils) > 0 &&
-      booking.refund_status === "PROCESSED",
+      booking.refund_status === "PROCESSED" &&
+      booking.refund_destination === "ORIGINAL_PAYMENT_METHOD",
     "The E2E cancellation is missing its policy-backed refund snapshot.",
   );
 
-  const { data: walletTransactions, error: walletError } = await admin
-    .from("field_wallet_transactions")
+  const { data: refunds, error: refundError } = await admin
+    .from("payment_refunds")
     .select(
-      "id,profile_id,direction,amount_fils,transaction_type,booking_id,policy_version_id,idempotency_key",
+      "id,recipient_profile_id,status,amount_fils,currency,idempotency_key",
     )
-    .eq("profile_id", manifest.accounts.main.profileId)
-    .eq("booking_id", booking.id)
-    .eq("transaction_type", "BOOKING_REFUND");
-  if (walletError) {
-    throw new Error(`verify E2E wallet refund: ${walletError.message}`);
+    .eq("intent_id", booking.payment_intent_id);
+  if (refundError) {
+    throw new Error(
+      `verify E2E original-method refund: ${refundError.message}`,
+    );
   }
   assert(
-    (walletTransactions ?? []).length === 1,
-    "The cancellation must create exactly one idempotent wallet refund.",
+    (refunds ?? []).length === 1,
+    "The cancellation must create exactly one idempotent original-method refund.",
   );
-  const walletRefund = walletTransactions![0];
+  const refund = refunds![0];
   assert(
-    walletRefund.direction === "CREDIT" &&
-      Number(walletRefund.amount_fils) === Number(booking.refund_amount_fils) &&
-      walletRefund.policy_version_id ===
-        booking.reliability_policy_version_id &&
-      walletRefund.idempotency_key === `booking-refund:${booking.id}`,
-    "The E2E wallet credit does not match the booking refund snapshot.",
+    refund.recipient_profile_id === manifest.accounts.main.profileId &&
+      refund.status === "SUCCEEDED" && refund.currency === "USD" &&
+      Number(refund.amount_fils) === Number(booking.refund_amount_fils) &&
+      refund.idempotency_key === `booking-refund:${booking.id}`,
+    "The synthetic provider refund does not match the cancellation snapshot.",
+  );
+  const { count: walletCredits, error: walletError } = await admin
+    .from("field_wallet_transactions").select("id", {
+      count: "exact",
+      head: true,
+    })
+    .eq("booking_id", booking.id);
+  if (walletError) {
+    throw new Error(
+      `verify no duplicate wallet credit: ${walletError.message}`,
+    );
+  }
+  assert(
+    walletCredits === 0,
+    "An original-method refund must not also credit a wallet.",
   );
 
   const { data: game, error: gameError } = await admin

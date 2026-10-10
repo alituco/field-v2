@@ -204,6 +204,15 @@ begin
   select pg_get_functiondef(
     'public.preview_clan_fixture_cancellation(uuid)'::regprocedure
   ) into function_text;
+  if position('preview_clan_fixture_cancellation_policy' in function_text) = 0
+    or has_function_privilege('authenticated',
+      'public.preview_clan_fixture_cancellation_policy(uuid)', 'EXECUTE')
+  then
+    raise exception 'Clan refund preview bypasses its protected cancellation policy.';
+  end if;
+  select pg_get_functiondef(
+    'public.preview_clan_fixture_cancellation_policy(uuid)'::regprocedure
+  ) into function_text;
   if position('payer_profile_id' in function_text) = 0
     or position('- ''payer_profile_id''' in function_text) = 0
     or position('- ''opponent_payer_profile_id''' in function_text) = 0
@@ -215,7 +224,7 @@ begin
     'public.preview_join_clan_fixture_charge(uuid,uuid)'::regprocedure
   ) into function_text;
   if position('terms_to_use.policy_snapshot' in function_text) = 0
-    or position('clan_fixture_charge_quote_from_snapshot' in function_text) = 0
+    or position('clan_fixture_charge_quote_for_price' in function_text) = 0
   then
     raise exception 'AWAY clan preview does not use the fixture''s frozen policy snapshot.';
   end if;
@@ -278,6 +287,15 @@ begin
 
   select pg_get_functiondef(
     'public.cancel_open_queue_booking(uuid)'::regprocedure
+  ) into function_text;
+  if position('cancel_open_queue_booking_policy' in function_text) = 0
+    or has_function_privilege('authenticated',
+      'public.cancel_open_queue_booking_policy(uuid)', 'EXECUTE')
+  then
+    raise exception 'Solo refund wrapper bypasses its protected cancellation policy.';
+  end if;
+  select pg_get_functiondef(
+    'public.cancel_open_queue_booking_policy(uuid)'::regprocedure
   ) into function_text;
   if position('replacement_marketplace_open' in function_text) = 0
     or position('profile_has_active_play_restriction' in function_text) = 0

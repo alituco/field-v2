@@ -246,7 +246,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
       final booking = await widget.repository.bookGame(
         game: widget.game,
         role: widget.role,
-        paymentMethod: 'TAP_CHECKOUT',
+        paymentMethod: 'STRIPE',
       );
       if (!mounted) return;
       await Navigator.of(context).push<void>(
@@ -322,7 +322,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                   SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      'SECURE TAP CHECKOUT',
+                      'SECURE CHECKOUT',
                       style: TextStyle(
                         color: fieldEmerald700,
                         fontSize: 11,
@@ -358,7 +358,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                   SizedBox(width: 11),
                   Expanded(
                     child: Text(
-                      'BenefitPay · Visa · Mastercard',
+                      'Apple Pay · Visa · Mastercard',
                       style: TextStyle(
                         color: fieldGray900,
                         fontSize: 13,
@@ -381,7 +381,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                 const SizedBox(width: 6),
                 const Expanded(
                   child: Text(
-                    'Before any cancellation, Field shows the exact wallet refund, reliability strikes, and deposit outcome calculated using server time.',
+                    'Before any cancellation, Fieldrush shows the exact refund, reliability strikes, and deposit outcome. Refunds return to your original payment method.',
                     style: TextStyle(
                       color: fieldGray400,
                       fontSize: 11,
@@ -709,7 +709,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
                   const Padding(
                     padding: EdgeInsets.only(top: 5),
                     child: Text(
-                      'Returned to your Field Wallet after the referee records your on-time arrival.',
+                      'Refunded to your original payment method after the referee records your on-time arrival.',
                       style: TextStyle(
                         color: fieldGray500,
                         fontSize: 11,

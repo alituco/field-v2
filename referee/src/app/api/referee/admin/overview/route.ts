@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { OPEN_REPORT_STATUSES } from "@/lib/admin-moderation";
+import { paymentIntentAttention, paymentRefundAttention, refundNeedsAttention } from "@/lib/payment-refunds";
 import {
   adminOnly,
   isRefereeContext,
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest) {
     fixtureBroadcastResult,
     soloBroadcastResult,
     paymentReconciliationResult,
+    paymentRefundsResult,
     resolutionCasesResult,
     auditResult,
     liveFixtureCount,
@@ -105,13 +107,20 @@ export async function GET(request: NextRequest) {
       .select("game_id,status,error_message,updated_at")
       .in("status", ["ERROR", "PROCESSING"]),
     context.db
-      .from("tap_payment_intents")
+      .from("payment_intents")
       .select(
-        "id,purpose,amount_fils,currency,tap_charge_id,tap_payment_method,failure_reason,created_at",
+        "id,purpose,amount_fils,currency,provider,provider_intent_id,provider_payment_id,payment_method,failure_reason,created_at,external_refund_review_required,external_payment_refunds(provider_refund_id,amount_minor,currency,provider_status)",
       )
-      .eq("status", "REQUIRES_REFUND")
-      .order("created_at", { ascending: false })
-      .limit(30),
+      .or("status.eq.REQUIRES_REFUND,external_refund_review_required.eq.true")
+      .order("external_refund_review_required", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(100),
+    context.db
+      .from("payment_refunds")
+      .select("id,intent_id,amount_fils,currency,status,last_error,provider_refund_id,provider_status,created_at,updated_at,payment_intent:payment_intents(external_refund_review_required)")
+      .or(`status.eq.FAILED,and(status.in.(PENDING,PROCESSING),updated_at.lt.${staleProcessing.toISOString()})`)
+      .order("updated_at", { ascending: true })
+      .limit(100),
     context.db
       .from("match_resolution_cases")
       .select(
@@ -143,6 +152,7 @@ export async function GET(request: NextRequest) {
     fixtureBroadcastResult,
     soloBroadcastResult,
     paymentReconciliationResult,
+    paymentRefundsResult,
     resolutionCasesResult,
     auditResult,
     liveFixtureCount,
@@ -201,6 +211,9 @@ export async function GET(request: NextRequest) {
     (row.status === "PROCESSING" && new Date(String(row.updated_at)).getTime() < staleProcessing.getTime()),
   );
   const paymentReconciliations = rows(paymentReconciliationResult.data);
+  const paymentRefunds = rows(paymentRefundsResult.data).filter((row) =>
+    refundNeedsAttention({ status: row.status, updated_at: row.updated_at }, now),
+  );
   const resolutionCases = rows(resolutionCasesResult.data);
 
   const attention = [
@@ -232,15 +245,8 @@ export async function GET(request: NextRequest) {
         dismissible: false,
       };
     }),
-    ...paymentReconciliations.map((payment) => ({
-      id: `payment-${payment.id}`,
-      kind: "PAYMENT_RECONCILIATION",
-      severity: "CRITICAL",
-      title: "Captured payment needs reconciliation",
-      detail:
-        `${(Number(payment.amount_fils) / 1000).toFixed(3)} ${String(payment.currency)} · ${String(payment.purpose).replaceAll("_", " ")} · Tap ${String(payment.tap_charge_id ?? "reference unavailable")}${payment.failure_reason ? ` · ${String(payment.failure_reason)}` : ""}`,
-      createdAt: payment.created_at,
-    })),
+    ...paymentReconciliations.map(paymentIntentAttention),
+    ...paymentRefunds.map(paymentRefundAttention),
     ...forfeits.slice(0, 12).map((forfeit) => ({
       id: String(forfeit.id),
       kind: "FORFEIT_REVIEW",
@@ -338,6 +344,11 @@ export async function GET(request: NextRequest) {
     })),
   ];
 
+  attention.sort((left, right) =>
+    Number("resolution" in right && right.resolution === "PAYMENT_MANUAL_RECONCILIATION") -
+    Number("resolution" in left && left.resolution === "PAYMENT_MANUAL_RECONCILIATION"),
+  );
+
   const auditRows = rows(auditResult.data);
   const actorIds = [...new Set(auditRows.map((row) => String(row.actor_referee_id)))];
   const actorResult = actorIds.length
@@ -358,7 +369,7 @@ export async function GET(request: NextRequest) {
 
   const operationalAttention = forfeits.length + standaloneStoppages.length + unassignedFixtures.length +
     unassignedSolo.length + fixturesWithoutReserve.length + soloWithoutReserve.length +
-    broadcastProblems.length + paymentReconciliations.length + resolutionCases.length;
+    broadcastProblems.length + paymentReconciliations.length + paymentRefunds.length + resolutionCases.length;
   return NextResponse.json({
     metrics: {
       openReports: reportsResult.count ?? reports.length,

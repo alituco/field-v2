@@ -11,6 +11,7 @@ import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../profile/goal_clip_downloader.dart';
+import '../payments/refund_status.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
@@ -76,6 +77,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   String? _rosterErrorText;
   FixtureReliabilityRoster? _reliabilityRoster;
   MatchResolutionCase? _matchResolutionCase;
+  bool _clanGamesEnabled = false;
 
   @override
   void initState() {
@@ -92,6 +94,12 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     unawaited(_refreshFixture(quiet: true));
     unawaited(_loadReliabilityRoster(quiet: true));
     unawaited(_loadMatchResolution());
+    unawaited(_loadClanAvailability());
+  }
+
+  Future<void> _loadClanAvailability() async {
+    final enabled = await clanGamesAvailable(widget.fixtureRepository);
+    if (mounted) setState(() => _clanGamesEnabled = enabled);
   }
 
   @override
@@ -102,7 +110,8 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   bool get _canJoin {
     final membership = widget.myClanMembership;
-    return membership != null &&
+    return _clanGamesEnabled &&
+        membership != null &&
         membership.canManageMatches &&
         _fixture.isOpen &&
         _fixture.homeClanId != membership.clan.id;
@@ -283,7 +292,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         quoteUpdated = true;
       }
       if (!mounted || reason == null) return;
-      await reliabilityRepository.cancelFixtureBooking(
+      final cancelled = await reliabilityRepository.cancelFixtureBooking(
         fixtureId: _fixture.id,
         reason: reason,
       );
@@ -291,8 +300,15 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       await _refreshFixture();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Clan cancellation and Field Wallet outcome recorded.'),
+        SnackBar(
+          content: Text(
+            cancellationRefundMessage(
+              refundAmountFils: cancelled.refundAmountFils,
+              destination: cancelled.refundDestination,
+              status: cancelled.refundStatus,
+              isClan: true,
+            ),
+          ),
         ),
       );
     } catch (error) {
@@ -2500,11 +2516,11 @@ class _TeamPaymentsPanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.receipt_long_rounded, color: fieldEmerald600),
-              SizedBox(width: 8),
-              Expanded(
+              const Icon(Icons.receipt_long_rounded, color: fieldEmerald600),
+              const SizedBox(width: 8),
+              const Expanded(
                 child: Text(
                   'TEAM PAYMENTS',
                   maxLines: 1,
@@ -2516,10 +2532,10 @@ class _TeamPaymentsPanel extends StatelessWidget {
                   ),
                 ),
               ),
-              SizedBox(width: 8),
+              const SizedBox(width: 8),
               Text(
-                '20 BHD EACH',
-                style: TextStyle(
+                fixture.teamPriceLabel.toUpperCase(),
+                style: const TextStyle(
                   color: fieldGray500,
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
@@ -6511,7 +6527,7 @@ class _ClanCancellationSheetState extends State<_ClanCancellationSheet> {
                     ),
                     const SizedBox(height: 9),
                     _CancellationFact(
-                      label: 'Total Field Wallet credit',
+                      label: quote.refundDestinationLabel,
                       value: '${quote.refundLabel} · ${quote.refundPercent}%',
                     ),
                     const SizedBox(height: 9),

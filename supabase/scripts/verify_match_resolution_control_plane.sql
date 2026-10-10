@@ -645,7 +645,10 @@ begin
     ) <> 2
   then
     raise exception
-      'Same-score clan correction did not restore exactly the explicit Player SR lineup.';
+      'Same-score clan correction did not restore exactly the explicit Player SR lineup (replayed %, appearances %, rating events %).',
+      played_correction_result #>> '{consequences,initial_player_sr_pipeline_replayed}',
+      (select count(*) from public.fixture_player_appearances where fixture_id=fixture_to_test.id and played),
+      (select count(*) from public.player_rating_events where source_type='CLAN_FIXTURE' and source_id=fixture_to_test.id);
   end if;
 
   -- Two different affected members may dispute the same current revision.

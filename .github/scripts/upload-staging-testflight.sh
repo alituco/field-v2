@@ -19,6 +19,8 @@ required_variables=(
   SUPABASE_PUBLISHABLE_KEY
   APPLE_TEAM_ID
   IOS_STAGING_BUNDLE_ID
+  STRIPE_PUBLISHABLE_KEY
+  APPLE_MERCHANT_ID
   GITHUB_REF
   GITHUB_RUN_NUMBER
   GITHUB_RUN_ATTEMPT
@@ -47,6 +49,10 @@ if [[ "$APPLE_TEAM_ID" != "$expected_team_id" ]]; then
 fi
 if [[ "$IOS_STAGING_BUNDLE_ID" != "$expected_bundle_id" ]]; then
   echo "::error::The configured bundle ID is not Field Staging."
+  exit 1
+fi
+if [[ "$STRIPE_PUBLISHABLE_KEY" != pk_test_* || "$APPLE_MERCHANT_ID" != merchant.com.alialtaraif.fieldrush ]]; then
+  echo "::error::Staging requires a Stripe test publishable key and the Fieldrush Apple Pay merchant ID."
   exit 1
 fi
 
@@ -134,6 +140,11 @@ if [[ "$profile_app_identifier" != "$expected_team_id.$expected_bundle_id" ]]; t
   echo "::error::The provisioning profile does not belong to Field Staging."
   exit 1
 fi
+if ! /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.in-app-payments' "$profile_plist_path" \
+  | awk '{$1=$1; print}' | grep -Fxq "$APPLE_MERCHANT_ID"; then
+  echo "::error::Regenerate the staging App Store profile with the Fieldrush Apple Pay merchant enabled."
+  exit 1
+fi
 if [[ "$(date -j -f '%a %b %d %T %Y' "$profile_expiration_without_zone" '+%s')" -le "$(date '+%s')" ]]; then
   echo "::error::The staging provisioning profile has expired."
   exit 1
@@ -195,6 +206,8 @@ flutter build ios \
   --dart-define=APP_ENV=staging \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
+  --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY" \
+  --dart-define=APPLE_MERCHANT_ID="$APPLE_MERCHANT_ID" \
   --dart-define=DEV=false \
   --dart-define=PROFILE_SWITCHER_ENABLED=true
 

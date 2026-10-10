@@ -27,6 +27,8 @@ import type {
 
 import forfeitStyles from "./forfeit-review.module.css";
 import { ReliabilitySection } from "./reliability-section";
+import { GamePaymentSettingsPanel } from "./game-payment-settings";
+import { refundRetryNotice } from "@/lib/payment-refunds";
 
 type AdminSection =
   | "overview"
@@ -61,6 +63,7 @@ type AttentionItem = {
   gameId: string | null;
   resolution: string | null;
   dismissible: boolean;
+  paymentRefundId: string | null;
 };
 
 type AuditItem = {
@@ -922,6 +925,11 @@ export default function AdminPage() {
             <AdminPageSkeleton />
           ) : section === "overview" ? (
             <OverviewSection
+              accessToken={accessToken}
+              onRefundRetried={async (message) => {
+                setNotice(message);
+                await loadAll(true);
+              }}
               overview={overview}
               games={games}
               reports={reports}
@@ -1205,12 +1213,16 @@ type NormalizedOverview = {
 };
 
 function OverviewSection({
+  accessToken,
+  onRefundRetried,
   overview,
   games,
   reports,
   forfeits,
   onNavigate,
 }: {
+  accessToken: string;
+  onRefundRetried: (message: string) => Promise<void>;
   overview: NormalizedOverview;
   games: RefereeFixture[];
   reports: AdminReport[];
@@ -1218,6 +1230,8 @@ function OverviewSection({
   onNavigate: (section: AdminSection) => void;
 }) {
   const router = useRouter();
+  const [retryPaymentRefund, setRetryPaymentRefund] = useState<AttentionItem | null>(null);
+  const [showAllAttention, setShowAllAttention] = useState(false);
   const now = Date.now();
   const upcoming = games
     .filter((game) =>
@@ -1282,7 +1296,7 @@ function OverviewSection({
             />
           ) : (
             <div className="admin-attention-list">
-              {overview.attention.slice(0, 7).map((item) => (
+              {(showAllAttention ? overview.attention : overview.attention.slice(0, 7)).map((item) => (
                 <article className={item.gameId ? "actionable" : ""} key={item.id}>
                   <span className={`admin-severity-dot ${item.severity.toLowerCase()}`} />
                   <div>
@@ -1290,7 +1304,11 @@ function OverviewSection({
                     <p>{item.detail}</p>
                     {!item.dismissible ? (
                       <small className="admin-required-resolution">
-                        {item.resolution === "RESOLVE_NO_DATA"
+                        {item.resolution === "PAYMENT_MANUAL_RECONCILIATION"
+                          ? "Manual Stripe reconciliation required · cannot dismiss or retry"
+                          : item.resolution?.startsWith("PAYMENT") || item.resolution === "RETRY_PAYMENT_REFUND"
+                          ? "Payment resolution required · cannot dismiss"
+                          : item.resolution === "RESOLVE_NO_DATA"
                           ? "Admin resolution required · cannot dismiss"
                           : "Assignment required · cannot dismiss"}
                       </small>
@@ -1299,7 +1317,9 @@ function OverviewSection({
                   <div className="admin-attention-meta">
                     <span>{humanize(item.kind)}</span>
                     <time>{relativeTime(item.createdAt)}</time>
-                    {item.gameId && item.matchKind ? (
+                    {item.paymentRefundId ? (
+                      <button onClick={() => setRetryPaymentRefund(item)} type="button">Review refund →</button>
+                    ) : item.gameId && item.matchKind ? (
                       <button
                         onClick={() => router.push(`/admin/games/${item.matchKind!.toLowerCase()}/${item.gameId}`)}
                         type="button"
@@ -1312,6 +1332,11 @@ function OverviewSection({
                   </div>
                 </article>
               ))}
+              {overview.attention.length > 7 ? (
+                <button className="admin-row-action" onClick={() => setShowAllAttention((value) => !value)} type="button">
+                  {showAllAttention ? "Show fewer items" : `Show all ${overview.attention.length} items`}
+                </button>
+              ) : null}
             </div>
           )}
         </section>
@@ -1384,7 +1409,69 @@ function OverviewSection({
           <CompactAuditList items={overview.audit.slice(0, 5)} />
         </section>
       </div>
+      {retryPaymentRefund ? (
+        <PaymentRefundRetryDialog
+          accessToken={accessToken}
+          item={retryPaymentRefund}
+          onClose={() => setRetryPaymentRefund(null)}
+          onSaved={async (message) => {
+            setRetryPaymentRefund(null);
+            await onRefundRetried(message);
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function PaymentRefundRetryDialog({ accessToken, item, onClose, onSaved }: {
+  accessToken: string;
+  item: AttentionItem;
+  onClose: () => void;
+  onSaved: (message: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function retry() {
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetchJson<{ result?: { status?: string; already_settled?: boolean } }>(
+        `/api/referee/admin/payments/refunds/${item.paymentRefundId}/retry`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: reason.trim() }),
+        },
+      );
+      await onSaved(refundRetryNotice({
+        status: response.result?.status,
+        alreadySettled: response.result?.already_settled,
+        destination: "ORIGINAL_PAYMENT_METHOD",
+      }));
+    } catch (error) {
+      setError(errorMessage(error, "Could not retry this refund."));
+      setSaving(false);
+    }
+  }
+  return (
+    <AdminModal onClose={() => { if (!saving) onClose(); }}>
+      <span className="admin-eyebrow">Payment refund</span>
+      <h2>{item.title}</h2>
+      <p className="admin-modal-lead">{item.detail}</p>
+      <p>The refund returns to the original card or Apple Pay payment method. A retry checks the existing processor reference and never creates a duplicate refund.</p>
+      <label className="admin-modal-field">
+        <span>Reason for retry</span>
+        <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={2000} disabled={saving} rows={4} />
+        <small>Minimum 10 characters. Your reason is recorded in the audit trail.</small>
+      </label>
+      {error ? <p role="alert">{error}</p> : null}
+      <div className="admin-modal-actions">
+        <button type="button" disabled={saving} onClick={onClose} className="admin-secondary-button">Close</button>
+        <button type="button" disabled={saving || reason.trim().length < 10} onClick={() => void retry()} className="admin-primary-button">{saving ? "Checking refund…" : "Retry refund"}</button>
+      </div>
+    </AdminModal>
   );
 }
 
@@ -1807,6 +1894,7 @@ function GamesSection({
             </button>
           </div>
         </div>
+        <GamePaymentSettingsPanel accessToken={accessToken} />
         <div className="admin-game-view-tabs" role="tablist" aria-label="Game timing">
           <button
             aria-selected={view === "SCHEDULED"}
@@ -4255,6 +4343,7 @@ function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
     gameId: stringFrom(row.gameId ?? row.game_id ?? row.fixtureId ?? row.fixture_id),
     resolution: stringFrom(row.resolution),
     dismissible: row.dismissible !== false,
+    paymentRefundId: stringFrom(row.paymentRefundId),
   };
 }
 

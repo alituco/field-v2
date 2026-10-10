@@ -156,6 +156,10 @@ GitHub environment `staging`:
 - variable `IOS_STAGING_BUNDLE_ID=com.alialtaraif.field.staging`
 - variable `TESTFLIGHT_INTERNAL_GROUP=admins`
 - secret `SUPABASE_PUBLISHABLE_KEY` for the staging app build
+- secrets `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` from Stripe sandbox
+- secret `STRIPE_WEBHOOK_SECRET` for the staging payment webhook
+- secret `STRIPE_RECONCILE_SECRET`, a randomly generated 32+ character worker key
+- variable `STRIPE_WEBHOOK_ENDPOINT_ID` for that sandbox webhook
 - secrets `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_KEY_ID`, and
   `APP_STORE_CONNECT_PRIVATE_KEY` for the App Store Connect team API key
 - secrets `IOS_DISTRIBUTION_CERTIFICATE_BASE64` and
@@ -163,6 +167,17 @@ GitHub environment `staging`:
   identity
 - secret `IOS_STAGING_PROVISIONING_PROFILE_BASE64` for the manual
   `Field Staging App Store` provisioning profile
+
+The profile must include the Apple Pay merchant
+`merchant.com.alialtaraif.fieldrush`. See [Stripe payments](../docs/stripe-payments.md)
+for event subscriptions and testing. The deployment configures a five-minute
+Supabase cron worker with its credential stored in Vault. It enables the verified
+sandbox webhook after deploying its handler. Do not merge this payment cutover
+to production until live credentials, signing and a coordinated mobile/admin
+release are configured; production Stripe activation is not part of staging setup.
+The deployment script currently refuses production before making any changes,
+so this schema cannot accidentally be applied with the retired payment handlers
+still running. Remove that guard only as part of the coordinated live rollout.
 
 GitHub environment `production`:
 
@@ -220,7 +235,7 @@ Code cannot configure these safely:
 - production Auth site URL, redirect allow-list, and SMS provider
 - the first real production admin/referee account
 - production Cloudflare Stream secrets and webhook
-- real payment processing (current match payments are still simulated)
+- production Stripe live processing and original-payment-method refund verification
 - Vercel `field-bh` production env values
 
 For the public waitlist, set Vercel's production `SUPABASE_URL` and

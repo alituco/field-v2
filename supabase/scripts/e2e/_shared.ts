@@ -10,7 +10,7 @@ import {
   type SafeDevDataTarget,
 } from "../_shared/environment_guard.ts";
 
-export const E2E_SCHEMA_VERSION = 1;
+export const E2E_SCHEMA_VERSION = 2;
 export const E2E_VENUE_PREFIX = "[FIELD E2E";
 export const E2E_PROFILE_PREFIX = "[E2E]";
 export const E2E_DEFAULT_BIRTH_DATE = "2000-01-01";
@@ -36,7 +36,7 @@ export type E2EGame = {
   startsAt: string;
   endsAt: string;
   mainRole: "DEF" | "ATT";
-  capacity: 12;
+  capacity: 14;
   seededConfirmedCount: number;
 };
 
@@ -372,9 +372,9 @@ export function parseManifest(value: unknown): E2EManifest {
   }
   if (
     !Array.isArray(manifest.accounts.players) ||
-    manifest.accounts.players.length !== 12
+    manifest.accounts.players.length !== 14
   ) {
-    throw new Error("The E2E manifest must contain exactly 12 test players.");
+    throw new Error("The E2E manifest must contain exactly 14 test players.");
   }
   if (
     accounts.some((account) =>

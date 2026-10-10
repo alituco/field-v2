@@ -64,6 +64,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   String? _activeJoinRequest;
   String? _membersErrorText;
   String? _reliabilityErrorText;
+  bool _clanGamesEnabled = false;
 
   Clan get clan => _clan;
 
@@ -86,6 +87,9 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     _moderationRepository =
         widget.moderationRepository ?? SupabaseModerationRepository();
     _loadClanData();
+    clanGamesAvailable(widget.fixtureRepository).then((enabled) {
+      if (mounted) setState(() => _clanGamesEnabled = enabled);
+    });
   }
 
   Future<void> _openCustomize() async {
@@ -124,6 +128,18 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   }
 
   Future<void> _openFixtureFlow() async {
+    if (!await clanGamesAvailable(widget.fixtureRepository)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Clan games are currently unavailable. Existing bookings and refunds are unaffected.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
     if (!_canManageClan) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -742,6 +758,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
       ),
       bottomNavigationBar: _ClanActionBar(
         canManageMatches: _canManageClan,
+        clanGamesEnabled: _clanGamesEnabled,
         isCurrentClan: _isCurrentClan,
         hasClan: _hasClan,
         hasPendingRequest: _myJoinRequest != null,
@@ -3644,6 +3661,7 @@ class _Panel extends StatelessWidget {
 class _ClanActionBar extends StatelessWidget {
   const _ClanActionBar({
     required this.canManageMatches,
+    required this.clanGamesEnabled,
     required this.isCurrentClan,
     required this.hasClan,
     required this.hasPendingRequest,
@@ -3652,6 +3670,7 @@ class _ClanActionBar extends StatelessWidget {
   });
 
   final bool canManageMatches;
+  final bool clanGamesEnabled;
   final bool isCurrentClan;
   final bool hasClan;
   final bool hasPendingRequest;
@@ -3660,7 +3679,8 @@ class _ClanActionBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final enabled = !isWorking && (canManageMatches || !hasClan);
+    final enabled =
+        !isWorking && ((canManageMatches && clanGamesEnabled) || !hasClan);
     final icon = canManageMatches
         ? Icons.sports_mma_rounded
         : isCurrentClan
@@ -3671,7 +3691,9 @@ class _ClanActionBar extends StatelessWidget {
         ? Icons.hourglass_top_rounded
         : Icons.group_add_rounded;
     final label = canManageMatches
-        ? 'Schedule a Match'
+        ? clanGamesEnabled
+              ? 'Schedule a Match'
+              : 'Clan games paused'
         : isCurrentClan
         ? 'Clan Member'
         : hasClan

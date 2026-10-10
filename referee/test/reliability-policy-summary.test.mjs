@@ -42,8 +42,8 @@ test("human summary includes attendance, deposits, sanctions, SR, and appeals", 
   assert.match(text, /Player sanction ladder/);
   assert.match(text, /Late-player SR/);
   assert.match(text, /Routine traffic is not automatically excused/);
-  assert.match(text, /Field Wallet in the game's currency/);
-  assert.match(text, /USD and historical BHD balances are kept separately/);
+  assert.match(text, /original card or Apple Pay payment method/);
+  assert.match(text, /Historical wallet balances remain separate/);
 });
 
 test("downloadable document is standalone, printable, and escapes admin copy", () => {

@@ -12,7 +12,12 @@ begin
     'open_queue_games',
     'open_queue_bookings',
     'season_zero_waitlist',
-    'reliability_policy_versions'
+    'reliability_policy_versions',
+    'payment_intents',
+    'payment_refunds',
+    'payment_webhook_events',
+    'external_payment_refunds',
+    'game_payment_settings'
   ]) as required(table_name)
   where to_regclass(format('public.%I', table_name)) is null;
 
@@ -27,7 +32,13 @@ begin
   from unnest(array[
     'book_open_queue_game',
     'cancel_open_queue_booking',
-    'preview_open_queue_cancellation'
+    'preview_open_queue_cancellation',
+    'record_stripe_payment_capture',
+    'finalize_payment_intent',
+    'configure_stripe_reconciliation',
+    'get_game_payment_settings',
+    'admin_set_game_payment_settings',
+    'record_external_stripe_refund'
   ]) as required(function_name)
   where not exists (
     select 1

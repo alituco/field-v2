@@ -1,6 +1,5 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
-import { legacyOpenQueueFormat } from "../_shared/legacy_open_queue_format.ts";
 
 import {
   type AdminClient,
@@ -41,6 +40,8 @@ const PLAYER_DEFINITIONS = [
   ["+97339009010", "Faisal E2E", "field_e2e_10"],
   ["+97339009011", "Jassim E2E", "field_e2e_11"],
   ["+97339009012", "Rami E2E", "field_e2e_12"],
+  ["+97339009013", "Zaid E2E", "field_e2e_13"],
+  ["+97339009014", "Adam E2E", "field_e2e_14"],
 ] as const;
 
 const ADMIN_DEFINITION = [
@@ -55,10 +56,12 @@ const FILLER_ROLES = [
   "DEF",
   "DEF",
   "DEF",
-  "MID",
-  "MID",
-  "MID",
-  "MID",
+  "DEF",
+  "DEF",
+  "ATT",
+  "ATT",
+  "ATT",
+  "ATT",
   "ATT",
   "ATT",
 ] as const;
@@ -173,6 +176,16 @@ await assertPoolHasNoForeignUpcomingBookings(
   e2eAdmin,
 );
 
+// Only this protected synthetic account pool moves to the current test market.
+// Retain their rating history; never migrate real players or legacy games.
+await assertNoError(
+  admin.from("player_ratings").update({ region: "phoenix" }).in(
+    "profile_id",
+    players.map((player) => player.profileId),
+  ),
+  "select the Phoenix market for isolated E2E players",
+);
+
 const main = players[selectedMainIndex];
 const partyTarget = players[
   (selectedMainIndex + 1) % players.length
@@ -223,14 +236,14 @@ try {
   const policyVersionId = await ensurePolicyTerms(admin, match.id);
   const ratingsBefore = await loadRatings(admin, players);
 
-  logStep("Seeding 11 of 12 match bookings; the UI creates the final booking.");
+  logStep("Seeding 13 of 14 match bookings; the UI creates the final booking.");
   const bookingRows = fillers.map((player, index) => ({
     game_id: match.id,
     profile_id: player.profileId,
     role: FILLER_ROLES[index],
     player_rating_at_booking: ratingsBefore[player.profileId],
-    amount_paid_fils: 3000,
-    base_amount_fils: 3000,
+    amount_paid_fils: 13000,
+    base_amount_fils: 13000,
     discount_bps: 0,
     reliability_deposit_fils: 0,
     reliability_deposit_status: "NOT_REQUIRED",
@@ -274,7 +287,7 @@ try {
     games: {
       match: {
         ...match,
-        seededConfirmedCount: 11,
+        seededConfirmedCount: 13,
       },
       cancellation: {
         ...cancellation,
@@ -472,6 +485,7 @@ async function ensureAccount(
             ...user.app_metadata,
             fieldrush_e2e: true,
             fieldrush_e2e_role: input.role,
+            fieldrush_e2e_run_id: config.runId,
           },
         },
       ).catch((error) => {
@@ -495,6 +509,7 @@ async function ensureAccount(
           fieldrush_e2e_role: input.clearAuthOnboarding
             ? "onboarding"
             : input.role,
+          fieldrush_e2e_run_id: config.runId,
         },
       },
     ).catch((error) => {
@@ -772,6 +787,7 @@ async function findUnusedSoloSlots(
   const { data: existing, error } = await client
     .from("open_queue_games")
     .select("starts_at,status")
+    .eq("timezone", "America/Phoenix")
     .gte("starts_at", now.toISOString())
     .lte("starts_at", latest.toISOString())
     .neq("status", "CANCELLED")
@@ -793,14 +809,14 @@ async function findUnusedSoloSlots(
   ));
 
   while (cursor <= latest && slots.length < count) {
-    // Bahrain is UTC+3 year-round. 20:30 Bahrain is 17:30 UTC.
+    // Phoenix is UTC-7 year-round. 20:30 local is 03:30 UTC the next day.
     const weekday = cursor.getUTCDay();
     if (weekday === 2 || weekday === 5) {
       const candidate = new Date(Date.UTC(
         cursor.getUTCFullYear(),
         cursor.getUTCMonth(),
-        cursor.getUTCDate(),
-        17,
+        cursor.getUTCDate() + 1,
+        3,
         30,
       ));
       if (
@@ -848,13 +864,19 @@ async function createGame(
 ): Promise<Omit<E2EGame, "seededConfirmedCount">> {
   const endsAt = new Date(start.getTime() + 60 * 60 * 1000);
   const { data, error } = await client.from("open_queue_games").insert({
-    ...legacyOpenQueueFormat,
+    format_version: "FIELDRUSH_7V7",
+    currency: "USD",
+    capacity: 14,
+    goalkeeper_capacity: 2,
+    defender_capacity: 6,
+    midfielder_capacity: 0,
+    attacker_capacity: 6,
     venue,
     starts_at: start.toISOString(),
     ends_at: endsAt.toISOString(),
-    timezone: "Asia/Bahrain",
-    price_fils: 3000,
-    age_label: "16+ · E2E",
+    timezone: "America/Phoenix",
+    price_fils: 13000,
+    age_label: "18+ · E2E",
     created_by: createdBy,
   }).select("id,venue,starts_at,ends_at,capacity").single();
   if (error || !data) {
@@ -866,7 +888,7 @@ async function createGame(
     startsAt: String(data.starts_at),
     endsAt: String(data.ends_at),
     mainRole,
-    capacity: 12,
+    capacity: 14,
   };
 }
 

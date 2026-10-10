@@ -1,15 +1,14 @@
 export type AdminGameCurrency = "BHD" | "USD";
 
-/** Legacy clan payments are BHD; solo payments use the persisted game currency. */
+/** Always use recorded game currency; do not relabel historical payments. */
 export function adminGameCurrency(
   matchKind: "CLAN" | "SOLO",
   persistedCurrency?: unknown,
 ): AdminGameCurrency {
-  if (matchKind === "CLAN") return "BHD";
   if (persistedCurrency === "BHD" || persistedCurrency === "USD") {
     return persistedCurrency;
   }
-  throw new Error("The solo game's payment currency is missing or unsupported.");
+  throw new Error(`The ${matchKind.toLowerCase()} game's payment currency is missing or unsupported.`);
 }
 
 /** The legacy *_fils ledger names denote thousandths in either currency. */

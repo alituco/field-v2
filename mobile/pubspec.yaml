@@ -42,7 +42,7 @@ dependencies:
   image_picker: ^1.2.3
   path_provider: ^2.1.5
   video_player: ^2.12.0
-  checkout_flutter: ^1.0.4
+  flutter_stripe: ^14.1.0
   phone_numbers_parser: ^9.0.28
   country_picker: ^2.0.28
   url_launcher: ^6.3.3

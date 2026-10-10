@@ -697,6 +697,8 @@ class OpenQueueBooking {
     this.cancelledAt,
     this.refundPercent,
     this.refundAmountFils,
+    this.refundDestination,
+    this.refundStatus,
   });
 
   final String id;
@@ -710,6 +712,8 @@ class OpenQueueBooking {
   final DateTime? cancelledAt;
   final int? refundPercent;
   final int? refundAmountFils;
+  final String? refundDestination;
+  final String? refundStatus;
   final OpenQueueGame game;
 
   String? get assignedTeam {
@@ -742,6 +746,8 @@ class OpenQueueBooking {
       cancelledAt: cancelledAt,
       refundPercent: refundPercent,
       refundAmountFils: refundAmountFils,
+      refundDestination: refundDestination,
+      refundStatus: refundStatus,
       game: game ?? this.game,
     );
   }
@@ -763,6 +769,8 @@ class OpenQueueBooking {
       cancelledAt: _asDate(json['cancelled_at']),
       refundPercent: _asNullableInt(json['refund_percent']),
       refundAmountFils: _asNullableInt(json['refund_amount_fils']),
+      refundDestination: _nonEmptyString(json['refund_destination']),
+      refundStatus: _nonEmptyString(json['refund_status']),
       game: OpenQueueGame.fromBookingJson(gameJson),
     );
   }
@@ -843,12 +851,20 @@ class OpenQueueCancellationPreview {
         destination == 'FIELD_WALLET') {
       return '$refundPercentLabel to your Field wallet';
     }
+    if (destination == 'ORIGINAL_PAYMENT_METHOD' || destination == 'STRIPE') {
+      return '$refundPercentLabel to your original payment method';
+    }
     return '$refundPercentLabel to ${destination.replaceAll('_', ' ').toLowerCase()}';
   }
 
   String get refundLabel {
     if (effectiveRefundBps == 0) return 'No refund';
-    return '${_moneyLabel(refundAmountFils, currency)} to Field wallet';
+    final destination = refundDestination?.trim().toUpperCase();
+    final label =
+        destination == 'ORIGINAL_PAYMENT_METHOD' || destination == 'STRIPE'
+        ? 'your original payment method'
+        : 'Field wallet';
+    return '${_moneyLabel(refundAmountFils, currency)} to $label';
   }
 
   bool hasSameConsequencesAs(OpenQueueCancellationPreview other) {

@@ -2,7 +2,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'open_queue.dart';
 import 'open_queue_party_repository.dart';
-import '../payments/tap_payment_service.dart';
+import '../payments/payment_service.dart';
 import '../reliability/reliability.dart';
 
 abstract class OpenQueueRepository {
@@ -73,6 +73,8 @@ class SupabaseOpenQueueRepository
     cancelled_at,
     refund_percent,
     refund_amount_fils,
+    refund_destination,
+    refund_status,
     game:open_queue_games!open_queue_bookings_game_id_fkey(
       id,
       status,
@@ -274,8 +276,8 @@ class SupabaseOpenQueueRepository
     required OpenQueueRole role,
     required String paymentMethod,
   }) async {
-    final payment = await TapPaymentService(client: _client).pay(
-      purpose: TapPaymentPurpose.soloBooking,
+    final payment = await PaymentService(client: _client).pay(
+      purpose: PaymentPurpose.soloBooking,
       payload: {'game_id': game.id, 'role': role.code},
     );
     final response = await _client
@@ -320,7 +322,7 @@ class SupabaseOpenQueueRepository
 
   @override
   Future<OpenQueueBooking> cancelBooking(String bookingId) async {
-    await _client.rpc(
+    final cancellation = await _client.rpc(
       'cancel_open_queue_booking',
       params: {'booking_id_to_cancel': bookingId},
     );
@@ -330,7 +332,13 @@ class SupabaseOpenQueueRepository
         .eq('id', bookingId)
         .single();
     return _hydrateBookingGame(
-      OpenQueueBooking.fromJson(Map<String, dynamic>.from(response)),
+      OpenQueueBooking.fromJson({
+        ...Map<String, dynamic>.from(response),
+        if (cancellation is Map) ...{
+          'refund_destination': cancellation['refund_destination'],
+          'refund_status': cancellation['refund_status'],
+        },
+      }),
     );
   }
 

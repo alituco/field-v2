@@ -123,6 +123,15 @@ begin
   select pg_get_functiondef(
     'public.cancel_clan_fixture_booking(uuid,text)'::regprocedure
   ) into function_text;
+  if position('cancel_clan_fixture_booking_policy' in function_text) = 0
+    or has_function_privilege('authenticated',
+      'public.cancel_clan_fixture_booking_policy(uuid,text)', 'EXECUTE')
+  then
+    raise exception 'Clan refund wrapper bypasses its protected cancellation policy.';
+  end if;
+  select pg_get_functiondef(
+    'public.cancel_clan_fixture_booking_policy(uuid,text)'::regprocedure
+  ) into function_text;
   if position('set played = false' in function_text) = 0
     or position('reliability_forfeit_without_play' in function_text) = 0
     or position('set played = false' in function_text) >

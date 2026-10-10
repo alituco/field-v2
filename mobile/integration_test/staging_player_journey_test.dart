@@ -70,7 +70,7 @@ void main() {
     );
     final mainId = _currentUserId();
     final matchGame = await _gameById(repository, config.matchGameId);
-    expect(matchGame.confirmedCount, 11);
+    expect(matchGame.confirmedCount, 13);
     expect(matchGame.spotsFor(OpenQueueRole.defender), 1);
 
     await _bookGameThroughUi(
@@ -159,7 +159,7 @@ void main() {
 
     final preservedMatch = await _gameById(repository, config.matchGameId);
     expect(preservedMatch.status, 'FULL');
-    expect(preservedMatch.confirmedCount, 12);
+    expect(preservedMatch.confirmedCount, 14);
     expect(
       await _boundedRemoteStep(
         'verify preserved full-match booking',

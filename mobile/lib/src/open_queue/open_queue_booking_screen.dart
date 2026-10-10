@@ -6,6 +6,7 @@ import '../clans/clan_widgets.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
+import '../payments/refund_status.dart';
 import '../reliability/reliability_deadline_notice.dart';
 import 'open_queue.dart';
 import 'open_queue_kit_indicator.dart';
@@ -389,8 +390,21 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     if (!mounted) return;
     setState(() => _cancelling = true);
     try {
-      await widget.repository.cancelBooking(_booking.id);
+      final cancelled = await widget.repository.cancelBooking(_booking.id);
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            cancellationRefundMessage(
+              refundAmountFils:
+                  cancelled.refundAmountFils ?? preview.refundAmountFils,
+              destination:
+                  cancelled.refundDestination ?? preview.refundDestination,
+              status: cancelled.refundStatus,
+            ),
+          ),
+        ),
+      );
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;

@@ -47,7 +47,7 @@ export async function loadStagingManifest(): Promise<StagingManifest> {
 
   const manifest = parsed as unknown as StagingManifest;
   if (
-    manifest.schemaVersion !== 1 ||
+    manifest.schemaVersion !== 2 ||
     !manifest.runId ||
     !manifest.login?.bootstrapPhone ||
     !manifest.login?.otpCode ||
@@ -56,7 +56,7 @@ export async function loadStagingManifest(): Promise<StagingManifest> {
     !manifest.accounts?.main?.displayName ||
     !isUuid(manifest.games?.match?.id) ||
     !manifest.games?.match?.venue ||
-    manifest.games?.match?.capacity !== 12 ||
+    manifest.games?.match?.capacity !== 14 ||
     !manifest.markers?.reportDetails ||
     !manifest.markers?.supportDetails
   ) {

@@ -21,6 +21,7 @@ import {
 } from "@/lib/admin-match-resolution-ui";
 import type { MatchResolutionType } from "@/lib/match-action-input";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { refundRetryNotice } from "@/lib/payment-refunds";
 import type {
   BroadcastControlResponse,
   FixtureEvent,
@@ -285,7 +286,7 @@ export default function AdminGameDetailPage() {
             <p className={styles.actionHint}>
               {needsResolution
                 ? "Use the no-data review so attendance, refunds, SR and strikes are decided together."
-                : "Admin cancellation gives every payer a 100% Field Wallet refund, including held reliability deposits."}
+                : "Admin cancellation gives every payer a full refund, including held reliability deposits. Card and Apple Pay payments return to the original payment method."}
             </p>
           </section>
 
@@ -456,8 +457,10 @@ function ResolutionCaseBanner({
   const retriableRefunds = failedRefunds.filter(
     (refund) =>
       refund.status === "FAILED" &&
+      !refund.requiresManualReview &&
       refund.revisionId === currentRevisionId,
   );
+  const manualRefunds = failedRefunds.filter((refund) => refund.requiresManualReview);
 
   return (
     <section
@@ -509,7 +512,8 @@ function ResolutionCaseBanner({
           {pendingRefunds.length ? <span>{pendingRefunds.length} refund{pendingRefunds.length === 1 ? "" : "s"} processing</span> : null}
           {completedRefunds.length ? <span>{completedRefunds.length} refund{completedRefunds.length === 1 ? "" : "s"} completed</span> : null}
           {retriableRefunds.length ? <span className={styles.failedFlag}>{retriableRefunds.length} refund{retriableRefunds.length === 1 ? "" : "s"} need retry</span> : null}
-          {failedRefunds.length > retriableRefunds.length ? <span>{failedRefunds.length - retriableRefunds.length} historical refund failure{failedRefunds.length - retriableRefunds.length === 1 ? "" : "s"} retained</span> : null}
+          {manualRefunds.length ? <span className={styles.failedFlag}>{manualRefunds.length} external refund{manualRefunds.length === 1 ? "" : "s"} require manual reconciliation · no retry</span> : null}
+          {failedRefunds.length > retriableRefunds.length + manualRefunds.length ? <span>{failedRefunds.length - retriableRefunds.length - manualRefunds.length} historical refund failure(s) retained</span> : null}
         </div>
       ) : null}
       {failedRefunds.length ? (
@@ -524,7 +528,9 @@ function ResolutionCaseBanner({
                   {refund.failureReason ? ` · ${refund.failureReason}` : " · No failure detail was recorded"}
                 </small>
               </div>
-              {refund.status === "FAILED" && refund.revisionId === currentRevisionId ? (
+              {refund.requiresManualReview ? (
+                <em>Reconcile the Stripe Dashboard refund with the booking and payment ledger. Retry cannot release this hold.</em>
+              ) : refund.status === "FAILED" && refund.revisionId === currentRevisionId ? (
                 <button onClick={() => onRetryRefund(refund)} type="button">
                   Retry refund
                 </button>
@@ -582,11 +588,11 @@ function RetryResolutionRefundDialog({
           body: JSON.stringify({ reason: trimmedReason }),
         },
       );
-      const status = result.result?.status?.toUpperCase() ?? "COMPLETED";
-      const creditedFils = numericValue(result.result?.amount_fils);
-      const savedNotice = result.result?.already_settled
-        ? `This refund was already ${humanize(status).toLowerCase()}. No second credit was issued.`
-        : `Refund retry completed. ${formatGameMoney(creditedFils, detail.currency)} was credited to the original payer through ${humanize(refund.destination)}.`;
+      const savedNotice = refundRetryNotice({
+        status: result.result?.status,
+        alreadySettled: result.result?.already_settled,
+        destination: refund.destination,
+      });
       await onSaved(savedNotice);
     } catch (retryError) {
       setError(message(retryError, "Could not retry this refund."));
@@ -616,8 +622,8 @@ function RetryResolutionRefundDialog({
           <button aria-label="Close refund retry" disabled={saving} onClick={onClose}>×</button>
         </header>
         <p className={styles.modalIntro}>
-          This retries the missing Field Wallet credit for the original payer.
-          It does not reverse completed refunds or issue a duplicate credit.
+          This retries the outstanding refund to the recorded destination.
+          Completed refunds are retained, and the server prevents duplicate refunds.
         </p>
         <dl className={styles.refundRetryFacts}>
           <div><dt>Recipient</dt><dd>{refundSideLabel(refund, detail)}</dd></div>
@@ -628,8 +634,8 @@ function RetryResolutionRefundDialog({
         <div className={styles.modalWarning}>
           <strong>This action is audited</strong>
           <p>
-            The retry reason, admin, prior failure and resulting wallet
-            transaction are permanently recorded against this match.
+            The retry reason, admin, prior failure and processor or wallet
+            result are permanently recorded against this match.
           </p>
         </div>
         <label>
@@ -638,7 +644,7 @@ function RetryResolutionRefundDialog({
             autoFocus
             disabled={saving}
             maxLength={2000}
-            placeholder="Example: Payer account was reconciled and the wallet credit can now be issued."
+            placeholder="Example: The payment processor issue has been resolved and the refund can be retried."
             value={reason}
             onChange={(event) => setReason(event.target.value)}
           />
@@ -1515,7 +1521,7 @@ function CancelGameDialog({ accessToken, detail, onClose, onSaved }: {
     <div className={styles.modalBackdrop} role="presentation">
       <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
         <header><div><span>ADMIN CANCELLATION</span><h2>Cancel this game?</h2></div><button onClick={onClose}>×</button></header>
-        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers through Field Wallet.</p></div>
+        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers. Card and Apple Pay payments are refunded to the original payment method; historical wallet payments keep their recorded destination.</p></div>
         <label><span>Cancellation category</span><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>{CANCELLATION_REASONS.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></label>
         <label><span>Reason</span><textarea maxLength={1000} placeholder="Why is Field cancelling this game?" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <label><span>Type CANCEL to confirm</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
