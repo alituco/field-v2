@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -136,4 +138,122 @@ void main() {
     expect(taps, 0);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'scrollUntilFound waits for delayed content without a scroll range',
+    (tester) async {
+      final ready = ValueNotifier<bool>(false);
+      addTearDown(ready.dispose);
+      const target = ValueKey('delayed-scroll-target');
+      final started = tester.binding.clock.now();
+      final timer = Timer(
+        const Duration(seconds: 14),
+        () => ready.value = true,
+      );
+      addTearDown(timer.cancel);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ValueListenableBuilder<bool>(
+              valueListenable: ready,
+              builder: (context, loaded, child) => ListView(
+                children: [
+                  if (loaded)
+                    const Text('Loaded action', key: target)
+                  else
+                    const Text('Loading action'),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await scrollUntilFound(
+        tester,
+        find.byKey(target),
+        maxScrolls: 0,
+        timeout: const Duration(seconds: 20),
+      );
+
+      expect(find.byKey(target), findsOneWidget);
+      expect(
+        tester.binding.clock.now().difference(started),
+        greaterThanOrEqualTo(const Duration(seconds: 14)),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('scrollUntilFound times out even without a scrollable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(home: Scaffold(body: Text('No target'))),
+    );
+    final started = tester.binding.clock.now();
+
+    Object? failure;
+    try {
+      await scrollUntilFound(
+        tester,
+        find.byKey(const ValueKey('missing-scroll-target')),
+        maxScrolls: 0,
+        timeout: const Duration(milliseconds: 500),
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(failure, isA<TestFailure>());
+    expect(
+      tester.binding.clock.now().difference(started),
+      const Duration(milliseconds: 500),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'scrollUntilFound rescans delayed content above a completed scan',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final ready = ValueNotifier<bool>(false);
+      addTearDown(ready.dispose);
+      final controller = ScrollController();
+      addTearDown(controller.dispose);
+      const target = ValueKey('late-lazy-list-target');
+      final timer = Timer(const Duration(seconds: 8), () => ready.value = true);
+      addTearDown(timer.cancel);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ValueListenableBuilder<bool>(
+              valueListenable: ready,
+              builder: (context, loaded, child) => ListView.builder(
+                controller: controller,
+                itemExtent: 100,
+                itemCount: loaded ? 31 : 30,
+                itemBuilder: (context, index) => index == 1 && loaded
+                    ? const Text('Late action', key: target)
+                    : Text('List row $index'),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      await scrollUntilFound(
+        tester,
+        find.byKey(target),
+        maxScrolls: 6,
+        delta: 600,
+        timeout: const Duration(seconds: 15),
+      );
+
+      expect(find.byKey(target), findsOneWidget);
+      expect(controller.offset, lessThan(200));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
