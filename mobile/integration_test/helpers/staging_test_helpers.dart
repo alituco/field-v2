@@ -195,10 +195,7 @@ Future<void> tapWhenVisible(
   Duration timeout = const Duration(seconds: 25),
   String? reason,
 }) async {
-  await pumpUntilFound(tester, finder, timeout: timeout, reason: reason);
-  await _centerInScrollable(tester, finder);
-  await tester.tap(finder);
-  await tester.pump();
+  await _tapWhenHittable(tester, finder, timeout: timeout, reason: reason);
 }
 
 Future<void> scrollUntilFound(
@@ -206,10 +203,19 @@ Future<void> scrollUntilFound(
   Finder finder, {
   int maxScrolls = 18,
   double delta = 420,
+  Duration timeout = const Duration(seconds: 25),
   String? reason,
 }) async {
+  const interval = Duration(milliseconds: 220);
+  final deadline = DateTime.now().add(timeout);
+  var pumpedTime = Duration.zero;
+  var scrollCount = 0;
   var resetToStart = false;
-  for (var attempt = 0; attempt <= maxScrolls; attempt++) {
+  var rescannedAfterLayoutChange = false;
+  ScrollPosition? trackedPosition;
+  double? previousMaxExtent;
+  var scanFinished = false;
+  while (DateTime.now().isBefore(deadline) && pumpedTime < timeout) {
     if (finder.evaluate().isNotEmpty) {
       await _centerInScrollable(tester, finder);
       // Centering pumps a frame. Async booking/party refreshes can rebuild a
@@ -217,57 +223,80 @@ Future<void> scrollUntilFound(
       // just found. Only return once the target still exists after centering;
       // otherwise continue the bounded scan and resolve the rebuilt widget.
       if (finder.evaluate().isNotEmpty) return;
-      continue;
-    }
-    final scrollables = find.byType(Scrollable);
-    if (scrollables.evaluate().isEmpty) break;
-
-    Finder? scrollTarget;
-    final candidateCount = scrollables.evaluate().length;
-    for (var index = candidateCount - 1; index >= 0; index--) {
-      final candidate = scrollables.at(index);
-      final state = tester.state<ScrollableState>(candidate);
-      final position = state.position;
-      if (position.axis == Axis.vertical &&
-          (position.pixels > position.minScrollExtent + 0.5 ||
-              position.pixels < position.maxScrollExtent - 0.5)) {
-        scrollTarget = candidate;
-        break;
+    } else {
+      final scrollables = find.byType(Scrollable);
+      Finder? scrollTarget;
+      final candidateCount = scrollables.evaluate().length;
+      for (var index = candidateCount - 1; index >= 0; index--) {
+        final candidate = scrollables.at(index);
+        final position = tester.state<ScrollableState>(candidate).position;
+        if (position.axis == Axis.vertical &&
+            (position.pixels > position.minScrollExtent + 0.5 ||
+                position.pixels < position.maxScrollExtent - 0.5)) {
+          scrollTarget = candidate;
+          break;
+        }
+      }
+      if (scrollTarget != null) {
+        final position = tester.state<ScrollableState>(scrollTarget).position;
+        final extentChanged =
+            identical(position, trackedPosition) &&
+            previousMaxExtent != null &&
+            (position.maxScrollExtent - previousMaxExtent).abs() > 0.5;
+        trackedPosition = position;
+        previousMaxExtent = position.maxScrollExtent;
+        if (scanFinished &&
+            extentChanged &&
+            !rescannedAfterLayoutChange &&
+            position.pixels > position.minScrollExtent + 0.5) {
+          // Async content may appear above the viewport after a lazy-list scan
+          // has finished. Rescan once when its extent actually changes, keeping
+          // the same overall time and physical-drag budgets.
+          position.jumpTo(position.minScrollExtent);
+          rescannedAfterLayoutChange = true;
+          scanFinished = false;
+        } else if (!resetToStart &&
+            position.pixels > position.minScrollExtent + 0.5) {
+          // A prior action may have left a lazy ListView below a target that is
+          // no longer built. Start one deterministic top-to-bottom scan so this
+          // helper can find content in either direction.
+          position.jumpTo(position.minScrollExtent);
+          resetToStart = true;
+        } else {
+          resetToStart = true;
+          if (scrollCount < maxScrolls &&
+              position.pixels < position.maxScrollExtent - 0.5) {
+            await tester.drag(
+              scrollTarget,
+              Offset(0, -delta),
+              warnIfMissed: false,
+            );
+            scrollCount++;
+          }
+        }
+        scanFinished =
+            scrollCount >= maxScrolls ||
+            position.pixels >= position.maxScrollExtent - 0.5;
       }
     }
-    if (scrollTarget == null) {
-      // Lists can still be loading their first page. Pump without dragging a
-      // zero-range PageView/Scrollable, then inspect the layout again.
-      await tester.pump(const Duration(milliseconds: 220));
-      continue;
-    }
-    final position = tester.state<ScrollableState>(scrollTarget).position;
-    if (!resetToStart && position.pixels > position.minScrollExtent + 0.5) {
-      // A prior action may have left a lazy ListView below a target that is
-      // no longer built. Start one deterministic top-to-bottom scan so this
-      // helper can find content in either direction.
-      position.jumpTo(position.minScrollExtent);
-      resetToStart = true;
-      await tester.pump(const Duration(milliseconds: 220));
-      continue;
-    }
-    resetToStart = true;
-    if (position.pixels >= position.maxScrollExtent - 0.5) {
-      // The target can be created by a FutureBuilder after the list has
-      // already reached its current boundary (for example, once the booking
-      // quote returns). Keep pumping within the caller's bounded attempt
-      // budget instead of treating the temporary boundary as final.
-      await tester.pump(const Duration(milliseconds: 220));
-      continue;
-    }
-    await tester.drag(scrollTarget, Offset(0, -delta), warnIfMissed: false);
-    await tester.pump(const Duration(milliseconds: 220));
+
+    // Readiness polling is not a scroll attempt. A pending server action may
+    // replace a card long after this scan reaches its boundary, or before any
+    // scroll range exists. Keep waiting within the time budget without spending
+    // the physical-drag budget on loading frames.
+    final remaining = timeout - pumpedTime;
+    final pause = remaining < interval ? remaining : interval;
+    await tester.pump(pause);
+    pumpedTime += pause;
   }
+  _reportUiWaitFailure();
   throw TestFailure(reason ?? 'Could not scroll to the expected widget.');
 }
 
 Future<void> _centerInScrollable(WidgetTester tester, Finder finder) async {
-  final element = finder.first.evaluate().first;
+  final elements = finder.evaluate();
+  if (elements.isEmpty) return;
+  final element = elements.first;
   // Integration tests drive Flutter frames manually. Awaiting an animated
   // ensureVisible before pumping a frame deadlocks whenever scrolling is
   // actually required, so center the target synchronously instead.
@@ -283,18 +312,69 @@ Future<void> tapAfterScroll(
   WidgetTester tester,
   Finder finder, {
   int maxScrolls = 18,
+  Duration timeout = const Duration(seconds: 25),
   String? reason,
 }) async {
+  final deadline = DateTime.now().add(timeout);
   await scrollUntilFound(
     tester,
     finder,
     maxScrolls: maxScrolls,
+    timeout: timeout,
     reason: reason,
   );
-  // Capture the resolved target geometry synchronously. This avoids a second
-  // finder evaluation between scrolling and the tap when an async page
-  // refresh replaces the same keyed control.
-  final center = tester.getCenter(finder.first);
-  await tester.tapAt(center);
-  await tester.pump();
+  await _tapWhenHittable(
+    tester,
+    finder,
+    timeout: deadline.difference(DateTime.now()),
+    reason: reason,
+  );
+}
+
+Future<void> _tapWhenHittable(
+  WidgetTester tester,
+  Finder finder, {
+  required Duration timeout,
+  String? reason,
+}) async {
+  const interval = Duration(milliseconds: 100);
+  final deadline = DateTime.now().add(timeout);
+  var pumpedTime = Duration.zero;
+
+  // A route can have built its controls while a slide transition still places
+  // them outside the screen. Async list refreshes can also replace a target
+  // after ensureVisible. Re-resolve and hit-test the live layout on each frame;
+  // never tap geometry captured before the frame or wait for every animation.
+  while (DateTime.now().isBefore(deadline) && pumpedTime < timeout) {
+    if (finder.evaluate().isNotEmpty) {
+      await _centerInScrollable(tester, finder);
+      final hittable = finder.hitTestable();
+      if (hittable.evaluate().isNotEmpty) {
+        final center = tester.getCenter(hittable.first);
+        await tester.tapAt(center);
+        await tester.pump();
+        return;
+      }
+    }
+    await tester.pump(interval);
+    pumpedTime += interval;
+  }
+  throw TestFailure(
+    reason ?? 'Timed out waiting for the expected widget to become tappable.',
+  );
+}
+
+void _reportUiWaitFailure() {
+  // Fixture-only UI labels help diagnose a failed action without dumping
+  // editable fields, auth sessions, or the entire widget tree.
+  final labels = find
+      .byType(Text)
+      .evaluate()
+      .map((element) => (element.widget as Text).data)
+      .whereType<String>()
+      .take(40)
+      .map(
+        (label) => label.length > 160 ? '${label.substring(0, 160)}…' : label,
+      );
+  debugPrint('[FIELD_E2E] UI wait failed; labels: ${labels.join(' | ')}');
 }

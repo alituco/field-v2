@@ -467,9 +467,10 @@ Future<void> _bookGameThroughUi(
     tester,
     find.byKey(ValueKey('open-queue-main-role-$roleSlug')),
   );
-  await tapWhenVisible(
+  await _tapEnabledFilledButton(
     tester,
     find.byKey(const ValueKey('open-queue-see-matching-games')),
+    reason: 'Open Queue availability never enabled matching games.',
   );
 
   final joinAction = find.byKey(
@@ -522,6 +523,11 @@ Future<void> _createAndSendPartyInvite(
     tester,
     find.byKey(const ValueKey('create-open-queue-party')),
     reason: 'A newly booked player could not create a party.',
+  );
+  await pumpUntilFound(
+    tester,
+    find.text('Party created. Invite confirmed players from this game.'),
+    reason: 'Party creation did not finish successfully in the UI.',
   );
   await _tapEnabledFilledButton(
     tester,
@@ -665,13 +671,11 @@ Future<void> _submitModerationReport(
       );
   await tester.pump();
 
-  await pumpUntilFound(
+  await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('profile-options-menu')),
     reason: 'The party target profile did not load its options menu.',
   );
-  await tester.tap(find.byKey(const ValueKey('profile-options-menu')));
-  await tester.pump();
   await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('profile-report-action')),
@@ -745,13 +749,26 @@ Future<void> _tapEnabledFilledButton(
   Duration timeout = const Duration(seconds: 35),
   String? reason,
 }) async {
-  await scrollUntilFound(tester, finder, maxScrolls: 60, reason: reason);
   final deadline = DateTime.now().add(timeout);
+  await scrollUntilFound(
+    tester,
+    finder,
+    maxScrolls: 60,
+    timeout: timeout,
+    reason: reason,
+  );
   while (DateTime.now().isBefore(deadline)) {
-    final button = tester.widget<FilledButton>(finder);
-    if (button.onPressed != null) {
-      await tapAfterScroll(tester, finder, reason: reason);
-      return;
+    if (finder.evaluate().isNotEmpty) {
+      final button = tester.widget<FilledButton>(finder);
+      if (button.onPressed != null) {
+        await tapWhenVisible(
+          tester,
+          finder,
+          timeout: deadline.difference(DateTime.now()),
+          reason: reason,
+        );
+        return;
+      }
     }
     await tester.pump(const Duration(milliseconds: 100));
   }
