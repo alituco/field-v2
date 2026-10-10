@@ -2,6 +2,20 @@ import '../fixtures/fixture.dart';
 
 enum OpenQueueRole { goalkeeper, defender, midfielder, attacker }
 
+/// Midfielder is retained in the enum for legacy 6v6 match history only.
+const fieldrushOpenQueueRoles = [
+  OpenQueueRole.goalkeeper,
+  OpenQueueRole.defender,
+  OpenQueueRole.attacker,
+];
+
+DateTime gameLocalDateTime(DateTime instant, String timezone) =>
+    instant.toUtc().add(switch (timezone) {
+      'America/Phoenix' => const Duration(hours: -7),
+      'Asia/Bahrain' => const Duration(hours: 3),
+      _ => Duration.zero,
+    });
+
 class OpenQueueBookingCostPreview {
   const OpenQueueBookingCostPreview({
     required this.currency,
@@ -70,6 +84,9 @@ class OpenQueueBookingCostPreview {
 }
 
 String _moneyLabel(int fils, String currency) {
+  if (currency == 'USD') {
+    return '\$${(fils / 1000).toStringAsFixed(fils % 10 == 0 ? 2 : 3)}';
+  }
   final dinars = fils / 1000;
   final amount = dinars == dinars.roundToDouble()
       ? dinars.toInt().toString()
@@ -93,6 +110,12 @@ extension OpenQueueRoleX on OpenQueueRole {
   };
 
   int get matchCapacity => switch (this) {
+    OpenQueueRole.goalkeeper => 2,
+    OpenQueueRole.defender || OpenQueueRole.attacker => 6,
+    OpenQueueRole.midfielder => 0,
+  };
+
+  int get legacyMatchCapacity => switch (this) {
     OpenQueueRole.goalkeeper || OpenQueueRole.attacker => 2,
     OpenQueueRole.defender || OpenQueueRole.midfielder => 4,
   };
@@ -121,6 +144,7 @@ class OpenQueueGame {
     required this.capacity,
     required this.confirmedCount,
     required this.spots,
+    this.currency = 'BHD',
     this.whiteScore,
     this.blackScore,
     this.myBookingId,
@@ -153,6 +177,7 @@ class OpenQueueGame {
   final int capacity;
   final int confirmedCount;
   final Map<OpenQueueRole, int> spots;
+  final String currency;
   final int? whiteScore;
   final int? blackScore;
   final String? myBookingId;
@@ -255,18 +280,47 @@ class OpenQueueGame {
 
   bool get hasMyBooking => myBookingId != null;
 
+  // Both formats are constrained server-side. Capacity is included in all
+  // existing feed/booking contracts, including older deployed RPC versions.
+  bool get isFieldrushFormat => capacity == 14;
+
+  List<OpenQueueRole> get supportedRoles =>
+      isFieldrushFormat ? fieldrushOpenQueueRoles : OpenQueueRole.values;
+
+  int capacityFor(OpenQueueRole role) =>
+      isFieldrushFormat ? role.matchCapacity : role.legacyMatchCapacity;
+
   int spotsFor(OpenQueueRole role) => spots[role] ?? 0;
 
-  bool canBook(OpenQueueRole role) => !isFull && spotsFor(role) > 0;
+  bool canBook(OpenQueueRole role) => canBookAt(role, DateTime.now());
 
-  DateTime get bahrainStartsAt =>
-      startsAt.toUtc().add(const Duration(hours: 3));
+  bool canBookAt(OpenQueueRole role, DateTime now) =>
+      status == 'OPEN' &&
+      startsAt.isAfter(now) &&
+      !hasMyBooking &&
+      !hasRecordedScore &&
+      !hasPendingOperationalResolution &&
+      !isFull &&
+      capacityFor(role) > 0 &&
+      spotsFor(role) > 0;
 
-  DateTime get bahrainEndsAt => endsAt.toUtc().add(const Duration(hours: 3));
+  /// Wall-clock values for the two supported launch markets. Both zones have
+  /// fixed offsets; expanding markets needs an IANA timezone implementation.
+  DateTime localDateTime(DateTime instant) =>
+      gameLocalDateTime(instant, timezone);
+
+  DateTime get localStartsAt => localDateTime(startsAt);
+  DateTime get localEndsAt => localDateTime(endsAt);
+
+  // Compatibility aliases for existing fixture screens. The game, not the
+  // device or a hardcoded market, now determines the displayed wall clock.
+  DateTime get bahrainStartsAt => localStartsAt;
+
+  DateTime get bahrainEndsAt => localEndsAt;
 
   bool get isToday {
     final value = bahrainStartsAt;
-    final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+    final now = localDateTime(DateTime.now());
     return value.year == now.year &&
         value.month == now.month &&
         value.day == now.day;
@@ -274,7 +328,7 @@ class OpenQueueGame {
 
   bool get isTomorrow {
     final value = bahrainStartsAt;
-    final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+    final now = localDateTime(DateTime.now());
     final tomorrow = DateTime.utc(
       now.year,
       now.month,
@@ -307,10 +361,7 @@ class OpenQueueGame {
   String get startTimeLabel => _clock(bahrainStartsAt);
 
   String get priceLabel {
-    final dinars = priceFils / 1000;
-    return dinars == dinars.roundToDouble()
-        ? '${dinars.toInt()} BHD'
-        : '${dinars.toStringAsFixed(3)} BHD';
+    return _moneyLabel(priceFils, currency);
   }
 
   factory OpenQueueGame.fromJson(Map<String, dynamic> json) {
@@ -322,6 +373,7 @@ class OpenQueueGame {
       endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
+      currency: json['currency'] as String? ?? 'BHD',
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
@@ -371,6 +423,7 @@ class OpenQueueGame {
       endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
+      currency: json['currency'] as String? ?? 'BHD',
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
@@ -731,6 +784,7 @@ class OpenQueueCancellationPreview {
     this.explanation,
     this.checkInDeadlineAt,
     this.noShowCutoffAt,
+    this.currency = 'BHD',
   });
 
   final bool canCancel;
@@ -750,6 +804,7 @@ class OpenQueueCancellationPreview {
   final String? explanation;
   final DateTime? checkInDeadlineAt;
   final DateTime? noShowCutoffAt;
+  final String currency;
 
   int get effectiveRefundBps => refundBps ?? (refundPercent * 100);
 
@@ -793,11 +848,12 @@ class OpenQueueCancellationPreview {
 
   String get refundLabel {
     if (effectiveRefundBps == 0) return 'No refund';
-    return '${(refundAmountFils / 1000).toStringAsFixed(3)} BHD to Field wallet';
+    return '${_moneyLabel(refundAmountFils, currency)} to Field wallet';
   }
 
   bool hasSameConsequencesAs(OpenQueueCancellationPreview other) {
     return canCancel == other.canCancel &&
+        currency == other.currency &&
         policyVersionId == other.policyVersionId &&
         outcomeCode == other.outcomeCode &&
         strikeDelta == other.strikeDelta &&
@@ -817,6 +873,7 @@ class OpenQueueCancellationPreview {
       canCancel: json['can_cancel'] == true,
       refundPercent: _asInt(json['refund_percent']),
       refundAmountFils: _asInt(json['refund_amount_fils']),
+      currency: json['currency'] as String? ?? 'BHD',
       refundCutoffAt: _asDate(json['refund_cutoff_at']),
       serverNow: _asDate(json['server_now']),
       policyVersionId: _nonEmptyString(json['policy_version_id']),

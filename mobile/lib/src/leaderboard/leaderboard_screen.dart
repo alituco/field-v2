@@ -18,6 +18,7 @@ class LeaderboardScreen extends StatefulWidget {
     required this.clanRepository,
     required this.fixtureRepository,
     required this.leaderboardRepository,
+    this.profileRepository,
     this.activationTick = 0,
     this.playerActivationTick = 0,
   });
@@ -25,6 +26,7 @@ class LeaderboardScreen extends StatefulWidget {
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
   final LeaderboardRepository leaderboardRepository;
+  final ProfileRepository? profileRepository;
   final int activationTick;
   final int playerActivationTick;
 
@@ -42,14 +44,16 @@ class _LeaderboardRegion {
 enum _LeaderboardMode { clans, players }
 
 class _LeaderboardScreenState extends State<LeaderboardScreen> {
-  static const _activeRegion = _LeaderboardRegion(
+  static const _clanRegion = _LeaderboardRegion(
     id: 'bahrain',
     label: 'Bahrain',
   );
 
   static const _seasons = leaderboardSeasons;
 
-  final ProfileRepository _profileRepository = SupabaseProfileRepository();
+  late final ProfileRepository _profileRepository =
+      widget.profileRepository ?? SupabaseProfileRepository();
+  String _playerRegion = 'phoenix';
   _LeaderboardMode _mode = _LeaderboardMode.clans;
   int _seasonIndex = 0;
   int _loadGeneration = 0;
@@ -138,11 +142,16 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         widget.clanRepository.listClans(),
         widget.clanRepository.getMyClanMembership(),
         widget.leaderboardRepository.loadPlayerStats(season),
-        widget.leaderboardRepository.loadPlayerRatingLeaderboard(
-          season: season,
-        ),
         _profileRepository.getCurrentProfile(),
       ]);
+      if (!mounted || generation != _loadGeneration) return;
+      final profile = results[3] as PlayerProfile;
+      final reportedRegion = profile.playerRating?.region.trim().toLowerCase();
+      final region = reportedRegion == null || reportedRegion.isEmpty
+          ? 'phoenix'
+          : reportedRegion;
+      final playerRatings = await widget.leaderboardRepository
+          .loadPlayerRatingLeaderboard(season: season, region: region);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _clans = (results[0] as List<Clan>).toList()
@@ -153,8 +162,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
           });
         _myMembership = results[1] as ClanMembership?;
         _playerStats = results[2] as LeaderboardPlayerStats;
-        _playerRatings = results[3] as List<PlayerRatingLeaderboardEntry>;
-        _currentProfileId = (results[4] as PlayerProfile).id;
+        _playerRatings = playerRatings;
+        _playerRegion = region;
+        _currentProfileId = profile.id;
       });
     } catch (error) {
       if (!mounted || generation != _loadGeneration) return;
@@ -233,7 +243,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => _AllRankingsScreen(
-          region: _activeRegion,
+          region: _clanRegion,
           clans: rankedClans,
           clanRecords: _playerStats.clanRecords,
           myMembership: _myMembership,
@@ -254,7 +264,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         _clans
             .where(
               (clan) =>
-                  clan.region == _activeRegion.id &&
+                  clan.region == _clanRegion.id &&
                   _playerStats.isClanEligible(clan.id),
             )
             .toList()
@@ -354,7 +364,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
                 onPlayerTap: _openPlayerProfile,
               ),
             ] else ...[
-              _PlayerRatingHero(season: _selectedSeason),
+              _PlayerRatingHero(
+                season: _selectedSeason,
+                regionLabel: switch (_playerRegion) {
+                  'phoenix' => 'Phoenix, AZ',
+                  'bahrain' => 'Bahrain',
+                  _ => _playerRegion,
+                },
+              ),
               const SizedBox(height: 18),
               if (_isLoading)
                 const _LeaderboardLoadingState()
@@ -420,9 +437,10 @@ class _LeaderboardModeSelector extends StatelessWidget {
 }
 
 class _PlayerRatingHero extends StatelessWidget {
-  const _PlayerRatingHero({required this.season});
+  const _PlayerRatingHero({required this.season, required this.regionLabel});
 
   final LeaderboardSeason season;
+  final String regionLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -445,11 +463,11 @@ class _PlayerRatingHero extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'PLAYER LADDER',
                   style: TextStyle(
                     color: fieldEmerald200,
@@ -458,8 +476,8 @@ class _PlayerRatingHero extends StatelessWidget {
                     letterSpacing: 1.4,
                   ),
                 ),
-                SizedBox(height: 4),
-                Text(
+                const SizedBox(height: 4),
+                const Text(
                   'Your game. Your rating.',
                   style: TextStyle(
                     color: Colors.white,
@@ -467,10 +485,10 @@ class _PlayerRatingHero extends StatelessWidget {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
-                SizedBox(height: 5),
+                const SizedBox(height: 5),
                 Text(
-                  'Bahrain · Season rankings',
-                  style: TextStyle(
+                  '$regionLabel · Season rankings',
+                  style: const TextStyle(
                     color: Colors.white70,
                     fontSize: 12,
                     fontWeight: FontWeight.w600,

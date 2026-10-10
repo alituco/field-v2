@@ -1,5 +1,14 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
 import { isExactFieldStagingSupabaseUrl } from "../_shared/staging_guard.ts";
+import {
+  formatTapCheckoutAmount,
+  tapChargeAmountMatches,
+  tapCheckoutHashInput,
+  tapCustomerPhone,
+  type TapPaymentCurrency,
+  tapPaymentCurrency,
+  tapSupportedPaymentMethods,
+} from "../_shared/tap_checkout.ts";
 
 // deno-lint-ignore no-explicit-any
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
@@ -27,7 +36,7 @@ type PaymentIntent = {
   profile_id: string;
   purpose: PaymentPurpose;
   status: string;
-  currency: "BHD";
+  currency: TapPaymentCurrency;
   amount_fils: number;
   payload: Record<string, unknown>;
   quote_snapshot: Record<string, unknown>;
@@ -185,6 +194,7 @@ async function completeStagingE2ECheckout(
     quote.total_fils,
     "The checkout total is unavailable.",
   );
+  const currency = checkoutCurrency(quote.currency, amountFils);
   const id = crypto.randomUUID();
   const compactId = id.replaceAll("-", "");
   const chargeId = `field_e2e_${compactId}`;
@@ -205,7 +215,7 @@ async function completeStagingE2ECheckout(
       profile_id: context.userId,
       purpose: "SOLO_BOOKING",
       status: "CAPTURED",
-      currency: "BHD",
+      currency,
       amount_fils: amountFils,
       payload,
       quote_snapshot: quote,
@@ -319,9 +329,7 @@ async function prepareCheckout(
     quote.total_fils,
     "The checkout total is unavailable.",
   );
-  if (text(quote.currency)?.toUpperCase() !== "BHD") {
-    throw new HttpError("This checkout currency is not supported.", 409);
-  }
+  const currency = checkoutCurrency(quote.currency, amountFils);
 
   await context.admin
     .from("tap_payment_intents")
@@ -341,6 +349,7 @@ async function prepareCheckout(
 
   if (
     intent.amount_fils !== amountFils ||
+    intent.currency !== currency ||
     !jsonValuesEqual(intent.payload, payload) ||
     !jsonValuesEqual(intent.quote_snapshot, quote, new Set(["server_now"]))
   ) {
@@ -359,11 +368,12 @@ async function prepareCheckout(
   }
 
   const profile = await loadProfile(context.admin, context.userId);
-  const amount = formatBhd(intent.amount_fils);
+  const amount = formatTapCheckoutAmount(intent.amount_fils, currency);
   const hashString = await checkoutHash(
     context.secretKey,
     context.publicKey,
     amount,
+    currency,
     intent.transaction_reference,
     context.webhookUrl,
   );
@@ -377,21 +387,18 @@ async function prepareCheckout(
       hashString,
       language: "en",
       themeMode: "light",
-      supportedPaymentMethods: [
-        ...(context.applePayEnabled ? ["APPLE_PAY"] : []),
-        "BENEFIT_PAY",
-        "VISA",
-        "MASTERCARD",
-      ],
+      supportedPaymentMethods: tapSupportedPaymentMethods(
+        currency,
+        context.applePayEnabled,
+      ),
       paymentType: "ALL",
-      selectedCurrency: "BHD",
-      supportedCurrencies: ["BHD"],
+      selectedCurrency: currency,
+      supportedCurrencies: [currency],
       supportedPaymentTypes: [],
       supportedRegions: [],
       supportedSchemes: [],
       // Do not restrict the issuing country. Tap's own sandbox cards can map
-      // to non-Bahrain BIN countries (for example LR), even though the
-      // merchant and transaction are Bahrain/BHD.
+      // to countries different from the customer's market (for example LR).
       supportedCountries: [],
       gateway: {
         publicKey: context.publicKey,
@@ -420,12 +427,12 @@ async function prepareCheckout(
       },
       amount,
       order: {
-        currency: "BHD",
+        currency,
         amount,
         items: [
           {
             amount,
-            currency: "BHD",
+            currency,
             name: checkoutName(purpose),
             quantity: 1,
             description: checkoutDescription(purpose),
@@ -592,7 +599,7 @@ async function insertIntent(
       id,
       profile_id: context.userId,
       purpose,
-      currency: "BHD",
+      currency: checkoutCurrency(quote.currency, amountFils),
       amount_fils: amountFils,
       payload,
       quote_snapshot: quote,
@@ -615,7 +622,7 @@ async function insertIntent(
   return data as PaymentIntent;
 }
 
-async function findActiveIntent(
+function findActiveIntent(
   admin: SupabaseAnyClient,
   userId: string,
   purpose: PaymentPurpose,
@@ -706,9 +713,8 @@ function verifyChargeDetails(
   if (text(charge.currency)?.toUpperCase() !== intent.currency) {
     throw new HttpError("The payment currency does not match.", 409);
   }
-  const amount = Number(charge.amount);
   if (
-    !Number.isFinite(amount) || Math.round(amount * 1000) !== intent.amount_fils
+    !tapChargeAmountMatches(charge.amount, intent.amount_fils, intent.currency)
   ) {
     throw new HttpError("The payment amount does not match.", 409);
   }
@@ -750,35 +756,36 @@ function customerConfiguration(
     text(user.user_metadata?.name) ??
     "Field Player";
   const names = fullName.trim().split(/\s+/);
-  const rawPhone = text(profile?.phone) ?? user.phone ?? "";
-  const digits = rawPhone.replace(/\D/g, "");
-  const countryCode = digits.startsWith("973") ? "973" : "973";
-  const number = digits.startsWith(countryCode)
-    ? digits.slice(countryCode.length)
-    : digits;
+  const phone = tapCustomerPhone(user.phone ?? text(profile?.phone) ?? "");
+  if (!phone) {
+    throw new HttpError(
+      "Verify a valid phone number in account details before paying.",
+      409,
+    );
+  }
   return {
     firstName: names[0] || "Field",
     lastName: names.slice(1).join(" ") || "Player",
     email: user.email ?? "",
-    phone: {
-      countryCode,
-      number: number || "00000000",
-    },
+    phone,
   };
 }
 
-async function checkoutHash(
+function checkoutHash(
   secretKey: string,
   publicKey: string,
   amount: string,
+  currency: TapPaymentCurrency,
   transactionReference: string,
   postUrl: string,
 ) {
-  const input = `x_publickey${publicKey}` +
-    `x_amount${amount}` +
-    "x_currencyBHD" +
-    `x_transaction${transactionReference}` +
-    `x_post${postUrl}`;
+  const input = tapCheckoutHashInput(
+    publicKey,
+    amount,
+    currency,
+    transactionReference,
+    postUrl,
+  );
   return hmacSha256(secretKey, input);
 }
 
@@ -901,13 +908,28 @@ function chargeIdentifier(value: unknown) {
   return normalized;
 }
 
-function formatBhd(fils: number) {
-  return (fils / 1000).toFixed(3);
+function checkoutCurrency(
+  value: unknown,
+  amountFils: number,
+): TapPaymentCurrency {
+  const currency = tapPaymentCurrency(value);
+  if (!currency) {
+    throw new HttpError("This checkout currency is not supported.", 409);
+  }
+  try {
+    formatTapCheckoutAmount(amountFils, currency);
+  } catch {
+    throw new HttpError(
+      "The checkout total has invalid currency precision.",
+      409,
+    );
+  }
+  return currency;
 }
 
 function positiveInteger(value: unknown, message: string) {
   const number = Number(value);
-  if (!Number.isInteger(number) || number <= 0) {
+  if (!Number.isSafeInteger(number) || number <= 0) {
     throw new HttpError(message, 409);
   }
   return number;

@@ -11,7 +11,7 @@ abstract class LeaderboardRepository {
 
   Future<List<PlayerRatingLeaderboardEntry>> loadPlayerRatingLeaderboard({
     required LeaderboardSeason season,
-    String region = 'bahrain',
+    String region = 'phoenix',
   });
 }
 
@@ -22,10 +22,16 @@ class SupabaseLeaderboardRepository implements LeaderboardRepository {
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
     LeaderboardSeason season,
   ) async {
+    // The account's server-owned market preserves legacy Bahrain players while
+    // new Fieldrush accounts use Phoenix. Never move rating history in the UI.
+    final account = await _client.rpc('get_my_fieldrush_account');
+    final region = account is Map
+        ? account['ranking_region'] as String? ?? 'phoenix'
+        : 'phoenix';
     final response = await _client.rpc(
       'get_my_season_player_rating',
       params: {
-        'region_to_use': 'bahrain',
+        'region_to_use': region,
         'season_starts_on': season.startsOn,
         'season_ends_on': season.endsOn,
       },
@@ -40,7 +46,7 @@ class SupabaseLeaderboardRepository implements LeaderboardRepository {
   @override
   Future<List<PlayerRatingLeaderboardEntry>> loadPlayerRatingLeaderboard({
     required LeaderboardSeason season,
-    String region = 'bahrain',
+    String region = 'phoenix',
   }) async {
     final response = await _client.rpc(
       'list_season_player_rating_leaderboard',

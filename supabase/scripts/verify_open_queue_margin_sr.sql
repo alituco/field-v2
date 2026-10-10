@@ -120,6 +120,8 @@ begin
   where profile_id = any(player_ids);
 
   insert into public.open_queue_games (
+    format_version, currency, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     status,
     venue,
     starts_at,
@@ -127,6 +129,7 @@ begin
     timezone,
     created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 12, 2, 4, 4, 2,
     'OPEN',
     'Margin SR rollback verification A',
     game_starts[1],
@@ -210,6 +213,8 @@ begin
   where profile_id = any(player_ids);
 
   insert into public.open_queue_games (
+    format_version, currency, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     status,
     venue,
     starts_at,
@@ -217,6 +222,7 @@ begin
     timezone,
     created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 12, 2, 4, 4, 2,
     'OPEN',
     'Margin SR rollback verification B',
     game_starts[2],

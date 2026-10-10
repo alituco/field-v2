@@ -6,14 +6,14 @@ enum RatingDivision {
   division5(
     number: 5,
     minimumRating: 0,
-    maximumRating: 999,
+    maximumRating: 1099,
     colors: [Color(0xFFF6E2C5), Color(0xFFC08A4E), Color(0xFF6B3D16)],
     highlight: Color(0xFFFFF3DF),
     stroke: Color(0xFF3F2410),
   ),
   division4(
     number: 4,
-    minimumRating: 1000,
+    minimumRating: 1100,
     maximumRating: 1299,
     colors: [Color(0xFFE4ECF3), Color(0xFF8695A5), Color(0xFF3C4652)],
     highlight: Color(0xFFF8FBFF),
@@ -22,22 +22,22 @@ enum RatingDivision {
   division3(
     number: 3,
     minimumRating: 1300,
-    maximumRating: 1599,
+    maximumRating: 1499,
     colors: [Color(0xFFF8FAFC), Color(0xFF9FB0C3), Color(0xFF465569)],
     highlight: Color(0xFFFFFFFF),
     stroke: Color(0xFF1E293B),
   ),
   division2(
     number: 2,
-    minimumRating: 1600,
-    maximumRating: 1799,
+    minimumRating: 1500,
+    maximumRating: 1649,
     colors: [Color(0xFFFEF0B8), Color(0xFFF2A416), Color(0xFF8A4B0C)],
     highlight: Color(0xFFFFF8D8),
     stroke: Color(0xFF3A1D02),
   ),
   division1(
     number: 1,
-    minimumRating: 1800,
+    minimumRating: 1650,
     maximumRating: null,
     colors: [Color(0xFFE9FFF6), Color(0xFF34D399), Color(0xFF065F46)],
     highlight: Color(0xFFF0FFF8),
@@ -84,10 +84,10 @@ enum RatingDivision {
 }
 
 RatingDivision divisionFromRating(int rating) {
-  if (rating >= 1800) return RatingDivision.division1;
-  if (rating >= 1600) return RatingDivision.division2;
+  if (rating >= 1650) return RatingDivision.division1;
+  if (rating >= 1500) return RatingDivision.division2;
   if (rating >= 1300) return RatingDivision.division3;
-  if (rating >= 1000) return RatingDivision.division4;
+  if (rating >= 1100) return RatingDivision.division4;
   return RatingDivision.division5;
 }
 

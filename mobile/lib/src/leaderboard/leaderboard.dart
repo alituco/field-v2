@@ -67,7 +67,7 @@ class PlayerRatingLeaderboardEntry {
       losses: _leaderboardInt(json['losses']),
       draws: _leaderboardInt(json['draws']),
       lastChange: _leaderboardInt(json['last_change']),
-      region: json['region'] as String? ?? 'bahrain',
+      region: json['region'] as String? ?? 'phoenix',
     );
   }
 }
@@ -113,7 +113,7 @@ const leaderboardSeasons = [
 ];
 
 LeaderboardSeason get activeLeaderboardSeason =>
-    leaderboardSeasonForDate(_bahrainToday());
+    leaderboardSeasonForDate(_phoenixToday());
 
 LeaderboardSeason leaderboardSeasonForDate(DateTime date) {
   final day = DateTime.utc(date.year, date.month, date.day);
@@ -130,15 +130,16 @@ LeaderboardSeason leaderboardSeasonForDate(DateTime date) {
 }
 
 bool isActiveLeaderboardSeason(LeaderboardSeason season, {DateTime? now}) {
-  final bahrainDay = now ?? _bahrainToday();
-  final day = DateTime.utc(bahrainDay.year, bahrainDay.month, bahrainDay.day);
+  final marketDay = now ?? _phoenixToday();
+  final day = DateTime.utc(marketDay.year, marketDay.month, marketDay.day);
   final startsOn = DateTime.parse('${season.startsOn}T00:00:00Z');
   final endsOn = DateTime.parse('${season.endsOn}T00:00:00Z');
   return !day.isBefore(startsOn) && !day.isAfter(endsOn);
 }
 
-DateTime _bahrainToday() {
-  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+DateTime _phoenixToday() {
+  // Phoenix does not observe daylight saving time.
+  final now = DateTime.now().toUtc().subtract(const Duration(hours: 7));
   return DateTime.utc(now.year, now.month, now.day);
 }
 

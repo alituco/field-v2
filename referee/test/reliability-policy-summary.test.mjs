@@ -37,12 +37,13 @@ test("human summary includes attendance, deposits, sanctions, SR, and appeals", 
     ...section.rules.flatMap((rule) => [rule.title, rule.explanation, ...(rule.facts ?? [])]),
   ]).join("\n");
 
-  assert.match(text, /six|6v6/i);
+  assert.match(text, /Solo matches are 7v7\. Clan matches are 6v6\./);
   assert.match(text, /Player reliability deposit/);
   assert.match(text, /Player sanction ladder/);
   assert.match(text, /Late-player SR/);
   assert.match(text, /Routine traffic is not automatically excused/);
-  assert.match(text, /Field Wallet in BHD/);
+  assert.match(text, /Field Wallet in the game's currency/);
+  assert.match(text, /USD and historical BHD balances are kept separately/);
 });
 
 test("downloadable document is standalone, printable, and escapes admin copy", () => {

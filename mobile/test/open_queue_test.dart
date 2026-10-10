@@ -6,14 +6,14 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('Player Rating uses the shared five-division thresholds', () {
     expect(ratingDivisionLabel(0), 'Division 5');
-    expect(ratingDivisionLabel(999), 'Division 5');
-    expect(ratingDivisionLabel(1000), 'Division 4');
+    expect(ratingDivisionLabel(1099), 'Division 5');
+    expect(ratingDivisionLabel(1100), 'Division 4');
     expect(ratingDivisionLabel(1299), 'Division 4');
     expect(ratingDivisionLabel(1300), 'Division 3');
-    expect(ratingDivisionLabel(1599), 'Division 3');
-    expect(ratingDivisionLabel(1600), 'Division 2');
-    expect(ratingDivisionLabel(1799), 'Division 2');
-    expect(ratingDivisionLabel(1800), 'Division 1');
+    expect(ratingDivisionLabel(1499), 'Division 3');
+    expect(ratingDivisionLabel(1500), 'Division 2');
+    expect(ratingDivisionLabel(1649), 'Division 2');
+    expect(ratingDivisionLabel(1650), 'Division 1');
     expect(ratingDivisionLabel(2600), 'Division 1');
   });
 
@@ -47,17 +47,18 @@ void main() {
     },
   );
 
-  test('role caps match balanced six-a-side teams', () {
+  test('new roles use 7v7 while historical MID capacity remains available', () {
     expect(OpenQueueRole.goalkeeper.matchCapacity, 2);
-    expect(OpenQueueRole.defender.matchCapacity, 4);
-    expect(OpenQueueRole.midfielder.matchCapacity, 4);
-    expect(OpenQueueRole.attacker.matchCapacity, 2);
+    expect(OpenQueueRole.defender.matchCapacity, 6);
+    expect(OpenQueueRole.midfielder.matchCapacity, 0);
+    expect(OpenQueueRole.attacker.matchCapacity, 6);
+    expect(OpenQueueRole.midfielder.legacyMatchCapacity, 4);
     expect(
       OpenQueueRole.values.fold<int>(
         0,
         (total, role) => total + role.matchCapacity,
       ),
-      12,
+      14,
     );
   });
 

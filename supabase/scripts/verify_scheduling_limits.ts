@@ -3,6 +3,7 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
+import { legacyOpenQueueFormat } from "./_shared/legacy_open_queue_format.ts";
 
 type ProfileRow = { id: string; phone: string };
 type FixtureSlot = {
@@ -432,6 +433,7 @@ async function activeFixtureCount(clanId: string) {
 async function createOpenQueueGame(slotOffset: number, suffix: string) {
   const startsAt = futureBahrainOpenQueueStart(slotOffset);
   const { data, error } = await admin.from("open_queue_games").insert({
+    ...legacyOpenQueueFormat,
     venue: `[LIMIT VERIFY ${suffix}] ${crypto.randomUUID().slice(0, 8)}`,
     starts_at: startsAt.toISOString(),
     ends_at: new Date(startsAt.getTime() + 60 * 60 * 1000).toISOString(),

@@ -2,8 +2,9 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import '../clans/clan_widgets.dart';
+import '../auth/fieldrush_auth_theme.dart';
 
+/// The floating, frosted navigation from the Fieldrush reference.
 class FieldBottomNav extends StatelessWidget {
   const FieldBottomNav({
     super.key,
@@ -13,208 +14,124 @@ class FieldBottomNav extends StatelessWidget {
 
   final int? selectedIndex;
   final ValueChanged<int> onSelected;
-
-  static const _items = [
-    _FieldBottomNavItem(
-      icon: Icons.home_outlined,
-      selectedIcon: Icons.home_rounded,
-      label: 'Home',
-    ),
-    _FieldBottomNavItem(
-      icon: Icons.calendar_month_outlined,
-      selectedIcon: Icons.calendar_month_rounded,
-      label: 'Fixtures',
-    ),
-    _FieldBottomNavItem(
-      icon: Icons.shield_outlined,
-      selectedIcon: Icons.shield_rounded,
-      label: 'Clans',
-    ),
-    _FieldBottomNavItem(
-      icon: Icons.emoji_events_outlined,
-      selectedIcon: Icons.emoji_events_rounded,
-      label: 'Ranks',
-    ),
-    _FieldBottomNavItem(
-      icon: Icons.person_outline_rounded,
-      selectedIcon: Icons.person_rounded,
-      label: 'Profile',
-    ),
-  ];
+  static const _labels = ['Home', 'Fixtures', 'Clans', 'Ranks', 'You'];
 
   @override
   Widget build(BuildContext context) {
     if (MediaQuery.viewInsetsOf(context).bottom > 0) {
       return const SizedBox.shrink();
     }
-
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      minimum: const EdgeInsets.fromLTRB(13, 0, 13, 15),
       child: DecoratedBox(
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(32),
           boxShadow: [
             BoxShadow(
-              color: fieldGray900.withValues(alpha: 0.16),
-              blurRadius: 30,
-              spreadRadius: -5,
-              offset: const Offset(0, 13),
-            ),
-            BoxShadow(
-              color: fieldEmerald600.withValues(alpha: 0.09),
-              blurRadius: 20,
-              spreadRadius: -7,
-              offset: const Offset(0, 8),
+              color: FieldrushAuthTheme.ink.withValues(alpha: .3),
+              blurRadius: 34,
+              spreadRadius: -10,
+              offset: const Offset(0, 14),
             ),
           ],
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(32),
           child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+            filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
             child: Container(
               key: const ValueKey('field-liquid-glass-nav'),
-              height: 68,
+              constraints: const BoxConstraints(minHeight: 64),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Colors.white.withValues(alpha: 0.82),
-                    const Color(0xFFF3FAF7).withValues(alpha: 0.66),
-                    Colors.white.withValues(alpha: 0.56),
-                  ],
-                  stops: const [0, 0.52, 1],
-                ),
-                border: Border.all(
-                  color: Colors.white.withValues(alpha: 0.88),
-                  width: 1.2,
-                ),
+                color: FieldrushAuthTheme.cream.withValues(alpha: .58),
+                border: Border.all(color: Colors.white.withValues(alpha: .8)),
                 borderRadius: BorderRadius.circular(32),
               ),
-              child: Stack(
+              child: Row(
                 children: [
-                  Positioned(
-                    top: 1,
-                    left: 24,
-                    right: 24,
-                    child: Container(
-                      height: 1,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [
-                            Colors.transparent,
-                            Colors.white.withValues(alpha: 0.95),
-                            Colors.transparent,
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.all(5),
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final itemWidth = constraints.maxWidth / _items.length;
-                        final index = selectedIndex?.clamp(
-                          0,
-                          _items.length - 1,
-                        );
-                        final alignmentX = index == null
-                            ? -1.0
-                            : -1 + (2 * index / (_items.length - 1));
-
-                        return Stack(
-                          children: [
-                            AnimatedAlign(
-                              key: const ValueKey(
-                                'field-liquid-glass-selection',
-                              ),
-                              duration: const Duration(milliseconds: 360),
-                              curve: Curves.easeOutCubic,
-                              alignment: Alignment(alignmentX, 0),
-                              child: AnimatedOpacity(
-                                duration: const Duration(milliseconds: 180),
-                                opacity: index == null ? 0 : 1,
-                                child: SizedBox(
-                                  width: itemWidth,
-                                  height: double.infinity,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 3,
-                                      vertical: 2,
-                                    ),
-                                    child: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: [
-                                            Colors.white.withValues(
-                                              alpha: 0.94,
-                                            ),
-                                            fieldEmerald50.withValues(
-                                              alpha: 0.76,
-                                            ),
-                                            Colors.white.withValues(
-                                              alpha: 0.62,
-                                            ),
-                                          ],
-                                        ),
-                                        border: Border.all(
-                                          color: Colors.white.withValues(
-                                            alpha: 0.96,
-                                          ),
-                                        ),
-                                        borderRadius: BorderRadius.circular(25),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: fieldEmerald700.withValues(
-                                              alpha: 0.13,
-                                            ),
-                                            blurRadius: 14,
-                                            spreadRadius: -5,
-                                            offset: const Offset(0, 6),
-                                          ),
-                                          BoxShadow(
-                                            color: Colors.white.withValues(
-                                              alpha: 0.80,
-                                            ),
-                                            blurRadius: 5,
-                                            offset: const Offset(-2, -2),
-                                          ),
-                                        ],
+                  for (var index = 0; index < _labels.length; index++)
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 1),
+                        child: Semantics(
+                          selected: selectedIndex == index,
+                          button: true,
+                          label: _labels[index],
+                          excludeSemantics: true,
+                          child: AnimatedContainer(
+                            key: selectedIndex == index
+                                ? const ValueKey('field-liquid-glass-selection')
+                                : null,
+                            duration: const Duration(milliseconds: 180),
+                            decoration: BoxDecoration(
+                              color: selectedIndex == index
+                                  ? FieldrushAuthTheme.forest
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(25),
+                              boxShadow: selectedIndex == index
+                                  ? [
+                                      BoxShadow(
+                                        color: FieldrushAuthTheme.ink
+                                            .withValues(alpha: .42),
+                                        offset: const Offset(0, 4),
+                                        blurRadius: 12,
+                                        spreadRadius: -2,
                                       ),
-                                    ),
+                                    ]
+                                  : null,
+                            ),
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                key: ValueKey('field-bottom-nav-item-$index'),
+                                borderRadius: BorderRadius.circular(25),
+                                onTap: () => onSelected(index),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 7,
+                                  ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      SizedBox(
+                                        width: 21,
+                                        height: 21,
+                                        child: CustomPaint(
+                                          painter: _NavIcon(
+                                            index,
+                                            selectedIndex == index
+                                                ? Colors.white
+                                                : const Color(0xFF414A42),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        _labels[index],
+                                        maxLines: 1,
+                                        style: TextStyle(
+                                          fontFamily: 'PlusJakartaSans',
+                                          fontSize: 10,
+                                          height: 1.1,
+                                          fontWeight: selectedIndex == index
+                                              ? FontWeight.w800
+                                              : FontWeight.w700,
+                                          color: selectedIndex == index
+                                              ? Colors.white
+                                              : const Color(0xFF414A42),
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),
                             ),
-                            Row(
-                              children: [
-                                for (
-                                  var itemIndex = 0;
-                                  itemIndex < _items.length;
-                                  itemIndex++
-                                )
-                                  Expanded(
-                                    child: _FieldBottomNavButton(
-                                      key: ValueKey(
-                                        'field-bottom-nav-item-$itemIndex',
-                                      ),
-                                      item: _items[itemIndex],
-                                      isActive: index == itemIndex,
-                                      onTap: () => onSelected(itemIndex),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ],
-                        );
-                      },
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -225,85 +142,92 @@ class FieldBottomNav extends StatelessWidget {
   }
 }
 
-class _FieldBottomNavItem {
-  const _FieldBottomNavItem({
-    required this.icon,
-    required this.selectedIcon,
-    required this.label,
-  });
-
-  final IconData icon;
-  final IconData selectedIcon;
-  final String label;
-}
-
-class _FieldBottomNavButton extends StatelessWidget {
-  const _FieldBottomNavButton({
-    super.key,
-    required this.item,
-    required this.isActive,
-    required this.onTap,
-  });
-
-  final _FieldBottomNavItem item;
-  final bool isActive;
-  final VoidCallback onTap;
+class _NavIcon extends CustomPainter {
+  const _NavIcon(this.index, this.color);
+  final int index;
+  final Color color;
 
   @override
-  Widget build(BuildContext context) {
-    final color = isActive ? fieldEmerald700 : fieldGray500;
-
-    return Semantics(
-      selected: isActive,
-      button: true,
-      label: item.label,
-      child: Tooltip(
-        message: item.label,
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(25),
-            child: SizedBox.expand(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  AnimatedScale(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutBack,
-                    scale: isActive ? 1.08 : 1,
-                    child: Icon(
-                      isActive ? item.selectedIcon : item.icon,
-                      size: isActive ? 24 : 23,
-                      color: color,
-                      weight: isActive ? 2.8 : 2,
-                      shadows: isActive
-                          ? [
-                              Shadow(
-                                color: fieldEmerald500.withValues(alpha: 0.24),
-                                blurRadius: 8,
-                              ),
-                            ]
-                          : null,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  AnimatedDefaultTextStyle(
-                    duration: const Duration(milliseconds: 220),
-                    style: TextStyle(
-                      color: color,
-                      fontSize: 9.5,
-                      height: 1,
-                      fontWeight: isActive ? FontWeight.w800 : FontWeight.w600,
-                    ),
-                    child: Text(item.label),
-                  ),
-                ],
-              ),
-            ),
+  void paint(Canvas canvas, Size size) {
+    canvas.scale(size.width / 24, size.height / 24);
+    final pen = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.9
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    switch (index) {
+      case 0:
+        canvas.drawPath(
+          Path()
+            ..moveTo(4, 10.4)
+            ..lineTo(12, 4)
+            ..lineTo(20, 10.4)
+            ..lineTo(20, 19)
+            ..quadraticBezierTo(20, 20.5, 18.5, 20.5)
+            ..lineTo(15, 20.5)
+            ..lineTo(15, 15)
+            ..lineTo(9, 15)
+            ..lineTo(9, 20.5)
+            ..lineTo(5.5, 20.5)
+            ..quadraticBezierTo(4, 20.5, 4, 19)
+            ..close(),
+          pen,
+        );
+      case 1:
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            const Rect.fromLTWH(3.5, 5, 17, 15.5),
+            const Radius.circular(2.5),
           ),
-        ),
-      ),
-    );
+          pen,
+        );
+        canvas.drawPath(
+          Path()
+            ..moveTo(3.5, 10)
+            ..lineTo(20.5, 10)
+            ..moveTo(8, 3)
+            ..lineTo(8, 7)
+            ..moveTo(16, 3)
+            ..lineTo(16, 7),
+          pen,
+        );
+      case 2:
+        canvas.drawPath(
+          Path()
+            ..moveTo(12, 3.5)
+            ..lineTo(19, 6)
+            ..lineTo(19, 11.4)
+            ..cubicTo(19, 15.8, 16.1, 19, 12, 20.5)
+            ..cubicTo(7.9, 19, 5, 15.8, 5, 11.4)
+            ..lineTo(5, 6)
+            ..close(),
+          pen,
+        );
+      case 3:
+        for (final rect in [
+          const Rect.fromLTWH(3.5, 13, 5.5, 7.5),
+          const Rect.fromLTWH(9.25, 7.5, 5.5, 13),
+          const Rect.fromLTWH(15, 10.5, 5.5, 10),
+        ]) {
+          canvas.drawRRect(
+            RRect.fromRectAndRadius(rect, const Radius.circular(1)),
+            pen,
+          );
+        }
+      case 4:
+        canvas.drawCircle(const Offset(12, 8.2), 3.8, pen);
+        canvas.drawPath(
+          Path()
+            ..moveTo(4.8, 20.5)
+            ..cubicTo(5.7, 16.6, 8.4, 14.5, 12, 14.5)
+            ..cubicTo(15.6, 14.5, 18.3, 16.6, 19.2, 20.5),
+          pen,
+        );
+    }
   }
+
+  @override
+  bool shouldRepaint(_NavIcon oldDelegate) =>
+      index != oldDelegate.index || color != oldDelegate.color;
 }

@@ -31,6 +31,12 @@ abstract interface class OpenQueueBookingLookupRepository {
   Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId);
 }
 
+/// Market discovery applies the market predicate before the server feed limit.
+/// The historical, all-market [OpenQueueRepository.listGames] stays available.
+abstract interface class OpenQueueMarketRepository {
+  Future<List<OpenQueueGame>> listMarketGames(String timezone);
+}
+
 abstract interface class OpenQueueReliabilityLookupRepository {
   Future<MatchReliabilityContext?> getMatchReliabilityContext(String gameId);
 }
@@ -46,6 +52,7 @@ class SupabaseOpenQueueRepository
     with SupabaseOpenQueuePartyRepository
     implements
         OpenQueueRepository,
+        OpenQueueMarketRepository,
         OpenQueueBookingLookupRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
@@ -77,6 +84,7 @@ class SupabaseOpenQueueRepository
       ends_at,
       timezone,
       price_fils,
+      currency,
       age_label,
       capacity,
       white_score,
@@ -92,19 +100,50 @@ class SupabaseOpenQueueRepository
   @override
   Future<List<OpenQueueGame>> listGames() async {
     final response = await _client.rpc('list_open_queue_games');
-    return [
-      for (final row in response as List<dynamic>)
-        OpenQueueGame.fromJson(Map<String, dynamic>.from(row as Map)),
-    ];
+    final rows = await _withCurrencies(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
+  }
+
+  @override
+  Future<List<OpenQueueGame>> listMarketGames(String timezone) async {
+    final response = await _client.rpc(
+      'list_open_queue_games_for_market',
+      params: {'timezone_to_use': timezone},
+    );
+    final rows = await _withCurrencies(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
   }
 
   @override
   Future<List<OpenQueueGame>> listFixtureGames() async {
     final response = await _client.rpc('list_open_queue_fixture_games');
-    return [
-      for (final row in response as List<dynamic>)
-        OpenQueueGame.fromJson(Map<String, dynamic>.from(row as Map)),
+    final rows = await _withCurrencies(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
+  }
+
+  Future<List<Map<String, dynamic>>> _withCurrencies(
+    List<dynamic> values,
+  ) async {
+    final rows = [
+      for (final value in values) Map<String, dynamic>.from(value as Map),
     ];
+    if (rows.isEmpty) return rows;
+    // Existing table-returning RPC signatures remain compatible for history.
+    // Fetch explicit currency separately; fail closed on an unmigrated server.
+    final currencies = await _client
+        .from('open_queue_games')
+        .select('id, currency')
+        .inFilter('id', [for (final row in rows) row['id'] as String]);
+    final byId = {for (final row in currencies) row['id']: row['currency']};
+    return [
+      for (final row in rows)
+        {...row, 'currency': _requiredCurrency(byId[row['id']])},
+    ];
+  }
+
+  String _requiredCurrency(Object? value) {
+    if (value == 'USD' || value == 'BHD') return value as String;
+    throw StateError('The game currency is unavailable. Please try again.');
   }
 
   @override
@@ -120,6 +159,25 @@ class SupabaseOpenQueueRepository
       ),
       _ => throw StateError('Solo match not found.'),
     };
+    final currencyRow = await _client
+        .from('open_queue_games')
+        .select('currency')
+        .eq('id', gameId)
+        .single();
+    final currency = _requiredCurrency(currencyRow['currency']);
+    final gameKey = row['game'] is Map
+        ? 'game'
+        : row['open_queue_game'] is Map
+        ? 'open_queue_game'
+        : null;
+    if (gameKey == null) {
+      row['currency'] = currency;
+    } else {
+      row[gameKey] = {
+        ...Map<String, dynamic>.from(row[gameKey] as Map),
+        'currency': currency,
+      };
+    }
     return OpenQueueMatchDetail.fromJson(row);
   }
 
@@ -245,7 +303,19 @@ class SupabaseOpenQueueRepository
       ),
       _ => throw StateError('Cancellation preview is unavailable.'),
     };
-    return OpenQueueCancellationPreview.fromJson(row);
+    final booking = await _client
+        .from('open_queue_bookings')
+        .select(
+          'game:open_queue_games!open_queue_bookings_game_id_fkey(currency)',
+        )
+        .eq('id', bookingId)
+        .single();
+    final game = booking['game'];
+    final currency = game is Map ? game['currency'] : null;
+    return OpenQueueCancellationPreview.fromJson({
+      ...row,
+      'currency': _requiredCurrency(currency),
+    });
   }
 
   @override

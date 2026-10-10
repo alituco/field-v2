@@ -330,6 +330,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _openEditProfile() async {
+    final openAccount = widget.onOpenAccount;
+    if (openAccount != null) {
+      await openAccount();
+      if (mounted) {
+        final next = _loadProfile();
+        setState(() => _profileFuture = next);
+      }
+      return;
+    }
     final profile = _latestProfile;
     if (profile == null) return;
 

@@ -1,6 +1,6 @@
 # Fieldrush account setup
 
-This foundation replaces the mobile app’s signup and account entry flow with the supplied Fieldrush design. It supports phone OTP and Google, requires a verified phone and an adult birthday, and keeps account identity separate from public player profiles. Games, payments, rankings, the main Home screen and the website remain outside this design phase.
+This foundation replaces the mobile app’s signup and account entry flow with the supplied Fieldrush design. It supports phone OTP and Google, requires a verified phone and an adult birthday, and keeps account identity separate from public player profiles. The Home and Account details extension adds the prototype's native layouts and the Phoenix solo-game rules below. The rest of the app and the website have not received that full visual redesign.
 
 ## What is implemented
 
@@ -11,6 +11,31 @@ This foundation replaces the mobile app’s signup and account entry flow with t
 - Unique lowercase usernames of 3–20 letters, digits, dots or underscores. Reserved staff, brand and technical names include separator-obfuscated and numeric-suffix variants; ordinary names such as `devin` remain usable.
 - Backend 18+ validation and versioned Terms and Privacy acceptance. Finishing signup opens Home immediately; no welcome confirmation or tour-completion step is required.
 - Account settings, Google linking, verified phone change, recovery and guarded deletion. Birthday corrections after signup require support.
+
+## Home and account details
+
+Home uses real bookings, positions, game capacity, notifications, public player search and season ratings. It shows an empty position picker until a game is booked, then the upcoming game, with additional bookings below. Streaks are intentionally omitted. Account details provides inline name, username and email editing, avatar upload/reset, verified phone changes, and a server-owned home city. Navigating away from unsaved edits requires confirmation.
+
+New Phoenix solo games are 7v7: one goalkeeper, three defenders and three attackers per team. Prices default to **USD 13 per player**, and admins can set a different whole-cent USD price when creating a game. The existing Tuesday/Friday 8:30–9:30 PM schedule now uses Phoenix time for new solo games. Division boundaries are 1100, 1300, 1500 and 1650 SR, with two rated placement games. Phoenix is the launch city; self-service city changes are not enabled.
+
+Existing 6v6 games, midfielder bookings and historical clan games retain their original rules and BHD currency. Previously rated accounts retain their market and history. Only completed, unrated Fieldrush accounts without legacy game, payment or wallet obligations move to Phoenix. This is not a database reset.
+
+### Deployment order for this extension
+
+The following changes are local until explicitly deployed. Apply the October 10 migrations in timestamp order, deploy the updated `tap-payment` and `tap-payment-webhook` functions, then release the matching admin and mobile clients:
+
+- `20261010000000_fieldrush_phoenix_game_format.sql`: versioned solo formats, Phoenix schedule, team allocation, account market and policy snapshots.
+- `20261010000100_fieldrush_usd_wallet_isolation.sql`: currency-safe payment intent checks and separate USD wallet accounting.
+- `20261010000200_move_fresh_fieldrush_accounts_to_phoenix.sql`: guarded migration of eligible fresh accounts only.
+- `20261010000500_fieldrush_home_activity.sql`: recipient-only notification read acknowledgements.
+
+Coordinate this as a staging rollout: do not create USD games while old BHD-only payment functions are still deployed. Verify that the Tap staging merchant accepts USD and the requested payment methods before end-to-end checkout testing. Client tests do not establish merchant currency activation. BenefitPay remains BHD-only; USD uses card and Apple Pay where the merchant supports them.
+
+USD and BHD wallet credits are never converted or combined. Database amount fields retain their existing integer-thousandths contract (`13000` means USD 13.00 for USD games). Card charges use whole cents; policy refunds preserve exact ledger values, including fractional cents, and the wallet displays that precision. This extension does not add wallet spending.
+
+Use `flutter analyze` and `flutter test` in `mobile`, and `npm test` plus `npm run typecheck` in `referee`. The isolated PostgreSQL fixture checks in `supabase/scripts/test_fieldrush_market.mjs` cover both formats, assignments, policies and wallet isolation. They supplement, rather than replace, a complete local Supabase migration replay and hosted device/payment checks.
+
+Local verification for this extension: 345 Flutter tests, Flutter analysis, 73 admin tests, admin type-checking and production build, 26 Deno tests, and 39 isolated PostgreSQL checks passed. The staging iOS simulator build also passed. Full Supabase migration replay was unavailable because the local Docker daemon was stopped. Real USD checkout and a complete 14-player check-in → match completion → refund journey have not been exercised; the existing hosted E2E fixtures deliberately retain their legacy 12-player/BHD format.
 
 ## Hosted staging setup
 
@@ -65,7 +90,7 @@ For the first transition from the old suite, the existing reserved test accounts
 
 Never use editable `user_metadata` as permission to delete a real account. Subsequent fixture resets require the protected markers and the exact reserved phone. These existing Bahrain-format numbers are isolated legacy test infrastructure, not the new app's default country or market.
 
-### Local verification on this branch
+### Earlier account-foundation verification (October 9)
 
 All 293 Flutter tests, Flutter analysis, the staging iOS simulator build, 18 CI-listed Deno tests and the new rollback-only database regression passed. Android compilation remains unverified because this machine has no Android SDK. Real hosted SMS, Google OAuth and hosted E2E have not been run for this branch.
 

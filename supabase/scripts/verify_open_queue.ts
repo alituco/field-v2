@@ -3,6 +3,7 @@ import {
   type SupabaseClient,
 } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
+import { legacyOpenQueueFormat } from "./_shared/legacy_open_queue_format.ts";
 
 type ProfileRow = { id: string; phone: string | null };
 
@@ -253,6 +254,7 @@ async function createGame(startsAt: Date, suffix: string) {
   const { data, error } = await admin
     .from("open_queue_games")
     .insert({
+      ...legacyOpenQueueFormat,
       venue: `[OQ VERIFY ${suffix}] ${crypto.randomUUID().slice(0, 8)}`,
       starts_at: startsAt.toISOString(),
       ends_at: new Date(startsAt.getTime() + 60 * 60 * 1000).toISOString(),

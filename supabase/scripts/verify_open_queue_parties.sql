@@ -81,8 +81,11 @@ begin
   end if;
 
   insert into public.open_queue_games (
+    format_version, currency, timezone, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     venue, starts_at, ends_at, created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 'Asia/Bahrain', 12, 2, 4, 4, 2,
     'Party verification pitch A',
     game_starts[1],
     game_starts[1] + interval '1 hour',
@@ -459,8 +462,11 @@ begin
   -- A two-goalkeeper party can never fit one GK per side. Reject it at accept
   -- time even though ten roster positions are still future placeholders.
   insert into public.open_queue_games (
+    format_version, currency, timezone, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     venue, starts_at, ends_at, created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 'Asia/Bahrain', 12, 2, 4, 4, 2,
     'Party verification pitch B',
     game_starts[2],
     game_starts[2] + interval '1 hour',

@@ -11,6 +11,7 @@ import {
 import { loadAdminOpenQueueGames } from "./open-queue-referee-data";
 import { loadAdminFixtures } from "./referee-data";
 import type { RefereeFixture } from "./types";
+import { adminGameCurrency, type AdminGameCurrency } from "./admin-game-money";
 
 export type AdminGameAuditItem = {
   id: string;
@@ -101,6 +102,7 @@ export type AdminGameResolutionCase = {
 
 export type AdminGameDetail = {
   fixture: RefereeFixture;
+  currency: AdminGameCurrency;
   participants: AdminGameParticipants;
   reserves: {
     active: AdminGameReserve[];
@@ -158,6 +160,7 @@ export async function loadAdminGameDetail(
     stoppageResult,
     ratingSummary,
     resolutionCase,
+    currencyResult,
   ] = await Promise.all([
     gamePromise,
     loadAdminGameParticipants(db, matchKind, matchId),
@@ -190,6 +193,9 @@ export async function loadAdminGameDetail(
       ? loadClanRatingSummary(db, matchId)
       : loadSoloRatingSummary(db, matchId),
     loadAdminGameResolution(db, matchKind, matchId),
+    matchKind === "SOLO"
+      ? db.from("open_queue_games").select("currency").eq("id", matchId).single()
+      : Promise.resolve({ data: null, error: null }),
   ]);
 
   const fixture = games.find((game) => game.id === matchId);
@@ -198,11 +204,13 @@ export async function loadAdminGameDetail(
   if (auditResult.error) throw new Error(`Could not load game audit: ${auditResult.error.message}`);
   if (reportResult.error) throw new Error(`Could not load game reports: ${reportResult.error.message}`);
   if (stoppageResult.error) throw new Error(`Could not load stoppages: ${stoppageResult.error.message}`);
+  if (currencyResult.error) throw new Error(`Could not load game currency: ${currencyResult.error.message}`);
 
   const assignment = assignmentResult.data as Row | null;
   const referee = relation(assignment?.referee);
   return {
     fixture,
+    currency: adminGameCurrency(matchKind, currencyResult.data?.currency),
     participants,
     reserves,
     assignedReferee: assignment && referee.profile_id ? {

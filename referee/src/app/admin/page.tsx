@@ -526,7 +526,7 @@ export default function AdminPage() {
   async function createSoloGame(input: {
     venue: string;
     matchDate: string;
-    priceBhd: string;
+    priceUsd: string;
     ageLabel: string;
   }) {
     setSubmitting("create-solo-game");
@@ -3293,22 +3293,22 @@ function SoloGameManagementDialog({
   onCreate: (input: {
     venue: string;
     matchDate: string;
-    priceBhd: string;
+    priceUsd: string;
     ageLabel: string;
   }) => void;
   onRemove: (fixture: RefereeFixture, reason: string) => void;
 }) {
-  const [venue, setVenue] = useState("TFA, Saar");
+  const [venue, setVenue] = useState("");
   const [matchDate, setMatchDate] = useState(nextSoloMatchDate());
-  const [priceBhd, setPriceBhd] = useState("3.000");
-  const [ageLabel, setAgeLabel] = useState("16+");
+  const [priceUsd, setPriceUsd] = useState("13.00");
+  const [ageLabel, setAgeLabel] = useState("18+");
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const creating = dialog.kind === "create";
   const createReady =
     venue.trim().length >= 2 &&
     matchDate.length === 10 &&
-    /^\d{1,3}(?:\.\d{1,3})?$/.test(priceBhd.trim()) &&
+    /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim()) &&
     ageLabel.trim().length >= 2;
   const removeReady =
     reason.trim().length >= 8 &&
@@ -3329,14 +3329,14 @@ function SoloGameManagementDialog({
             The game opens for player bookings as soon as it is created.
           </p>
           <div className="admin-modal-warning">
-            Solo Queue has a permanent slot: Tuesday or Friday · 8:30–9:30 PM Bahrain time.
+            7-a-side · Tuesday or Friday · 8:30–9:30 PM Phoenix time. Prices are in USD.
           </div>
           <label className="admin-modal-field">
             <span>Venue</span>
             <input
               maxLength={80}
               onChange={(event) => setVenue(event.target.value)}
-              placeholder="TFA, Saar"
+              placeholder="Venue in Phoenix"
               value={venue}
             />
           </label>
@@ -3351,14 +3351,14 @@ function SoloGameManagementDialog({
               <small>Tuesday or Friday</small>
             </label>
             <label className="admin-modal-field">
-              <span>Price (BHD)</span>
+              <span>Price per player (USD)</span>
               <input
                 inputMode="decimal"
-                onChange={(event) => setPriceBhd(event.target.value)}
-                placeholder="3.000"
-                value={priceBhd}
+                onChange={(event) => setPriceUsd(event.target.value)}
+                placeholder="13.00"
+                value={priceUsd}
               />
-              <small>Up to 3 decimals</small>
+              <small>Defaults to $13.00. Set this game’s price here (up to 2 decimals).</small>
             </label>
           </div>
           <label className="admin-modal-field">
@@ -3366,7 +3366,7 @@ function SoloGameManagementDialog({
             <input
               maxLength={40}
               onChange={(event) => setAgeLabel(event.target.value)}
-              placeholder="16+"
+              placeholder="18+"
               value={ageLabel}
             />
           </label>
@@ -3419,7 +3419,7 @@ function SoloGameManagementDialog({
               onCreate({
                 venue: venue.trim(),
                 matchDate,
-                priceBhd: priceBhd.trim(),
+                priceUsd: priceUsd.trim(),
                 ageLabel: ageLabel.trim(),
               });
             } else {
@@ -4644,11 +4644,11 @@ function truncate(value: string, limit: number) {
 
 function nextSoloMatchDate() {
   const now = new Date();
-  const bahrainCalendar = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const phoenixCalendar = new Date(now.getTime() - 7 * 60 * 60 * 1000);
   const candidate = new Date(Date.UTC(
-    bahrainCalendar.getUTCFullYear(),
-    bahrainCalendar.getUTCMonth(),
-    bahrainCalendar.getUTCDate(),
+    phoenixCalendar.getUTCFullYear(),
+    phoenixCalendar.getUTCMonth(),
+    phoenixCalendar.getUTCDate(),
   ));
 
   for (let offset = 0; offset < 14; offset += 1) {
@@ -4658,7 +4658,7 @@ function nextSoloMatchDate() {
       String(candidate.getUTCMonth() + 1).padStart(2, "0"),
       String(candidate.getUTCDate()).padStart(2, "0"),
     ].join("-");
-    const kickoff = new Date(`${value}T20:30:00+03:00`);
+    const kickoff = new Date(`${value}T20:30:00-07:00`);
     if ((weekday === 2 || weekday === 5) && kickoff.getTime() > now.getTime()) {
       return value;
     }

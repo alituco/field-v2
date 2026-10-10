@@ -117,7 +117,7 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "solo-structure",
     title: "Solo match controls",
-    detail: "Team finalization, party lock, and the refund used when a suspension releases unrelated bookings. Solo remains fixed at six players per side.",
+    detail: "Team finalization, party lock, and the refund used when a suspension releases unrelated bookings. New solo games have seven players per side.",
     fields: [
       numberField("solo.teamAssignmentLeadMinutes", "Assign teams and kits", "min before", 0, 10_080),
       numberField("solo.partyLockLeadMinutes", "Lock parties", "min before", 0, 10_080),
@@ -1392,7 +1392,7 @@ function LockedReliabilityRulesCard({ config }: {
     <details className={`admin-card ${styles.policyGroup}`}>
       <summary><div><span>Locked product and safety rules</span><small>Shown honestly here, but not presented as live controls.</small></div><b>Not editable</b><i>⌄</i></summary>
       <div className={styles.choiceGroups}>
-        <div className={styles.lockedRule}><span>Solo format</span><strong>{config.solo.playersPerSide}-a-side</strong><small>Six players per team, including the goalkeeper.</small></div>
+        <div className={styles.lockedRule}><span>Solo format</span><strong>{config.solo.playersPerSide}-a-side</strong><small>{config.solo.playersPerSide} players per team, including the goalkeeper. Existing bookings keep their original game format.</small></div>
         <div className={styles.lockedRule}><span>Clan format</span><strong>{config.clan.playersPerSide}-a-side</strong><small>Six players per team, including the goalkeeper. Matchday squads may still include substitutes.</small></div>
         <div className={styles.lockedRule}><span>Field cancellation</span><strong>Zero strikes</strong><small>A venue or Field cancellation never becomes a player reliability penalty.</small></div>
         <div className={styles.lockedRule}><span>Verified injury</span><strong>Assigned referee · zero strikes</strong><small>Evidence authority and no-strike treatment are safety invariants, not penalty knobs.</small></div>
@@ -1446,7 +1446,7 @@ function AppealsCard({ config, onChange }: {
           ))}
         </div></fieldset>
         <div className={styles.lockedRule}><span>Routine traffic</span><strong>Not automatically excused</strong><small>An admin may still overturn a documented exceptional case. Automatic excusal is intentionally locked off.</small></div>
-        <div className={styles.lockedRule}><span>Refund destination</span><strong>Field wallet · BHD</strong><small>Financial ledger destination is locked for consistency.</small></div>
+        <div className={styles.lockedRule}><span>Refund destination</span><strong>Field wallet</strong><small>Refunds use the game's currency. USD and historical BHD balances stay separate; no currency conversion is applied.</small></div>
       </div>
     </details>
   );

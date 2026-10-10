@@ -109,7 +109,7 @@ class ProfilePlayerRating {
       losses: _asInt(json['losses']),
       draws: _asInt(json['draws']),
       lastChange: _asInt(json['last_change']),
-      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
+      region: (json['region'] as String? ?? 'phoenix').trim().toLowerCase(),
       events: rawEvents is! List
           ? const []
           : [

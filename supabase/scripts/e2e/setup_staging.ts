@@ -1,5 +1,6 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
+import { legacyOpenQueueFormat } from "../_shared/legacy_open_queue_format.ts";
 
 import {
   type AdminClient,
@@ -847,6 +848,7 @@ async function createGame(
 ): Promise<Omit<E2EGame, "seededConfirmedCount">> {
   const endsAt = new Date(start.getTime() + 60 * 60 * 1000);
   const { data, error } = await client.from("open_queue_games").insert({
+    ...legacyOpenQueueFormat,
     venue,
     starts_at: start.toISOString(),
     ends_at: endsAt.toISOString(),

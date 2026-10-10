@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/auth_repository.dart';
 import '../auth/fieldrush_account.dart';
 import '../auth/fieldrush_account_screen.dart';
+import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
@@ -19,6 +20,7 @@ import '../reliability/reliability_repository.dart';
 import '../support/support_repository.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
+import 'home_discovery_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -158,6 +160,7 @@ class _HomeScreenState extends State<HomeScreen> {
         fixtureRepository: _fixtureRepository,
         leaderboardRepository: _leaderboardRepository,
         openQueueRepository: _openQueueRepository,
+        discoveryRepository: SupabaseHomeDiscoveryRepository(),
         onOpenClans: () => _selectTab(2),
         onOpenFixtures: () => _selectTab(1),
         onOpenRanks: _openPlayerRanks,
@@ -201,6 +204,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     builder: (_) => FieldrushAccountScreen(
                       authRepository: widget.authRepository,
                       accountRepository: widget.accountRepository!,
+                      profileRepository: _profileRepository,
+                      bottomNavigationBuilder: (confirmLeave) => FieldBottomNav(
+                        selectedIndex: 4,
+                        onSelected: (index) async {
+                          final navigator = Navigator.of(context);
+                          if (!await confirmLeave() || !mounted) return;
+                          navigator.pop();
+                          _selectTab(index);
+                        },
+                      ),
                     ),
                   ),
                 );
@@ -211,7 +224,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       key: const ValueKey('home-screen'),
       extendBody: true,
-      backgroundColor: fieldBackground,
+      backgroundColor: _selectedIndex == 0
+          ? FieldrushAuthTheme.cream
+          : fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: FieldBottomNav(
         selectedIndex: _selectedIndex,

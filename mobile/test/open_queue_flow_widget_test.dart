@@ -6,6 +6,134 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('new 14-player games offer only Keeper, Defender, and Attacker', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueScreen(
+          repository: _FakeOpenQueueRepository([_fieldrushGame()]),
+          initialMainRole: OpenQueueRole.attacker,
+          initialBackupRoles: const {
+            OpenQueueRole.midfielder,
+            OpenQueueRole.defender,
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('open-queue-main-role-mid')),
+      findsNothing,
+    );
+    expect(find.text('MID'), findsNothing);
+    expect(find.textContaining('Midfielder'), findsNothing);
+    for (final role in ['gk', 'def', 'att']) {
+      expect(
+        find.byKey(ValueKey('open-queue-main-role-$role')),
+        findsOneWidget,
+      );
+    }
+    await tester.drag(find.byType(ListView), const Offset(0, -450));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Anywhere'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('open-queue-see-matching-games')),
+    );
+    await tester.pumpAndSettle();
+    final screen = tester.widget<OpenQueueGamesScreen>(
+      find.byType(OpenQueueGamesScreen),
+    );
+    expect(screen.mainRole, OpenQueueRole.attacker);
+    expect(screen.backupRoles, {
+      OpenQueueRole.defender,
+      OpenQueueRole.goalkeeper,
+    });
+  });
+
+  testWidgets(
+    'unsupported initial main role is cleared for new or empty feeds',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      for (final games in <List<OpenQueueGame>>[
+        [_fieldrushGame()],
+        [],
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            key: UniqueKey(),
+            home: OpenQueueScreen(
+              repository: _FakeOpenQueueRepository(games),
+              initialMainRole: OpenQueueRole.midfielder,
+              initialBackupRoles: const {OpenQueueRole.midfielder},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('MID'), findsNothing);
+        expect(find.textContaining('Midfielder'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('open-queue-see-matching-games')),
+          findsNothing,
+        );
+        expect(find.text('Tap your main position'), findsOneWidget);
+        for (final role in ['gk', 'def', 'att']) {
+          expect(
+            find.byKey(ValueKey('open-queue-main-role-$role')),
+            findsOneWidget,
+          );
+        }
+      }
+    },
+  );
+
+  testWidgets(
+    'legacy 12-player games preserve midfield and initial selections',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpenQueueScreen(
+            repository: _FakeOpenQueueRepository([
+              _fieldrushGame(),
+              ..._games(),
+            ]),
+            initialMainRole: OpenQueueRole.midfielder,
+            initialBackupRoles: const {
+              OpenQueueRole.midfielder,
+              OpenQueueRole.defender,
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('open-queue-main-role-mid')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('MID'),
+        findsNothing,
+      ); // both pitch midfield nodes are selected.
+      expect(find.text('MAIN'), findsNWidgets(2));
+      await tester.tap(
+        find.byKey(const ValueKey('open-queue-see-matching-games')),
+      );
+      await tester.pumpAndSettle();
+      final screen = tester.widget<OpenQueueGamesScreen>(
+        find.byType(OpenQueueGamesScreen),
+      );
+      expect(screen.mainRole, OpenQueueRole.midfielder);
+      expect(screen.backupRoles, {OpenQueueRole.defender});
+    },
+  );
+
   testWidgets('role selection follows the Concept formation and role order', (
     tester,
   ) async {
@@ -46,7 +174,7 @@ void main() {
     expect(find.text('Fixtures'), findsOneWidget);
     expect(find.text('Clans'), findsOneWidget);
     expect(find.text('Ranks'), findsOneWidget);
-    expect(find.text('Profile'), findsOneWidget);
+    expect(find.text('You'), findsOneWidget);
   });
 
   testWidgets('games screen separates the main role from faster backup games', (
@@ -218,6 +346,28 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Ordinary Arena 3', skipOffstage: false), findsNothing);
+    },
+  );
+}
+
+OpenQueueGame _fieldrushGame() {
+  final startsAt = DateTime.now().add(const Duration(days: 2));
+  return OpenQueueGame(
+    id: 'fieldrush',
+    status: 'OPEN',
+    venue: 'Reach 11 Fields',
+    startsAt: startsAt,
+    endsAt: startsAt.add(const Duration(hours: 1)),
+    timezone: 'America/Phoenix',
+    currency: 'USD',
+    priceFils: 13000,
+    ageLabel: 'All ages',
+    capacity: 14,
+    confirmedCount: 8,
+    spots: const {
+      OpenQueueRole.goalkeeper: 1,
+      OpenQueueRole.defender: 3,
+      OpenQueueRole.attacker: 2,
     },
   );
 }

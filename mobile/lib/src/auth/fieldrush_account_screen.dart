@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -8,16 +9,27 @@ import 'date_of_birth.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_auth_theme.dart';
 import 'fieldrush_phone_field.dart';
+import '../profile/profile.dart';
+import '../profile/profile_repository.dart';
 
 class FieldrushAccountScreen extends StatefulWidget {
   const FieldrushAccountScreen({
     super.key,
     required this.authRepository,
     required this.accountRepository,
-  });
+    this.profileRepository,
+    this.imagePicker,
+    this.bottomNavigationBar,
+    this.bottomNavigationBuilder,
+  }) : assert(bottomNavigationBar == null || bottomNavigationBuilder == null);
 
   final AuthRepository authRepository;
   final FieldrushAccountRepository accountRepository;
+  final ProfileRepository? profileRepository;
+  final ImagePicker? imagePicker;
+  final Widget? bottomNavigationBar;
+  final Widget Function(Future<bool> Function() confirmLeave)?
+  bottomNavigationBuilder;
 
   @override
   State<FieldrushAccountScreen> createState() => _FieldrushAccountScreenState();
@@ -32,6 +44,11 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
   final _birthday = TextEditingController();
   final _email = TextEditingController();
   FieldrushAccount? _account;
+  PlayerProfile? _profile;
+  String? _editing;
+  String? _photoError;
+  bool _photoBusy = false;
+  bool _securityExpanded = false;
   String? _error;
   String? _notice;
   bool _loading = true;
@@ -48,6 +65,7 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _loadAccount();
+    _loadProfile();
   }
 
   @override
@@ -106,6 +124,78 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
     }
   }
 
+  Future<void> _loadProfile() async {
+    final repository = widget.profileRepository;
+    if (repository == null) return;
+    try {
+      final profile = await repository.getCurrentProfile();
+      if (mounted) setState(() => _profile = profile);
+    } catch (_) {
+      if (mounted) {
+        setState(() => _photoError = 'Could not load your photo. Try again.');
+      }
+    }
+  }
+
+  Future<void> _updatePhoto({bool reset = false}) async {
+    final repository = widget.profileRepository;
+    if (repository == null || _photoBusy || _locked) return;
+    setState(() {
+      _photoBusy = true;
+      _photoError = null;
+    });
+    try {
+      var avatarUrl = '';
+      if (!reset) {
+        final photo = await (widget.imagePicker ?? ImagePicker()).pickImage(
+          source: ImageSource.gallery,
+          maxWidth: 1200,
+          maxHeight: 1200,
+          imageQuality: 88,
+        );
+        if (photo == null) return;
+        final extension = photo.name.split('.').last.toLowerCase();
+        final contentType =
+            photo.mimeType ??
+            switch (extension) {
+              'png' => 'image/png',
+              'webp' => 'image/webp',
+              'heic' => 'image/heic',
+              'heif' => 'image/heif',
+              _ => 'image/jpeg',
+            };
+        avatarUrl = await repository.uploadCurrentUserAvatar(
+          bytes: await photo.readAsBytes(),
+          fileExtension: extension,
+          contentType: contentType,
+        );
+      }
+      // Avatar updates must not overwrite a bio changed on another screen.
+      final latest = await repository.getCurrentProfile();
+      await repository.updateCurrentProfile(
+        ProfileUpdate(
+          displayName: latest.displayName,
+          username: latest.username,
+          bio: latest.bio,
+          avatarUrl: avatarUrl,
+        ),
+      );
+      final updated = await repository.getCurrentProfile();
+      if (mounted) {
+        setState(() {
+          _profile = updated;
+          _notice = reset ? 'Photo reset.' : 'Photo updated.';
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _photoError = fieldrushAccountError(error));
+      }
+    } finally {
+      if (mounted) setState(() => _photoBusy = false);
+    }
+  }
+
   AccountDraft get _draft => AccountDraft(
     firstName: _firstName.text.trim(),
     lastName: _lastName.text.trim(),
@@ -137,6 +227,7 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
       if (!mounted) return;
       setState(() {
         _applyAccount(updated);
+        _editing = null;
         _notice = 'Account details saved.';
       });
     });
@@ -285,254 +376,840 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
     child: Builder(builder: _buildContent),
   );
 
+  bool get _dirty {
+    final account = _account;
+    if (_editing == null || account == null) return false;
+    final saved = account.draft.toJson();
+    final current = _draft.toJson();
+    return saved.keys.any((key) => saved[key] != current[key]);
+  }
+
+  Future<bool> _confirmDiscard() async {
+    if (!_dirty) return true;
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Discard your changes?'),
+            content: const Text('Your unsaved account changes will be lost.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Keep editing'),
+              ),
+              TextButton(
+                key: const Key('fieldrush-discard-changes'),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Discard changes'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  void _cancelEdit() {
+    setState(() {
+      _applyAccount(_account!);
+      _editing = null;
+      _error = null;
+    });
+  }
+
+  Future<void> _openEdit(String field) async {
+    if (_busy || _locked || _editing == field) return;
+    if (!await _confirmDiscard() || !mounted) return;
+    setState(() {
+      _applyAccount(_account!);
+      _editing = field;
+      _error = null;
+      _notice = null;
+    });
+  }
+
+  Future<bool> _confirmLeave() async {
+    if (_busy || _photoBusy || !await _confirmDiscard() || !mounted) {
+      return false;
+    }
+    if (_dirty) {
+      _cancelEdit();
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return false;
+    }
+    return true;
+  }
+
+  Future<void> _goBack() async {
+    if (await _confirmLeave() && mounted) Navigator.of(context).maybePop();
+  }
+
   Widget _buildContent(BuildContext context) {
     final account = _account;
-    final emailVerified =
-        account?.emailVerified == true &&
-        _email.text.trim() == account?.draft.email;
-    return Scaffold(
-      backgroundColor: FieldrushAuthTheme.cream,
-      appBar: AppBar(title: const Text('Your account')),
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : account == null
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
+    final navigation =
+        widget.bottomNavigationBuilder?.call(_confirmLeave) ??
+        widget.bottomNavigationBar;
+    return PopScope(
+      canPop: !_dirty && !_busy && !_photoBusy,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _goBack();
+      },
+      child: Scaffold(
+        backgroundColor: FieldrushAuthTheme.cream,
+        extendBody: navigation != null,
+        bottomNavigationBar: navigation,
+        body: SafeArea(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : account == null
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(_error ?? 'Could not load your account.'),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: _loadAccount,
+                          child: const Text('Try again'),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : Form(
+                  key: _formKey,
+                  child: ListView(
+                    key: const Key('fieldrush-account-scroll'),
+                    padding: EdgeInsets.only(
+                      bottom: navigation == null ? 36 : 132,
+                    ),
                     children: [
-                      Text(_error ?? 'Could not load your account.'),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        onPressed: _loadAccount,
-                        child: const Text('Try again'),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 36,
+                              height: 36,
+                              child: OutlinedButton(
+                                onPressed: _goBack,
+                                style: OutlinedButton.styleFrom(
+                                  padding: EdgeInsets.zero,
+                                  backgroundColor: Colors.white,
+                                  side: const BorderSide(
+                                    color: FieldrushAuthTheme.border,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                                child: const Icon(
+                                  Icons.chevron_left_rounded,
+                                  size: 23,
+                                  semanticLabel: 'Back',
+                                  color: Color(0xFF3C4A38),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            const Expanded(
+                              child: Text(
+                                'Account details',
+                                style: TextStyle(
+                                  fontFamily: 'Outfit',
+                                  fontSize: 18,
+                                  height: 1,
+                                  letterSpacing: -.18,
+                                  fontWeight: FontWeight.w800,
+                                  color: FieldrushAuthTheme.ink,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
+                      _photoCard(),
+                      if (_error != null || _notice != null || _locked)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(18, 12, 18, 0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (_error != null)
+                                _message(_error!, error: true),
+                              if (_notice != null) _message(_notice!),
+                              if (_locked && !_deletionSubmitted)
+                                _message(
+                                  'Deletion is pending. Account changes are disabled.',
+                                ),
+                            ],
+                          ),
+                        ),
+                      _card(
+                        child: Column(
+                          children: [
+                            _accountRow(
+                              field: 'name',
+                              label: 'FULL NAME',
+                              value:
+                                  '${account.draft.firstName} ${account.draft.lastName}'
+                                      .trim(),
+                              help:
+                                  'Shown on ladders as ${_publicName(account.draft)}',
+                              first: true,
+                            ),
+                            _accountRow(
+                              field: 'username',
+                              label: 'USERNAME',
+                              value: '@${account.draft.username}',
+                              help: 'Players search for you with this',
+                            ),
+                            _accountRow(
+                              field: 'birthday',
+                              label: 'DATE OF BIRTH',
+                              value: _birthdayLabel(account.draft.dateOfBirth),
+                              help: account.completed
+                                  ? 'Only you can see this. Contact support for a correction.'
+                                  : 'Only you can see this. You must be 18 or older.',
+                              action: account.completed ? 'Info' : 'Edit',
+                              onTap: account.completed
+                                  ? _showBirthdayHelp
+                                  : null,
+                            ),
+                            _accountRow(
+                              field: 'email',
+                              label: 'EMAIL',
+                              value: account.draft.email,
+                              help: account.emailVerified
+                                  ? 'For receipts and account recovery'
+                                  : widget
+                                        .accountRepository
+                                        .emailDeliveryEnabled
+                                  ? 'Verify it to get receipts and reminders'
+                                  : 'Email verification is not available yet.',
+                              verified: account.emailVerified,
+                              action:
+                                  !account.emailVerified &&
+                                      widget
+                                          .accountRepository
+                                          .emailDeliveryEnabled
+                                  ? 'Verify'
+                                  : 'Edit',
+                              actionKey:
+                                  !account.emailVerified &&
+                                      widget
+                                          .accountRepository
+                                          .emailDeliveryEnabled
+                                  ? const Key('fieldrush-verify-email')
+                                  : null,
+                              onAction:
+                                  !account.emailVerified &&
+                                      widget
+                                          .accountRepository
+                                          .emailDeliveryEnabled
+                                  ? _verifyEmail
+                                  : null,
+                            ),
+                            if (_pendingVerificationEmail != null)
+                              TextButton(
+                                key: const Key(
+                                  'fieldrush-refresh-email-verification',
+                                ),
+                                onPressed: _busy || _locked
+                                    ? null
+                                    : _refreshEmailVerification,
+                                child: const Text('Check verification status'),
+                              ),
+                            _accountRow(
+                              field: 'phone',
+                              label: 'PHONE',
+                              value: account.phone,
+                              help: 'For game-day texts',
+                              verified: account.phoneVerified,
+                              actionKey: const Key('fieldrush-change-phone'),
+                              onTap: _changePhone,
+                              onAction: _changePhone,
+                            ),
+                          ],
+                        ),
+                      ),
+                      _homeCityCard(account),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 22, 16, 0),
+                        child: SizedBox(
+                          height: 48,
+                          child: TextButton(
+                            key: const Key('fieldrush-delete-account'),
+                            onPressed: _busy || _locked ? null : _deleteAccount,
+                            style: TextButton.styleFrom(
+                              foregroundColor: FieldrushAuthTheme.danger,
+                              backgroundColor: Colors.white,
+                              textStyle: _text(12.5, weight: FontWeight.w800),
+                              side: const BorderSide(
+                                color: FieldrushAuthTheme.border,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            child: const Text('Delete account'),
+                          ),
+                        ),
+                      ),
+                      _securityOptions(account),
                     ],
                   ),
                 ),
-              )
-            : Form(
-                key: _formKey,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 36),
-                  children: [
-                    Text(
-                      'Make it yours.',
-                      style: Theme.of(context).textTheme.headlineLarge
-                          ?.copyWith(
-                            fontFamily: 'Outfit',
-                            fontWeight: FontWeight.w700,
-                          ),
-                    ),
-                    const SizedBox(height: 8),
-                    const Text('Manage your profile and how you sign in.'),
-                    const SizedBox(height: 24),
-                    if (_error != null) _message(_error!, error: true),
-                    if (_notice != null) _message(_notice!),
-                    if (_locked && !_deletionSubmitted)
-                      _message(
-                        'Deletion is pending. Account changes are disabled.',
-                      ),
-                    _section('Profile', [
-                      Text(
-                        'Other players see ${_publicName(account.draft)}. '
-                        'Your full last name, birthday and contact details stay private.',
-                      ),
-                      const SizedBox(height: 20),
-                      _field(
-                        _firstName,
-                        'First name',
-                        'fieldrush-first-name',
-                        validateFieldrushName,
-                      ),
-                      _field(
-                        _lastName,
-                        'Last name',
-                        'fieldrush-last-name',
-                        validateFieldrushName,
-                      ),
-                      _field(
-                        _username,
-                        'Username',
-                        'fieldrush-username',
-                        (value) => validateFieldrushUsername(
-                          value.trim().toLowerCase(),
-                        ),
-                        helper:
-                            '3–20 characters. Reserved staff and system names are unavailable.',
-                      ),
-                      _field(
-                        _birthday,
-                        'Birthday',
-                        'fieldrush-birthday',
-                        _validateBirthday,
-                        helper: account.completed
-                            ? 'Your birthday is private and cannot be changed here. Contact support for a correction.'
-                            : 'YYYY-MM-DD. You must be 18 or older.',
-                        keyboard: TextInputType.datetime,
-                        readOnly: account.completed,
-                      ),
-                    ]),
-                    _section('Email', [
-                      _field(
-                        _email,
-                        'Email address',
-                        'fieldrush-email',
-                        (value) => isFieldrushEmail(value)
-                            ? null
-                            : 'Enter a valid email address.',
-                        keyboard: TextInputType.emailAddress,
-                      ),
-                      Text(
-                        emailVerified ? 'Verified email' : 'Not verified yet',
-                        style: const TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 8),
-                      if (!widget.accountRepository.emailDeliveryEnabled)
-                        const Text(
-                          'Email verification is not available yet. You can save your '
-                          'email now, but it cannot be used for account recovery until verified.',
+        ),
+      ),
+    );
+  }
+
+  TextStyle _text(
+    double size, {
+    Color color = FieldrushAuthTheme.ink,
+    FontWeight weight = FontWeight.w600,
+    double height = 1.3,
+    double? spacing,
+  }) => TextStyle(
+    fontFamily: 'PlusJakartaSans',
+    fontSize: size,
+    color: color,
+    fontWeight: weight,
+    height: height,
+    letterSpacing: spacing,
+  );
+
+  Widget _card({required Widget child, EdgeInsetsGeometry? padding}) =>
+      Container(
+        margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        padding: padding,
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: FieldrushAuthTheme.border),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: child,
+      );
+
+  Widget _photoCard() {
+    final avatar = _profile?.avatarUrl;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+      padding: const EdgeInsets.fromLTRB(15, 15, 16, 15),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: FieldrushAuthTheme.border),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  key: const Key('fieldrush-profile-photo'),
+                  width: 64,
+                  height: 64,
+                  color: const Color(0xFFF2EFE3),
+                  child: avatar?.isNotEmpty == true
+                      ? Image.network(
+                          avatar!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, _, _) => _photoPlaceholder(),
                         )
-                      else
-                        OutlinedButton(
-                          key: const Key('fieldrush-verify-email'),
-                          onPressed: _busy || _locked ? null : _verifyEmail,
-                          child: Text(
-                            emailVerified
-                                ? 'Verify a different email'
-                                : 'Verify email',
-                          ),
-                        ),
-                      if (_pendingVerificationEmail != null)
-                        TextButton(
-                          key: const Key(
-                            'fieldrush-refresh-email-verification',
-                          ),
-                          onPressed: _busy || _locked
-                              ? null
-                              : _refreshEmailVerification,
-                          child: const Text('Check verification status'),
-                        ),
-                    ]),
-                    FilledButton(
-                      key: const Key('fieldrush-save-account'),
-                      onPressed: _busy || _locked ? null : _save,
-                      child: Text(_busy ? 'Please wait…' : 'Save changes'),
+                      : _photoPlaceholder(),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Profile photo',
+                      style: TextStyle(
+                        fontFamily: 'Outfit',
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        height: 1.2,
+                        color: FieldrushAuthTheme.ink,
+                      ),
                     ),
-                    const SizedBox(height: 24),
-                    _section('Sign-in & security', [
-                      const Text(
-                        'Phone number',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(account.phone),
-                      Text(
-                        account.phoneVerified
-                            ? 'Verified'
-                            : 'Verification required',
-                      ),
-                      OutlinedButton(
-                        key: const Key('fieldrush-change-phone'),
-                        onPressed: _busy || _locked || !account.phoneVerified
-                            ? null
-                            : _changePhone,
-                        child: const Text('Change phone number'),
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        account.googleLinked
-                            ? 'Google is linked'
-                            : 'Link Google as another way to sign in.',
-                      ),
-                      if (!account.googleLinked)
-                        OutlinedButton.icon(
-                          key: const Key('fieldrush-link-google'),
-                          onPressed: _busy || _locked ? null : _linkGoogle,
-                          icon: const Icon(Icons.link),
-                          label: const Text('Link Google'),
-                        ),
-                      if (_waitingForGoogle)
-                        TextButton(
-                          onPressed: () => _loadAccount(preserveDraft: true),
-                          child: const Text('Refresh linked accounts'),
-                        ),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Lost access to your phone? Sign in with a previously linked '
-                        'Google account. Do not create another account to recover this one.',
-                      ),
-                    ]),
-                    OutlinedButton(
-                      onPressed: _busy ? null : _signOut,
-                      child: const Text('Sign out'),
-                    ),
-                    const SizedBox(height: 12),
-                    TextButton(
-                      key: const Key('fieldrush-delete-account'),
-                      onPressed: _busy || _locked ? null : _deleteAccount,
-                      style: TextButton.styleFrom(
-                        foregroundColor: FieldrushAuthTheme.danger,
-                      ),
-                      child: const Text('Delete account'),
+                    const SizedBox(height: 5),
+                    Text(
+                      'Everyone can see it',
+                      style: _text(11, color: FieldrushAuthTheme.muted),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _pill(
+                    key: const Key('fieldrush-change-photo'),
+                    label: _photoBusy ? 'Saving…' : 'Change',
+                    onPressed:
+                        _photoBusy ||
+                            _locked ||
+                            widget.profileRepository == null
+                        ? null
+                        : _updatePhoto,
+                  ),
+                  if (avatar?.isNotEmpty == true)
+                    TextButton(
+                      key: const Key('fieldrush-reset-photo'),
+                      onPressed: _photoBusy || _locked
+                          ? null
+                          : () => _updatePhoto(reset: true),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size(44, 30),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        foregroundColor: FieldrushAuthTheme.danger,
+                        textStyle: _text(10.5, weight: FontWeight.w800),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      child: const Text('Reset'),
+                    ),
+                ],
+              ),
+            ],
+          ),
+          if (_photoError != null) ...[
+            const SizedBox(height: 10),
+            Text(
+              _photoError!,
+              style: _text(10.5, color: FieldrushAuthTheme.danger),
+            ),
+          ],
+        ],
       ),
     );
   }
+
+  Widget _photoPlaceholder() => const Center(
+    child: Icon(
+      Icons.person_outline_rounded,
+      size: 28,
+      color: FieldrushAuthTheme.muted,
+    ),
+  );
+
+  Widget _accountRow({
+    required String field,
+    required String label,
+    required String value,
+    required String help,
+    String action = 'Edit',
+    Key? actionKey,
+    bool? verified,
+    bool first = false,
+    VoidCallback? onTap,
+    VoidCallback? onAction,
+  }) {
+    final editing = _editing == field;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: first
+            ? null
+            : const Border(top: BorderSide(color: Color(0xFFF0ECE0))),
+      ),
+      child: editing
+          ? _inlineEditor(field, label, help)
+          : Material(
+              color: Colors.transparent,
+              child: InkWell(
+                key: Key('fieldrush-edit-$field'),
+                onTap: _busy || _locked
+                    ? null
+                    : onTap ?? () => _openEdit(field),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 16, 15),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Wrap(
+                              spacing: 7,
+                              runSpacing: 5,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(label, style: _labelStyle),
+                                if (verified != null)
+                                  _verificationBadge(verified),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              value,
+                              style: _text(14, weight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 7),
+                            Text(
+                              help,
+                              style: _text(
+                                10.5,
+                                color: FieldrushAuthTheme.muted,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      _pill(
+                        key: actionKey,
+                        label: action,
+                        filled: action == 'Verify',
+                        onPressed: _busy || _locked
+                            ? null
+                            : onAction ?? onTap ?? () => _openEdit(field),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+
+  TextStyle get _labelStyle => _text(
+    9.5,
+    color: FieldrushAuthTheme.muted,
+    weight: FontWeight.w800,
+    height: 1,
+    spacing: 1.14,
+  );
+
+  Widget _verificationBadge(bool verified) => Semantics(
+    label: verified ? 'Verified email or phone' : 'Not verified yet',
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: verified ? const Color(0xFFEFF6E4) : const Color(0xFFF7EED6),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        verified ? 'VERIFIED' : 'UNVERIFIED',
+        style: _text(
+          8,
+          weight: FontWeight.w800,
+          height: 1,
+          spacing: .8,
+          color: verified ? const Color(0xFF24472C) : const Color(0xFF8A6516),
+        ),
+      ),
+    ),
+  );
+
+  Widget _pill({
+    Key? key,
+    required String label,
+    required VoidCallback? onPressed,
+    bool filled = false,
+  }) => OutlinedButton(
+    key: key,
+    onPressed: onPressed,
+    style: OutlinedButton.styleFrom(
+      minimumSize: const Size(0, 32),
+      padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 8),
+      backgroundColor: filled ? FieldrushAuthTheme.forest : Colors.white,
+      foregroundColor: filled ? Colors.white : FieldrushAuthTheme.ink,
+      textStyle: _text(11, weight: FontWeight.w800, height: 1),
+      side: BorderSide(
+        color: filled ? FieldrushAuthTheme.forest : FieldrushAuthTheme.border,
+      ),
+      shape: const StadiumBorder(),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+    child: Text(label),
+  );
+
+  Widget _inlineEditor(String field, String label, String help) => Container(
+    color: const Color(0xFFFBFAF4),
+    padding: const EdgeInsets.fromLTRB(18, 14, 16, 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          label,
+          style: _labelStyle.copyWith(color: const Color(0xFF24472C)),
+        ),
+        const SizedBox(height: 9),
+        if (field == 'name') ...[
+          _field(
+            _firstName,
+            'First name',
+            'fieldrush-first-name',
+            validateFieldrushName,
+          ),
+          const SizedBox(height: 8),
+          _field(
+            _lastName,
+            'Last name',
+            'fieldrush-last-name',
+            validateFieldrushName,
+          ),
+        ],
+        if (field == 'username')
+          _field(
+            _username,
+            'Username',
+            'fieldrush-username',
+            (value) => validateFieldrushUsername(value.trim().toLowerCase()),
+            prefix: '@',
+          ),
+        if (field == 'birthday')
+          _field(
+            _birthday,
+            'YYYY-MM-DD',
+            'fieldrush-birthday',
+            _validateBirthday,
+            keyboard: TextInputType.datetime,
+          ),
+        if (field == 'email')
+          _field(
+            _email,
+            'Email address',
+            'fieldrush-email',
+            (value) =>
+                isFieldrushEmail(value) ? null : 'Enter a valid email address.',
+            keyboard: TextInputType.emailAddress,
+          ),
+        const SizedBox(height: 8),
+        Text(
+          field == 'email' && !widget.accountRepository.emailDeliveryEnabled
+              ? 'You can save your email now. It cannot be used for account recovery until verified.'
+              : help,
+          style: _text(10.5, color: FieldrushAuthTheme.muted, height: 1.35),
+        ),
+        const SizedBox(height: 13),
+        Row(
+          children: [
+            OutlinedButton(
+              key: const Key('fieldrush-cancel-edit'),
+              onPressed: _busy ? null : _cancelEdit,
+              style: OutlinedButton.styleFrom(
+                minimumSize: const Size(0, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                backgroundColor: Colors.white,
+                foregroundColor: FieldrushAuthTheme.ink,
+                side: const BorderSide(color: FieldrushAuthTheme.border),
+                textStyle: _text(12, weight: FontWeight.w800),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(13),
+                ),
+              ),
+              child: const Text('Cancel'),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: FilledButton(
+                key: const Key('fieldrush-save-account'),
+                onPressed: _busy || _locked || !_dirty ? null : _save,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 44),
+                  backgroundColor: FieldrushAuthTheme.forest,
+                  textStyle: _text(12, weight: FontWeight.w800),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(13),
+                  ),
+                ),
+                child: Text(_busy ? 'Saving…' : 'Save'),
+              ),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
 
   Widget _field(
     TextEditingController controller,
     String label,
     String key,
     String? Function(String) validator, {
-    String? helper,
     TextInputType? keyboard,
-    bool readOnly = false,
-  }) => Padding(
-    padding: const EdgeInsets.only(bottom: 16),
-    child: TextFormField(
-      key: Key(key),
-      controller: controller,
-      enabled: !_busy && !_locked,
-      readOnly: readOnly,
-      keyboardType: keyboard,
-      autocorrect: false,
-      onChanged: controller == _email ? (_) => setState(() {}) : null,
-      decoration: InputDecoration(
-        labelText: label,
-        helperText: helper,
-        helperMaxLines: 3,
+    String? prefix,
+  }) => TextFormField(
+    key: Key(key),
+    controller: controller,
+    enabled: !_busy && !_locked,
+    keyboardType: keyboard,
+    autocorrect: false,
+    style: _text(15, weight: FontWeight.w700),
+    onChanged: (_) => setState(() {}),
+    decoration: InputDecoration(
+      hintText: label,
+      prefixText: prefix,
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+      isDense: true,
+      errorMaxLines: 3,
+      border: _inputBorder(const Color(0xFFC7DD9B)),
+      enabledBorder: _inputBorder(const Color(0xFFC7DD9B)),
+      focusedBorder: _inputBorder(FieldrushAuthTheme.forest),
+      errorBorder: _inputBorder(const Color(0xFFE3B7B3)),
+      focusedErrorBorder: _inputBorder(FieldrushAuthTheme.danger),
+    ),
+    validator: (value) => validator(value ?? ''),
+  );
+
+  OutlineInputBorder _inputBorder(Color color) => OutlineInputBorder(
+    borderRadius: BorderRadius.circular(12),
+    borderSide: BorderSide(color: color, width: 1.5),
+  );
+
+  String _birthdayLabel(DateTime? date) {
+    if (date == null) return 'Not set';
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
+  }
+
+  void _showBirthdayHelp() {
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Your date of birth'),
+        content: const Text(
+          'Your birthday is private and cannot be changed here. '
+          'Contact support for a correction. You must be 18 or older to play.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
+          ),
+        ],
       ),
-      validator: (value) => validator(value ?? ''),
+    );
+  }
+
+  Widget _homeCityCard(FieldrushAccount account) => _card(
+    padding: const EdgeInsets.fromLTRB(18, 15, 18, 16),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('HOME CITY', style: _labelStyle),
+              const SizedBox(height: 8),
+              Text(
+                account.homeCity ?? 'Not available yet',
+                style: _text(14, weight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                account.homeCity == null
+                    ? 'Your home city will appear when the account service is updated.'
+                    : 'Your skill rating counts on this ladder. City changes will be available later.',
+                style: _text(11, color: FieldrushAuthTheme.muted, height: 1.45),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF2EFE3),
+            borderRadius: BorderRadius.circular(99),
+          ),
+          child: Text(
+            account.homeCity == null ? 'PENDING' : 'LOCKED',
+            style: _text(
+              9,
+              color: const Color(0xFF3C4A38),
+              weight: FontWeight.w800,
+              height: 1,
+              spacing: .9,
+            ),
+          ),
+        ),
+      ],
     ),
   );
 
-  Widget _section(String title, List<Widget> children) => Container(
-    margin: const EdgeInsets.only(bottom: 20),
-    padding: const EdgeInsets.all(20),
-    decoration: BoxDecoration(
-      color: Colors.white.withValues(alpha: 0.65),
-      border: Border.all(color: FieldrushAuthTheme.border),
-      borderRadius: BorderRadius.circular(24),
-    ),
+  Widget _securityOptions(FieldrushAccount account) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          title,
-          style: const TextStyle(
-            fontFamily: 'Outfit',
-            fontSize: 22,
-            fontWeight: FontWeight.w700,
+        TextButton(
+          key: const Key('fieldrush-security-options'),
+          onPressed: () =>
+              setState(() => _securityExpanded = !_securityExpanded),
+          style: TextButton.styleFrom(
+            foregroundColor: FieldrushAuthTheme.muted,
+            textStyle: _text(11, weight: FontWeight.w800),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('Sign-in & security'),
+              const SizedBox(width: 4),
+              Icon(
+                _securityExpanded ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+              ),
+            ],
           ),
         ),
-        const SizedBox(height: 16),
-        ...children,
+        if (_securityExpanded) ...[
+          const SizedBox(height: 8),
+          Text(
+            account.googleLinked
+                ? 'Google is linked'
+                : 'Link Google as another way to sign in.',
+            style: _text(12, color: FieldrushAuthTheme.muted),
+          ),
+          if (!account.googleLinked)
+            OutlinedButton.icon(
+              key: const Key('fieldrush-link-google'),
+              onPressed: _busy || _locked ? null : _linkGoogle,
+              icon: const Icon(Icons.link, size: 18),
+              label: const Text('Link Google'),
+            ),
+          if (_waitingForGoogle)
+            TextButton(
+              onPressed: () => _loadAccount(preserveDraft: true),
+              child: const Text('Refresh linked accounts'),
+            ),
+          const SizedBox(height: 8),
+          Text(
+            'Lost access to your phone? Sign in with a previously linked '
+            'Google account. Do not create another account to recover this one.',
+            style: _text(11, color: FieldrushAuthTheme.muted),
+          ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: _busy ? null : _signOut,
+            child: const Text('Sign out'),
+          ),
+        ],
       ],
     ),
   );

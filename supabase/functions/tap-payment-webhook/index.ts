@@ -1,4 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
+import { tapChargeAmountMatches } from "../_shared/tap_checkout.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -170,9 +171,8 @@ function chargeMismatch(
   if (text(charge.currency)?.toUpperCase() !== intent.currency) {
     return "currency";
   }
-  const amount = Number(charge.amount);
   if (
-    !Number.isFinite(amount) || Math.round(amount * 1000) !== intent.amount_fils
+    !tapChargeAmountMatches(charge.amount, intent.amount_fils, intent.currency)
   ) {
     return "amount";
   }
@@ -210,7 +210,7 @@ function fieldIntentStatus(tapStatus: string) {
   return "FAILED";
 }
 
-async function webhookHash(
+function webhookHash(
   secretKey: string,
   charge: Record<string, unknown>,
 ) {

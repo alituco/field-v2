@@ -6,6 +6,96 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('USD wallet uses dollars and cents without relabeling legacy BHD', () {
+    final usd = ReliabilityStatus.fromJson({
+      'wallet': {'currency': 'USD', 'balance_fils': 13520},
+    });
+    final bhd = ReliabilityStatus.fromJson({
+      'wallet': {'currency': 'BHD', 'balance_fils': 13520},
+    });
+    expect(usd.walletBalanceLabel, r'$13.52');
+    expect(bhd.walletBalanceLabel, '13.520 BHD');
+  });
+
+  test('wallet preserves exact fractional-cent policy credits', () {
+    final status = ReliabilityStatus.fromJson({
+      'wallet': {
+        'currency': 'USD',
+        'balance_fils': 6505,
+        'balances': [
+          {'currency': 'USD', 'balance_fils': 6505},
+          {'currency': 'BHD', 'balance_fils': 3750},
+        ],
+      },
+    });
+    expect(status.walletBalanceLabel, r'$6.505');
+    expect(status.visibleWalletBalances.map((balance) => balance.label), [
+      r'$6.505',
+      '3.750 BHD',
+    ]);
+  });
+
+  testWidgets(
+    'wallet shows USD and BHD as separate balances without conversion',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReliabilityStatusCard(
+              repository: _FakeReliabilityRepository(
+                wallet: {
+                  'currency': 'BHD',
+                  'balance_fils': 3750,
+                  'balances': [
+                    {'currency': 'USD', 'balance_fils': 6505},
+                    {'currency': 'BHD', 'balance_fils': 3750},
+                  ],
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('FIELD WALLET · USD'), findsOneWidget);
+      expect(find.text('FIELD WALLET · BHD'), findsOneWidget);
+      expect(find.text(r'$6.505'), findsOneWidget);
+      expect(find.text('3.750 BHD'), findsOneWidget);
+      expect(
+        find.text('Balances are separate. No currency conversion.'),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'USD credit is visible even when the primary BHD wallet is empty',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReliabilityStatusCard(
+              repository: _FakeReliabilityRepository(
+                wallet: {
+                  'currency': 'BHD',
+                  'balance_fils': 0,
+                  'balances': [
+                    {'currency': 'USD', 'balance_fils': 13000},
+                    {'currency': 'BHD', 'balance_fils': 0},
+                  ],
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('FIELD WALLET · USD'), findsOneWidget);
+      expect(find.text(r'$13.00'), findsOneWidget);
+      expect(find.text('FIELD WALLET · BHD'), findsNothing);
+    },
+  );
+
   test('reliability status parses server-authored sanctions and appeals', () {
     final status = ReliabilityStatus.fromJson({
       'server_now': '2026-07-21T16:50:00Z',
@@ -152,7 +242,7 @@ void main() {
 
     expect(find.text('Reliability deposit required'), findsOneWidget);
     expect(find.text('2 ACTIVE'), findsOneWidget);
-    expect(find.text('FIELD WALLET'), findsOneWidget);
+    expect(find.text('FIELD WALLET · BHD'), findsOneWidget);
     expect(find.text('3.750 BHD'), findsOneWidget);
     expect(find.text('Appeal'), findsOneWidget);
 
@@ -167,13 +257,17 @@ void main() {
 }
 
 class _FakeReliabilityRepository implements ReliabilityRepository {
+  _FakeReliabilityRepository({
+    this.wallet = const {'currency': 'BHD', 'balance_fils': 3750},
+  });
+  final Map<String, dynamic> wallet;
   @override
   Future<ReliabilityStatus> getMyStatus() async {
     return ReliabilityStatus.fromJson({
       'active_strikes': 2,
       'deposit_required': true,
       'deposit_bps': 2000,
-      'wallet': {'currency': 'BHD', 'balance_fils': 3750},
+      'wallet': wallet,
       'allowed_appeal_categories': ['VERIFIED_MEDICAL_EMERGENCY'],
       'incidents': [
         {
