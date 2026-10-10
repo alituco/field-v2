@@ -326,7 +326,12 @@ const _joiningClan = FixtureClan(
 );
 
 class _ChangingClanChargeRepository
-    implements FixtureRepository, FixtureReliabilityBookingRepository {
+    implements
+        FixtureRepository,
+        FixtureReliabilityBookingRepository,
+        FixtureBookingAvailabilityRepository {
+  @override
+  Future<bool> areClanGamesEnabled() async => true;
   _ChangingClanChargeRepository(this.fixture);
 
   Fixture fixture;

@@ -101,7 +101,7 @@ export type ReliabilityPolicyConfig = {
     reliabilityDeposit: {
       activeStrikeThreshold: number;
       depositBps: number;
-      onTimeReturnDestination: "FIELD_WALLET";
+      onTimeReturnDestination: "FIELD_WALLET" | "ORIGINAL_PAYMENT_METHOD";
       forfeitOutcomes: ReliabilityForfeitOutcome[];
     };
     sanctions: Array<{
@@ -172,8 +172,8 @@ export type ReliabilityPolicyConfig = {
     routineTrafficAutomaticallyExcused: boolean;
   };
   wallet: {
-    refundDestination: "FIELD_WALLET";
-    currency: "BHD";
+    refundDestination: "FIELD_WALLET" | "ORIGINAL_PAYMENT_METHOD";
+    currency: "BHD" | "USD";
   };
 };
 
@@ -267,7 +267,7 @@ export const reliabilityPolicyDefaults: ReliabilityPolicyConfig = {
     reliabilityDeposit: {
       activeStrikeThreshold: 2,
       depositBps: 2_000,
-      onTimeReturnDestination: "FIELD_WALLET",
+      onTimeReturnDestination: "ORIGINAL_PAYMENT_METHOD",
       forfeitOutcomes: [
         "LATE",
         "CANCELLED_LATE",
@@ -351,7 +351,7 @@ export const reliabilityPolicyDefaults: ReliabilityPolicyConfig = {
     allowedCategories: [...RELIABILITY_APPEAL_CATEGORIES],
     routineTrafficAutomaticallyExcused: false,
   },
-  wallet: { refundDestination: "FIELD_WALLET", currency: "BHD" },
+  wallet: { refundDestination: "ORIGINAL_PAYMENT_METHOD", currency: "USD" },
 };
 
 const FIELD_LABELS: Record<string, string> = {
@@ -434,7 +434,7 @@ export function validateReliabilityPolicyConfig(
   requireLiteral(value, "timezone", RELIABILITY_POLICY_TIME_ZONE, issues);
   requireLiteral(value, "attendance.hostCheckInRequired", true, issues);
   requireLiteral(value, "attendance.cancellationAfterKickoffOutcome", "NO_SHOW", issues);
-  requireLiteral(value, "solo.reliabilityDeposit.onTimeReturnDestination", "FIELD_WALLET", issues);
+  requireRefundDestination(value, "solo.reliabilityDeposit.onTimeReturnDestination", issues);
   const soloPlayersPerSide = numberAtPath(value, "solo.playersPerSide");
   if (soloPlayersPerSide !== 7 &&
       !(options.allowLegacySoloSixSide && soloPlayersPerSide === 6)) {
@@ -455,8 +455,10 @@ export function validateReliabilityPolicyConfig(
   requireLiteral(value, "injury.strikeDelta", 0, issues);
   requireLiteral(value, "injury.requiresRefereeVerification", true, issues);
   requireLiteral(value, "appeals.routineTrafficAutomaticallyExcused", false, issues);
-  requireLiteral(value, "wallet.refundDestination", "FIELD_WALLET", issues);
-  requireLiteral(value, "wallet.currency", "BHD", issues);
+  requireRefundDestination(value, "wallet.refundDestination", issues);
+  if (!["USD", "BHD"].includes(String(valueAtPath(value, "wallet.currency")))) {
+    issues.push({ path: "wallet.currency", message: "Use USD, or preserve a historical BHD policy." });
+  }
 
   for (const [path, minimum, maximum] of integerRules()) {
     requireNumber(value, path, minimum, maximum, issues, true);
@@ -574,6 +576,9 @@ export function normalizeReliabilityPolicyDraftConfig(
     allowLegacyClanSevenSide: true,
   });
   config.solo.playersPerSide = 7;
+  config.wallet.refundDestination = "ORIGINAL_PAYMENT_METHOD";
+  config.wallet.currency = "USD";
+  config.solo.reliabilityDeposit.onTimeReturnDestination = "ORIGINAL_PAYMENT_METHOD";
   config.clan.playersPerSide = 6;
   config.clan.minimumOnTimeWithoutClanStrike = Math.min(
     config.clan.minimumOnTimeWithoutClanStrike,
@@ -851,6 +856,16 @@ function compareGreater(
   const lesser = numberAtPath(root, lesserPath);
   if (greater !== null && lesser !== null && greater <= lesser) {
     issues.push({ path: greaterPath, message });
+  }
+}
+
+function requireRefundDestination(
+  root: Record<string, unknown>,
+  path: string,
+  issues: ReliabilityPolicyValidationIssue[],
+) {
+  if (!["FIELD_WALLET", "ORIGINAL_PAYMENT_METHOD"].includes(String(valueAtPath(root, path)))) {
+    issues.push({ path, message: "Use the original payment method, or preserve a historical Field Wallet rule." });
   }
 }
 

@@ -414,9 +414,15 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
 
-# Tap signs this server-to-server request with its webhook hashstring rather
-# than a Supabase user JWT. The function validates that HMAC before writing.
-[functions.tap-payment-webhook]
+# Checkout validates the user's token; webhooks verify Stripe's raw-body
+# signature; the recovery worker requires its own server-only secret.
+[functions.stripe-payment]
+verify_jwt = false
+
+[functions.stripe-payment-webhook]
+verify_jwt = false
+
+[functions.stripe-payment-reconcile]
 verify_jwt = false
 
 # ES256 tokens are verified with auth.getUser() inside the handler, followed by

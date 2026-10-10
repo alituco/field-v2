@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
+import { withLocalClanSeedCheckout } from "./_shared/local_clan_seed.ts";
 
 type AdminClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -522,19 +523,32 @@ await seedJoinRequests(
 );
 await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
 const clanOwnerIdsByTag = await loadClanOwnerIds(admin, clanIdsByTag);
-const fixtureIdsByKey = await seedFixtures(
-  admin,
-  clanIdsByTag,
-  clanOwnerIdsByTag,
-);
-await seedFixtureScorers(admin, clanIdsByTag, usersByPhone, fixtureIdsByKey);
-await seedFixtureMatchControl(
-  admin,
-  clanIdsByTag,
-  usersByPhone,
-  fixtureIdsByKey,
-);
-await finalizeSeededFixtures(admin, usersByPhone, fixtureIdsByKey);
+const fixtureIdsByKey = await withLocalClanSeedCheckout({
+  url: supabaseUrl,
+  readEnabled: async () => {
+    const { data, error } = await admin.from("game_payment_settings")
+      .select("clan_enabled").eq("singleton", true).single();
+    if (error) {
+      throw new Error(`Read local clan seed settings: ${error.message}`);
+    }
+    return data.clan_enabled === true;
+  },
+  writeEnabled: async (enabled) => {
+    const { error } = await admin.from("game_payment_settings")
+      .update({ clan_enabled: enabled }).eq("singleton", true);
+    if (error) {
+      throw new Error(
+        `Restore/update local clan seed settings: ${error.message}`,
+      );
+    }
+  },
+}, async () => {
+  const ids = await seedFixtures(admin, clanIdsByTag, clanOwnerIdsByTag);
+  await seedFixtureScorers(admin, clanIdsByTag, usersByPhone, ids);
+  await seedFixtureMatchControl(admin, clanIdsByTag, usersByPhone, ids);
+  await finalizeSeededFixtures(admin, usersByPhone, ids);
+  return ids;
+});
 await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
 await seedProfileDetails(admin, usersByPhone, clanIdsByTag);
 await seedFollows(admin, usersByPhone);

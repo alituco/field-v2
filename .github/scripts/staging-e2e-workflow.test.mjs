@@ -32,6 +32,15 @@ test("APK compilation is isolated from browser dependencies and emulator", () =>
   assert.doesNotMatch(prepare, /playwright install|npm ci|uses: .*staging-android-emulator/);
 });
 
+test("Android build and E2E preparation share dependency-only Gradle caching", () => {
+  for (const id of ["flutter", "prepare-staging-e2e"]) {
+    const source = job(id);
+    assert.match(source, /cache: gradle/);
+    assert.match(source, /mobile\/android\/\*\*\/\*\.gradle\*/);
+    assert.match(source, /mobile\/android\/gradle\/wrapper\/gradle-wrapper\.properties/);
+  }
+});
+
 test("fresh Android job only executes the encrypted prebuilt binary", () => {
   const android = job("android-staging-e2e");
   assert.match(android, /needs: prepare-staging-e2e/);
@@ -97,4 +106,20 @@ test("cross-job handoff only uploads ciphertext with short retention", () => {
   assert.match(prepare, /path: \$\{\{ runner\.temp \}\}\/field-e2e-handoff\.bin/);
   assert.match(prepare, /retention-days: 1/);
   assert.doesNotMatch(prepare, /path:.*(?:password\.txt|manifest\.json|\.apk)/);
+});
+
+test("public E2E failure artifacts only upload authenticated ciphertext", () => {
+  for (const [id, purpose] of [["android-staging-e2e", "android"], ["browser-staging-e2e", "browser"]]) {
+    const source = job(id);
+    assert.match(source, /STAGING_DIAGNOSTICS_KEY: \$\{\{ secrets\.SUPABASE_SERVICE_ROLE_KEY \}\}/);
+    assert.match(source, /staging-diagnostics\.mjs encrypt/);
+    assert.match(source, new RegExp(`--context "\\$GITHUB_RUN_ID:${purpose}"`));
+    assert.match(source, /umask 077/);
+    assert.match(source, /trap 'rm -f "\$archive"' EXIT/);
+    const upload = source.slice(source.indexOf(`      - name: Upload encrypted`));
+    assert.match(upload, /if: always\(\) && steps\.[a-z-]+\.outputs\.created == 'true'/);
+    assert.match(upload, new RegExp(`path: \\$\\{\\{ runner\\.temp \\}\\}/field-${purpose}-diagnostics\\.bin`));
+    assert.doesNotMatch(upload, /path:.*(?:e2e-artifacts|test-results|playwright-report|tar\.gz)/);
+    assert.match(upload, /retention-days: 7/);
+  }
 });

@@ -40,7 +40,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Field uses your camera when you choose to take a profile photo.</string>
+	<string>Fieldrush uses your camera when you choose to take a profile photo or scan a payment card.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Field lets you choose a profile photo from your library.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

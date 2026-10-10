@@ -32,6 +32,28 @@ if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" || -z "${SUPABASE_DB_PASSWORD:-}" ]]; then
   exit 64
 fi
 
+# This branch changes the payment schema, but only staging has the matching
+# Stripe deployment configured. Never migrate production and leave it running
+# the retired payment handlers. A coordinated live rollout must replace this
+# gate with live-key/webhook/worker validation and deployment first.
+if [[ "$target" == production ]]; then
+  echo "Production payment cutover is not configured. No production changes were made; deploy staging only." >&2
+  exit 64
+fi
+
+# Fail before migrations rather than leaving a partially upgraded checkout.
+if [[ "$target" == staging ]]; then
+  stripe_reconcile_secret="${STRIPE_RECONCILE_SECRET:-}"
+  if [[ "${STRIPE_SECRET_KEY:-}" != sk_test_* ||
+    "${STRIPE_PUBLISHABLE_KEY:-}" != pk_test_* ||
+    "${STRIPE_WEBHOOK_SECRET:-}" != whsec_* ||
+    ! "${STRIPE_WEBHOOK_ENDPOINT_ID:-}" =~ ^we_[A-Za-z0-9]+$ ||
+    ${#stripe_reconcile_secret} -lt 32 ]]; then
+    echo "Stripe sandbox keys, webhook signing secret and a 32+ character worker secret are required for staging." >&2
+    exit 64
+  fi
+fi
+
 production_function_list() {
   supabase functions list \
     --project-ref "$project_ref" \
@@ -95,26 +117,34 @@ deploy_function() {
 }
 
 if [[ "$target" == "staging" ]]; then
-  if [[ -z "${TAP_SECRET_KEY:-}" || -z "${TAP_PUBLIC_KEY:-}" ||
-    -z "${TAP_MERCHANT_ID:-}" ]]; then
-    echo "TAP_SECRET_KEY, TAP_PUBLIC_KEY, and TAP_MERCHANT_ID are required for staging." >&2
-    exit 64
-  fi
-
-  tap_webhook_url="https://${project_ref}.supabase.co/functions/v1/tap-payment-webhook"
+  # Do not put server keys in CLI arguments or print the temporary secret file.
+  stripe_secrets_file="$(mktemp)"
+  chmod 600 "$stripe_secrets_file"
+  trap 'rm -f "$stripe_secrets_file"' EXIT
+  printf 'STRIPE_SECRET_KEY=%s\nSTRIPE_WEBHOOK_SECRET=%s\nSTRIPE_RECONCILE_SECRET=%s\nFIELD_ENVIRONMENT=staging\n' \
+    "$STRIPE_SECRET_KEY" "$STRIPE_WEBHOOK_SECRET" "$STRIPE_RECONCILE_SECRET" \
+    >"$stripe_secrets_file"
   supabase secrets set \
     --project-ref "$project_ref" \
-    TAP_SECRET_KEY="$TAP_SECRET_KEY" \
-    TAP_PUBLIC_KEY="$TAP_PUBLIC_KEY" \
-    TAP_MERCHANT_ID="$TAP_MERCHANT_ID" \
-    TAP_APPLE_PAY_ENABLED="${TAP_APPLE_PAY_ENABLED:-false}" \
-    TAP_WEBHOOK_URL="$tap_webhook_url" \
-    FIELD_ENVIRONMENT=staging
+    --env-file "$stripe_secrets_file"
+  rm -f "$stripe_secrets_file"
+  trap - EXIT
 
-  # Both endpoints authenticate their own request: tap-payment validates the
-  # caller's access token and the webhook validates Tap's HMAC signature.
-  deploy_function tap-payment --no-verify-jwt
-  deploy_function tap-payment-webhook --no-verify-jwt
+  deploy_function stripe-payment --no-verify-jwt
+  deploy_function stripe-payment-webhook --no-verify-jwt
+  deploy_function stripe-payment-reconcile --no-verify-jwt
+  SUPABASE_PROJECT_REF="$project_ref" node .github/scripts/configure-stripe-staging.mjs
+
+  # Remove retired endpoints only after their replacements are deployed.
+  function_list="$(production_function_list)"
+  for retired_function in tap-payment tap-payment-webhook; do
+    if jq -e --arg name "$retired_function" '.[] | select(.name == $name)' \
+      >/dev/null <<<"$function_list"; then
+      supabase functions delete "$retired_function" --project-ref "$project_ref" --yes
+    fi
+  done
+  supabase secrets unset TAP_SECRET_KEY TAP_PUBLIC_KEY TAP_MERCHANT_ID \
+    TAP_APPLE_PAY_ENABLED TAP_WEBHOOK_URL --project-ref "$project_ref" --yes
 
   # The handler validates Auth tokens and recent authentication itself. It is
   # additionally disabled until FIELDRUSH_ACCOUNT_DELETION_ENABLED is set.

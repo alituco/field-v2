@@ -100,6 +100,8 @@ class ClanFixtureCancellationPreview {
     required this.currency,
     this.depositRefundFils = 0,
     this.policyVersionId,
+    this.refundDestination,
+    this.refundStatus,
   });
 
   final bool canCancel;
@@ -115,11 +117,19 @@ class ClanFixtureCancellationPreview {
   final String currency;
   final int depositRefundFils;
   final String? policyVersionId;
+  final String? refundDestination;
+  final String? refundStatus;
 
   int get refundPercent => (refundBps / 100).round();
   String get refundLabel => _fixtureMoneyLabel(refundAmountFils, currency);
   String get depositRefundLabel =>
       _fixtureMoneyLabel(depositRefundFils, currency);
+  String get refundDestinationLabel =>
+      switch (refundDestination?.trim().toUpperCase()) {
+        'ORIGINAL_PAYMENT_METHOD' || 'STRIPE' => 'Original payment method',
+        'FIELD_WALLET' => 'Field Wallet',
+        _ => 'Refund',
+      };
 
   bool hasSameConsequencesAs(ClanFixtureCancellationPreview other) {
     return canCancel == other.canCancel &&
@@ -134,6 +144,7 @@ class ClanFixtureCancellationPreview {
         forfeitScore == other.forfeitScore &&
         currency == other.currency &&
         depositRefundFils == other.depositRefundFils &&
+        refundDestination == other.refundDestination &&
         policyVersionId == other.policyVersionId;
   }
 
@@ -152,6 +163,8 @@ class ClanFixtureCancellationPreview {
       currency: (json['currency'] as String? ?? 'BHD').trim(),
       depositRefundFils: _asInt(json['deposit_refund_fils']),
       policyVersionId: (json['policy_version_id'] as String?)?.trim(),
+      refundDestination: (json['refund_destination'] as String?)?.trim(),
+      refundStatus: (json['refund_status'] as String?)?.trim(),
     );
   }
 }
@@ -552,6 +565,8 @@ class Fixture {
     this.awayPaidAt,
     this.homePayer,
     this.awayPayer,
+    this.currency,
+    this.basePriceFils,
     this.cancelledAt,
     this.cancellationCode,
     this.cancellationReason,
@@ -599,6 +614,11 @@ class Fixture {
   final DateTime? awayPaidAt;
   final FixtureParticipant? homePayer;
   final FixtureParticipant? awayPayer;
+  final String? currency;
+  final int? basePriceFils;
+  String get teamPriceLabel => basePriceFils == null || currency == null
+      ? 'Price shown at checkout'
+      : '${_fixtureMoneyLabel(basePriceFils!, currency!)} each';
   final DateTime? cancelledAt;
   final String? cancellationCode;
   final String? cancellationReason;
@@ -909,6 +929,8 @@ class Fixture {
       awayPayer: awayPayer == null
           ? null
           : FixtureParticipant.fromJson(awayPayer),
+      currency: _nonEmptyString(json['currency']),
+      basePriceFils: _asNullableInt(json['base_price_fils']),
       cancelledAt: _asDate(json['cancelled_at']),
       cancellationCode: json['cancellation_code'] as String?,
       cancellationReason: json['cancellation_reason'] as String?,
@@ -1052,10 +1074,13 @@ int _asInt(Object? value, {int fallback = 0}) {
 }
 
 String _fixtureMoneyLabel(int fils, String currency) {
-  final dinars = fils / 1000;
-  final amount = dinars == dinars.roundToDouble()
-      ? dinars.toInt().toString()
-      : dinars.toStringAsFixed(3);
+  final units = fils / 1000;
+  if (currency.toUpperCase() == 'USD') {
+    return '\$${units.toStringAsFixed(fils % 10 == 0 ? 2 : 3)} USD';
+  }
+  final amount = units == units.roundToDouble()
+      ? units.toInt().toString()
+      : units.toStringAsFixed(3);
   return '$amount $currency';
 }
 

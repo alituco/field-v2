@@ -51,7 +51,7 @@ The following October 10 migrations were applied to hosted staging in timestamp 
 
 The rehearsal exercised actual admin game creation, USD quoting, 7v7 policy snapshots, rejection of MID bookings, market-isolated feeds and account/wallet RPCs. Its synthetic game was rolled back. Post-commit comparisons verified all 163 existing games, 1,054 bookings, 482 rating events, historical policy snapshots, published policies and BHD balances were preserved. No games were seeded and no production data was changed. Private backup and verification records are under the gitignored `scratch/phoenix-rollout/2026-10-10/`.
 
-**Stripe will replace Tap completely for Fieldrush.** The updated Tap functions from the earlier implementation were deliberately not deployed in this rollout. The existing hosted Tap checkout rejects USD quotes before creating a charge; paid USD booking is unavailable until the Stripe integration is implemented and verified. Do not enable a Tap USD merchant as a workaround. Preserve historical payment/refund records when retiring the provider; removing old financial tables is not part of this deployment.
+**Stripe is the checkout provider for Fieldrush.** See [Stripe payments](stripe-payments.md) for sandbox setup, native Apple Pay, original-payment-method refunds and the coordinated backend/mobile rollout. Preserve historical payment and refund records when retiring the previous provider; do not erase financial history.
 
 The admin PWA can be deployed independently, without triggering TestFlight:
 
@@ -62,11 +62,11 @@ gh workflow run smoke-supabase-staging.yml \
 
 That manual workflow runs hosted staging API smoke checks and admin tests/type-checking, then publishes only the configured `field-ops-staging` Vercel project. It does not apply migrations or build/upload a mobile binary. This source promotion uses an explicit `[skip ci]` merge marker to avoid the ordinary push workflow's automatic TestFlight path; normal future staging pushes retain their existing CI behavior.
 
-USD and BHD wallet credits are never converted or combined. Database amount fields retain their existing integer-thousandths contract (`13000` means USD 13.00 for USD games). Card charges use whole cents; policy refunds preserve exact ledger values, including fractional cents, and the wallet displays that precision. This extension does not add wallet spending.
+Historical USD and BHD wallet credits are never converted or combined. Database amount fields retain their existing integer-thousandths contract (`13000` means USD 13.00 for USD games). New Stripe cancellation refunds return to the original payment method, not the wallet. The ledger retains exact policy amounts; Stripe transfers whole cents with rounding carried across refunds on the same payment. This extension does not add wallet spending.
 
 Use `flutter analyze` and `flutter test` in `mobile`, and `npm test` plus `npm run typecheck` in `referee`. The isolated PostgreSQL fixture checks in `supabase/scripts/test_fieldrush_market.mjs` cover both formats, assignments, policies and wallet isolation. They supplement, rather than replace, a complete local Supabase migration replay and hosted device/payment checks.
 
-Local verification for this extension: 345 Flutter tests, Flutter analysis, 73 admin tests, admin type-checking and production build, 26 Deno tests, and 39 isolated PostgreSQL checks passed. The staging iOS simulator build also passed. Full Supabase migration replay was unavailable because the local Docker daemon was stopped. Real USD checkout and a complete 14-player check-in → match completion → refund journey have not been exercised; the existing hosted E2E fixtures deliberately retain their legacy 12-player/BHD format.
+Local verification for this extension: 345 Flutter tests, Flutter analysis, 73 admin tests, admin type-checking and production build, 26 Deno tests, and 39 isolated PostgreSQL checks passed. The staging iOS simulator build also passed. Full Supabase migration replay was unavailable because the local Docker daemon was stopped. That run did not exercise real USD checkout or a complete 14-player check-in → match completion → refund journey. The subsequent Stripe branch updates the hosted E2E fixture contract to Phoenix, 14 players and USD13; a hosted run is still required after coordinated deployment.
 
 ## Hosted staging setup
 

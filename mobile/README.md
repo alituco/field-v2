@@ -72,7 +72,7 @@ flutter analyze
 flutter test
 ```
 
-See [Tap Payments](../docs/tap-payments.md) for the secure local checkout
+See [Stripe Payments](../docs/stripe-payments.md) for the secure local checkout
 setup, supported payment methods, and device requirements.
 
 The hosted Android journey lives in

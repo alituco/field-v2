@@ -128,7 +128,7 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "solo-outcomes",
     title: "Solo attendance outcomes",
-    detail: "One final outcome produces the strike and wallet refund shown here.",
+    detail: "One final outcome produces the strike and refund shown here.",
     fields: [
       numberField("solo.outcomes.onTime.strikes", "On time · strikes", "strikes", 0, 20),
       bpsField("solo.outcomes.onTime.refundBps", "On time · refund", "%", 100),
@@ -420,7 +420,7 @@ export function ReliabilitySection({
       const decision = appealDialog.decision;
       setAppealDialog(null);
       onNotice(decision === "OVERTURN"
-        ? "Appeal approved. The strike and its sanctions were reversed, and wallet corrections were applied."
+        ? "Appeal approved. The strike and its sanctions were reversed, and eligible refunds were recorded for processing."
         : "Appeal reviewed. The original attendance decision remains in place.");
       if (response.warning) onError(response.warning);
     } catch (error) {
@@ -802,7 +802,7 @@ export function ReliabilitySection({
           <blockquote className={styles.appealMessage}>{appealDialog.appeal.message}</blockquote>
           <div className={appealDialog.decision === "OVERTURN" ? styles.modalNotice : styles.modalWarning}>
             {appealDialog.decision === "OVERTURN"
-              ? "This appends a strike reversal, revokes only sanctions caused by this incident, corrects attendance to excused, and returns any eligible refund or forfeited deposit to Field Wallet. Nothing is deleted."
+              ? "This appends a strike reversal, revokes only sanctions caused by this incident, corrects attendance to excused, and returns any eligible refund or forfeited deposit through the original payment method. Historical wallet credits keep their original destination. Nothing is deleted."
               : "The attendance outcome, strike, refund, and related sanctions will remain unchanged. The player will receive your review result."}
           </div>
           <label className={styles.modalField}>
@@ -1069,7 +1069,7 @@ function CancellationRulesCard({ owner, config, issues, onChange }: {
                     label="Fee refunded"
                     maximum={100}
                     onChange={(value) => onChange(refundPath, value)}
-                    tooltip="Percentage of the original booking fee returned to the Field Wallet. 100% means a full fee refund."
+                    tooltip="Percentage of the original booking fee refunded. New card and Apple Pay bookings return to their original payment method. 100% means a full fee refund."
                     unit="%"
                     value={Number(getAtPath(config, refundPath))}
                   />
@@ -1428,7 +1428,7 @@ function AppealsCard({ config, onChange }: {
   }
   return (
     <details className={`admin-card ${styles.policyGroup}`}>
-      <summary><div><span>Appeals, deposit forfeiture and wallet</span><small>Player-facing exceptions stay explicit and auditable.</small></div><b>Review rules</b><i>⌄</i></summary>
+      <summary><div><span>Appeals, deposit forfeiture and refunds</span><small>Player-facing exceptions stay explicit and auditable.</small></div><b>Review rules</b><i>⌄</i></summary>
       <div className={styles.choiceGroups}>
         <fieldset><legend>Allowed appeal categories</legend><div>
           {RELIABILITY_APPEAL_CATEGORIES.map((category) => (
@@ -1446,7 +1446,7 @@ function AppealsCard({ config, onChange }: {
           ))}
         </div></fieldset>
         <div className={styles.lockedRule}><span>Routine traffic</span><strong>Not automatically excused</strong><small>An admin may still overturn a documented exceptional case. Automatic excusal is intentionally locked off.</small></div>
-        <div className={styles.lockedRule}><span>Refund destination</span><strong>Field wallet</strong><small>Refunds use the game's currency. USD and historical BHD balances stay separate; no currency conversion is applied.</small></div>
+        <div className={styles.lockedRule}><span>Refund destination</span><strong>{config.wallet.refundDestination === "FIELD_WALLET" ? "Historical Field Wallet rule" : "Original payment method"}</strong><small>New card and Apple Pay payments are refunded to the original payment method, in the booking's currency. Historical wallet credits remain separate. Bank processing can take a few days.</small></div>
       </div>
     </details>
   );

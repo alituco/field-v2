@@ -57,6 +57,20 @@ test("draft revision tokens preserve PostgreSQL microseconds", () => {
   assert.equal(validReliabilityRevision(revision), revision);
 });
 
+test("new drafts refund original methods without rewriting historical wallet policies", () => {
+  const historical = cloneReliabilityPolicyConfig(reliabilityPolicyDefaults);
+  historical.wallet.refundDestination = "FIELD_WALLET";
+  historical.wallet.currency = "BHD";
+  historical.solo.reliabilityDeposit.onTimeReturnDestination = "FIELD_WALLET";
+  assert.deepEqual(validateReliabilityPolicyConfig(historical), []);
+  const editable = normalizeReliabilityPolicyDraftConfig(historical);
+  assert.equal(editable.wallet.refundDestination, "ORIGINAL_PAYMENT_METHOD");
+  assert.equal(editable.wallet.currency, "USD");
+  assert.equal(editable.solo.reliabilityDeposit.onTimeReturnDestination, "ORIGINAL_PAYMENT_METHOD");
+  assert.equal(historical.wallet.refundDestination, "FIELD_WALLET");
+  assert.equal(historical.wallet.currency, "BHD");
+});
+
 test("validation rejects unknown settings, unsafe thresholds, and overlapping cancellation bands", () => {
   const invalid = cloneReliabilityPolicyConfig(reliabilityPolicyDefaults);
   invalid.attendance.checkInOpenLeadMinutes = 10;

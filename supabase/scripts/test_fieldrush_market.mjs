@@ -3,6 +3,9 @@
 // PGLITE_MODULE=/tmp/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite node supabase/scripts/test_fieldrush_market.mjs
 // This tests the new migrations against the real relevant function definitions,
 // with a minimal fixture schema; it is not a full Supabase migration replay.
+// Its pre-October fixture intentionally uses the historical payment table names
+// that the tested market migrations expect. The later provider rename and full
+// Stripe checkout/refund behavior are tested in verify_stripe_payment_system.sql.
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';

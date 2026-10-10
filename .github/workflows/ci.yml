@@ -42,6 +42,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -52,28 +56,6 @@ jobs:
 
       - name: Install Flutter dependencies
         run: flutter pub get
-
-      # Tap's published checkout_flutter 1.0.4 still calls the repository
-      # method removed by AGP 9. Keep this version-pinned patch explicit and
-      # fail closed if Tap changes the package contents.
-      - name: Patch Tap Checkout for AGP 9
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_dir="$PUB_CACHE/hosted/pub.dev/checkout_flutter-1.0.4"
-          patch_file="$PWD/patches/checkout_flutter-1.0.4-agp9.patch"
-
-          if patch --batch --dry-run --forward --strip=1 \
-            --directory="$package_dir" < "$patch_file"; then
-            patch --batch --forward --strip=1 \
-              --directory="$package_dir" < "$patch_file"
-          elif patch --batch --dry-run --reverse --strip=1 \
-            --directory="$package_dir" < "$patch_file"; then
-            echo "Tap Checkout AGP 9 patch is already applied in the restored cache."
-          else
-            echo "Tap Checkout 1.0.4 no longer matches the reviewed AGP 9 patch." >&2
-            exit 1
-          fi
 
       - name: Analyze Flutter app
         run: flutter analyze
@@ -105,7 +87,7 @@ jobs:
 
   flutter-ios:
     name: Flutter iOS flavor builds
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 35
     defaults:
       run:
@@ -114,6 +96,17 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Require Xcode 26 for Stripe SDK builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / {split($2, version, "."); print version[1]}')"
+          if [[ -z "$xcode_major" || "$xcode_major" -lt 26 ]]; then
+            echo "::error::The Stripe iOS SDK requires Xcode 26 or newer."
+            exit 1
+          fi
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -272,7 +265,9 @@ jobs:
           bash -n .github/scripts/upload-staging-testflight.sh
           node --check .github/scripts/smoke-supabase.mjs
           node --test .github/scripts/smoke-supabase.test.mjs
-          node --test .github/scripts/*android*.test.mjs .github/scripts/staging-e2e-handoff.test.mjs .github/scripts/staging-e2e-workflow.test.mjs
+          node --test .github/scripts/configure-stripe-staging.test.mjs
+          node --test .github/scripts/deploy-supabase.test.mjs
+          node --test .github/scripts/*android*.test.mjs .github/scripts/staging-e2e-handoff.test.mjs .github/scripts/staging-e2e-workflow.test.mjs .github/scripts/staging-diagnostics.test.mjs
           grep -q "deploy_function dev-phone-login --no-verify-jwt" \
             .github/scripts/deploy-supabase.sh
           grep -q "Hosted schema has no published reliability policy" \
@@ -294,7 +289,7 @@ jobs:
           deno fmt --check supabase/functions "${script_files[@]}"
           deno check supabase/functions/*/index.ts "${script_files[@]}"
           deno test \
-            supabase/functions/_shared/tap_checkout_test.ts \
+            supabase/functions/_shared/stripe_checkout_test.ts \
             supabase/functions/_shared/staging_guard_test.ts \
             supabase/functions/fieldrush-delete-account/request_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
@@ -389,7 +384,7 @@ jobs:
             supabase/scripts/verify_match_resolution_control_plane.sql \
             supabase/scripts/verify_moderation_system.sql \
             supabase/scripts/verify_support_ticket_system.sql \
-            supabase/scripts/verify_tap_payment_system.sql
+            supabase/scripts/verify_stripe_payment_system.sql
           do
             docker exec -i supabase_db_field_v2 \
               psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
@@ -422,9 +417,8 @@ jobs:
       E2E_DEV_OTP_CODE: "000000"
       E2E_ONBOARDING_PHONE: "+97339009100"
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
-      TAP_PUBLIC_KEY: ${{ vars.TAP_PUBLIC_KEY }}
-      TAP_MERCHANT_ID: ${{ vars.TAP_MERCHANT_ID }}
-      TAP_APPLE_PAY_ENABLED: ${{ vars.TAP_APPLE_PAY_ENABLED }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      STRIPE_WEBHOOK_ENDPOINT_ID: ${{ vars.STRIPE_WEBHOOK_ENDPOINT_ID }}
 
     steps:
       - name: Check out repository
@@ -436,7 +430,9 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_RECONCILE_SECRET: ${{ secrets.STRIPE_RECONCILE_SECRET }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF" != "refs/heads/staging" ]]; then
@@ -459,8 +455,8 @@ jobs:
             echo "::error::The staging GitHub environment is missing Supabase credentials."
             exit 1
           fi
-          if [[ -z "$TAP_SECRET_KEY" || -z "$TAP_PUBLIC_KEY" || -z "$TAP_MERCHANT_ID" ]]; then
-            echo "::error::The staging GitHub environment is missing Tap credentials."
+          if [[ "$STRIPE_SECRET_KEY" != sk_test_* || "$STRIPE_PUBLISHABLE_KEY" != pk_test_* || "$STRIPE_WEBHOOK_SECRET" != whsec_* || -z "$STRIPE_RECONCILE_SECRET" ]]; then
+            echo "::error::The staging GitHub environment is missing Stripe sandbox/webhook/worker credentials."
             exit 1
           fi
 
@@ -477,7 +473,9 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_RECONCILE_SECRET: ${{ secrets.STRIPE_RECONCILE_SECRET }}
         run: .github/scripts/deploy-supabase.sh staging "$SUPABASE_PROJECT_REF"
 
       - name: Smoke-test hosted staging
@@ -488,6 +486,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter for Android E2E
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -666,15 +668,38 @@ jobs:
         with:
           script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh" run-prebuilt
 
-      - name: Upload Android failure diagnostics
+      - name: Encrypt Android failure diagnostics
+        id: android-diagnostics
         if: failure() || cancelled()
+        continue-on-error: true
+        shell: bash
+        env:
+          STAGING_DIAGNOSTICS_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ ! -d mobile/build/e2e-artifacts ]]; then
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/field-android-diagnostics.tar.gz"
+          trap 'rm -f "$archive"' EXIT
+          tar -czf "$archive" -- mobile/build/e2e-artifacts
+          node .github/scripts/staging-diagnostics.mjs encrypt \
+            --input "$archive" \
+            --output "$RUNNER_TEMP/field-android-diagnostics.bin" \
+            --context "$GITHUB_RUN_ID:android"
+          echo "created=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload encrypted Android failure diagnostics
+        if: always() && steps.android-diagnostics.outputs.created == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: staging-android-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-          path: mobile/build/e2e-artifacts/
+          path: ${{ runner.temp }}/field-android-diagnostics.bin
           if-no-files-found: ignore
           retention-days: 7
+          compression-level: 0
 
   browser-staging-e2e:
     name: Staging referee and admin E2E
@@ -808,18 +833,46 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/field-referee-e2e.pid")" || true
           fi
 
-      - name: Upload staging E2E failure diagnostics
+      # Traces contain Authorization headers and session state. Log masking does
+      # not sanitize artifact contents, especially in a public repository.
+      - name: Encrypt staging browser failure diagnostics
+        id: browser-diagnostics
         if: failure() || cancelled()
+        continue-on-error: true
+        shell: bash
+        env:
+          STAGING_DIAGNOSTICS_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          paths=()
+          for directory in referee/e2e-artifacts referee/playwright-report referee/test-results; do
+            if [[ -d "$directory" ]]; then
+              paths+=("$directory")
+            fi
+          done
+          if [[ ${#paths[@]} -eq 0 ]]; then
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/field-browser-diagnostics.tar.gz"
+          trap 'rm -f "$archive"' EXIT
+          tar -czf "$archive" -- "${paths[@]}"
+          node .github/scripts/staging-diagnostics.mjs encrypt \
+            --input "$archive" \
+            --output "$RUNNER_TEMP/field-browser-diagnostics.bin" \
+            --context "$GITHUB_RUN_ID:browser"
+          echo "created=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload encrypted staging browser failure diagnostics
+        if: always() && steps.browser-diagnostics.outputs.created == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: staging-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            referee/e2e-artifacts/
-            referee/playwright-report/
-            referee/test-results/
+          path: ${{ runner.temp }}/field-browser-diagnostics.bin
+          compression-level: 0
 
   deploy-staging:
     name: Deploy and end-to-end test staging
@@ -939,6 +992,8 @@ jobs:
       SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
       SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APPLE_MERCHANT_ID: merchant.com.alialtaraif.fieldrush
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
       IOS_STAGING_BUNDLE_ID: ${{ vars.IOS_STAGING_BUNDLE_ID }}
       TESTFLIGHT_INTERNAL_GROUP: ${{ vars.TESTFLIGHT_INTERNAL_GROUP }}
 

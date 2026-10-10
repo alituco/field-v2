@@ -15,7 +15,8 @@ The production project is explicitly denied by
 
 1. `setup_staging.ts` creates or refreshes the tagged test accounts, cancels
    transient state from interrupted runs, creates two tagged future solo games,
-   seeds 11 of 12 places in the match journey, and writes a non-secret manifest.
+   seeds 13 of 14 places in a Phoenix USD match, and writes a non-secret
+   manifest.
 2. `verify_staging.ts --phase=prepared` proves the fixture is ready before UI
    automation starts.
 3. The mobile/referee/admin E2E journeys use IDs and exact text markers from the
@@ -47,7 +48,7 @@ export E2E_MANIFEST_PATH='/tmp/field-e2e-manifest.json'
 
 GitHub Actions should generate and mask `E2E_TEST_PASSWORD`; it must never be
 written to the manifest or uploaded as an artifact. The onboarding phone must be
-reserved for automation and must not be one of the fixed 12-player or admin test
+reserved for automation and must not be one of the fixed 14-player or admin test
 accounts.
 
 The optional `E2E_BOOTSTRAP_PHONE` and `E2E_DEV_OTP_CODE` values describe the
@@ -94,7 +95,7 @@ numbers, game times, and run-specific text markers. Important entries are:
 - `accounts.partyTarget`: player that accepts the party invitation.
 - `accounts.onboarding`: separate user prepared with missing name/DOB metadata.
 - `accounts.admin`: active isolated admin/referee.
-- `games.match`: 11 seeded bookings; the mobile test books the final place.
+- `games.match`: 13 seeded bookings; the mobile test books the final place.
 - `games.cancellation`: empty game used to verify cancellation and reopening.
 - `markers.reportDetails` and `markers.supportDetails`: exact text used to find
   the mobile submissions without depending on unrelated staging records.

@@ -12,6 +12,7 @@ import { loadAdminOpenQueueGames } from "./open-queue-referee-data";
 import { loadAdminFixtures } from "./referee-data";
 import type { RefereeFixture } from "./types";
 import { adminGameCurrency, type AdminGameCurrency } from "./admin-game-money";
+import { refundRequiresManualReview } from "./payment-refunds";
 
 export type AdminGameAuditItem = {
   id: string;
@@ -63,6 +64,8 @@ export type AdminGameResolutionRefund = {
   status: string;
   failureReason: string | null;
   walletTransactionId: string | null;
+  paymentRefundId: string | null;
+  requiresManualReview: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -193,9 +196,8 @@ export async function loadAdminGameDetail(
       ? loadClanRatingSummary(db, matchId)
       : loadSoloRatingSummary(db, matchId),
     loadAdminGameResolution(db, matchKind, matchId),
-    matchKind === "SOLO"
-      ? db.from("open_queue_games").select("currency").eq("id", matchId).single()
-      : Promise.resolve({ data: null, error: null }),
+    db.from(matchKind === "SOLO" ? "open_queue_games" : "fixtures")
+      .select("currency").eq("id", matchId).single(),
   ]);
 
   const fixture = games.find((game) => game.id === matchId);
@@ -276,7 +278,7 @@ async function loadAdminGameResolution(
       .order("revision", { ascending: false }),
     db.from("match_resolution_refunds")
       .select(
-        "id,case_id,revision_id,recipient_profile_id,clan_id,side,amount_fils,refund_bps,destination,status,failure_reason,wallet_transaction_id,created_at,updated_at",
+        "id,case_id,revision_id,recipient_profile_id,clan_id,side,amount_fils,refund_bps,destination,status,failure_reason,wallet_transaction_id,payment_refund_id,created_at,updated_at,payment_refund:payment_refunds(provider_status,payment_intent:payment_intents(external_refund_review_required))",
       )
       .eq("case_id", caseId)
       .order("created_at", { ascending: false }),
@@ -334,6 +336,8 @@ async function loadAdminGameResolution(
       status: text(row.status, "PENDING").toUpperCase(),
       failureReason: nullableText(row.failure_reason),
       walletTransactionId: nullableText(row.wallet_transaction_id),
+      paymentRefundId: nullableText(row.payment_refund_id),
+      requiresManualReview: refundRequiresManualReview(relation(row.payment_refund)),
       createdAt: text(row.created_at),
       updatedAt: text(row.updated_at),
     })),

@@ -66,7 +66,7 @@ test("referee runs the match and admin sees player-created requests", async ({
   ).toBeVisible();
 
   await checkInEveryPlayer(page, page.locator("details.attendance-roster"));
-  await expect(playersTab).toContainText("12/12");
+  await expect(playersTab).toContainText("14/14");
   await expect(page.getByRole("button", {
     name: "Start game",
     exact: true,

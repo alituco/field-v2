@@ -135,6 +135,7 @@ class _FixturesScreenState extends State<FixturesScreen> {
       context: context,
       cachedMembership: _myClanMembership,
       loadMembership: widget.fixtureRepository.getMyClanMembership,
+      loadClanAvailability: () => clanGamesAvailable(widget.fixtureRepository),
     );
     if (selection == null || !mounted) return;
 

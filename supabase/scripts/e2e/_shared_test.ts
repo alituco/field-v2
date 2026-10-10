@@ -12,7 +12,7 @@ Deno.test("parses the versioned, tagged E2E manifest contract", () => {
   const parsed = parseManifest(manifest);
 
   assertEquals(parsed.runId, "test-run-42");
-  assertEquals(parsed.accounts.players.length, 12);
+  assertEquals(parsed.accounts.players.length, 14);
   assertEquals(
     parsed.accounts.main.profileId,
     manifest.accounts.main.profileId,
@@ -62,15 +62,15 @@ Deno.test("rejects an incomplete player rating baseline", () => {
 Deno.test("normalizes CI run identifiers and rotates deterministically", () => {
   assertEquals(normalizeRunId("  action / attempt #2  "), "action-attempt-2");
   assertEquals(
-    selectRotatingIndex("same-run", 12),
-    selectRotatingIndex("same-run", 12),
+    selectRotatingIndex("same-run", 14),
+    selectRotatingIndex("same-run", 14),
   );
 });
 
 function validManifest(): E2EManifest {
   const runId = "test-run-42";
   const players = Array.from(
-    { length: 12 },
+    { length: 14 },
     (_, index) =>
       account(
         index + 1,
@@ -79,11 +79,11 @@ function validManifest(): E2EManifest {
       ),
   );
   const onboarding = account(
-    13,
+    15,
     "+97339009100",
     "field_e2e_onboarding",
   );
-  const admin = account(14, "+97339009099", "field_e2e_admin");
+  const admin = account(16, "+97339009099", "field_e2e_admin");
 
   return {
     schemaVersion: E2E_SCHEMA_VERSION,
@@ -111,19 +111,19 @@ function validManifest(): E2EManifest {
       match: {
         id: uuid(20),
         venue: "[FIELD E2E test-run-42] Match",
-        startsAt: "2026-07-28T17:30:00.000Z",
-        endsAt: "2026-07-28T18:30:00.000Z",
+        startsAt: "2026-07-29T03:30:00.000Z",
+        endsAt: "2026-07-29T04:30:00.000Z",
         mainRole: "DEF",
-        capacity: 12,
-        seededConfirmedCount: 11,
+        capacity: 14,
+        seededConfirmedCount: 13,
       },
       cancellation: {
         id: uuid(21),
         venue: "[FIELD E2E test-run-42] Cancel",
-        startsAt: "2026-07-31T17:30:00.000Z",
-        endsAt: "2026-07-31T18:30:00.000Z",
+        startsAt: "2026-08-01T03:30:00.000Z",
+        endsAt: "2026-08-01T04:30:00.000Z",
         mainRole: "ATT",
-        capacity: 12,
+        capacity: 14,
         seededConfirmedCount: 0,
       },
     },
