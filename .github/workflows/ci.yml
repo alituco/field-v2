@@ -546,6 +546,17 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      # Jobs do not share installed tools. Auth configuration below still
+      # calls the CLI even though deployment now runs on a different runner.
+      - name: Set up Supabase CLI for E2E authentication
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.105.0
+          github-token: ${{ github.token }}
+
+      - name: Verify the E2E authentication CLI before native tooling setup
+        run: supabase --version
+
       - name: Reserve disk space for Android E2E
         run: bash .github/scripts/prepare-android-runner.sh
 
