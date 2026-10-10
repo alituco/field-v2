@@ -237,6 +237,24 @@ void main() {
     },
   );
 
+  test('last five excludes archived results after a ranking reset', () {
+    final profile = _profile(
+      resetAt: DateTime.parse('2026-10-10T12:00:00Z'),
+      events: [
+        _event('archived', '2026-10-09T12:00:00Z'),
+        _event('current', '2026-10-11T12:00:00Z'),
+      ],
+    );
+    expect(
+      fieldrushSeasonResults(
+        profile,
+        leaderboardSeasons[1],
+      ).map((event) => event.id),
+      ['current'],
+    );
+    expect(profile.playerRating!.events.length, 2);
+  });
+
   testWidgets(
     'history opens the actual match and preserves player SR meaning',
     (tester) async {
@@ -471,6 +489,7 @@ OpenQueueMatchDetail _matchDetail() => OpenQueueMatchDetail(
 
 PlayerProfile _profile({
   String name = 'Ali A.',
+  DateTime? resetAt,
   List<ProfileRatingEvent> events = const [],
   List<ProfilePreviousGame> games = const [],
 }) => PlayerProfile(
@@ -487,6 +506,7 @@ PlayerProfile _profile({
   career: const [],
   previousGames: games,
   playerRating: ProfilePlayerRating(
+    ratingsResetAt: resetAt,
     skillRating: 1700,
     matchesPlayed: 100,
     wins: 70,

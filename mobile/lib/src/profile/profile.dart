@@ -88,6 +88,8 @@ class ProfilePlayerRating {
     required this.lastChange,
     required this.region,
     required this.events,
+    this.ratingsResetAt,
+    this.ratingsResetSequence,
   });
 
   final int skillRating;
@@ -98,6 +100,21 @@ class ProfilePlayerRating {
   final int lastChange;
   final String region;
   final List<ProfileRatingEvent> events;
+  final DateTime? ratingsResetAt;
+  final int? ratingsResetSequence;
+
+  /// Archived events remain available for match history, but cannot contribute
+  /// to the new period's form or rating change after an administrative reset.
+  List<ProfileRatingEvent> get currentPeriodEvents => ratingsResetAt == null
+      ? events
+      : events.where((event) {
+          final afterDate = !event.playedAt.isBefore(ratingsResetAt!);
+          final afterSequence =
+              ratingsResetSequence == null ||
+              (event.appliedSequence != null &&
+                  event.appliedSequence! > ratingsResetSequence!);
+          return afterDate && afterSequence;
+        }).toList();
 
   String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
 
@@ -111,6 +128,10 @@ class ProfilePlayerRating {
       draws: _asInt(json['draws']),
       lastChange: _asInt(json['last_change']),
       region: (json['region'] as String? ?? 'phoenix').trim().toLowerCase(),
+      ratingsResetAt: DateTime.tryParse(
+        json['ratings_reset_at']?.toString() ?? '',
+      ),
+      ratingsResetSequence: _asNullableInt(json['ratings_reset_sequence']),
       events: rawEvents is! List
           ? const []
           : [
@@ -145,6 +166,7 @@ class ProfileRatingEvent {
     this.marginMultiplier,
     this.baseRatingChange,
     this.marginBonusApplied,
+    this.appliedSequence,
   });
 
   final String id;
@@ -166,6 +188,7 @@ class ProfileRatingEvent {
   final double? marginMultiplier;
   final int? baseRatingChange;
   final int? marginBonusApplied;
+  final int? appliedSequence;
 
   bool get isSolo => sourceType == 'OPEN_QUEUE';
 
@@ -197,6 +220,7 @@ class ProfileRatingEvent {
       marginMultiplier: _asDouble(json['margin_multiplier']),
       baseRatingChange: _asNullableInt(json['base_rating_change']),
       marginBonusApplied: _asNullableInt(json['margin_bonus_applied']),
+      appliedSequence: _asNullableInt(json['applied_sequence']),
     );
   }
 }

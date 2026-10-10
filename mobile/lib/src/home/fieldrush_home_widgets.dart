@@ -1190,7 +1190,7 @@ class FieldrushHomeRating extends StatelessWidget {
     final n = division.number;
     final next = division.nextDivisionRating;
     final filled = (division.progressFor(value) * 10).round();
-    final allEvents = [...?profile.playerRating?.events]
+    final allEvents = [...?profile.playerRating?.currentPeriodEvents]
       ..sort((a, b) => a.playedAt.compareTo(b.playedAt));
     final events = allEvents.skip(math.max(0, allEvents.length - 5)).toList();
     final delta = events.fold<int>(0, (sum, event) => sum + event.ratingChange);

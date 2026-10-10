@@ -512,13 +512,15 @@ List<ProfileRatingEvent> fieldrushSeasonResults(
   final end = DateTime.parse(
     '${season.endsOn}T00:00:00Z',
   ).add(const Duration(days: 1));
-  final events = (profile.playerRating?.events ?? <ProfileRatingEvent>[]).where(
-    (event) {
-      final marketTime = event.playedAt.toUtc().add(offset);
-      return !marketTime.isBefore(start) &&
-          marketTime.isBefore(end) &&
-          ['WIN', 'DRAW', 'LOSS'].contains(event.result);
-    },
-  ).toList()..sort((a, b) => b.playedAt.compareTo(a.playedAt));
+  final events =
+      (profile.playerRating?.currentPeriodEvents ?? <ProfileRatingEvent>[])
+          .where((event) {
+            final marketTime = event.playedAt.toUtc().add(offset);
+            return !marketTime.isBefore(start) &&
+                marketTime.isBefore(end) &&
+                ['WIN', 'DRAW', 'LOSS'].contains(event.result);
+          })
+          .toList()
+        ..sort((a, b) => b.playedAt.compareTo(a.playedAt));
   return events.take(5).toList();
 }

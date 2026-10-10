@@ -26,7 +26,19 @@ The private You tab now follows the prototype: identity and Edit, Following/Fans
 
 Notification preferences use the existing authenticated settings RPCs and wait for server confirmation before changing a switch. The wallet displays exact, separate currency balances through `get_my_fieldrush_wallet` from the pending USD migration below. Payment methods explains the existing checkout flow; it does not pretend to store cards, support wallet spending, or provide a transaction ledger. Support, sign-out confirmation and the staging-only profile switcher remain accessible.
 
-You-page verification: all 378 Flutter tests and Flutter analysis passed. Ranked and placement layouts were rendered with the bundled fonts, including 320px/large-text checks; real profile, notification preferences and match history were checked in the staging iOS simulator. Hosted rating and wallet still require the pending backend rollout below. Nothing was deployed by this UI extension.
+You-page verification: all 378 Flutter tests and Flutter analysis passed. Ranked and placement layouts were rendered with the bundled fonts, including 320px/large-text checks; real profile, notification preferences and match history were checked in the staging iOS simulator. Nothing was deployed by that UI extension. The later ranking reset below enables hosted placement against the player's existing market; Phoenix market migration and wallet still require the pending rollout below.
+
+### Player ranking resets
+
+`20261009010000_add_player_rating_reset_periods.sql` adds a privileged, explicit reset operation. Installing the migration alone does **not** reset users. A reset starts all player ratings at the internal 1200 SR baseline with zero current-period matches, wins, draws, losses and rating change. The app shows **Placement, 0/2** rather than that hidden baseline. Two new rated games reveal a division.
+
+The service-role-only `reset_player_rankings(request_id_to_use uuid, reason_to_use text)` requires a unique request ID and a reason. Reuse the same request ID when retrying an uncertain outcome; it returns the original result instead of erasing new progress. Before calling it, take a private database backup and finish or cancel every started unfinished match. The function also refuses live, paused, running and recorded-start matches, takes private recovery snapshots, and rebases only future unstarted lineup SR snapshots without changing teams.
+
+Past games, rating events, archived seasons, refunds, strikes, clan rankings and account data are preserved. Both a timestamp and ledger-sequence boundary exclude prior events from current placement, including future-dated test results. Old score corrections and appeals cannot change the new player SR or counters; verified-injury refunds still run. Home and You use current-period results while match history retains the original rating details. This is a **player ranking reset**, not a season, market, reliability or clan-data reset.
+
+On October 10, 2026 (UTC), this migration and one explicit reset were applied to **hosted staging only**: all 121 player ratings returned 0/2 placement, and all 482 rating-event rows were verified unchanged. The reset rebased one future solo booking; game counts, booking counts and player regions were unchanged. Private local backup and verification records are under the gitignored `scratch/ranking-resets/2026-10-10/`; database snapshots are in `fieldrush_rating_private`. No October 10 market/payment migrations or production changes were deployed by this reset.
+
+Verification: 385 Flutter tests, Flutter analysis, 63 isolated PostgreSQL checks, a hosted rollback rehearsal with all 121 player season RPCs, post-commit database comparisons, and the staging simulator placement display passed. Run the targeted SQL fixture with `PGLITE_MODULE=/path/to/node_modules/@electric-sql/pglite node supabase/scripts/test_player_rating_reset.mjs`. This fixture is not a complete Supabase migration replay.
 
 ### Deployment order for this extension
 
