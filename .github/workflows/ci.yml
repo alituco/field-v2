@@ -267,9 +267,12 @@ jobs:
           bash -n .github/scripts/configure-staging-e2e-auth.sh
           bash -n .github/scripts/deploy-supabase.sh
           bash -n .github/scripts/run-staging-android-e2e.sh
+          bash -n .github/scripts/prepare-android-emulator.sh
+          bash -n .github/scripts/check-android-emulator.sh
           bash -n .github/scripts/upload-staging-testflight.sh
           node --check .github/scripts/smoke-supabase.mjs
           node --test .github/scripts/smoke-supabase.test.mjs
+          node --test .github/scripts/*android*.test.mjs .github/scripts/staging-e2e-handoff.test.mjs .github/scripts/staging-e2e-workflow.test.mjs
           grep -q "deploy_function dev-phone-login --no-verify-jwt" \
             .github/scripts/deploy-supabase.sh
           grep -q "Hosted schema has no published reliability policy" \
@@ -383,8 +386,8 @@ jobs:
               <"$verifier"
           done
 
-  deploy-staging:
-    name: Deploy and end-to-end test staging
+  prepare-staging-e2e:
+    name: Deploy staging and build player E2E
     needs:
       - flutter
       - flutter-ios
@@ -393,10 +396,9 @@ jobs:
       - database
     if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    permissions:
-      contents: read
-      deployments: write
+    timeout-minutes: 35
+    outputs:
+      handoff-artifact-id: ${{ steps.handoff-upload.outputs.artifact-id }}
     environment:
       name: staging
     env:
@@ -484,13 +486,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Set up Node.js for referee E2E
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: referee/package-lock.json
-
       - name: Set up Deno for E2E fixtures
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
         with:
@@ -516,16 +511,9 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: .github/scripts/configure-staging-e2e-auth.sh
 
-      - name: Install staging E2E dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          (cd mobile && flutter pub get)
-          (cd referee && npm ci)
-
-      - name: Install Playwright Chromium
-        working-directory: referee
-        run: npx playwright install --with-deps chromium
+      - name: Install player E2E dependencies
+        working-directory: mobile
+        run: flutter pub get
 
       - name: Create isolated staging E2E fixtures
         env:
@@ -570,43 +558,174 @@ jobs:
         timeout-minutes: 15
         run: bash .github/scripts/run-staging-android-e2e.sh build-only
 
-      - name: Enable KVM for the Android emulator
+      - name: Encrypt E2E handoff for fresh runners
+        id: handoff
+        if: always() && env.E2E_MANIFEST_PATH != ''
         shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          if [[ ! -s "$E2E_MANIFEST_PATH" ]]; then
+            echo "No manifest exists; there are no fixtures to hand off."
+            exit 0
+          fi
+          payload_dir="$RUNNER_TEMP/field-e2e-payload"
+          mkdir -m 700 "$payload_dir"
+          cp "$E2E_MANIFEST_PATH" "$payload_dir/manifest.json"
+          printf '%s' "$E2E_TEST_PASSWORD" >"$payload_dir/password.txt"
+          apk="$GITHUB_WORKSPACE/mobile/build/app/outputs/flutter-apk/app-staging-debug.apk"
+          if [[ -s "$apk" ]]; then
+            cp "$apk" "$payload_dir/player-journey.apk"
+          fi
+          chmod 600 "$payload_dir"/*
+          node .github/scripts/staging-e2e-handoff.mjs pack \
+            --source-dir "$payload_dir" \
+            --output "$RUNNER_TEMP/field-e2e-handoff.bin"
+          echo "created=true" >>"$GITHUB_OUTPUT"
 
-      - name: Run staging player journey on Android
-        timeout-minutes: 25
-        uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+      - name: Transfer encrypted APK and fixture state
+        id: handoff-upload
+        if: always() && steps.handoff.outputs.created == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          api-level: 34
-          # ATD images are purpose-built for headless automated tests and use
-          # substantially fewer runner resources than the full Google APIs
-          # image. This journey only talks to Supabase, so Play services are
-          # neither required nor useful here.
-          target: aosp_atd
-          arch: x86_64
-          profile: pixel_2
-          cores: 2
-          ram-size: 2048M
-          heap-size: 512M
-          disk-size: 4096M
-          disable-animations: true
-          emulator-boot-timeout: 600
-          emulator-options: >-
-            -no-window
-            -gpu swiftshader_indirect
-            -feature -Vulkan
-            -no-snapshot
-            -noaudio
-            -no-boot-anim
-            -no-metrics
-            -camera-back none
-          script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh"
+          name: staging-e2e-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/field-e2e-handoff.bin
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Clean up fixtures if handoff could not be saved
+        if: (failure() || cancelled()) && steps.handoff-upload.outcome != 'success'
+        shell: bash
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${E2E_MANIFEST_PATH:-}" && -s "$E2E_MANIFEST_PATH" ]]; then
+            deno run --allow-env --allow-net --allow-read \
+              supabase/scripts/e2e/cleanup_staging.ts
+          fi
+
+  android-staging-e2e:
+    name: Staging Android player E2E
+    needs: prepare-staging-e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: staging
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Flutter for the prebuilt test driver
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Install test driver dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Download encrypted player APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+          path: ${{ runner.temp }}/field-e2e-download
+          merge-multiple: true
+
+      - name: Restore prebuilt player APK
+        shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/staging-e2e-handoff.mjs unpack \
+            --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
+            --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          test -s "$RUNNER_TEMP/field-e2e-restored/player-journey.apk"
+          echo "E2E_APK_PATH=$RUNNER_TEMP/field-e2e-restored/player-journey.apk" >>"$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/field-e2e-restored/password.txt"
+
+      # This fresh runner does not install Playwright, deploy Supabase, or
+      # compile Android. Flutter drive installs the already-tested binary.
+      - name: Run staging player journey on a fresh Android runner
+        uses: ./.github/actions/staging-android-emulator
+        with:
+          script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh" run-prebuilt
+
+      - name: Upload Android failure diagnostics
+        if: failure() || cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-android-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: mobile/build/e2e-artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser-staging-e2e:
+    name: Staging referee and admin E2E
+    needs: [prepare-staging-e2e, android-staging-e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment:
+      name: staging
+    env:
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js for referee E2E
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Set up Deno for outcome verification
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Download encrypted fixture state
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+          path: ${{ runner.temp }}/field-e2e-download
+          merge-multiple: true
+
+      - name: Restore isolated E2E fixture state
+        shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/staging-e2e-handoff.mjs unpack \
+            --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
+            --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          password="$(cat "$RUNNER_TEMP/field-e2e-restored/password.txt")"
+          echo "::add-mask::$password"
+          {
+            echo "E2E_TEST_PASSWORD=$password"
+            echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-restored/manifest.json"
+          } >>"$GITHUB_ENV"
+          mkdir -p referee/e2e-artifacts
+
+      - name: Install referee E2E dependencies
+        working-directory: referee
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: referee
+        run: npx playwright install --with-deps chromium
 
       - name: Build staging referee app
         working-directory: referee
@@ -671,23 +790,6 @@ jobs:
           supabase/scripts/e2e/verify_staging.ts
           --phase=complete
 
-      - name: Clean up mutable staging E2E fixtures
-        if: always()
-        shell: bash
-        env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${E2E_MANIFEST_PATH:-}" || ! -s "$E2E_MANIFEST_PATH" ]]; then
-            echo "No E2E manifest was created; cleanup is not required."
-            exit 0
-          fi
-          deno run \
-            --allow-env \
-            --allow-net \
-            --allow-read \
-            supabase/scripts/e2e/cleanup_staging.ts
-
       - name: Stop staging referee app
         if: always()
         shell: bash
@@ -705,10 +807,71 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
           path: |
-            mobile/build/e2e-artifacts/
             referee/e2e-artifacts/
             referee/playwright-report/
             referee/test-results/
+
+  deploy-staging:
+    name: Deploy and end-to-end test staging
+    needs: [prepare-staging-e2e, android-staging-e2e, browser-staging-e2e]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      deployments: write
+    environment:
+      name: staging
+    env:
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Deno for fixture cleanup
+        if: needs.prepare-staging-e2e.outputs.handoff-artifact-id != ''
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Download encrypted cleanup manifest
+        if: needs.prepare-staging-e2e.outputs.handoff-artifact-id != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+          path: ${{ runner.temp }}/field-e2e-download
+          merge-multiple: true
+
+      - name: Restore and clean up mutable staging E2E fixtures
+        if: needs.prepare-staging-e2e.outputs.handoff-artifact-id != ''
+        shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/staging-e2e-handoff.mjs unpack \
+            --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
+            --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          E2E_MANIFEST_PATH="$RUNNER_TEMP/field-e2e-restored/manifest.json" \
+            deno run --allow-env --allow-net --allow-read \
+              supabase/scripts/e2e/cleanup_staging.ts
+
+      # Cleanup runs even when Android/browser failed or was skipped, but a
+      # successful cleanup must never turn a failed journey into a green gate.
+      - name: Require every staging E2E stage to pass
+        env:
+          PREPARE_RESULT: ${{ needs.prepare-staging-e2e.result }}
+          ANDROID_RESULT: ${{ needs.android-staging-e2e.result }}
+          BROWSER_RESULT: ${{ needs.browser-staging-e2e.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$PREPARE_RESULT" != success || "$ANDROID_RESULT" != success || "$BROWSER_RESULT" != success ]]; then
+            echo "::error::Staging E2E did not pass: prepare=$PREPARE_RESULT, Android=$ANDROID_RESULT, browser=$BROWSER_RESULT."
+            exit 1
+          fi
 
       - name: Record successful staging deployment
         shell: bash
