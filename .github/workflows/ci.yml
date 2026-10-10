@@ -42,6 +42,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -482,6 +486,10 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter for Android E2E
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2

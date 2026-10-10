@@ -32,6 +32,15 @@ test("APK compilation is isolated from browser dependencies and emulator", () =>
   assert.doesNotMatch(prepare, /playwright install|npm ci|uses: .*staging-android-emulator/);
 });
 
+test("Android build and E2E preparation share dependency-only Gradle caching", () => {
+  for (const id of ["flutter", "prepare-staging-e2e"]) {
+    const source = job(id);
+    assert.match(source, /cache: gradle/);
+    assert.match(source, /mobile\/android\/\*\*\/\*\.gradle\*/);
+    assert.match(source, /mobile\/android\/gradle\/wrapper\/gradle-wrapper\.properties/);
+  }
+});
+
 test("fresh Android job only executes the encrypted prebuilt binary", () => {
   const android = job("android-staging-e2e");
   assert.match(android, /needs: prepare-staging-e2e/);
