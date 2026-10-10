@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
+import { legacyOpenQueueFormat } from "./_shared/legacy_open_queue_format.ts";
 
 type ProfileRow = {
   id: string;
@@ -663,6 +664,7 @@ async function seedFinalSoloGame({
   const { data: game, error: gameError } = await admin
     .from("open_queue_games")
     .insert({
+      ...legacyOpenQueueFormat,
       venue: `${SEED_PREFIX} Solo History ${index + 1}`,
       starts_at: temporaryStart.toISOString(),
       ends_at: new Date(temporaryStart.getTime() + 60 * 60 * 1000)
@@ -918,6 +920,7 @@ async function seedUpcomingSoloGames(
     const { data: game, error: gameError } = await admin
       .from("open_queue_games")
       .insert({
+        ...legacyOpenQueueFormat,
         venue: `${SEED_PREFIX} Solo Future ${gameIndex + 1}`,
         starts_at: startsAt.toISOString(),
         ends_at: new Date(startsAt.getTime() + 60 * 60 * 1000).toISOString(),

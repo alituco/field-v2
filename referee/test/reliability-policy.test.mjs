@@ -18,8 +18,22 @@ import {
 test("the canonical reliability policy defaults pass strict validation", () => {
   assert.deepEqual(validateReliabilityPolicyConfig(reliabilityPolicyDefaults), []);
   assert.deepEqual(parseReliabilityPolicyConfig(reliabilityPolicyDefaults), reliabilityPolicyDefaults);
-  assert.equal(reliabilityPolicyDefaults.solo.playersPerSide, 6);
+  assert.equal(reliabilityPolicyDefaults.solo.playersPerSide, 7);
   assert.equal(reliabilityPolicyDefaults.clan.playersPerSide, 6);
+});
+
+test("historical six-a-side solo policies remain readable and normalize new drafts to seven", () => {
+  const historical = cloneReliabilityPolicyConfig(reliabilityPolicyDefaults);
+  historical.solo.playersPerSide = 6;
+  assert.ok(validateReliabilityPolicyConfig(historical).some((issue) =>
+    issue.path === "solo.playersPerSide"));
+  assert.deepEqual(validateReliabilityPolicyConfig(historical, {
+    allowLegacySoloSixSide: true,
+  }), []);
+  const editable = normalizeReliabilityPolicyDraftConfig(historical);
+  assert.equal(editable.solo.playersPerSide, 7);
+  assert.equal(historical.solo.playersPerSide, 6);
+  assert.deepEqual(validateReliabilityPolicyConfig(editable), []);
 });
 
 test("historical seven-a-side clan policies remain readable but cannot become drafts", () => {

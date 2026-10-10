@@ -10,6 +10,7 @@ import type {
   AdminGameResolutionRefund,
 } from "@/lib/admin-game-detail";
 import type { AdminGameParticipant } from "@/lib/admin-game-participants";
+import { formatGameMoney, type AdminGameCurrency } from "@/lib/admin-game-money";
 import type {
   AdminGameReserve,
   AdminReserveCandidate,
@@ -517,7 +518,7 @@ function ResolutionCaseBanner({
             <article key={refund.id}>
               <div>
                 <span>{refundSideLabel(refund, detail)} · {humanize(refund.status)}</span>
-                <strong>{formatBhd(refund.amountFils)}</strong>
+                <strong>{formatGameMoney(refund.amountFils, detail.currency)}</strong>
                 <small>
                   {humanize(refund.destination)} · {refund.refundBps / 100}% refund
                   {refund.failureReason ? ` · ${refund.failureReason}` : " · No failure detail was recorded"}
@@ -585,7 +586,7 @@ function RetryResolutionRefundDialog({
       const creditedFils = numericValue(result.result?.amount_fils);
       const savedNotice = result.result?.already_settled
         ? `This refund was already ${humanize(status).toLowerCase()}. No second credit was issued.`
-        : `Refund retry completed. ${formatBhd(creditedFils)} was credited to the original payer through ${humanize(refund.destination)}.`;
+        : `Refund retry completed. ${formatGameMoney(creditedFils, detail.currency)} was credited to the original payer through ${humanize(refund.destination)}.`;
       await onSaved(savedNotice);
     } catch (retryError) {
       setError(message(retryError, "Could not retry this refund."));
@@ -620,7 +621,7 @@ function RetryResolutionRefundDialog({
         </p>
         <dl className={styles.refundRetryFacts}>
           <div><dt>Recipient</dt><dd>{refundSideLabel(refund, detail)}</dd></div>
-          <div><dt>Amount due</dt><dd>{formatBhd(refund.amountFils)}</dd></div>
+          <div><dt>Amount due</dt><dd>{formatGameMoney(refund.amountFils, detail.currency)}</dd></div>
           <div><dt>Destination</dt><dd>{humanize(refund.destination)}</dd></div>
           <div><dt>Failed because</dt><dd>{refund.failureReason ?? "No failure detail was recorded."}</dd></div>
         </dl>
@@ -1035,8 +1036,8 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
                 <div className={styles.modalWarning}>
                   <strong>Exact server-calculated preview</strong>
                   <p>
-                    {previewRefundLine(preview, "home", homeLabel)}{" · "}
-                    {previewRefundLine(preview, "away", awayLabel)}
+                    {previewRefundLine(preview, "home", homeLabel, detail.currency)}{" · "}
+                    {previewRefundLine(preview, "away", awayLabel, detail.currency)}
                   </p>
                 </div>
               </>
@@ -2065,6 +2066,7 @@ function previewRefundLine(
   preview: AdminResolutionPreview,
   side: "home" | "away",
   label: string,
+  currency: AdminGameCurrency,
 ) {
   const acceptedSides = side === "home"
     ? new Set(["HOME", "WHITE"])
@@ -2081,7 +2083,7 @@ function previewRefundLine(
   const statuses = [...new Set(
     refunds.map((refund) => refund.status?.toUpperCase()).filter(Boolean),
   )];
-  return `${label}: ${formatBhd(targetFils)} total · ${
+  return `${label}: ${formatGameMoney(targetFils, currency)} total · ${
     statuses.length ? statuses.map((status) => humanize(status!)).join(", ") : "Calculated"
   }`;
 }
@@ -2112,13 +2114,6 @@ function nestedNumber(
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
-}
-
-function formatBhd(fils: number) {
-  return `${(fils / 1000).toLocaleString("en-BH", {
-    minimumFractionDigits: 3,
-    maximumFractionDigits: 3,
-  })} BHD`;
 }
 
 const REPORT_CATEGORIES = [

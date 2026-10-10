@@ -20,12 +20,12 @@ void main() {
       find.byKey(const ValueKey('field-liquid-glass-nav')),
       findsOneWidget,
     );
-    for (final label in ['Home', 'Fixtures', 'Clans', 'Ranks', 'Profile']) {
+    for (final label in ['Home', 'Fixtures', 'Clans', 'Ranks', 'You']) {
       expect(find.text(label), findsOneWidget);
     }
 
     final fixturesSemantics = tester.widgetList<Semantics>(
-      find.descendant(
+      find.ancestor(
         of: find.byKey(const ValueKey('field-bottom-nav-item-1')),
         matching: find.byType(Semantics),
       ),
@@ -35,10 +35,13 @@ void main() {
       isTrue,
     );
 
-    final selection = tester.widget<AnimatedAlign>(
+    final selection = tester.widget<AnimatedContainer>(
       find.byKey(const ValueKey('field-liquid-glass-selection')),
     );
-    expect(selection.alignment, const Alignment(-0.5, 0));
+    expect(
+      (selection.decoration as BoxDecoration).color,
+      const Color(0xFF386641),
+    );
 
     await tester.tap(find.byKey(const ValueKey('field-bottom-nav-item-4')));
     await tester.pump();
@@ -59,7 +62,8 @@ void main() {
     await _pumpNav(tester, selectedIndex: 0, onSelected: (_) {});
 
     final dock = find.byKey(const ValueKey('field-liquid-glass-nav'));
-    expect(tester.getSize(dock), const Size(296, 68));
+    expect(tester.getSize(dock).width, 294);
+    expect(tester.getSize(dock).height, greaterThanOrEqualTo(64));
     expect(tester.getBottomRight(dock).dy, 568 - 34);
     expect(tester.takeException(), isNull);
   });

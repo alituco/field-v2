@@ -23,15 +23,15 @@ begin
     raise exception 'The initial check-in opening lead must be 120 minutes.';
   end if;
   supported_config := jsonb_set(
-    jsonb_set(seeded_config, '{solo,playersPerSide}', '6'::jsonb),
+    jsonb_set(seeded_config, '{solo,playersPerSide}', '7'::jsonb),
     '{clan,playersPerSide}',
     '6'::jsonb
   );
   if not public.reliability_policy_release_controls_are_valid(supported_config) then
-    raise exception 'The current six-a-side format violates a release-locked structural control.';
+    raise exception 'The current Solo 7v7 / Clan 6v6 format violates a release-locked structural control.';
   end if;
   if public.reliability_policy_release_controls_are_valid(
-    jsonb_set(supported_config, '{solo,playersPerSide}', '7'::jsonb)
+    jsonb_set(supported_config, '{solo,playersPerSide}', '6'::jsonb)
   ) or public.reliability_policy_release_controls_are_valid(
     jsonb_set(supported_config, '{clan,playersPerSide}', '7'::jsonb)
   ) or public.reliability_policy_release_controls_are_valid(

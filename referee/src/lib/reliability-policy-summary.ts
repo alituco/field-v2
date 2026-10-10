@@ -60,7 +60,7 @@ export function buildReliabilityPolicySummary(
         rules: [
           {
             title: "Match format",
-            explanation: `Solo and clan matches are ${config.solo.playersPerSide}v${config.solo.playersPerSide}. Clan matches also require ${config.clan.playersPerSide} players per side.`,
+            explanation: `Solo matches are ${config.solo.playersPerSide}v${config.solo.playersPerSide}. Clan matches are ${config.clan.playersPerSide}v${config.clan.playersPerSide}. Existing games keep their original format.`,
             facts: [
               `Solo: ${config.solo.playersPerSide} players per side`,
               `Clan: ${config.clan.playersPerSide} players per side`,
@@ -252,7 +252,7 @@ export function buildReliabilityPolicySummary(
           },
           {
             title: "Refund destination",
-            explanation: `Policy refunds are credited to Field Wallet in ${config.wallet.currency}.`,
+            explanation: "Policy refunds are credited to Field Wallet in the game's currency. USD and historical BHD balances are kept separately, without currency conversion.",
           },
         ],
       },

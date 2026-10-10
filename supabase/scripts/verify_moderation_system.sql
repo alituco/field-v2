@@ -117,11 +117,14 @@ begin
   limit 1;
 
   insert into public.open_queue_games (
+    format_version, currency, timezone, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     venue,
     starts_at,
     ends_at,
     created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 'Asia/Bahrain', 12, 2, 4, 4, 2,
     'Moderation verification pitch',
     restriction_game_starts_at,
     restriction_game_starts_at + interval '1 hour',

@@ -294,11 +294,21 @@ jobs:
           deno fmt --check supabase/functions "${script_files[@]}"
           deno check supabase/functions/*/index.ts "${script_files[@]}"
           deno test \
+            supabase/functions/_shared/tap_checkout_test.ts \
             supabase/functions/_shared/staging_guard_test.ts \
             supabase/functions/fieldrush-delete-account/request_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts
+
+      - name: Check Phoenix game rules and isolated USD wallets
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/fieldrush-market-sql-tools" \
+            --no-package-lock --no-save --ignore-scripts @electric-sql/pglite@0.5.8
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_fieldrush_market.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
         run: >-

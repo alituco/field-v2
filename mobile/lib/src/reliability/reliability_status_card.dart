@@ -172,7 +172,7 @@ class _ReliabilityCard extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
-          if (status.walletBalanceFils > 0) ...[
+          if (status.visibleWalletBalances.isNotEmpty) ...[
             const SizedBox(height: 13),
             Container(
               key: const ValueKey('field-wallet-balance'),
@@ -182,33 +182,50 @@ class _ReliabilityCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(13),
                 border: Border.all(color: fieldGray100),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(
-                    Icons.account_balance_wallet_outlined,
-                    color: fieldGray500,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 9),
-                  const Expanded(
-                    child: Text(
-                      'FIELD WALLET',
-                      style: TextStyle(
-                        color: fieldGray500,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: .8,
+                  for (final balance in status.visibleWalletBalances)
+                    Padding(
+                      key: ValueKey('field-wallet-balance-${balance.currency}'),
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.account_balance_wallet_outlined,
+                            color: fieldGray500,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'FIELD WALLET · ${balance.currency}',
+                              style: const TextStyle(
+                                color: fieldGray500,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: .8,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            balance.label,
+                            style: const TextStyle(
+                              color: fieldGray900,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  Text(
-                    status.walletBalanceLabel,
-                    style: const TextStyle(
-                      color: fieldGray900,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
+                  if (status.visibleWalletBalances.length > 1) ...[
+                    const SizedBox(height: 5),
+                    const Text(
+                      'Balances are separate. No currency conversion.',
+                      style: TextStyle(color: fieldGray500, fontSize: 10),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),

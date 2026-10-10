@@ -54,6 +54,7 @@ class ReliabilityStatus {
     required this.allowedAppealCategories,
     this.walletBalanceFils = 0,
     this.walletCurrency = 'BHD',
+    this.walletBalances = const [],
   });
 
   final DateTime? serverNow;
@@ -69,9 +70,23 @@ class ReliabilityStatus {
   final List<ReliabilityAppealCategory> allowedAppealCategories;
   final int walletBalanceFils;
   final String walletCurrency;
+  final List<FieldWalletBalance> walletBalances;
 
-  String get walletBalanceLabel =>
-      '${(walletBalanceFils / 1000).toStringAsFixed(3)} $walletCurrency';
+  String get walletBalanceLabel => FieldWalletBalance(
+    currency: walletCurrency,
+    balanceFils: walletBalanceFils,
+  ).label;
+
+  List<FieldWalletBalance> get visibleWalletBalances {
+    final balances = <String, FieldWalletBalance>{
+      walletCurrency: FieldWalletBalance(
+        currency: walletCurrency,
+        balanceFils: walletBalanceFils,
+      ),
+      for (final balance in walletBalances) balance.currency: balance,
+    };
+    return balances.values.where((balance) => balance.balanceFils > 0).toList();
+  }
 
   bool get isGoodStanding =>
       activeStrikes == 0 &&
@@ -153,6 +168,16 @@ class ReliabilityStatus {
       ),
       walletCurrency:
           _string(wallet?['currency'] ?? json['wallet_currency']) ?? 'BHD',
+      walletBalances: [
+        if (wallet?['balances'] case final List balances)
+          for (final value in balances)
+            if (_map(value) case final row?)
+              if (_string(row['currency']) case final currency?)
+                FieldWalletBalance(
+                  currency: currency.toUpperCase(),
+                  balanceFils: _int(row['balance_fils']),
+                ),
+      ],
       allowedAppealCategories: allowedAppealCategories,
       incidents: [
         if (rawIncidents is List)
@@ -165,6 +190,19 @@ class ReliabilityStatus {
       ],
     );
   }
+}
+
+class FieldWalletBalance {
+  const FieldWalletBalance({required this.currency, required this.balanceFils});
+
+  final String currency;
+  final int balanceFils;
+
+  // Refund policy calculations retain their exact thousandths in the ledger.
+  // Show any fractional cent rather than rounding away money that is recorded.
+  String get label => currency.toUpperCase() == 'USD'
+      ? '\$${(balanceFils / 1000).toStringAsFixed(balanceFils % 10 == 0 ? 2 : 3)}'
+      : '${(balanceFils / 1000).toStringAsFixed(3)} $currency';
 }
 
 class ReliabilityIncident {

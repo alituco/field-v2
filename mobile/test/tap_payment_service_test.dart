@@ -4,6 +4,104 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:field/src/payments/tap_payment_service.dart';
 
 void main() {
+  test(
+    'USD amount and supported methods reach native checkout unchanged',
+    () async {
+      Map<String, dynamic>? configuration;
+      final service = TapPaymentService(
+        functionInvoker: (body) async => body['action'] == 'prepare'
+            ? {
+                'intent_id': 'usd-intent',
+                'currency': 'USD',
+                'amount_fils': 13000,
+                'configuration': {
+                  'selectedCurrency': 'USD',
+                  'supportedCurrencies': ['USD'],
+                  'amount': '13.00',
+                  'order': {'currency': 'USD', 'amount': '13.00'},
+                  'supportedPaymentMethods': [
+                    'APPLE_PAY',
+                    'VISA',
+                    'MASTERCARD',
+                  ],
+                },
+              }
+            : {
+                'resource_type': 'OPEN_QUEUE_BOOKING',
+                'resource_id': 'usd-booking',
+                'payment_method': 'VISA',
+              },
+        checkoutStarter:
+            ({
+              required configurations,
+              onClose,
+              onReady,
+              onSuccess,
+              onError,
+              onCancel,
+            }) async {
+              configuration = configurations;
+              onSuccess?.call('{"chargeId":"chg_usd_12345678"}');
+              return true;
+            },
+      );
+      final result = await service.pay(
+        purpose: TapPaymentPurpose.soloBooking,
+        payload: {'game_id': 'usd-game', 'role': 'DEF'},
+      );
+      expect(configuration?['selectedCurrency'], 'USD');
+      expect(configuration?['amount'], '13.00');
+      expect(configuration?['order'], {'currency': 'USD', 'amount': '13.00'});
+      expect(configuration?['supportedPaymentMethods'], [
+        'APPLE_PAY',
+        'VISA',
+        'MASTERCARD',
+      ]);
+      expect(result.resourceId, 'usd-booking');
+    },
+  );
+
+  test(
+    'merchant currency restrictions produce an actionable error without confirming',
+    () async {
+      var confirms = 0;
+      final service = TapPaymentService(
+        functionInvoker: (body) async {
+          if (body['action'] == 'confirm') confirms++;
+          return {'intent_id': 'intent', 'configuration': <String, dynamic>{}};
+        },
+        checkoutStarter:
+            ({
+              required configurations,
+              onClose,
+              onReady,
+              onSuccess,
+              onError,
+              onCancel,
+            }) async {
+              scheduleMicrotask(
+                () => onError?.call('Currency USD is not enabled'),
+              );
+              return true;
+            },
+      );
+      await expectLater(
+        service.pay(
+          purpose: TapPaymentPurpose.soloBooking,
+          payload: {'game_id': 'usd-game', 'role': 'GK'},
+        ),
+        throwsA(
+          isA<TapPaymentException>().having(
+            (error) => error.message,
+            'message',
+            'This currency is not enabled for this merchant. Contact Field support.',
+          ),
+        ),
+      );
+      expect(confirms, 0);
+    },
+  );
+
   test('Tap checkout confirms the captured charge with Field server', () async {
     final calls = <Map<String, dynamic>>[];
     Map<String, dynamic>? checkoutConfiguration;

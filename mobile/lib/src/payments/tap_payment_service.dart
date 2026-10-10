@@ -198,6 +198,13 @@ class TapPaymentService {
     if (normalized.contains('declin')) {
       return 'Payment was declined. Try another payment method.';
     }
+    if (normalized.contains('currency') &&
+        (normalized.contains('not supported') ||
+            normalized.contains('unsupported') ||
+            normalized.contains('not enabled') ||
+            normalized.contains('disabled'))) {
+      return 'This currency is not enabled for this merchant. Contact Field support.';
+    }
     if (normalized.contains('network') || normalized.contains('connection')) {
       return 'Tap could not connect. Check your internet and try again.';
     }

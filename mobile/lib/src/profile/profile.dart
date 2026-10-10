@@ -1,4 +1,5 @@
 import '../clans/clan.dart';
+import '../open_queue/open_queue.dart';
 
 class PlayerProfile {
   const PlayerProfile({
@@ -87,6 +88,8 @@ class ProfilePlayerRating {
     required this.lastChange,
     required this.region,
     required this.events,
+    this.ratingsResetAt,
+    this.ratingsResetSequence,
   });
 
   final int skillRating;
@@ -97,6 +100,21 @@ class ProfilePlayerRating {
   final int lastChange;
   final String region;
   final List<ProfileRatingEvent> events;
+  final DateTime? ratingsResetAt;
+  final int? ratingsResetSequence;
+
+  /// Archived events remain available for match history, but cannot contribute
+  /// to the new period's form or rating change after an administrative reset.
+  List<ProfileRatingEvent> get currentPeriodEvents => ratingsResetAt == null
+      ? events
+      : events.where((event) {
+          final afterDate = !event.playedAt.isBefore(ratingsResetAt!);
+          final afterSequence =
+              ratingsResetSequence == null ||
+              (event.appliedSequence != null &&
+                  event.appliedSequence! > ratingsResetSequence!);
+          return afterDate && afterSequence;
+        }).toList();
 
   String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
 
@@ -109,7 +127,11 @@ class ProfilePlayerRating {
       losses: _asInt(json['losses']),
       draws: _asInt(json['draws']),
       lastChange: _asInt(json['last_change']),
-      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
+      region: (json['region'] as String? ?? 'phoenix').trim().toLowerCase(),
+      ratingsResetAt: DateTime.tryParse(
+        json['ratings_reset_at']?.toString() ?? '',
+      ),
+      ratingsResetSequence: _asNullableInt(json['ratings_reset_sequence']),
       events: rawEvents is! List
           ? const []
           : [
@@ -144,6 +166,7 @@ class ProfileRatingEvent {
     this.marginMultiplier,
     this.baseRatingChange,
     this.marginBonusApplied,
+    this.appliedSequence,
   });
 
   final String id;
@@ -165,6 +188,7 @@ class ProfileRatingEvent {
   final double? marginMultiplier;
   final int? baseRatingChange;
   final int? marginBonusApplied;
+  final int? appliedSequence;
 
   bool get isSolo => sourceType == 'OPEN_QUEUE';
 
@@ -196,6 +220,7 @@ class ProfileRatingEvent {
       marginMultiplier: _asDouble(json['margin_multiplier']),
       baseRatingChange: _asNullableInt(json['base_rating_change']),
       marginBonusApplied: _asNullableInt(json['margin_bonus_applied']),
+      appliedSequence: _asNullableInt(json['applied_sequence']),
     );
   }
 }
@@ -561,6 +586,7 @@ class ProfileHighlight {
     this.isPublic = true,
     this.status = ProfileHighlightStatus.ready,
     this.errorMessage,
+    this.createdAt,
   });
 
   final String id;
@@ -578,6 +604,7 @@ class ProfileHighlight {
   final bool isPublic;
   final ProfileHighlightStatus status;
   final String? errorMessage;
+  final DateTime? createdAt;
 
   bool get isReady => status == ProfileHighlightStatus.ready;
 
@@ -609,6 +636,7 @@ class ProfileHighlight {
       errorMessage: _nonEmptyString(
         json['processing_error'] ?? json['error_message'],
       ),
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
     );
   }
 
@@ -629,6 +657,7 @@ class ProfileHighlight {
       isPublic: isPublic ?? this.isPublic,
       status: status,
       errorMessage: errorMessage,
+      createdAt: createdAt,
     );
   }
 }
@@ -700,6 +729,7 @@ class ProfilePreviousGame {
     required this.awayScore,
     required this.playerSide,
     this.playerRole,
+    this.timezone,
   });
 
   final String id;
@@ -716,10 +746,19 @@ class ProfilePreviousGame {
   final int awayScore;
   final String playerSide;
   final String? playerRole;
+  final String? timezone;
 
   bool get isSolo => type == ProfileGameType.solo;
 
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
+
+  /// Game-calendar time, never the viewing device's calendar. Clan fixtures
+  /// have always used Bahrain; solo games require their own stored timezone.
+  DateTime? get localPlayedAt {
+    final zone = timezone ?? (isSolo ? null : 'Asia/Bahrain');
+    if (!['America/Phoenix', 'Asia/Bahrain', 'UTC'].contains(zone)) return null;
+    return gameLocalDateTime(playedAt, zone!);
+  }
 
   ProfileGameOutcome? get outcome {
     final isHomeSide = switch (playerSide.trim().toUpperCase()) {
@@ -741,13 +780,17 @@ class ProfilePreviousGame {
         .toString()
         .toUpperCase();
     final isSolo = rawType == 'SOLO' || rawType == 'OPEN_QUEUE';
+    final timezone = isSolo
+        ? _nonEmptyString(json['timezone'])
+        : 'Asia/Bahrain';
     final playedAtValue =
         json['played_at'] ?? json['starts_at'] ?? json['match_date'];
     return ProfilePreviousGame(
       id: (json['match_id'] ?? json['source_id'] ?? json['id'] ?? '')
           .toString(),
       type: isSolo ? ProfileGameType.solo : ProfileGameType.clan,
-      playedAt: _profileGameDate(playedAtValue),
+      playedAt: _profilePreviousGameDate(playedAtValue, timezone),
+      timezone: timezone,
       venue: (json['venue'] as String? ?? '').trim(),
       homeName: (json['home_name'] as String? ?? (isSolo ? 'White Team' : ''))
           .trim(),
@@ -772,6 +815,27 @@ class ProfilePreviousGame {
       },
     );
   }
+}
+
+DateTime _profilePreviousGameDate(Object? value, String? timezone) {
+  if (value is String && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+    final calendar = DateTime.tryParse(value);
+    if (calendar != null) {
+      final midnight = DateTime.utc(
+        calendar.year,
+        calendar.month,
+        calendar.day,
+      );
+      // A legacy match_date is a game-calendar date, not a device-local
+      // midnight. Invert the known fixed market offset before storing it.
+      final offset = gameLocalDateTime(
+        midnight,
+        timezone ?? 'UTC',
+      ).difference(midnight);
+      return midnight.subtract(offset).toLocal();
+    }
+  }
+  return _profileGameDate(value);
 }
 
 DateTime _profileGameDate(Object? value) {

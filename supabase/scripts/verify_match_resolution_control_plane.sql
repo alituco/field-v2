@@ -767,8 +767,11 @@ begin
   end if;
 
   insert into public.open_queue_games (
+    format_version, currency, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     status, venue, starts_at, ends_at, timezone, created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 12, 2, 4, 4, 2,
     'OPEN',
     'Match resolution rollback verification',
     solo_game_starts_at,

@@ -741,7 +741,7 @@ class _SoloFixtureSheet extends StatelessWidget {
         !game.hasMyBooking &&
         !game.isFull &&
         game.startsAt.isAfter(DateTime.now());
-    final startsAt = game.bahrainStartsAt;
+    final startsAt = game.localStartsAt;
     final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
 
     return SafeArea(
@@ -948,7 +948,9 @@ class _SoloFixtureSheet extends StatelessWidget {
                   mainAxisSpacing: 10,
                   childAspectRatio: 1.72,
                   children: [
-                    for (final role in _soloFixtureSpotOrder)
+                    for (final role in _soloFixtureSpotOrder.where(
+                      game.supportedRoles.contains,
+                    ))
                       _SoloSpotTile(
                         role: role,
                         spots: game.spotsFor(role),

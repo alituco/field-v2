@@ -61,6 +61,9 @@ class FieldrushAccount {
     this.completed = false,
     this.tourCompleted = false,
     this.status = 'onboarding',
+    this.homeCity,
+    this.rankingRegion,
+    this.homeCityLocked = true,
   });
 
   final AccountDraft draft;
@@ -71,6 +74,11 @@ class FieldrushAccount {
   final bool completed;
   final bool tourCompleted;
   final String status;
+
+  /// Server-owned market. Null means the server has not supplied this contract.
+  final String? homeCity;
+  final String? rankingRegion;
+  final bool homeCityLocked;
 
   bool get deletionPending =>
       status == 'deletion_pending' || status == 'deleted';
@@ -85,6 +93,9 @@ class FieldrushAccount {
         completed: json['onboarding_completed'] == true,
         tourCompleted: json['tour_completed'] == true,
         status: json['status'] as String? ?? 'onboarding',
+        homeCity: json['home_city'] as String?,
+        rankingRegion: json['ranking_region'] as String?,
+        homeCityLocked: json['home_city_locked'] != false,
       );
 }
 

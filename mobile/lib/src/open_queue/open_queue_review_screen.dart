@@ -605,7 +605,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
               .previewBookingCost(gameId: widget.game.id, role: widget.role)
         : Future.value(
             OpenQueueBookingCostPreview(
-              currency: 'BHD',
+              currency: widget.game.currency,
               standardMatchFeeFils: widget.game.priceFils,
               replacementDiscountBps: 0,
               discountAmountFils: 0,

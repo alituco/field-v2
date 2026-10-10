@@ -203,6 +203,8 @@ export type ReliabilityPolicyValidationIssue = {
 };
 
 export type ReliabilityPolicyValidationOptions = {
+  // Historical solo games keep their six-a-side policy snapshots.
+  allowLegacySoloSixSide?: boolean;
   // Published versions are immutable snapshots. Season Zero began with clan
   // matches at seven-a-side, so history must remain readable after the live
   // format moves to six-a-side.
@@ -229,7 +231,7 @@ export const reliabilityPolicyDefaults: ReliabilityPolicyConfig = {
     cancellationAfterKickoffOutcome: "NO_SHOW",
   },
   solo: {
-    playersPerSide: 6,
+    playersPerSide: 7,
     cancellations: {
       early: {
         minimumHoursBeforeKickoff: 24,
@@ -433,7 +435,14 @@ export function validateReliabilityPolicyConfig(
   requireLiteral(value, "attendance.hostCheckInRequired", true, issues);
   requireLiteral(value, "attendance.cancellationAfterKickoffOutcome", "NO_SHOW", issues);
   requireLiteral(value, "solo.reliabilityDeposit.onTimeReturnDestination", "FIELD_WALLET", issues);
-  requireLiteral(value, "solo.playersPerSide", 6, issues);
+  const soloPlayersPerSide = numberAtPath(value, "solo.playersPerSide");
+  if (soloPlayersPerSide !== 7 &&
+      !(options.allowLegacySoloSixSide && soloPlayersPerSide === 6)) {
+    issues.push({
+      path: "solo.playersPerSide",
+      message: "New solo matches are fixed at 7 players per side.",
+    });
+  }
   const clanPlayersPerSide = numberAtPath(value, "clan.playersPerSide");
   if (clanPlayersPerSide !== 6 &&
       !(options.allowLegacyClanSevenSide && clanPlayersPerSide === 7)) {
@@ -555,15 +564,16 @@ export function parseReliabilityPolicyConfig(
 }
 
 // The web app can deploy just before its database migration. During that
-// window, normalize an existing seven-a-side draft in memory so the policy
-// page remains usable and the next save writes only the supported format.
+// window, normalize legacy draft formats in memory so the policy page remains
+// usable and the next save writes only the supported formats.
 export function normalizeReliabilityPolicyDraftConfig(
   value: unknown,
 ): ReliabilityPolicyConfig {
   const config = parseReliabilityPolicyConfig(value, {
+    allowLegacySoloSixSide: true,
     allowLegacyClanSevenSide: true,
   });
-  config.solo.playersPerSide = 6;
+  config.solo.playersPerSide = 7;
   config.clan.playersPerSide = 6;
   config.clan.minimumOnTimeWithoutClanStrike = Math.min(
     config.clan.minimumOnTimeWithoutClanStrike,

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/auth_repository.dart';
 import '../auth/fieldrush_account.dart';
 import '../auth/fieldrush_account_screen.dart';
+import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
@@ -14,11 +15,13 @@ import '../moderation/account_restriction_screen.dart';
 import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../profile/profile_repository.dart';
-import '../profile/profile_screen.dart';
+import '../profile/fieldrush_you_screen.dart';
+import '../profile/fieldrush_you_settings.dart';
 import '../reliability/reliability_repository.dart';
 import '../support/support_repository.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
+import 'home_discovery_repository.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -57,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _clansActivationTick = 0;
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
+  int _youActivationTick = 0;
   bool _isSigningOut = false;
   String? _shownModerationNoticeSignature;
 
@@ -121,6 +125,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (index == 3) {
         _ranksActivationTick++;
       }
+      if (index == 4) _youActivationTick++;
       _selectedIndex = index;
     });
   }
@@ -158,6 +163,7 @@ class _HomeScreenState extends State<HomeScreen> {
         fixtureRepository: _fixtureRepository,
         leaderboardRepository: _leaderboardRepository,
         openQueueRepository: _openQueueRepository,
+        discoveryRepository: SupabaseHomeDiscoveryRepository(),
         onOpenClans: () => _selectTab(2),
         onOpenFixtures: () => _selectTab(1),
         onOpenRanks: _openPlayerRanks,
@@ -182,36 +188,52 @@ class _HomeScreenState extends State<HomeScreen> {
         activationTick: _ranksActivationTick,
         playerActivationTick: _playerRanksActivationTick,
       ),
-      ProfileScreen(
+      FieldrushYouScreen(
+        activationTick: _youActivationTick,
         profileRepository: _profileRepository,
+        leaderboardRepository: _leaderboardRepository,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
         reliabilityRepository: _reliabilityRepository,
         supportRepository: widget.supportRepository,
+        accountRepository: widget.accountRepository,
+        settingsRepository: SupabaseYouSettingsRepository(),
+        onOpenRanks: _openPlayerRanks,
         profileSwitcherEnabled: widget.profileSwitcherEnabled,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
-        onOpenAccount: widget.accountRepository == null
-            ? null
-            : () async {
-                await Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) => FieldrushAccountScreen(
-                      authRepository: widget.authRepository,
-                      accountRepository: widget.accountRepository!,
-                    ),
-                  ),
-                );
-              },
+        onOpenAccount: () async {
+          if (widget.accountRepository == null) return;
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => FieldrushAccountScreen(
+                authRepository: widget.authRepository,
+                accountRepository: widget.accountRepository!,
+                profileRepository: _profileRepository,
+                bottomNavigationBuilder: (confirmLeave) => FieldBottomNav(
+                  selectedIndex: 4,
+                  onSelected: (index) async {
+                    final navigator = Navigator.of(context);
+                    if (!await confirmLeave() || !mounted) return;
+                    navigator.pop();
+                    _selectTab(index);
+                  },
+                ),
+              ),
+            ),
+          );
+        },
       ),
     ];
 
     return Scaffold(
       key: const ValueKey('home-screen'),
       extendBody: true,
-      backgroundColor: fieldBackground,
+      backgroundColor: _selectedIndex == 0 || _selectedIndex == 4
+          ? FieldrushAuthTheme.cream
+          : fieldBackground,
       body: IndexedStack(index: _selectedIndex, children: pages),
       bottomNavigationBar: FieldBottomNav(
         selectedIndex: _selectedIndex,

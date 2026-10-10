@@ -11,21 +11,43 @@ abstract class LeaderboardRepository {
 
   Future<List<PlayerRatingLeaderboardEntry>> loadPlayerRatingLeaderboard({
     required LeaderboardSeason season,
-    String region = 'bahrain',
+    String region = 'phoenix',
   });
 }
 
 class SupabaseLeaderboardRepository implements LeaderboardRepository {
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseLeaderboardRepository({SupabaseClient? client})
+    : _injectedClient = client;
+
+  final SupabaseClient? _injectedClient;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
 
   @override
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
     LeaderboardSeason season,
   ) async {
+    // The account's server-owned market preserves legacy Bahrain players while
+    // new Fieldrush accounts use Phoenix. Never move rating history in the UI.
+    final account = await _client.rpc('get_my_fieldrush_account');
+    var region = account is Map ? account['ranking_region'] as String? : null;
+    // Older account RPCs do not return a market. Read the actual rating row
+    // instead of guessing Phoenix and hiding an existing player's placement.
+    if (region == null || region.trim().isEmpty) {
+      final userId = _client.auth.currentUser?.id;
+      if (userId == null) {
+        throw const AuthException('Sign in to view your rating.');
+      }
+      final rating = await _client
+          .from('player_ratings')
+          .select('region')
+          .eq('profile_id', userId)
+          .single();
+      region = rating['region'] as String;
+    }
     final response = await _client.rpc(
       'get_my_season_player_rating',
       params: {
-        'region_to_use': 'bahrain',
+        'region_to_use': region,
         'season_starts_on': season.startsOn,
         'season_ends_on': season.endsOn,
       },
@@ -40,7 +62,7 @@ class SupabaseLeaderboardRepository implements LeaderboardRepository {
   @override
   Future<List<PlayerRatingLeaderboardEntry>> loadPlayerRatingLeaderboard({
     required LeaderboardSeason season,
-    String region = 'bahrain',
+    String region = 'phoenix',
   }) async {
     final response = await _client.rpc(
       'list_season_player_rating_leaderboard',

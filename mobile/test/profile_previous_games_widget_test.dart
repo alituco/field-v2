@@ -12,6 +12,58 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('public player profile hides baseline SR during placement', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ProfileScreen(
+            profileId: 'placement-player',
+            profileRepository: _FakeProfileRepository(
+              PlayerProfile(
+                id: 'placement-player',
+                displayName: 'New P.',
+                username: 'new.p',
+                bio: '',
+                followingCount: 0,
+                fansCount: 0,
+                appearances: 0,
+                goals: 0,
+                assists: 0,
+                highlights: const [],
+                career: const [],
+                previousGames: const [],
+                playerRating: const ProfilePlayerRating(
+                  skillRating: 1200,
+                  matchesPlayed: 0,
+                  wins: 0,
+                  losses: 0,
+                  draws: 0,
+                  lastChange: 0,
+                  region: 'phoenix',
+                  events: [],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('profile-player-rating-card')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('PLACEMENT'), findsOneWidget);
+    expect(find.text('0/2 placement games'), findsOneWidget);
+    expect(find.text('????'), findsOneWidget);
+    expect(find.text('1200'), findsNothing);
+    expect(find.text('DIVISION 4'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   test('career history keeps its row id separate from its clan id', () {
     final entry = ProfileCareerEntry.fromJson({
       'id': 'career-row',
@@ -414,6 +466,9 @@ class _FakeProfileRepository implements ProfileRepository {
   const _FakeProfileRepository(this.profile);
 
   final PlayerProfile profile;
+
+  @override
+  String get currentUserId => 'viewer';
 
   @override
   Future<PlayerProfile> getCurrentProfile() async => profile;

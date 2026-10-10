@@ -28,7 +28,7 @@ void main() {
     expect(twoGames.gamesNeededToRank, 0);
   });
 
-  test('player season selection rolls over on the Bahrain season dates', () {
+  test('player season selection rolls over on the market calendar dates', () {
     expect(leaderboardSeasonForDate(DateTime.utc(2026, 6, 1)).id, 's0');
     expect(leaderboardSeasonForDate(DateTime.utc(2026, 9, 30)).id, 's0');
     expect(leaderboardSeasonForDate(DateTime.utc(2026, 10, 1)).id, 's1');

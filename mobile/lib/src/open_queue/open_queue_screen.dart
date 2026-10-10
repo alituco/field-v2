@@ -41,6 +41,21 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   bool _loading = true;
   String? _error;
 
+  List<OpenQueueRole> get _roleOptions {
+    final supported = _games.isEmpty
+        ? fieldrushOpenQueueRoles.toSet()
+        : {for (final game in _games) ...game.supportedRoles};
+    return _queueRoleOrder.where(supported.contains).toList(growable: false);
+  }
+
+  void _sanitizeRoleSelections() {
+    final supported = _roleOptions.toSet();
+    if (!supported.contains(_mainRole)) _mainRole = null;
+    _backupRoles.removeWhere(
+      (role) => !supported.contains(role) || role == _mainRole,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -63,10 +78,12 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       setState(() {
         _games = results[0] as List<OpenQueueGame>;
         _upcomingBookings = results[1] as List<OpenQueueBooking>;
+        _sanitizeRoleSelections();
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        _sanitizeRoleSelections();
         _error = userFacingError(
           error,
           fallback: 'We could not load Open Queue games.',
@@ -78,20 +95,26 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   }
 
   void _selectMain(OpenQueueRole role) {
+    if (!_roleOptions.contains(role)) return;
     setState(() {
       final wasAnywhere = _isAnywhere;
       _mainRole = _mainRole == role ? null : role;
       _backupRoles.remove(role);
       if (wasAnywhere && _mainRole != null) {
-        _backupRoles = _queueRoleOrder.where((item) => item != role).toSet();
+        _backupRoles = _roleOptions.where((item) => item != role).toSet();
       }
     });
   }
 
   bool get _isAnywhere =>
-      _mainRole != null && _backupRoles.length == _queueRoleOrder.length - 1;
+      _mainRole != null &&
+      _backupRoles.length == _roleOptions.length - 1 &&
+      _roleOptions
+          .where((role) => role != _mainRole)
+          .every(_backupRoles.contains);
 
   void _toggleBackup(OpenQueueRole role) {
+    if (!_roleOptions.contains(role) || role == _mainRole) return;
     setState(() {
       if (_isAnywhere) _backupRoles.clear();
       if (_backupRoles.contains(role)) {
@@ -109,7 +132,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       if (_isAnywhere) {
         _backupRoles.clear();
       } else {
-        _backupRoles = _queueRoleOrder.where((role) => role != main).toSet();
+        _backupRoles = _roleOptions.where((role) => role != main).toSet();
       }
     });
   }
@@ -207,6 +230,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
               ),
               const SizedBox(height: 20),
               _QueuePitch(
+                roles: _roleOptions,
                 mainRole: _mainRole,
                 backupRoles: _backupRoles,
                 onSelect: _selectMain,
@@ -225,7 +249,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
                 crossAxisSpacing: 10,
                 childAspectRatio: 2.8,
                 children: [
-                  for (final role in _queueRoleOrder)
+                  for (final role in _roleOptions)
                     _RoleButton(
                       role: role,
                       selected: _mainRole == role,
@@ -259,7 +283,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final role in _queueRoleOrder)
+                    for (final role in _roleOptions)
                       if (role != mainRole)
                         _BackupRoleChip(
                           label: role.label,
@@ -615,11 +639,13 @@ class _QueueBookedGameRow extends StatelessWidget {
 
 class _QueuePitch extends StatelessWidget {
   const _QueuePitch({
+    required this.roles,
     required this.mainRole,
     required this.backupRoles,
     required this.onSelect,
   });
 
+  final List<OpenQueueRole> roles;
   final OpenQueueRole? mainRole;
   final Set<OpenQueueRole> backupRoles;
   final ValueChanged<OpenQueueRole> onSelect;
@@ -670,7 +696,9 @@ class _QueuePitch extends StatelessWidget {
                       Positioned.fill(
                         child: CustomPaint(painter: _PitchPainter()),
                       ),
-                      for (final node in nodes)
+                      for (final node in nodes.where(
+                        (node) => roles.contains(node.$1),
+                      ))
                         Positioned(
                           left: constraints.maxWidth * node.$2 - 34,
                           top: constraints.maxHeight * node.$3 - 34,

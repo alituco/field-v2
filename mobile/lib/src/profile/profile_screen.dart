@@ -9,6 +9,7 @@ import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
+import '../leaderboard/leaderboard.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
@@ -330,6 +331,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _openEditProfile() async {
+    final openAccount = widget.onOpenAccount;
+    if (openAccount != null) {
+      await openAccount();
+      if (mounted) {
+        final next = _loadProfile();
+        setState(() => _profileFuture = next);
+      }
+      return;
+    }
     final profile = _latestProfile;
     if (profile == null) return;
 
@@ -862,6 +872,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = rating.lastChange;
+    final isPlacement = rating.matchesPlayed < minimumPlayerLeaderboardMatches;
     final division = divisionFromRating(rating.skillRating);
     final nextRating = division.nextDivisionRating;
     final nextDivision = nextRating == null
@@ -910,7 +921,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      division.label.toUpperCase(),
+                      isPlacement ? 'PLACEMENT' : division.label.toUpperCase(),
                       style: const TextStyle(
                         color: Color(0xFFAAAAB4),
                         fontSize: 11,
@@ -921,7 +932,9 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 9),
                   Text(
-                    '${rating.matchesPlayed} rated ${rating.matchesPlayed == 1 ? 'game' : 'games'}',
+                    isPlacement
+                        ? '${rating.matchesPlayed}/$minimumPlayerLeaderboardMatches placement games'
+                        : '${rating.matchesPlayed} rated ${rating.matchesPlayed == 1 ? 'game' : 'games'}',
                     style: const TextStyle(
                       color: Color(0xFF9999A8),
                       fontSize: 11,
@@ -937,7 +950,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${rating.skillRating}',
+                isPlacement ? '????' : '${rating.skillRating}',
                 style: const TextStyle(
                   color: Color(0xFF35BD69),
                   fontSize: 58,
@@ -947,17 +960,18 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Text(
-                  '${change > 0 ? '+' : ''}$change',
-                  style: TextStyle(
-                    color: changeColor,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
+              if (!isPlacement)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Text(
+                    '${change > 0 ? '+' : ''}$change',
+                    style: TextStyle(
+                      color: changeColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 22),
@@ -965,7 +979,9 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
               key: const ValueKey('profile-player-rating-progress'),
-              value: division.progressFor(rating.skillRating),
+              value: isPlacement
+                  ? rating.matchesPlayed / minimumPlayerLeaderboardMatches
+                  : division.progressFor(rating.skillRating),
               minHeight: 7,
               color: const Color(0xFF35BD69),
               backgroundColor: const Color(0xFF292A2E),
@@ -975,7 +991,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
           Row(
             children: [
               Text(
-                '${division.minimumRating}',
+                isPlacement ? 'UNRANKED' : '${division.minimumRating}',
                 style: const TextStyle(
                   color: Color(0xFF9999A8),
                   fontSize: 11,
@@ -984,7 +1000,9 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                nextRating == null
+                isPlacement
+                    ? 'Complete placement games'
+                    : nextRating == null
                     ? 'TOP DIVISION'
                     : '${nextDivision!.label} · $nextRating',
                 style: const TextStyle(

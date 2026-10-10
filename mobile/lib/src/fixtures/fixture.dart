@@ -622,6 +622,23 @@ class Fixture {
   final List<FixtureLineupPlayer> homeLineup;
   final List<FixtureLineupPlayer> awayLineup;
 
+  /// Matches the existing clan fixture_start_at database function. The stored
+  /// matchDate is a calendar date, not midnight in the viewer's time zone.
+  DateTime get scheduledStartAt {
+    final (hour, minute) = switch (timeSlot) {
+      '7:00 PM - 8:00 PM' => (19, 0),
+      '8:30 PM - 9:30 PM' => (20, 30),
+      _ => (0, 0),
+    };
+    return DateTime.utc(
+      matchDate.year,
+      matchDate.month,
+      matchDate.day,
+      hour - 3,
+      minute,
+    );
+  }
+
   bool get isOpen => status == FixtureStatus.open;
 
   bool get isFinal => status == FixtureStatus.finalResult;
