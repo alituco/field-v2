@@ -14,7 +14,7 @@ export const E2E_SCHEMA_VERSION = 1;
 export const E2E_VENUE_PREFIX = "[FIELD E2E";
 export const E2E_PROFILE_PREFIX = "[E2E]";
 export const E2E_DEFAULT_BIRTH_DATE = "2000-01-01";
-export const E2E_DEFAULT_BOOTSTRAP_PHONE = "+97339009099";
+export const E2E_DEFAULT_BOOTSTRAP_PHONE = "+97339009098";
 export const E2E_DEFAULT_OTP_CODE = "000000";
 
 const UUID_PATTERN =

@@ -40,7 +40,7 @@ class StagingE2EConfig {
     );
     const bootstrapPhone = String.fromEnvironment(
       'E2E_BOOTSTRAP_PHONE',
-      defaultValue: '+97339009099',
+      defaultValue: '+97339009098',
     );
     const devOtpCode = String.fromEnvironment(
       'E2E_DEV_OTP_CODE',

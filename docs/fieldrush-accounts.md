@@ -60,7 +60,7 @@ The hosted player journey uses an injected, integration-test-only OTP transport 
 
 For the first transition from the old suite, the existing reserved test accounts may lack protected ownership markers. Setup stops deliberately until an administrator verifies ownership:
 
-- Bootstrap login `+97339009099`: the staging-only login function creates this dedicated fixture with protected `app_metadata.fieldrush_e2e=true` and `app_metadata.fieldrush_e2e_role=bootstrap`. It refuses to reuse an unmarked account. Setup completes its onboarding through the same authenticated RPC as the app. The earlier bootstrap player at `+97338883672` is no longer used by CI.
+- Bootstrap login `+97339009098`: the staging-only login function creates this dedicated fixture with protected `app_metadata.fieldrush_e2e=true` and `app_metadata.fieldrush_e2e_role=bootstrap`. It refuses to reuse an unmarked account. Setup completes its onboarding through the same authenticated RPC as the app. The earlier bootstrap player at `+97338883672` is no longer used by CI.
 - Disposable onboarding actor `+97339009100`: set `app_metadata.fieldrush_e2e=true` and `app_metadata.fieldrush_e2e_role=onboarding`, or remove that specific verified test actor so setup can recreate it.
 
 Never use editable `user_metadata` as permission to delete a real account. Subsequent fixture resets require the protected markers and the exact reserved phone. These existing Bahrain-format numbers are isolated legacy test infrastructure, not the new app's default country or market.

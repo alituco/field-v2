@@ -35,7 +35,7 @@ Deno.test("auth-only onboarding exception requires protected marker and reserved
 
 Deno.test("bootstrap refresh refuses unmarked or different accounts", () => {
   const valid = {
-    phone: "+97339009099",
+    phone: "+97339009098",
     app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "bootstrap" },
   };
   if (

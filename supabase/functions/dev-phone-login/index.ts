@@ -180,7 +180,7 @@ async function ensureDevUser({
     phone,
     password,
     phone_confirm: true,
-    ...(phone === "+97339009099"
+    ...(phone === "+97339009098"
       ? {
         app_metadata: { fieldrush_e2e: true, fieldrush_e2e_role: "bootstrap" },
       }
@@ -204,7 +204,7 @@ async function ensureDevUser({
   if (!existingUser) {
     throw new Error("Dev user already exists, but could not be found.");
   }
-  if (phone === "+97339009099" && !isProtectedBootstrapFixture(existingUser)) {
+  if (phone === "+97339009098" && !isProtectedBootstrapFixture(existingUser)) {
     throw new Error(
       "The reserved E2E bootstrap number belongs to an unmarked account.",
     );

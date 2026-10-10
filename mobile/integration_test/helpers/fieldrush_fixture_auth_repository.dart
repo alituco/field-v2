@@ -20,7 +20,7 @@ class FieldrushFixtureAuthRepository
         'Fixture login requires the staging flavor and exact staging backend.',
       );
     }
-    if (_bootstrapPhone != '+97339009099' || fixture.devOtpCode != '000000') {
+    if (_bootstrapPhone != '+97339009098' || fixture.devOtpCode != '000000') {
       throw TestFailure(
         'Fixture login must use the isolated staging bootstrap phone and OTP.',
       );

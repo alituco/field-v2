@@ -12,7 +12,7 @@ export function isProtectedBootstrapFixture(target: {
   phone?: string;
   app_metadata?: Record<string, unknown>;
 }): boolean {
-  return target.phone?.replace(/\D/g, "") === "97339009099" &&
+  return target.phone?.replace(/\D/g, "") === "97339009098" &&
     target.app_metadata?.fieldrush_e2e === true &&
     target.app_metadata?.fieldrush_e2e_role === "bootstrap";
 }
