@@ -420,11 +420,9 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                       ? null
                       : () => widget.onPlay(
                           game,
-                          Set.unmodifiable(
-                            _selected.where(
-                              (role) => game.canBookAt(role, now),
-                            ),
-                          ),
+                          // Home suggests the soonest game, but the next
+                          // screen must retain preferences for later games.
+                          Set.unmodifiable(_selected),
                         ),
                   style: FilledButton.styleFrom(
                     backgroundColor: _green,

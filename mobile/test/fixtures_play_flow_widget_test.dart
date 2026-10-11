@@ -277,7 +277,8 @@ Future<void> _pumpFixtures(
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: FixturesScreen(
+        // These permissions and scheduling tests target legacy clan play.
+        body: LegacyFixturesScreen(
           fixtureRepository: fixtureRepository,
           openQueueRepository: const _FakeOpenQueueRepository(),
           onNavigateTab: onNavigateTab,

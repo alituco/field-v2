@@ -10,14 +10,13 @@ import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_reliability_roster.dart';
 import '../fixtures/fixture_repository.dart';
-import '../fixtures/fixtures_screen.dart';
 import '../leaderboard/leaderboard.dart';
 import '../leaderboard/leaderboard_repository.dart';
 import '../open_queue/open_queue.dart';
-import '../open_queue/open_queue_booking_screen.dart';
+import '../open_queue/fieldrush_booking_flow.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_party_repository.dart';
 import '../open_queue/open_queue_repository.dart';
-import '../open_queue/open_queue_review_screen.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
@@ -303,12 +302,25 @@ class _DashboardHomeState extends State<DashboardHome> {
   }
 
   Future<void> _openBooking(OpenQueueBooking booking) async {
-    await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => OpenQueueBookingScreen(
+        builder: (_) => FieldrushGameDetailScreen(
           repository: widget.openQueueRepository,
-          booking: booking,
+          gameId: booking.gameId,
+          initialGame: booking.game,
+          profileRepository: widget.profileRepository,
           onNavigateTab: widget.onNavigateTab,
+          onJoin: (game) async {
+            await Navigator.of(context).push<OpenQueueBooking>(
+              MaterialPageRoute(
+                builder: (_) => FieldrushBookingFlow(
+                  repository: widget.openQueueRepository,
+                  initialGame: game,
+                  onNavigateTab: widget.onNavigateTab,
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
@@ -319,23 +331,16 @@ class _DashboardHomeState extends State<DashboardHome> {
     OpenQueueGame game, [
     Set<OpenQueueRole>? roles,
   ]) async {
-    if (game.status.toUpperCase() == 'LIVE' ||
-        game.status.toUpperCase() == 'FINAL' ||
-        game.isFull) {
+    if (roles == null || game.isFull) {
       await _openSoloMatch(game);
       return;
     }
-    final valid = roles?.where((role) => game.canBook(role)).toList() ?? [];
-    final role = valid.length == 1
-        ? valid.single
-        : await showSoloFixtureAvailabilitySheet(context, game);
-    if (role == null || !mounted) return;
-    await Navigator.of(context).push<bool>(
+    await Navigator.of(context).push<OpenQueueBooking>(
       MaterialPageRoute(
-        builder: (_) => OpenQueueReviewScreen(
+        builder: (_) => FieldrushBookingFlow(
           repository: widget.openQueueRepository,
-          game: game,
-          role: role,
+          initialRoles: roles,
+          startAtGames: true,
           onNavigateTab: widget.onNavigateTab,
         ),
       ),
@@ -348,23 +353,24 @@ class _DashboardHomeState extends State<DashboardHome> {
 
   Future<void> _openSoloMatchById(String gameId) async {
     try {
-      final detail = await widget.openQueueRepository.getMatchDetail(gameId);
-      if (!mounted) return;
-      await Navigator.of(context).push<bool>(
+      await Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) => FixtureDetailScreen(
-            fixture: detail.toFixture(),
-            fixtureRepository: widget.fixtureRepository,
-            clanRepository: widget.clanRepository,
+          builder: (_) => FieldrushGameDetailScreen(
+            repository: widget.openQueueRepository,
+            gameId: gameId,
             profileRepository: widget.profileRepository,
-            myClanMembership: null,
-            sourceLabel: 'SOLO',
-            showTeamRatings: false,
-            playerRatingUpdate: detail.viewerRatingUpdate,
-            refreshFixture: () async =>
-                (await widget.openQueueRepository.getMatchDetail(
-                  gameId,
-                )).toFixture(),
+            onNavigateTab: widget.onNavigateTab,
+            onJoin: (game) async {
+              await Navigator.of(context).push<OpenQueueBooking>(
+                MaterialPageRoute(
+                  builder: (_) => FieldrushBookingFlow(
+                    repository: widget.openQueueRepository,
+                    initialGame: game,
+                    onNavigateTab: widget.onNavigateTab,
+                  ),
+                ),
+              );
+            },
           ),
         ),
       );

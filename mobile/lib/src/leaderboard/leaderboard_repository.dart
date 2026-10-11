@@ -15,12 +15,44 @@ abstract class LeaderboardRepository {
   });
 }
 
-class SupabaseLeaderboardRepository implements LeaderboardRepository {
+abstract interface class PagedLeaderboardRepository {
+  Future<PlayerRatingLeaderboardPage> loadPlayerRatingPage({
+    required LeaderboardSeason season,
+    String region = 'phoenix',
+    int offset = 0,
+    int pageSize = 23,
+  });
+}
+
+class SupabaseLeaderboardRepository
+    implements LeaderboardRepository, PagedLeaderboardRepository {
   SupabaseLeaderboardRepository({SupabaseClient? client})
     : _injectedClient = client;
 
   final SupabaseClient? _injectedClient;
   SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
+
+  @override
+  Future<PlayerRatingLeaderboardPage> loadPlayerRatingPage({
+    required LeaderboardSeason season,
+    String region = 'phoenix',
+    int offset = 0,
+    int pageSize = 23,
+  }) async {
+    final response = await _client.rpc(
+      'list_fieldrush_player_rating_page',
+      params: {
+        'region_to_use': region,
+        'season_starts_on': season.startsOn,
+        'season_ends_on': season.endsOn,
+        'offset_to_use': offset,
+        'page_size_to_use': pageSize,
+      },
+    );
+    return PlayerRatingLeaderboardPage.fromJson(
+      Map<String, dynamic>.from(response as Map),
+    );
+  }
 
   @override
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(

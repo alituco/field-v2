@@ -1,6 +1,6 @@
 # Fieldrush account setup
 
-This foundation replaces the mobile app’s signup and account entry flow with the supplied Fieldrush design. It supports phone OTP and Google, requires a verified phone and an adult birthday, and keeps account identity separate from public player profiles. The Home and Account details extension adds the prototype's native layouts and the Phoenix solo-game rules below. The rest of the app and the website have not received that full visual redesign.
+This foundation replaces the mobile app’s signup and account entry flow with the supplied Fieldrush design. It supports phone OTP and Google, requires a verified phone and an adult birthday, and keeps account identity separate from public player profiles. Home, account details, You, Fixtures, solo game details and Ranks now have native Fieldrush layouts. Historical clan screens and the website have not received that full visual redesign.
 
 ## What is implemented
 
@@ -27,6 +27,22 @@ The private You tab now follows the prototype: identity and Edit, Following/Fans
 Notification preferences use the existing authenticated settings RPCs and wait for server confirmation before changing a switch. The wallet displays exact, separate currency balances through `get_my_fieldrush_wallet`, now deployed to staging. Payment methods explains the existing checkout flow; it does not pretend to store cards, support wallet spending, or provide a transaction ledger. Support, sign-out confirmation and the staging-only profile switcher remain accessible.
 
 You-page verification: all 378 Flutter tests and Flutter analysis passed. Ranked and placement layouts were rendered with the bundled fonts, including 320px/large-text checks; real profile, notification preferences and match history were checked in the staging iOS simulator. The later ranking reset below enables hosted placement against the player's existing market. Phoenix market and wallet migrations were subsequently deployed in the October 10 rollout below.
+
+## Fixtures, booking and Ranks
+
+Fixtures uses real Phoenix/USD games, local match dates, recorded status, booking membership and scores. Cards open a dedicated game page; they do not book immediately. Legacy fixture UI remains separate for historical clan/6v6 behavior. New clan bookings stay disabled.
+
+The Play flow follows the prototype: select any combination of Keeper, Defender and Attacker → choose a matching game → review the game and suggested position → verify the exact server quote → native Stripe payment → confirmed booking. Home enters the same matching-game step with all selected positions preserved. Suggestions choose the most open slots among those preferences; an earlier out-of-position alternative requires an explicit selection. Opening a specific game lets the player choose an available role before checkout. Availability and price are rechecked, changed terms require confirmation, and ambiguous payment retries recover an existing booking/intent rather than bypassing payment verification.
+
+The supplied HTML is a visual/flow reference, not a source of production transactions. No sample players, fake card balances or sample game prices are used. Games remain 60 minutes, as agreed, and the screens use each game's actual duration, admin-policy assignment cutoff and cancellation policy; the prototype's 90-minute duration and three-hour draw are not installed as new rules. Current default solo pricing remains USD 13, configurable through admin.
+
+Game details expose the live roster, team assignment, match timeline, stream/recording, clips, venue directions, party management and a server-previewed cancellation refund. Party and booking permissions remain enforced by the existing backend. Refunds return to the original payment method under the saved policy.
+
+Ranks shows Phoenix Solo, two-game placement, authoritative season standing, podium, nearby ranks and a paginated full ladder. Clan rankings show Coming soon. It does not move legacy players into Phoenix or fabricate week-over-week movement. Apply `20261011000000_fieldrush_leaderboard_pages.sql` with the normal backend rollout **before releasing this mobile version**; the new authenticated, bounded read RPC provides pagination and excludes deleted profiles consistently from the authoritative ranking helper. It does not reset ratings or change division thresholds. This branch alone does not deploy that migration.
+
+Run `flutter analyze --no-pub` and `flutter test --no-pub` from `mobile`. The focused suites are `fieldrush_booking_flow_test.dart`, `fieldrush_fixture_booking_navigation_test.dart`, `fieldrush_fixture_page_test.dart`, `fieldrush_game_detail_screen_test.dart` and `fieldrush_leaderboard_test.dart`. The isolated SQL harness is `PGLITE_MODULE=/path/to/node_modules/@electric-sql/pglite node supabase/scripts/test_fieldrush_leaderboard.mjs`; this supplements full Supabase replay and hosted device/payment E2E, not replaces them.
+
+Local verification: all 465 Flutter tests passed with two test workers, plus 33 leaderboard, 63 ranking-reset and 39 Phoenix-market isolated PostgreSQL checks. Native layouts were rendered with the bundled fonts and checked at narrow widths with enlarged text. The staging iOS simulator build passed. Hosted E2E selectors/assertions were updated and statically analyzed, but the hosted mutation journey and this migration have not been run against staging as part of this branch.
 
 ### Player ranking resets
 

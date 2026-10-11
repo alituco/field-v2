@@ -74,7 +74,9 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('home-quick-play')));
       expect(chosen?.id, 'soonest');
-      expect(roles, {OpenQueueRole.attacker});
+      // Home is a preference shortcut into the matching-game step, not a
+      // reservation for only the first game's available position.
+      expect(roles, {OpenQueueRole.defender, OpenQueueRole.attacker});
       expect(find.textContaining(soonest.priceLabel), findsOneWidget);
       expect(find.textContaining(r'$13.00'), findsOneWidget);
       expect(find.textContaining('BHD'), findsNothing);

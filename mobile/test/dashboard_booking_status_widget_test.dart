@@ -8,7 +8,7 @@ import 'package:field/src/home/home_discovery_repository.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
-import 'package:field/src/open_queue/open_queue_booking_screen.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/open_queue_party.dart';
 import 'package:field/src/open_queue/open_queue_party_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
@@ -224,22 +224,19 @@ void main() {
         tester,
         find.descendant(of: alert, matching: find.byType(FilledButton)),
       );
-      await pumpUntilFound(tester, find.byType(OpenQueueBookingScreen));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
       expect(
         tester
-            .widget<OpenQueueBookingScreen>(find.byType(OpenQueueBookingScreen))
-            .booking
-            .id,
-        invitedBooking.id,
+            .widget<FieldrushGameDetailScreen>(
+              find.byType(FieldrushGameDetailScreen),
+            )
+            .gameId,
+        invitedBooking.gameId,
       );
-      await tapAfterScroll(
-        tester,
-        find.byKey(const ValueKey('open-queue-party-invite-indicator')),
-      );
-      await pumpUntilFound(
-        tester,
-        find.byKey(const ValueKey('accept-open-queue-party-invite')),
-      );
+      await tester.scrollUntilVisible(find.text('Accept'), 250);
+      expect(find.text('Accept'), findsOneWidget);
+      expect(find.textContaining('Sami'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );
@@ -423,6 +420,13 @@ class _Queue extends Fake implements OpenQueueRepository {
   Future<List<OpenQueueGame>> listGames() async => games;
   @override
   Future<List<OpenQueueGame>> listFixtureGames() async => fixtures;
+  @override
+  Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async =>
+      OpenQueueMatchDetail(
+        game: bookings.firstWhere((booking) => booking.gameId == gameId).game,
+        scorers: const [],
+        timeline: const [],
+      );
 }
 
 class _Invites extends _Queue implements OpenQueuePartyRepository {

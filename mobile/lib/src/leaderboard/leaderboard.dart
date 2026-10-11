@@ -3,6 +3,38 @@ import '../ranking/rating_division.dart';
 const minimumClanLeaderboardMatches = 4;
 const minimumPlayerLeaderboardMatches = 2;
 
+/// A bounded server page plus the current player's actual neighboring ranks.
+class PlayerRatingLeaderboardPage {
+  const PlayerRatingLeaderboardPage({
+    required this.players,
+    required this.aroundMe,
+    required this.totalCount,
+    required this.nextOffset,
+  });
+
+  final List<PlayerRatingLeaderboardEntry> players;
+  final List<PlayerRatingLeaderboardEntry> aroundMe;
+  final int totalCount;
+  final int? nextOffset;
+
+  factory PlayerRatingLeaderboardPage.fromJson(Map<String, dynamic> json) {
+    List<PlayerRatingLeaderboardEntry> entries(Object? value) => [
+      for (final row in value as List<dynamic>? ?? const [])
+        PlayerRatingLeaderboardEntry.fromJson(
+          Map<String, dynamic>.from(row as Map),
+        ),
+    ];
+    return PlayerRatingLeaderboardPage(
+      players: entries(json['players']),
+      aroundMe: entries(json['around_me']),
+      totalCount: _leaderboardInt(json['total_count']),
+      nextOffset: json['next_offset'] == null
+          ? null
+          : _leaderboardInt(json['next_offset']),
+    );
+  }
+}
+
 class PlayerRatingLeaderboardEntry {
   const PlayerRatingLeaderboardEntry({
     required this.rank,

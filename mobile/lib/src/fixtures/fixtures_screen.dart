@@ -13,6 +13,7 @@ import 'fixture_detail_screen.dart';
 import 'fixture_play_chooser.dart';
 import 'fixture_repository.dart';
 import 'fixture_widgets.dart';
+import 'fieldrush_fixture_page.dart';
 
 Future<OpenQueueRole?> showSoloFixtureAvailabilitySheet(
   BuildContext context,
@@ -26,8 +27,44 @@ Future<OpenQueueRole?> showSoloFixtureAvailabilitySheet(
   );
 }
 
-class FixturesScreen extends StatefulWidget {
+/// The launch-market fixtures surface. Legacy clan fixture views stay available
+/// separately for existing match history and operational tools.
+class FixturesScreen extends StatelessWidget {
   const FixturesScreen({
+    super.key,
+    required this.fixtureRepository,
+    required this.openQueueRepository,
+    this.clanRepository,
+    this.onNavigateTab,
+    this.onPlay,
+    this.onOpenGame,
+    this.activationTick = 0,
+    this.now,
+  });
+
+  final FixtureRepository fixtureRepository;
+  final OpenQueueRepository openQueueRepository;
+  final ClanRepository? clanRepository;
+  final ValueChanged<int>? onNavigateTab;
+  final Future<void> Function(OpenQueueGame? game)? onPlay;
+  final Future<void> Function(OpenQueueGame game)? onOpenGame;
+  final int activationTick;
+  final DateTime? now;
+
+  @override
+  Widget build(BuildContext context) => FieldrushFixturePage(
+    repository: openQueueRepository,
+    fixtureRepository: fixtureRepository,
+    onNavigateTab: onNavigateTab,
+    onPlay: onPlay,
+    onOpenGame: onOpenGame,
+    activationTick: activationTick,
+    now: now,
+  );
+}
+
+class LegacyFixturesScreen extends StatefulWidget {
+  const LegacyFixturesScreen({
     super.key,
     required this.fixtureRepository,
     required this.openQueueRepository,
@@ -41,10 +78,10 @@ class FixturesScreen extends StatefulWidget {
   final ValueChanged<int>? onNavigateTab;
 
   @override
-  State<FixturesScreen> createState() => _FixturesScreenState();
+  State<LegacyFixturesScreen> createState() => _FixturesScreenState();
 }
 
-class _FixturesScreenState extends State<FixturesScreen> {
+class _FixturesScreenState extends State<LegacyFixturesScreen> {
   List<Fixture> _fixtures = const [];
   List<OpenQueueGame> _soloGames = const [];
   MyClanMembership? _myClanMembership;
