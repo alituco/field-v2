@@ -1,6 +1,10 @@
 # Stripe payments
 
-Fieldrush uses Stripe PaymentSheet for card and Apple Pay checkout. New solo
+Fieldrush embeds Stripe's native payment-method selector in the solo checkout.
+Players select a method alongside the game, position and server-quoted total,
+then use Fieldrush's Pay button. Card entry, Apple Pay authorization and bank
+authentication remain Stripe/system-owned secure UI; the app never handles raw
+card details. Legacy callers retain PaymentSheet compatibility. New solo
 games are priced in USD ($13 by default, configurable by admins). The US Stripe
 account cannot charge BHD. Historical BHD games, payments and wallet balances
 are preserved, but their old checkout is unavailable. **Clan games are disabled**;
@@ -48,6 +52,18 @@ branch is under review; it must not deliver events to an undeployed handler.
 
 ## Booking and refund guarantees
 
+- Opening checkout or choosing a payment method does not create a payment or
+  booking. The embedded selector loads from a read-only quote; server `prepare`
+  runs only after an explicit Pay/Confirm booking action, including free games.
+- USD amounts remain stored in the legacy thousandths columns. Embedded Stripe
+  amounts use cents (`amount_fils / 10`) after exact-precision validation. A
+  different prepared total is cancelled/reconciled and must be reviewed again.
+- Native selection is disabled during confirmation. A dismissed card-entry
+  form is not a cancelled payment; an actual confirmation cancellation is
+  reconciled with the server. The native view is disposed before navigation.
+- A completed native payment stays in server-verification mode if the response
+  is lost or the session expires. Resume checks the same attempt; it does not
+  assume a failed charge or ask for a replacement payment.
 - Prices, currency, payer and target game come from authenticated server quotes.
 - The app never supplies a trusted successful-payment flag. Stripe's returned
   payment is checked server-side before the database atomically creates a booking.

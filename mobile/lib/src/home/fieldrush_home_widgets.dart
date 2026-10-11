@@ -420,11 +420,9 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                       ? null
                       : () => widget.onPlay(
                           game,
-                          Set.unmodifiable(
-                            _selected.where(
-                              (role) => game.canBookAt(role, now),
-                            ),
-                          ),
+                          // Home suggests the soonest game, but the next
+                          // screen must retain preferences for later games.
+                          Set.unmodifiable(_selected),
                         ),
                   style: FilledButton.styleFrom(
                     backgroundColor: _green,
@@ -639,8 +637,7 @@ class _OpenNightRow extends StatelessWidget {
                             division: divisionFromRating(
                               game.matchAverageSr!,
                             ).number,
-                            size: 15,
-                            mini: true,
+                            size: 20,
                           ),
                           const SizedBox(width: 5),
                           Flexible(
@@ -1671,6 +1668,8 @@ class FieldrushDivisionShieldPainter extends CustomPainter {
   final bool mini;
   final bool placement;
 
+  int get starCount => mini || placement || division == 5 ? 0 : 5 - division;
+
   Path _shield(Rect rect) {
     const points = [
       Offset(0, 0),
@@ -1735,7 +1734,7 @@ class FieldrushDivisionShieldPainter extends CustomPainter {
               : tier.face,
         ).createShader(faceBounds),
     );
-    final stars = mini || placement || division == 5 ? 0 : 5 - division;
+    final stars = starCount;
     final starSize = math.max(4, (size.width * .11).round()).toDouble();
     final starGap = math.max(1, (size.width * .025).round()).toDouble();
     final rowWidth = stars * starSize + math.max(0, stars - 1) * starGap;
@@ -1778,7 +1777,7 @@ class FieldrushDivisionShieldPainter extends CustomPainter {
         style: _outfit(
           (size.width * (mini ? .5 : .44)).roundToDouble(),
           color: placement ? const Color(0xFFF3EBD6) : tier.ink,
-          tracking: -.03 * size.width,
+          tracking: -.03 * (size.width * (mini ? .5 : .44)).roundToDouble(),
         ),
       ),
       textDirection: TextDirection.ltr,

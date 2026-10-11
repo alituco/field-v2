@@ -1,6 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// Hosted journeys must never present a real-charge checkout. The application
+/// and server still validate the run-scoped, staging-only bypass independently.
+void validateHostedPaymentBypass() {
+  const environment = String.fromEnvironment('APP_ENV');
+  const bypass = bool.fromEnvironment('FIELD_E2E_PAYMENT_BYPASS');
+  const runId = String.fromEnvironment('E2E_RUN_ID');
+  if (environment != 'staging' || !bypass || runId.trim().isEmpty) {
+    throw TestFailure(
+      'Hosted player journeys require APP_ENV=staging, '
+      'FIELD_E2E_PAYMENT_BYPASS=true, and an isolated E2E_RUN_ID. '
+      'Refusing to execute a real-payment journey.',
+    );
+  }
+}
+
 class StagingE2EConfig {
   const StagingE2EConfig({
     required this.mainPhone,

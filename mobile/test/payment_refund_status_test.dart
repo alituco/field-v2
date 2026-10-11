@@ -73,6 +73,53 @@ void main() {
     expect(preview.refundLabel, '3 BHD to Field wallet');
   });
 
+  for (final destination in ['ORIGINAL_PAYMENT_METHOD', 'stripe']) {
+    test(
+      '$destination cancellation narrative uses the authoritative destination',
+      () {
+        const explanation =
+            'Cancellation outcome: Cancelled early. No reliability strike is added. '
+            '100% of the match fee returns to your Field Wallet. '
+            'The reliability deposit returns to your Field Wallet.';
+        final preview = OpenQueueCancellationPreview.fromJson({
+          'refund_destination': destination,
+          'explanation': explanation,
+        });
+        expect(
+          preview.displayExplanation,
+          'Cancellation outcome: Cancelled early. No reliability strike is added. '
+          '100% of the match fee returns to your original payment method. '
+          'The reliability deposit returns to your original payment method.',
+        );
+        expect(preview.explanation, explanation);
+      },
+    );
+  }
+
+  for (final destination in ['FIELD_WALLET', null, 'OTHER']) {
+    test('historical or unspecified $destination narrative is unchanged', () {
+      const explanation =
+          '50% of the match fee returns to your Field Wallet. '
+          'The reliability deposit is forfeited.';
+      final preview = OpenQueueCancellationPreview.fromJson({
+        'refund_destination': destination,
+        'explanation': explanation,
+      });
+      expect(preview.displayExplanation, explanation);
+    });
+  }
+
+  test('current and absent Stripe explanations remain unchanged', () {
+    const explanation = 'The refund returns to your original payment method.';
+    for (final text in [explanation, null, '']) {
+      final preview = OpenQueueCancellationPreview.fromJson({
+        'refund_destination': 'ORIGINAL_PAYMENT_METHOD',
+        'explanation': text,
+      });
+      expect(preview.displayExplanation, preview.explanation);
+    }
+  });
+
   test('clan cancellation requires acknowledgement if destination changes', () {
     final data = {
       'refund_amount_fils': 13000,

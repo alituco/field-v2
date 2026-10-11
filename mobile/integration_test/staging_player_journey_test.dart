@@ -1,11 +1,18 @@
 import 'dart:async';
 
 import 'package:field/main.dart' as app;
+import 'package:field/src/fixtures/fieldrush_fixture_page.dart';
+import 'package:field/src/leaderboard/fieldrush_leaderboard_widgets.dart';
+import 'package:field/src/leaderboard/leaderboard.dart';
+import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/moderation/moderation_repository.dart';
+import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
+import 'package:field/src/open_queue/fieldrush_booking_widgets.dart';
+import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
-import 'package:field/src/open_queue/open_queue_booking_screen.dart';
+import 'package:field/src/open_queue/open_queue_party.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
-import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/fieldrush_you_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
@@ -22,6 +29,7 @@ void main() {
 
   testWidgets('hosted staging player journey', (tester) async {
     final config = StagingE2EConfig.fromEnvironment()..validate();
+    validateHostedPaymentBypass();
 
     _logStage('launch app and verify signed-out state');
     await app.runFieldApp(
@@ -71,6 +79,8 @@ void main() {
       label: 'main player',
     );
     final mainId = _currentUserId();
+    _logStage('verify Phoenix leaderboards and season navigation');
+    await _verifyLeaderboards(tester);
     final matchGame = await _gameById(repository, config.matchGameId);
     expect(matchGame.confirmedCount, 13);
     expect(matchGame.spotsFor(OpenQueueRole.defender), 1);
@@ -88,14 +98,16 @@ void main() {
 
     await _createAndSendPartyInvite(
       tester,
+      gameId: matchGame.id,
       inviteeId: config.partyTargetProfileId,
     );
-    await tapAfterScroll(tester, find.byKey(const ValueKey('booking-go-home')));
+    await _goHomeFromGame(tester);
     await pumpUntilFound(
       tester,
       find.byKey(ValueKey('home-solo-booking-${matchBooking!.id}')),
       reason: 'The new match booking did not appear on Home.',
     );
+    await _verifyFixtureDetailLink(tester, matchGame);
 
     _logStage('accept the party invite as its recipient');
     await _switchToProfile(
@@ -429,7 +441,7 @@ Future<OpenQueueGame> _gameById(
 ) async {
   final games = await _boundedRemoteStep(
     'load solo-game feed for $gameId',
-    repository.listGames(),
+    repository.listMarketGames('America/Phoenix'),
   );
   try {
     return games.firstWhere((game) => game.id == gameId);
@@ -438,6 +450,229 @@ Future<OpenQueueGame> _gameById(
       'The staging fixture did not expose upcoming game $gameId.',
     );
   }
+}
+
+Future<void> _verifyFixtureDetailLink(
+  WidgetTester tester,
+  OpenQueueGame game,
+) async {
+  await tapWhenVisible(
+    tester,
+    find.byKey(const ValueKey('field-bottom-nav-item-1')),
+  );
+  await pumpUntilFound(tester, find.byType(FieldrushFixturePage));
+  await pumpUntilFound(
+    tester,
+    find.byKey(const ValueKey('fixtures-next-day')),
+    reason: 'The server-backed fixture calendar did not load.',
+  );
+  final local = game.localStartsAt;
+  final dateKey =
+      '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  final date = find.byKey(ValueKey('fixtures-date-$dateKey'));
+  final calendar = find.descendant(
+    of: find.byType(FieldrushFixturePage),
+    matching: find.byWidgetPredicate(
+      (widget) =>
+          widget is Scrollable && widget.axisDirection == AxisDirection.right,
+    ),
+  );
+  await tester.scrollUntilVisible(
+    date,
+    160,
+    scrollable: calendar,
+    maxScrolls: 80,
+  );
+  await tapWhenVisible(tester, date);
+  await tapAfterScroll(tester, find.byKey(ValueKey('solo-fixture-${game.id}')));
+  await _expectGameDetail(tester, game.id);
+  expect(
+    find.byType(FieldrushBookingFlow),
+    findsNothing,
+    reason: 'Fixture taps must open game details rather than a new booking.',
+  );
+  await pumpUntilFound(tester, find.text('Leave game'));
+  await _goHomeFromGame(tester);
+}
+
+Future<void> _verifyLeaderboards(WidgetTester tester) async {
+  final repository = SupabaseLeaderboardRepository();
+  final season = activeLeaderboardSeason;
+  await tapWhenVisible(
+    tester,
+    find.byKey(const ValueKey('field-bottom-nav-item-3')),
+  );
+  var content = await _loadedRanks(tester, season);
+  final expected = await _boundedRemoteStep(
+    'read authoritative Phoenix ranks',
+    repository.loadPlayerRatingPage(season: season),
+  );
+  final rating = await _boundedRemoteStep(
+    'read authoritative current-season placement',
+    repository.loadCurrentPlayerRating(season),
+  );
+  _assertRanksMatchServer(content, expected, rating);
+  expect(find.byKey(const ValueKey('ranks-city')), findsOneWidget);
+  await tapWhenVisible(tester, find.byKey(const ValueKey('ranks-city')));
+  await pumpUntilFound(tester, find.text('Solo ladder is live'));
+  await tapWhenVisible(tester, find.text('Solo ladder is live'));
+
+  final rankPage = find.byType(FieldrushLeaderboardContent);
+  await tapAfterScroll(
+    tester,
+    find.descendant(of: rankPage, matching: find.text('Clans')),
+  );
+  await pumpUntilFound(tester, find.text('Clan ladders are coming'));
+  expect(tester.widget<FieldrushLeaderboardContent>(rankPage).clans, isTrue);
+  await tapAfterScroll(tester, find.text('See solo ladder'));
+  content = await _loadedRanks(tester, season);
+  expect(content.clans, isFalse);
+
+  if (expected.players.isEmpty) {
+    await scrollUntilFound(tester, find.text('The ladder starts here'));
+    expect(content.totalCount, 0);
+  } else {
+    final top = expected.players.first;
+    final podium = find.byKey(ValueKey('ranks-podium-${top.profileId}'));
+    await scrollUntilFound(tester, podium);
+    expect(
+      find.descendant(of: podium, matching: find.text('${top.skillRating}')),
+      findsOneWidget,
+    );
+    await tapAfterScroll(tester, podium);
+    if (top.profileId == _currentUserId()) {
+      await pumpUntilFound(tester, find.byType(FieldrushYouScreen));
+      await pumpUntilFound(tester, find.byKey(const ValueKey('you-content')));
+      await tapWhenVisible(
+        tester,
+        find.byKey(const ValueKey('field-bottom-nav-item-3')),
+      );
+    } else {
+      await pumpUntilFound(tester, find.byType(ProfileScreen));
+      expect(
+        tester.widget<ProfileScreen>(find.byType(ProfileScreen).last).profileId,
+        top.profileId,
+      );
+      await tapWhenVisible(
+        tester,
+        find.descendant(
+          of: find.byType(ProfileScreen),
+          matching: find.byIcon(Icons.arrow_back_rounded),
+        ),
+      );
+    }
+    content = await _loadedRanks(tester, season);
+    if (expected.totalCount > 3) {
+      await tapAfterScroll(tester, find.byKey(const ValueKey('ranks-more')));
+      await pumpUntilFound(
+        tester,
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is FieldrushLeaderboardContent &&
+              !widget.loadingMore &&
+              widget.visibleCount >= 20,
+        ),
+        reason: 'Expanding the Phoenix ladder did not expose its ranked rows.',
+      );
+      content = tester.widget<FieldrushLeaderboardContent>(rankPage);
+      expect(content.pageError, isNull);
+      final rows = expected.players.skip(3).take(20).toList();
+      for (final player in rows) {
+        await scrollUntilFound(
+          tester,
+          find.byKey(ValueKey('ranks-player-${player.profileId}')),
+          maxScrolls: 60,
+          reason:
+              'A server-returned player disappeared from the expanded leaderboard.',
+        );
+      }
+    }
+  }
+
+  final seasonIndex = leaderboardSeasons.indexWhere(
+    (value) => value.id == season.id,
+  );
+  if (seasonIndex > 0) {
+    final previous = leaderboardSeasons[seasonIndex - 1];
+    await tapAfterScroll(tester, find.byTooltip('Previous season'));
+    content = await _loadedRanks(tester, previous);
+    final oldPage = await _boundedRemoteStep(
+      'read authoritative previous-season ranks',
+      repository.loadPlayerRatingPage(season: previous),
+    );
+    final oldRating = await _boundedRemoteStep(
+      'read authoritative previous-season placement',
+      repository.loadCurrentPlayerRating(previous),
+    );
+    _assertRanksMatchServer(content, oldPage, oldRating);
+    await tapAfterScroll(tester, find.byTooltip('Next season'));
+    await _loadedRanks(tester, season);
+  }
+
+  await tapWhenVisible(
+    tester,
+    find.byKey(const ValueKey('field-bottom-nav-item-0')),
+  );
+  await pumpUntilFound(tester, find.byKey(const ValueKey('home-screen')));
+}
+
+Future<FieldrushLeaderboardContent> _loadedRanks(
+  WidgetTester tester,
+  LeaderboardSeason season,
+) async {
+  final content = find.byWidgetPredicate(
+    (widget) =>
+        widget is FieldrushLeaderboardContent &&
+        widget.season.id == season.id &&
+        !widget.loading,
+  );
+  await pumpUntilFound(
+    tester,
+    content,
+    timeout: const Duration(seconds: 45),
+    reason: 'The ${season.label} leaderboard did not finish loading.',
+  );
+  final widget = tester.widget<FieldrushLeaderboardContent>(content);
+  expect(
+    widget.error,
+    isNull,
+    reason:
+        'Ranks returned a loading failure rather than authoritative season data.',
+  );
+  return widget;
+}
+
+void _assertRanksMatchServer(
+  FieldrushLeaderboardContent content,
+  PlayerRatingLeaderboardPage page,
+  PlayerRatingLeaderboardEntry rating,
+) {
+  expect(content.totalCount, page.totalCount);
+  expect(
+    content.players.map((player) => player.profileId),
+    page.players.map((player) => player.profileId),
+  );
+  expect(
+    content.players.map((player) => player.skillRating),
+    page.players.map((player) => player.skillRating),
+  );
+  expect(
+    content.players.every(
+      (player) => player.isRanked && player.region == 'phoenix',
+    ),
+    isTrue,
+  );
+  expect(
+    content.currentRating,
+    isNotNull,
+    reason:
+        'The player’s real seasonal placement must load alongside the ladder.',
+  );
+  expect(content.currentRating!.profileId, _currentUserId());
+  expect(content.currentRating!.matchesPlayed, rating.matchesPlayed);
+  expect(content.currentRating!.skillRating, rating.skillRating);
+  expect(content.currentRating!.rank, rating.rank);
+  expect(content.currentRating!.region, rating.region);
 }
 
 Future<void> _bookGameThroughUi(
@@ -450,6 +685,15 @@ Future<void> _bookGameThroughUi(
     isTrue,
     reason: '${role.code} must be available in ${game.id} before UI booking.',
   );
+  expect(game.timezone, 'America/Phoenix');
+  expect(game.currency, 'USD');
+  expect(game.capacity, 14);
+  final repository = SupabaseOpenQueueRepository();
+  await _expectNoBooking(
+    repository,
+    game.id,
+    'before entering the booking flow',
+  );
   await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('field-bottom-nav-item-1')),
@@ -458,46 +702,76 @@ Future<void> _bookGameThroughUi(
     tester,
     find.byKey(const ValueKey('fixtures-play-action')),
   );
+  await pumpUntilFound(tester, find.text('Start a game'));
+  expect(find.byKey(const ValueKey('play-clan-choice')), findsOneWidget);
   await tapWhenVisible(tester, find.byKey(const ValueKey('play-solo-choice')));
 
-  final roleSlug = role.code.toLowerCase();
+  await pumpUntilFound(tester, find.byType(FieldrushBookingFlow));
+  expect(find.text('STEP 1 OF 3'), findsOneWidget);
   await pumpUntilFound(
     tester,
-    find.byKey(ValueKey('open-queue-main-role-$roleSlug')),
+    find.byKey(ValueKey('booking-position-${role.code}')),
   );
   await tapWhenVisible(
     tester,
-    find.byKey(ValueKey('open-queue-main-role-$roleSlug')),
+    find.byKey(ValueKey('booking-position-${role.code}')),
   );
+  expect(find.text('1 selected'), findsOneWidget);
+  expect(find.byKey(const ValueKey('booking-position-MID')), findsNothing);
   await _tapEnabledFilledButton(
     tester,
-    find.byKey(const ValueKey('open-queue-see-matching-games')),
-    reason: 'Open Queue availability never enabled matching games.',
+    find.byKey(const ValueKey('booking-see-games')),
+    reason: 'The selected positions never enabled matching games.',
   );
+  await pumpUntilFound(tester, find.text('STEP 2 OF 3'));
 
-  final joinAction = find.byKey(
-    ValueKey('open-queue-join-${game.id}-$roleSlug'),
-  );
+  final joinAction = find.byKey(ValueKey('booking-game-${game.id}'));
   await scrollUntilFound(
     tester,
     joinAction,
     maxScrolls: 60,
     reason: 'The E2E game was not offered for ${role.label}.',
   );
-  await _tapEnabledFilledButton(
-    tester,
-    joinAction,
-    reason: 'The ${role.label} booking action never became available.',
+  expect(
+    find.descendant(
+      of: joinAction,
+      matching: find.text('Your spot · ${bookingRoleName(role)}'),
+    ),
+    findsOneWidget,
   );
+  await tapAfterScroll(tester, joinAction);
   await pumpUntilFound(
     tester,
-    find.byType(OpenQueueReviewScreen),
-    reason: 'Joining the game did not open its booking review.',
+    find.text('STEP 3 OF 3'),
+    reason: 'Choosing the game did not open the review step.',
+  );
+  expect(find.text(game.calendarDateLabel), findsWidgets);
+  expect(find.text(bookingRoleName(role)), findsOneWidget);
+  expect(find.text('7v7'), findsOneWidget);
+  await _expectNoBooking(
+    repository,
+    game.id,
+    'after selecting a position and reviewing the game',
   );
   await _tapEnabledFilledButton(
     tester,
-    find.byKey(const ValueKey('open-queue-continue-to-checkout')),
-    reason: 'The booking-cost preview never enabled checkout.',
+    find.byKey(const ValueKey('booking-continue-payment')),
+    reason: 'The review step never enabled checkout.',
+  );
+  await pumpUntilFound(tester, find.byType(FieldrushCheckoutSheet));
+  final quote = await _boundedRemoteStep(
+    'verify the authoritative checkout total',
+    repository.previewBookingCost(gameId: game.id, role: role),
+  );
+  expect(quote.currency, 'USD');
+  await pumpUntilFound(
+    tester,
+    find.text('Continue to Pay · ${quote.totalLabel}'),
+  );
+  await _expectNoBooking(
+    repository,
+    game.id,
+    'while the exact-price checkout is still awaiting confirmation',
   );
   await _tapEnabledFilledButton(
     tester,
@@ -506,36 +780,115 @@ Future<void> _bookGameThroughUi(
   );
   await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('booking-player-status-card')),
-    reason: 'Booking did not reach its confirmation details.',
+    find.byKey(const ValueKey('booking-view-game')),
+    reason: 'Verified payment did not reach the booking confirmation.',
   );
+  expect(find.text('You’re in'), findsOneWidget);
+  final confirmed = await _boundedRemoteStep(
+    'verify the server-confirmed reservation',
+    repository.getMyUpcomingBookingForGame(game.id),
+  );
+  expect(confirmed, isNotNull);
+  expect(confirmed!.gameId, game.id);
+  expect(confirmed.role, role);
+  expect(confirmed.status, 'CONFIRMED');
+  expect(confirmed.game.currency, 'USD');
+  expect(confirmed.amountPaidFils, quote.totalFils);
+  await _tapEnabledFilledButton(
+    tester,
+    find.byKey(const ValueKey('booking-view-game')),
+  );
+  await _expectGameDetail(tester, game.id);
   await scrollUntilFound(
     tester,
-    find.text(game.venue),
-    reason: 'The booking details did not show the booked venue.',
+    find.textContaining(game.venue),
+    reason: 'The game detail did not show its actual venue.',
   );
-  expect(find.text(game.venue), findsWidgets);
+  await pumpUntilFound(
+    tester,
+    find.text('Leave game'),
+    reason: 'The confirmed reservation was not reflected on the game page.',
+  );
+}
+
+Future<void> _expectNoBooking(
+  SupabaseOpenQueueRepository repository,
+  String gameId,
+  String stage,
+) async {
+  final booking = await _boundedRemoteStep(
+    'verify no reservation $stage',
+    repository.getMyUpcomingBookingForGame(gameId),
+  );
+  expect(
+    booking,
+    isNull,
+    reason:
+        'Merely selecting or reviewing a game must not reserve a position $stage.',
+  );
+}
+
+Future<void> _expectGameDetail(WidgetTester tester, String gameId) async {
+  await pumpUntilFound(
+    tester,
+    find.byType(FieldrushGameDetailScreen),
+    reason: 'The Fieldrush game page did not open.',
+  );
+  expect(
+    tester
+        .widget<FieldrushGameDetailScreen>(
+          find.byType(FieldrushGameDetailScreen).last,
+        )
+        .gameId,
+    gameId,
+    reason: 'The game page opened a different fixture.',
+  );
+  await pumpUntilFound(
+    tester,
+    find.byKey(const ValueKey('fieldrush-game-hero')),
+  );
+}
+
+Future<void> _goHomeFromGame(WidgetTester tester) async {
+  await tapWhenVisible(
+    tester,
+    find.byKey(const ValueKey('field-bottom-nav-item-0')).last,
+  );
+  await pumpUntilAbsent(
+    tester,
+    find.byType(FieldrushGameDetailScreen),
+    reason: 'Game navigation did not return to Home.',
+  );
+  await pumpUntilFound(tester, find.byKey(const ValueKey('home-screen')));
 }
 
 Future<void> _createAndSendPartyInvite(
   WidgetTester tester, {
+  required String gameId,
   required String inviteeId,
 }) async {
-  await _tapEnabledFilledButton(
+  final party = find.byKey(const ValueKey('fieldrush-game-party'));
+  final inviteSlot = find
+      .descendant(of: party, matching: find.text('Invite'))
+      .first;
+  await tapAfterScroll(
     tester,
-    find.byKey(const ValueKey('create-open-queue-party')),
-    reason: 'A newly booked player could not create a party.',
+    inviteSlot,
+    reason:
+        'The booked player did not receive an available party invitation slot.',
   );
   await pumpUntilFound(
     tester,
-    find.text('Party created. Invite confirmed players from this game.'),
-    reason: 'Party creation did not finish successfully in the UI.',
+    find.byKey(const ValueKey('party-invite-sheet-close')),
+    reason: 'Creating a party did not open the real invitation picker.',
   );
-  await _tapEnabledFilledButton(
-    tester,
-    find.byKey(const ValueKey('invite-open-queue-party-player')),
-    reason: 'The party did not expose its invite action.',
+  final created = await _boundedRemoteStep(
+    'verify party creation',
+    SupabaseOpenQueueRepository().getPartyContext(gameId),
   );
+  expect(created.myParty, isNotNull);
+  expect(created.myParty!.ownerProfileId, _currentUserId());
+  expect(created.myParty!.isOwner, isTrue);
   final inviteAction = find.byKey(ValueKey('invite-party-player-$inviteeId'));
   await scrollUntilFound(
     tester,
@@ -556,6 +909,14 @@ Future<void> _createAndSendPartyInvite(
     tester,
     find.byKey(const ValueKey('party-invite-sheet-close')),
   );
+  final invited = await _boundedRemoteStep(
+    'verify persisted party invitation',
+    SupabaseOpenQueueRepository().getPartyContext(gameId),
+  );
+  expect(
+    invited.myParty!.pendingMembers.map((member) => member.profileId),
+    contains(inviteeId),
+  );
 }
 
 Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
@@ -568,36 +929,39 @@ Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
     timeout: const Duration(seconds: 35),
     reason: 'The invited player did not receive the party alert on Home.',
   );
-  await pumpUntilFound(
-    tester,
-    find.byType(OpenQueueBookingScreen),
-    reason: 'View invitation did not open the invited player\'s booking.',
-  );
-  expect(
-    tester
-        .widget<OpenQueueBookingScreen>(find.byType(OpenQueueBookingScreen))
-        .booking
-        .gameId,
-    gameId,
-    reason: 'The party alert opened a different game.',
-  );
-  await tapAfterScroll(
-    tester,
-    find.byKey(const ValueKey('open-queue-party-invite-indicator')),
-    reason: 'Booking details did not show the incoming party invite.',
+  await _expectGameDetail(tester, gameId);
+  final party = find.byKey(const ValueKey('fieldrush-game-party'));
+  final accept = find.descendant(
+    of: party,
+    matching: find.widgetWithText(FilledButton, 'Accept'),
   );
   await _tapEnabledFilledButton(
     tester,
-    find.byKey(const ValueKey('accept-open-queue-party-invite')),
+    accept,
+    reason: 'The game page did not expose the incoming party invite.',
   );
   await pumpUntilAbsent(
     tester,
-    find.byKey(const ValueKey('open-queue-party-invite')),
+    accept,
     reason: 'The accepted party invitation remained pending.',
   );
-  expect(find.byKey(const ValueKey('open-queue-party-count')), findsOneWidget);
-  await tapAfterScroll(tester, find.byKey(const ValueKey('booking-go-home')));
-  await pumpUntilFound(tester, find.byKey(const ValueKey('home-screen')));
+  await pumpUntilFound(
+    tester,
+    find.descendant(of: party, matching: find.text('YOUR PARTY')),
+  );
+  final accepted = await _boundedRemoteStep(
+    'verify persisted party acceptance',
+    SupabaseOpenQueueRepository().getPartyContext(gameId),
+  );
+  expect(accepted.myParty, isNotNull);
+  expect(accepted.myParty!.isOwner, isFalse);
+  expect(accepted.myParty!.acceptedCount, 2);
+  final membership = accepted.myParty!.members.singleWhere(
+    (member) => member.profileId == _currentUserId(),
+  );
+  expect(membership.status, OpenQueuePartyMemberStatus.accepted);
+  expect(accepted.receivedInvites, isEmpty);
+  await _goHomeFromGame(tester);
 }
 
 Future<void> _submitSupportRequest(
@@ -730,7 +1094,11 @@ Future<void> _submitModerationReport(
 }
 
 Future<void> _cancelCurrentBooking(WidgetTester tester) async {
-  await tapAfterScroll(tester, find.byKey(const ValueKey('booking-cancel')));
+  expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+  await _tapEnabledFilledButton(
+    tester,
+    find.byKey(const ValueKey('game-main-action')),
+  );
   await pumpUntilFound(
     tester,
     find.byKey(const ValueKey('field-confirmation-dialog')),
@@ -753,9 +1121,20 @@ Future<void> _cancelCurrentBooking(WidgetTester tester) async {
   }
   await pumpUntilAbsent(
     tester,
-    find.byKey(const ValueKey('booking-player-status-card')),
-    reason: 'The cancelled booking details did not close.',
+    find.byKey(const ValueKey('field-confirmation-dialog')),
+    reason: 'The cancellation confirmation did not close.',
   );
+  await pumpUntilAbsent(
+    tester,
+    find.text('Leave game'),
+    reason: 'The game page still shows the cancelled reservation as active.',
+  );
+  await pumpUntilFound(
+    tester,
+    find.textContaining('Join ·'),
+    reason: 'Cancelling did not restore the available-game action.',
+  );
+  await _goHomeFromGame(tester);
 }
 
 Future<void> _tapEnabledFilledButton(

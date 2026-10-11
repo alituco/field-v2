@@ -11,8 +11,10 @@ import 'package:field/src/home/home_discovery_repository.dart';
 import 'package:field/src/home/home_discovery_screen.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
+import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
+import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
-import 'package:field/src/open_queue/open_queue_booking_screen.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/profile.dart';
@@ -177,16 +179,18 @@ void main() {
     final game = _game('booked');
     final queue = _Queue(bookings: [_booking(game)]);
     await _openActivity(tester, queue, _notice('OPEN_QUEUE_GAME', game.id));
-    expect(find.byType(OpenQueueBookingScreen), findsOneWidget);
+    expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
     expect(
       tester
-          .widget<OpenQueueBookingScreen>(find.byType(OpenQueueBookingScreen))
-          .booking
+          .widget<FieldrushGameDetailScreen>(
+            find.byType(FieldrushGameDetailScreen),
+          )
           .gameId,
       game.id,
     );
-    expect(queue.detailRequests, isEmpty);
-    expect(find.byType(OpenQueueReviewScreen), findsNothing);
+    expect(find.text('Leave game'), findsOneWidget);
+    expect(queue.detailRequests, [game.id]);
+    _expectNoCheckout(queue);
   });
 
   testWidgets('party activity uses game_id, not the membership entity ID', (
@@ -205,12 +209,15 @@ void main() {
     );
     expect(
       tester
-          .widget<OpenQueueBookingScreen>(find.byType(OpenQueueBookingScreen))
-          .booking
+          .widget<FieldrushGameDetailScreen>(
+            find.byType(FieldrushGameDetailScreen),
+          )
           .gameId,
       game.id,
     );
-    expect(queue.detailRequests, isEmpty);
+    expect(queue.detailRequests, [game.id]);
+    expect(queue.detailRequests, isNot(contains('membership-id')));
+    _expectNoCheckout(queue);
   });
 
   testWidgets('historical cancelled game opens by ID outside the Home feed', (
@@ -219,14 +226,15 @@ void main() {
     final game = _game('old-game', status: 'CANCELLED', past: true);
     final queue = _Queue(detail: _detail(game));
     await _openActivity(tester, queue, _notice('OPEN_QUEUE_GAME', game.id));
-    final screen = tester.widget<FixtureDetailScreen>(
-      find.byType(FixtureDetailScreen),
+    final screen = tester.widget<FieldrushGameDetailScreen>(
+      find.byType(FieldrushGameDetailScreen),
     );
-    expect(screen.fixture.id, game.id);
-    expect(screen.fixture.isCancelled, isTrue);
-    expect(screen.sourceLabel, 'SOLO');
-    expect(queue.detailRequests, everyElement(game.id));
-    expect(find.byType(OpenQueueReviewScreen), findsNothing);
+    expect(screen.gameId, game.id);
+    expect(find.text('Game cancelled'), findsOneWidget);
+    expect(find.byKey(const ValueKey('game-main-action')), findsNothing);
+    expect(queue.games, isEmpty);
+    expect(queue.detailRequests, [game.id]);
+    _expectNoCheckout(queue);
     expect(tester.takeException(), isNull);
   });
 
@@ -236,9 +244,18 @@ void main() {
     final game = _game('available');
     final queue = _Queue(games: [game], detail: _detail(game));
     await _openActivity(tester, queue, _notice('OPEN_QUEUE_GAME', game.id));
-    expect(find.byType(FixtureDetailScreen), findsOneWidget);
-    expect(queue.detailRequests, isNotEmpty);
-    expect(find.byType(OpenQueueReviewScreen), findsNothing);
+    expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<FieldrushGameDetailScreen>(
+            find.byType(FieldrushGameDetailScreen),
+          )
+          .gameId,
+      game.id,
+    );
+    expect(queue.detailRequests, [game.id]);
+    expect(find.text('Join · \$13.00'), findsOneWidget);
+    _expectNoCheckout(queue);
   });
 
   testWidgets('clan activity fetches a fixture absent from the Home feed', (
@@ -275,7 +292,7 @@ void main() {
         _notice('FIXTURE', fixture.id),
         fixtures: fixtures,
       );
-      expect(find.byType(OpenQueueBookingScreen), findsNothing);
+      expect(find.byType(FieldrushGameDetailScreen), findsNothing);
       final screen = tester.widget<FixtureDetailScreen>(
         find.byType(FixtureDetailScreen),
       );
@@ -284,6 +301,7 @@ void main() {
       // Only the detail screen's quiet refresh fetches; routing uses the cache.
       expect(fixtures.requests, [fixture.id]);
       expect(queue.detailRequests, isEmpty);
+      _expectNoCheckout(queue);
       expect(tester.takeException(), isNull);
     },
   );
@@ -335,9 +353,10 @@ void main() {
         tester.widget<SelectableText>(find.byType(SelectableText)).data,
         notice.body,
       );
-      expect(find.byType(OpenQueueBookingScreen), findsNothing);
+      expect(find.byType(FieldrushGameDetailScreen), findsNothing);
       expect(find.byType(FixtureDetailScreen), findsNothing);
       expect(queue.detailRequests, isEmpty);
+      _expectNoCheckout(queue);
       await tester.tap(find.text('Close'));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('home-notification-details')), findsNothing);
@@ -353,41 +372,85 @@ void main() {
       _notice('OPEN_QUEUE_PARTY_MEMBERSHIP', 'membership'),
     );
     expect(find.byKey(const Key('home-notification-details')), findsOneWidget);
-    expect(find.byType(OpenQueueBookingScreen), findsNothing);
+    expect(find.byType(FieldrushGameDetailScreen), findsNothing);
   });
 
-  for (final type in ['OPEN_QUEUE_GAME', 'FIXTURE']) {
-    testWidgets(
-      '$type fetch errors show feedback instead of silently doing nothing',
-      (tester) async {
-        await _openActivity(
-          tester,
-          _Queue(),
-          _notice(type, 'missing'),
-          fixtures: _Fixtures(),
-        );
-        expect(find.byType(SnackBar), findsOneWidget);
-        expect(find.textContaining('Could not open'), findsOneWidget);
-        expect(find.byType(FixtureDetailScreen), findsNothing);
-        expect(tester.takeException(), isNull);
-      },
-    );
-  }
+  testWidgets(
+    'game fetch errors stay visible in detail and retry the same ID',
+    (tester) async {
+      final queue = _Queue();
+      await _openActivity(tester, queue, _notice('OPEN_QUEUE_GAME', 'missing'));
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      expect(
+        find.textContaining('We could not load this game'),
+        findsOneWidget,
+      );
+      expect(find.text('Try again'), findsOneWidget);
+      expect(queue.detailRequests, ['missing']);
+      _expectNoCheckout(queue);
+
+      queue.detail = _detail(_game('missing'));
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(queue.detailRequests, ['missing', 'missing']);
+      expect(find.textContaining('We could not load this game'), findsNothing);
+      expect(find.byKey(const ValueKey('fieldrush-game-hero')), findsOneWidget);
+      _expectNoCheckout(queue);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'fixture fetch errors show feedback instead of silently doing nothing',
+    (tester) async {
+      final queue = _Queue();
+      await _openActivity(
+        tester,
+        queue,
+        _notice('FIXTURE', 'missing'),
+        fixtures: _Fixtures(),
+      );
+      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.textContaining('Could not open'), findsOneWidget);
+      expect(find.byType(FixtureDetailScreen), findsNothing);
+      expect(find.byType(FieldrushGameDetailScreen), findsNothing);
+      _expectNoCheckout(queue);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'read receipt failure never blocks the notification destination',
     (tester) async {
       final game = _game('booked');
+      final queue = _Queue(bookings: [_booking(game)]);
       await _openActivity(
         tester,
-        _Queue(bookings: [_booking(game)]),
+        queue,
         _notice('OPEN_QUEUE_GAME', game.id),
         readFails: true,
       );
-      expect(find.byType(OpenQueueBookingScreen), findsOneWidget);
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushGameDetailScreen>(
+              find.byType(FieldrushGameDetailScreen),
+            )
+            .gameId,
+        game.id,
+      );
+      expect(find.text('Leave game'), findsOneWidget);
+      _expectNoCheckout(queue);
       expect(tester.takeException(), isNull);
     },
   );
+}
+
+void _expectNoCheckout(_Queue queue) {
+  expect(find.byType(FieldrushBookingFlow), findsNothing);
+  expect(find.byType(FieldrushCheckoutSheet), findsNothing);
+  expect(find.byType(OpenQueueReviewScreen), findsNothing);
+  expect(queue.bookRequests, isEmpty);
 }
 
 Future<void> _openActivity(
@@ -599,8 +662,9 @@ class _Queue extends Fake implements OpenQueueRepository {
   _Queue({this.bookings = const [], this.games = const [], this.detail});
   final List<OpenQueueBooking> bookings;
   final List<OpenQueueGame> games;
-  final OpenQueueMatchDetail? detail;
+  OpenQueueMatchDetail? detail;
   final detailRequests = <String>[];
+  final bookRequests = <String>[];
   @override
   Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => bookings;
   @override
@@ -613,8 +677,22 @@ class _Queue extends Fake implements OpenQueueRepository {
   @override
   Future<OpenQueueMatchDetail> getMatchDetail(String id) async {
     detailRequests.add(id);
-    if (detail == null) throw Exception('internal server error');
-    return detail!;
+    if (detail?.game.id == id) return detail!;
+    final booking = bookings
+        .where((booking) => booking.gameId == id)
+        .firstOrNull;
+    if (booking != null) return _detail(booking.game);
+    throw Exception('internal server error');
+  }
+
+  @override
+  Future<OpenQueueBooking> bookGame({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    required String paymentMethod,
+  }) async {
+    bookRequests.add(game.id);
+    throw StateError('Opening activity must never create a booking.');
   }
 }
 

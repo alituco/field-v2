@@ -14,6 +14,9 @@ import '../leaderboard/leaderboard_screen.dart';
 import '../moderation/account_restriction_screen.dart';
 import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
+import '../open_queue/open_queue.dart';
+import '../open_queue/fieldrush_booking_flow.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../profile/profile_repository.dart';
 import '../profile/fieldrush_you_screen.dart';
 import '../profile/fieldrush_you_settings.dart';
@@ -57,6 +60,7 @@ class _HomeScreenState extends State<HomeScreen> {
       SupabaseReliabilityRepository();
   int _selectedIndex = 0;
   int _homeActivationTick = 0;
+  int _fixturesActivationTick = 0;
   int _clansActivationTick = 0;
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
@@ -119,6 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (index == 0) {
         _homeActivationTick++;
       }
+      if (index == 1) _fixturesActivationTick++;
       if (index == 2) {
         _clansActivationTick++;
       }
@@ -153,6 +158,45 @@ class _HomeScreenState extends State<HomeScreen> {
     return widget.authRepository.switchToUserForDevelopment(profileId);
   }
 
+  Future<void> _openSoloBooking(OpenQueueGame? game) async {
+    await Navigator.of(context).push<OpenQueueBooking>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushBookingFlow(
+          repository: _openQueueRepository,
+          initialGame: game,
+          onNavigateTab: _selectTab,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _fixturesActivationTick++;
+        _homeActivationTick++;
+      });
+    }
+  }
+
+  Future<void> _openSoloGame(OpenQueueGame game) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushGameDetailScreen(
+          repository: _openQueueRepository,
+          gameId: game.id,
+          initialGame: game,
+          profileRepository: _profileRepository,
+          onNavigateTab: _selectTab,
+          onJoin: _openSoloBooking,
+        ),
+      ),
+    );
+    if (mounted) {
+      setState(() {
+        _fixturesActivationTick++;
+        _homeActivationTick++;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -175,6 +219,9 @@ class _HomeScreenState extends State<HomeScreen> {
         openQueueRepository: _openQueueRepository,
         clanRepository: _clanRepository,
         onNavigateTab: _selectTab,
+        activationTick: _fixturesActivationTick,
+        onPlay: _openSoloBooking,
+        onOpenGame: _openSoloGame,
       ),
       ClansScreen(
         clanRepository: _clanRepository,
@@ -187,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
         leaderboardRepository: _leaderboardRepository,
         activationTick: _ranksActivationTick,
         playerActivationTick: _playerRanksActivationTick,
+        onOpenYou: () => _selectTab(4),
       ),
       FieldrushYouScreen(
         activationTick: _youActivationTick,

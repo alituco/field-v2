@@ -14,6 +14,25 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('division shield star counts follow the HTML, including placement', () {
+    for (var division = 1; division <= 5; division++) {
+      expect(
+        FieldrushDivisionShieldPainter(division: division).starCount,
+        5 - division,
+      );
+      expect(
+        FieldrushDivisionShieldPainter(
+          division: division,
+          placement: true,
+        ).starCount,
+        0,
+      );
+    }
+    expect(
+      const FieldrushDivisionShieldPainter(division: 1, mini: true).starCount,
+      0,
+    );
+  });
   final now = DateTime.utc(2099, 6, 1);
 
   testWidgets(
@@ -74,7 +93,9 @@ void main() {
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('home-quick-play')));
       expect(chosen?.id, 'soonest');
-      expect(roles, {OpenQueueRole.attacker});
+      // Home is a preference shortcut into the matching-game step, not a
+      // reservation for only the first game's available position.
+      expect(roles, {OpenQueueRole.defender, OpenQueueRole.attacker});
       expect(find.textContaining(soonest.priceLabel), findsOneWidget);
       expect(find.textContaining(r'$13.00'), findsOneWidget);
       expect(find.textContaining('BHD'), findsNothing);

@@ -442,7 +442,8 @@ Future<void> _pumpFixtures(
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: FixturesScreen(
+        // This suite protects the historical clan/6v6 fixture surface.
+        body: LegacyFixturesScreen(
           fixtureRepository: _FakeFixtureRepository(fixtures),
           openQueueRepository: _FakeOpenQueueRepository(
             soloGames,

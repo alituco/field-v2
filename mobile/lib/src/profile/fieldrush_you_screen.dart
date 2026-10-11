@@ -384,10 +384,14 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
         child: SafeArea(
           bottom: false,
           child: profile == null
-              ? Center(
-                  child: _loading
-                      ? const CircularProgressIndicator()
-                      : Padding(
+              ? _loading
+                    ? ListView(
+                        key: const ValueKey('you-loading'),
+                        padding: const EdgeInsets.only(bottom: 132),
+                        children: const [FieldrushYouLoadingContent()],
+                      )
+                    : Center(
+                        child: Padding(
                           padding: const EdgeInsets.all(24),
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -416,7 +420,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                             ],
                           ),
                         ),
-                )
+                      )
               : RefreshIndicator(
                   onRefresh: _load,
                   child: ListView(

@@ -90,7 +90,18 @@ jobs:
         run: flutter analyze
 
       - name: Run Flutter tests
+        id: flutter-tests
         run: flutter test
+
+      - name: Upload Flutter golden failure images
+        if: failure() && steps.flutter-tests.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        continue-on-error: true
+        with:
+          name: flutter-golden-failures-${{ runner.os }}
+          path: mobile/test/failures/*.png
+          if-no-files-found: ignore
+          retention-days: 7
 
   android-builds:
     name: Flutter Android flavor builds
@@ -340,7 +351,7 @@ jobs:
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts
 
-      - name: Check Phoenix game rules and isolated USD wallets
+      - name: Check Phoenix game rules, wallets, and leaderboard pages
         shell: bash
         run: |
           set -euo pipefail
@@ -348,6 +359,8 @@ jobs:
             --no-package-lock --no-save --ignore-scripts @electric-sql/pglite@0.5.8
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_fieldrush_market.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_fieldrush_leaderboard.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
         run: >-

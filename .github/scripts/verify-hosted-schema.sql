@@ -2,6 +2,7 @@ do $field_hosted_schema$
 declare
   missing_tables text[];
   missing_functions text[];
+  ranks_function regprocedure;
 begin
   select array_agg(table_name order by table_name)
   into missing_tables
@@ -52,6 +53,24 @@ begin
     raise exception
       'Hosted schema is missing required functions: %',
       array_to_string(missing_functions, ', ');
+  end if;
+
+  -- Mobile Ranks requires this exact RPC signature, not just a function with
+  -- the same name. Check it before declaring a hosted deployment successful.
+  ranks_function := to_regprocedure(
+    'public.list_fieldrush_player_rating_page(text,date,date,integer,integer)'
+  );
+  if ranks_function is null then
+    raise exception 'Hosted schema is missing the Fieldrush Ranks RPC.';
+  end if;
+  if not has_function_privilege('authenticated', ranks_function, 'execute')
+    or has_function_privilege('anon', ranks_function, 'execute') then
+    raise exception 'Fieldrush Ranks must be executable by signed-in users only.';
+  end if;
+  if (select proargnames from pg_proc where oid = ranks_function) is distinct from
+    array['region_to_use', 'season_starts_on', 'season_ends_on',
+          'offset_to_use', 'page_size_to_use']::text[] then
+    raise exception 'Fieldrush Ranks RPC argument names do not match the mobile contract.';
   end if;
 
   if not exists (

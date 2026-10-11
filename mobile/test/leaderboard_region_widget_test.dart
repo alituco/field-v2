@@ -11,7 +11,9 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   for (final region in <String?>['phoenix', 'bahrain', null]) {
-    testWidgets('player ladder uses server region $region', (tester) async {
+    testWidgets('Phoenix ladder never changes legacy profile region $region', (
+      tester,
+    ) async {
       final rankings = _Rankings();
       await tester.pumpWidget(
         MaterialApp(
@@ -25,18 +27,11 @@ void main() {
           ),
         ),
       );
-      // The active-season badge intentionally pulses indefinitely.
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 500));
-      expect(rankings.requestedRegion, region ?? 'phoenix');
-      await tester.tap(find.text('Players'));
-      await tester.pump(const Duration(milliseconds: 500));
-      expect(
-        find.text(
-          '${region == 'bahrain' ? 'Bahrain' : 'Phoenix, AZ'} · Season rankings',
-        ),
-        findsOneWidget,
-      );
+      expect(rankings.requestedRegion, 'phoenix');
+      expect(find.text('Phoenix, AZ'), findsOneWidget);
+      expect(find.text('Your standing is unavailable'), findsOneWidget);
       expect(tester.takeException(), isNull);
     });
   }

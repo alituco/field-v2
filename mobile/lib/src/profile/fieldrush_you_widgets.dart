@@ -35,6 +35,111 @@ TextStyle _outfit(double size, {Color color = _ink}) => TextStyle(
   letterSpacing: -size * .02,
 );
 
+/// Keeps the You layout recognizable while the first profile request is pending.
+/// Static placeholders deliberately avoid shimmer, including in reduced motion.
+class FieldrushYouLoadingContent extends StatelessWidget {
+  const FieldrushYouLoadingContent({super.key});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Loading your profile and rating',
+    child: ExcludeSemantics(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 0),
+            child: SizedBox(
+              height: 44,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('You', style: _outfit(25)),
+              ),
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: Row(
+              children: [
+                _SkeletonBlock(width: 66, height: 66, radius: 21),
+                SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _SkeletonBlock(width: 132, height: 20),
+                      SizedBox(height: 8),
+                      _SkeletonBlock(width: 178, height: 12),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+            child: Row(
+              children: [
+                for (var i = 0; i < 2; i++) ...[
+                  if (i > 0) const SizedBox(width: 12),
+                  Expanded(
+                    child: _WhiteCard(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 15, 16, 16),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _SkeletonBlock(
+                              width: 40,
+                              height: MediaQuery.textScalerOf(
+                                context,
+                              ).scale(31.5),
+                            ),
+                            const SizedBox(height: 5),
+                            _SkeletonBlock(
+                              width: 88,
+                              height: MediaQuery.textScalerOf(
+                                context,
+                              ).scale(13.65),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 14, 16, 0),
+            child: _RatingCardSkeleton(),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+class _SkeletonBlock extends StatelessWidget {
+  const _SkeletonBlock({this.width, required this.height, this.radius = 5});
+  final double? width;
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: width,
+    height: height,
+    decoration: BoxDecoration(
+      color: const Color(0x1A24472C),
+      borderRadius: BorderRadius.circular(radius),
+    ),
+  );
+}
+
 /// The native You surface. Data and navigation stay with the owning screen.
 /// [rating] and [recentResults] must describe the same current season.
 class FieldrushYouContent extends StatefulWidget {
@@ -586,7 +691,14 @@ class _RatingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (loading || unavailable) {
+    if (loading) {
+      return _RatingCardSkeleton(
+        placement:
+            rating != null &&
+            rating!.matchesPlayed < minimumPlayerLeaderboardMatches,
+      );
+    }
+    if (unavailable) {
       return _WhiteCard(
         radius: 24,
         child: InkWell(
@@ -602,17 +714,12 @@ class _RatingCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      Text('Rating unavailable', style: _outfit(19)),
+                      const SizedBox(height: 6),
                       Text(
-                        loading ? 'Loading your rating…' : 'Rating unavailable',
-                        style: _outfit(19),
+                        'Open ranks to try again.',
+                        style: _jakarta(11.5, color: _muted),
                       ),
-                      if (!loading) ...[
-                        const SizedBox(height: 6),
-                        Text(
-                          'Open ranks to try again.',
-                          style: _jakarta(11.5, color: _muted),
-                        ),
-                      ],
                     ],
                   ),
                 ),
@@ -822,6 +929,121 @@ class _RatingCard extends StatelessWidget {
                   ),
                 ),
               ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RatingCardSkeleton extends StatelessWidget {
+  const _RatingCardSkeleton({this.placement = false});
+  final bool placement;
+
+  @override
+  Widget build(BuildContext context) {
+    final scale = MediaQuery.textScalerOf(context).scale;
+    return Semantics(
+      key: const ValueKey('you-rating-loading'),
+      container: true,
+      liveRegion: true,
+      label: 'Loading your rating',
+      child: ExcludeSemantics(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: const Color(0x1824472C)),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFEDF0E7), Color(0xFFDCE3D5)],
+            ),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Icon(
+                      Icons.shield_rounded,
+                      size: 62,
+                      color: Color(0x1A24472C),
+                    ),
+                    const SizedBox(width: 15),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _Spread(
+                            leading: _SkeletonBlock(
+                              width: 92,
+                              height: scale(12.35),
+                            ),
+                            trailing: _SkeletonBlock(
+                              width: 104,
+                              height: scale(11.7) + 12,
+                              radius: 99,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 7,
+                            runSpacing: 4,
+                            crossAxisAlignment: WrapCrossAlignment.end,
+                            children: [
+                              _SkeletonBlock(width: 92, height: scale(36)),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 3),
+                                child: _SkeletonBlock(
+                                  width: 94,
+                                  height: scale(13),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                if (placement) ...[
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      for (var i = 0; i < 5; i++)
+                        const Expanded(
+                          child: Center(
+                            child: _SkeletonBlock(
+                              width: 24,
+                              height: 24,
+                              radius: 8,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 18),
+                Row(
+                  children: [
+                    for (var i = 0; i < (placement ? 2 : 10); i++) ...[
+                      if (i > 0) const SizedBox(width: 3),
+                      const Expanded(
+                        child: _SkeletonBlock(height: 6, radius: 2),
+                      ),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _Spread(
+                  leading: _SkeletonBlock(width: 142, height: scale(14.95)),
+                  trailing: _SkeletonBlock(width: 72, height: scale(13)),
+                ),
+              ],
             ),
           ),
         ),

@@ -31,6 +31,14 @@ abstract interface class OpenQueueBookingLookupRepository {
   Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId);
 }
 
+abstract interface class OpenQueueEmbeddedCheckoutRepository {
+  Future<OpenQueueBooking> bookGameWithCollector({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    required PaymentCollector collectPayment,
+  });
+}
+
 /// Market discovery applies the market predicate before the server feed limit.
 /// The historical, all-market [OpenQueueRepository.listGames] stays available.
 abstract interface class OpenQueueMarketRepository {
@@ -54,6 +62,7 @@ class SupabaseOpenQueueRepository
         OpenQueueRepository,
         OpenQueueMarketRepository,
         OpenQueueBookingLookupRepository,
+        OpenQueueEmbeddedCheckoutRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
   SupabaseClient get _client => Supabase.instance.client;
@@ -275,19 +284,43 @@ class SupabaseOpenQueueRepository
     required OpenQueueGame game,
     required OpenQueueRole role,
     required String paymentMethod,
+  }) => _bookGame(game: game, role: role);
+
+  @override
+  Future<OpenQueueBooking> bookGameWithCollector({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    required PaymentCollector collectPayment,
+  }) => _bookGame(game: game, role: role, collectPayment: collectPayment);
+
+  Future<OpenQueueBooking> _bookGame({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    PaymentCollector? collectPayment,
   }) async {
-    final payment = await PaymentService(client: _client).pay(
-      purpose: PaymentPurpose.soloBooking,
-      payload: {'game_id': game.id, 'role': role.code},
-    );
+    final payment =
+        await PaymentService(
+          client: _client,
+          paymentCollector: collectPayment,
+        ).pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: {'game_id': game.id, 'role': role.code},
+        );
+    if (payment.resourceType != 'OPEN_QUEUE_BOOKING') {
+      throw const PaymentPendingException();
+    }
     final response = await _client
         .from('open_queue_bookings')
         .select(_bookingSelect)
         .eq('id', payment.resourceId)
         .single();
-    return _hydrateBookingGame(
-      OpenQueueBooking.fromJson(Map<String, dynamic>.from(response)),
+    final booking = OpenQueueBooking.fromJson(
+      Map<String, dynamic>.from(response),
     );
+    if (booking.gameId != game.id || booking.status != 'CONFIRMED') {
+      throw const PaymentPendingException();
+    }
+    return _hydrateBookingGame(booking);
   }
 
   @override
