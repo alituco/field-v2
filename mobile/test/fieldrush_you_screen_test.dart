@@ -19,6 +19,73 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'first You load shows a skeleton until profile and rating arrive',
+    (tester) async {
+      final response = Completer<PlayerProfile>();
+      await tester.pumpWidget(_app(profiles: _Profiles(first: response)));
+      await tester.pump();
+      expect(find.text('You'), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-loading')), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-rating-loading')), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.text('Rating unavailable'), findsNothing);
+
+      response.complete(_profile(name: 'Ali A.'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('you-loading')), findsNothing);
+      expect(find.byKey(const ValueKey('you-rating-loading')), findsNothing);
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+      expect(find.text('Ali A.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('failed first load leaves the skeleton for a usable retry', (
+    tester,
+  ) async {
+    final response = Completer<PlayerProfile>();
+    await tester.pumpWidget(_app(profiles: _Profiles(first: response)));
+    await tester.pump();
+    response.completeError(StateError('Unavailable'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('you-rating-loading')), findsNothing);
+    expect(find.text('Could not load your profile'), findsOneWidget);
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.text('Ali A.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reactivating You keeps identity visible with a rank skeleton', (
+    tester,
+  ) async {
+    final response = Completer<PlayerRatingLeaderboardEntry>();
+    final profiles = _Profiles();
+    final ratings = _Ratings(refresh: response);
+    await tester.pumpWidget(_app(profiles: profiles, ratings: ratings));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+
+    await tester.pumpWidget(
+      _app(profiles: profiles, ratings: ratings, activationTick: 1),
+    );
+    await tester.pump();
+    expect(find.text('Ali A.'), findsOneWidget);
+    expect(find.byKey(const ValueKey('you-rating-loading')), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('you-rating-unavailable')), findsNothing);
+
+    response.complete(
+      await _Ratings().loadCurrentPlayerRating(activeLeaderboardSeason),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('you-rating-loading')), findsNothing);
+    expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('You uses season stats and refreshes identity after Edit', (
     tester,
   ) async {
@@ -349,12 +416,16 @@ class _Profiles implements ProfileRepository {
 }
 
 class _Ratings implements LeaderboardRepository {
-  _Ratings({this.fail = false});
+  _Ratings({this.fail = false, this.refresh});
   final bool fail;
+  final Completer<PlayerRatingLeaderboardEntry>? refresh;
+  int loads = 0;
   @override
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
     LeaderboardSeason season,
   ) async {
+    loads++;
+    if (loads > 1 && refresh != null) return refresh!.future;
     if (fail) throw StateError('Unavailable');
     return const PlayerRatingLeaderboardEntry(
       rank: 38,

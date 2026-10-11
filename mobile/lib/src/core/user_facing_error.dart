@@ -23,6 +23,10 @@ String userFacingError(
   final lower = message.toLowerCase();
   final code = details.code?.toLowerCase();
 
+  // Missing server deployments are operational failures, not player actions.
+  // Keep the diagnostic in debug logs without displaying SQL names/signatures.
+  if (code == 'pgrst202' || code == 'pgrst205') return fallback;
+
   final codeMessage = _messageForCode(code, lower);
   if (codeMessage != null) return codeMessage;
 

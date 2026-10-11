@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'fieldrush_payment_appearance.dart';
+
 /// A completed sheet is only a payment signal. The server must verify Stripe
 /// and finalize the booking before the caller can navigate to a booking page.
 class PaymentService {
@@ -201,15 +203,7 @@ class PaymentService {
               ? null
               : const PaymentSheetApplePay(merchantCountryCode: 'US'),
           style: ThemeMode.light,
-          appearance: const PaymentSheetAppearance(
-            colors: PaymentSheetAppearanceColors(
-              primary: Color(0xFF386641),
-              background: Color(0xFFFAF7EF),
-              componentBackground: Color(0xFFFFFFFF),
-              primaryText: Color(0xFF22301E),
-            ),
-            shapes: PaymentSheetShape(borderRadius: 16),
-          ),
+          appearance: fieldrushPaymentSheetAppearance,
         ),
       );
       // The native sheet owns interaction time, including bank authentication.

@@ -283,7 +283,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                                 ),
                               ),
                               Text(
-                                'Choose securely in Stripe. Apple Pay appears on supported devices.',
+                                'Choose securely in the app. Apple Pay appears on supported devices.',
                                 style: bookingText(11),
                               ),
                             ],
@@ -375,6 +375,12 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                         : Text(
                             'Continue to Pay${preview == null ? '' : ' · ${preview.totalLabel}'}',
                           ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Secure payments by Stripe',
+                    textAlign: TextAlign.center,
+                    style: bookingText(10),
                   ),
                 ],
               ),

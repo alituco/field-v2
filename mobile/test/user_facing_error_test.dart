@@ -100,5 +100,20 @@ void main() {
         'We could not book this match.',
       );
     });
+
+    test('missing RPC or table uses the screen fallback, not schema details', () {
+      for (final code in ['PGRST202', 'PGRST205']) {
+        final error = PostgrestException(
+          message:
+              'Could not find the function public.list_fieldrush_player_rating_page '
+              'in the schema cache.',
+          code: code,
+        );
+        expect(
+          userFacingError(error, fallback: 'Could not load ranks. Try again.'),
+          'Could not load ranks. Try again.',
+        );
+      }
+    });
   });
 }

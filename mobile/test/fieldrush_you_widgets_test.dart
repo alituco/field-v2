@@ -12,6 +12,76 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('loading rating uses a non-interactive, accessible skeleton', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    final actions = <String>[];
+    await _pump(
+      tester,
+      _content(rating: _rating(), ratingLoading: true, actions: actions),
+    );
+
+    final skeleton = find.byKey(const ValueKey('you-rating-loading'));
+    expect(skeleton, findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('you-rating-unavailable')), findsNothing);
+    expect(find.byKey(const ValueKey('you-rating-ranked')), findsNothing);
+    expect(find.text('1199'), findsNothing);
+    expect(find.text('WON'), findsNothing);
+    final data = tester.getSemantics(skeleton).getSemanticsData();
+    expect(data.label, 'Loading your rating');
+    expect(data.flagsCollection.isLiveRegion, isTrue);
+    expect(data.hasAction(ui.SemanticsAction.tap), isFalse);
+    expect(
+      find.descendant(of: skeleton, matching: find.byType(InkWell)),
+      findsNothing,
+    );
+    expect(tester.binding.transientCallbackCount, 0);
+    expect(actions, isEmpty);
+    semantics.dispose();
+
+    await _pump(tester, _content(rating: _rating(), actions: actions));
+    expect(skeleton, findsNothing);
+    await tester.tap(find.byKey(const ValueKey('you-rating-ranked')));
+    expect(actions, ['ranks']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'rank skeleton preserves placement space and supports large text',
+    (tester) async {
+      for (final reducedMotion in [false, true]) {
+        for (final matches in [0, 8]) {
+          await _pump(
+            tester,
+            _content(rating: _rating(matches: matches), ratingLoading: true),
+            width: 320,
+            textScale: 1.6,
+            disableAnimations: reducedMotion,
+          );
+          final skeleton = find.byKey(const ValueKey('you-rating-loading'));
+          expect(tester.getSize(skeleton).width, 288);
+          expect(tester.getSize(skeleton).height, greaterThan(150));
+          expect(tester.binding.transientCallbackCount, 0);
+          expect(tester.takeException(), isNull);
+        }
+      }
+      await _pump(tester, _content(rating: _rating(), ratingLoading: true));
+      final rankedHeight = tester
+          .getSize(find.byKey(const ValueKey('you-rating-loading')))
+          .height;
+      await _pump(
+        tester,
+        _content(rating: _rating(matches: 0), ratingLoading: true),
+      );
+      expect(
+        tester.getSize(find.byKey(const ValueKey('you-rating-loading'))).height,
+        closeTo(rankedHeight + 42, .01),
+      );
+    },
+  );
+
   testWidgets('new player has real people counts and a two-game placement', (
     tester,
   ) async {
@@ -209,6 +279,8 @@ void main() {
     for (final (name, rating) in [
       ('you-placement', _rating(matches: 0)),
       ('you-ranked', _rating()),
+      ('you-loading', _rating()),
+      ('you-initial-loading', _rating()),
     ]) {
       final boundaryKey = GlobalKey();
       await _pump(
@@ -217,12 +289,15 @@ void main() {
           key: boundaryKey,
           child: ColoredBox(
             color: FieldrushAuthTheme.cream,
-            child: _content(
-              rating: rating,
-              reliability: _reliability(),
-              results: [for (var day = 3; day <= 7; day++) _event(day)],
-              clips: [_clip()],
-            ),
+            child: name == 'you-initial-loading'
+                ? const FieldrushYouLoadingContent()
+                : _content(
+                    rating: rating,
+                    ratingLoading: name == 'you-loading',
+                    reliability: _reliability(),
+                    results: [for (var day = 3; day <= 7; day++) _event(day)],
+                    clips: [_clip()],
+                  ),
           ),
         ),
         height: 1700,
@@ -249,6 +324,7 @@ Future<void> _pump(
   double width = 390,
   double height = 2600,
   double textScale = 1,
+  bool disableAnimations = false,
 }) async {
   await tester.binding.setSurfaceSize(Size(width, height));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -258,9 +334,10 @@ Future<void> _pump(
         builder: (context) => Theme(
           data: FieldrushAuthTheme.theme(context),
           child: MediaQuery(
-            data: MediaQuery.of(
-              context,
-            ).copyWith(textScaler: TextScaler.linear(textScale)),
+            data: MediaQuery.of(context).copyWith(
+              textScaler: TextScaler.linear(textScale),
+              disableAnimations: disableAnimations,
+            ),
             child: Scaffold(body: SingleChildScrollView(child: child)),
           ),
         ),
@@ -272,6 +349,7 @@ Future<void> _pump(
 
 FieldrushYouContent _content({
   PlayerRatingLeaderboardEntry? rating,
+  bool ratingLoading = false,
   bool ratingUnavailable = false,
   bool reliabilityUnavailable = false,
   ReliabilityStatus? reliability,
@@ -282,6 +360,7 @@ FieldrushYouContent _content({
 }) => FieldrushYouContent(
   profile: _profile(clips: clips),
   rating: rating,
+  ratingLoading: ratingLoading,
   ratingUnavailable: ratingUnavailable,
   recentResults: results,
   reliability: reliability,
