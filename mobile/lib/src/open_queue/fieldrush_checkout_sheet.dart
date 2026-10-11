@@ -2,12 +2,13 @@ import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
+import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
 import 'fieldrush_booking_widgets.dart';
 import 'open_queue.dart';
 import 'open_queue_repository.dart';
 
-/// Fieldrush review sheet; card collection remains in Stripe's native sheet.
+/// Fieldrush review sheet with native, embedded payment-method selection.
 /// Never show a simulated card/wallet or confirm based on a client-only event.
 class FieldrushCheckoutSheet extends StatefulWidget {
   const FieldrushCheckoutSheet({
@@ -15,10 +16,12 @@ class FieldrushCheckoutSheet extends StatefulWidget {
     required this.repository,
     required this.game,
     required this.role,
+    this.embeddedPaymentSessionFactory,
   });
   final OpenQueueRepository repository;
   final OpenQueueGame game;
   final OpenQueueRole role;
+  final FieldrushEmbeddedPaymentSessionFactory? embeddedPaymentSessionFactory;
 
   @override
   State<FieldrushCheckoutSheet> createState() => _FieldrushCheckoutSheetState();
@@ -30,6 +33,26 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   bool _processing = false;
   String? _error;
   bool _resumePayment = false;
+  bool _paymentSubmitted = false;
+  FieldrushEmbeddedPaymentSession? _paymentSession;
+  bool _allowPop = false;
+  bool _closing = false;
+  int _loadGeneration = 0;
+
+  bool get _embedded =>
+      widget.repository is OpenQueueEmbeddedCheckoutRepository &&
+      !PaymentService.stagingE2EBypass;
+
+  bool get _canPay =>
+      !_loading &&
+      !_processing &&
+      !_closing &&
+      _preview != null &&
+      (!_embedded ||
+          _preview!.totalFils == 0 ||
+          _resumePayment ||
+          (_paymentSession?.isReady == true &&
+              _paymentSession?.hasSelection == true));
 
   Future<OpenQueueBooking?> _confirmedBooking() async {
     final repository = widget.repository;
@@ -53,6 +76,78 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _loadGeneration++;
+    _paymentSession?.removeListener(_paymentChanged);
+    _paymentSession?.dispose();
+    super.dispose();
+  }
+
+  void _paymentChanged() {
+    if (mounted && !_closing) setState(() {});
+  }
+
+  Future<void> _replacePaymentSession(
+    OpenQueueBookingCostPreview preview,
+    int generation,
+  ) async {
+    final old = _paymentSession;
+    if (old != null) {
+      old.removeListener(_paymentChanged);
+      await old.close();
+      if (!mounted) return;
+      setState(() {
+        _paymentSession = null;
+        _paymentSubmitted = false;
+      });
+      // Unmount the old native widget (and its global callbacks) before another
+      // embedded selector attaches. Rebuilding with a new price is not enough.
+      await WidgetsBinding.instance.endOfFrame;
+      old.dispose();
+    }
+    if (!mounted || generation != _loadGeneration) return;
+    if (!_embedded || preview.totalFils == 0) return;
+    final factory =
+        widget.embeddedPaymentSessionFactory ??
+        StripeFieldrushEmbeddedPaymentSession.new;
+    final session = factory(
+      amountFils: preview.totalFils,
+      currency: preview.currency,
+    );
+    session.addListener(_paymentChanged);
+    setState(() => _paymentSession = session);
+    await session.initialize();
+  }
+
+  Future<void> _retryPaymentSelection() async {
+    final preview = _preview;
+    if (preview == null || _processing || _closing || _loading) return;
+    final generation = ++_loadGeneration;
+    setState(() => _loading = true);
+    try {
+      await _replacePaymentSession(preview, generation);
+    } catch (_) {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _error = 'Payment options could not load. Try again.');
+      }
+    } finally {
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loading = false);
+      }
+    }
+  }
+
+  Future<void> _close([OpenQueueBooking? booking]) async {
+    if (_closing || (_processing && booking == null)) return;
+    _closing = true;
+    await _paymentSession?.close();
+    if (!mounted) return;
+    setState(() => _allowPop = true);
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) Navigator.of(context).pop(booking);
+  }
+
   Future<OpenQueueBookingCostPreview> _quote() async {
     final repository = widget.repository;
     if (repository is! OpenQueueBookingCostPreviewRepository) {
@@ -62,13 +157,16 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     }
     final result = await (repository as OpenQueueBookingCostPreviewRepository)
         .previewBookingCost(gameId: widget.game.id, role: widget.role);
-    if (result.currency != 'USD' || result.totalFils < 0) {
+    if (result.currency != 'USD' ||
+        result.totalFils < 0 ||
+        result.totalFils % 10 != 0) {
       throw StateError('This game is not available for USD checkout.');
     }
     return result;
   }
 
   Future<void> _load() async {
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
@@ -76,9 +174,11 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     });
     try {
       final preview = await _quote();
-      if (mounted) setState(() => _preview = preview);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _preview = preview);
+      await _replacePaymentSession(preview, generation);
     } catch (error) {
-      if (mounted) {
+      if (mounted && generation == _loadGeneration) {
         setState(
           () => _error = userFacingError(
             error,
@@ -87,13 +187,15 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         );
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && generation == _loadGeneration) {
+        setState(() => _loading = false);
+      }
     }
   }
 
   Future<void> _pay() async {
     final shown = _preview;
-    if (_processing || _loading || shown == null) return;
+    if (!_canPay || shown == null) return;
     setState(() {
       _processing = true;
       _error = null;
@@ -103,7 +205,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         final recovered = await _confirmedBooking();
         if (!mounted) return;
         if (recovered != null) {
-          Navigator.of(context).pop(recovered);
+          await _close(recovered);
           return;
         }
       } else {
@@ -115,6 +217,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
             _error =
                 'Your booking terms changed. Review the updated total and deposit, then confirm again.';
           });
+          await _replacePaymentSession(latest, ++_loadGeneration);
           return;
         }
       }
@@ -122,11 +225,34 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       // service recovers its existing intent before quoting a new reservation;
       // quoting first would reject a now-full or already-booked game.
       _resumePayment = true;
-      final booking = await widget.repository.bookGame(
-        game: widget.game,
-        role: widget.role,
-        paymentMethod: 'STRIPE',
-      );
+      final repository = widget.repository;
+      final booking = _embedded
+          ? await (repository as OpenQueueEmbeddedCheckoutRepository)
+                .bookGameWithCollector(
+                  game: widget.game,
+                  role: widget.role,
+                  collectPayment: (request) async {
+                    // Check again against the authoritative prepared intent.
+                    // A price race must never confirm an unseen amount.
+                    if (request.amountFils != shown.totalFils ||
+                        request.currency != shown.currency) {
+                      throw const PaymentQuoteChangedException();
+                    }
+                    final session = _paymentSession;
+                    if (session == null ||
+                        !session.isReady ||
+                        !session.hasSelection) {
+                      throw const PaymentPendingException();
+                    }
+                    await session.collectPayment(request);
+                    if (mounted) setState(() => _paymentSubmitted = true);
+                  },
+                )
+          : await repository.bookGame(
+              game: widget.game,
+              role: widget.role,
+              paymentMethod: 'STRIPE',
+            );
       if (!mounted) return;
       // bookGame returns only after server-side payment verification and an
       // actual booking lookup. A native-sheet success is not enough.
@@ -135,23 +261,30 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
           'Your payment is being checked. Please check your games before trying again.',
         );
       }
-      Navigator.of(context).pop(booking);
+      await _close(booking);
     } catch (error) {
       if (_resumePayment) {
         try {
           final recovered = await _confirmedBooking();
           if (!mounted) return;
           if (recovered != null) {
-            Navigator.of(context).pop(recovered);
+            await _close(recovered);
             return;
           }
         } catch (_) {
           // Preserve the original error and the idempotent retry path if the
           // booking lookup is also temporarily unavailable.
         }
-        if (error is PaymentException && error is! PaymentPendingException) {
+        if (!_paymentSubmitted &&
+            error is PaymentException &&
+            error is! PaymentPendingException) {
           _resumePayment = false;
         }
+      }
+      if (error is PaymentQuoteChangedException) {
+        // The service only returns this after the superseded attempt is safely
+        // cancelled. Reload terms and native configuration, then require Pay.
+        await _load();
       }
       if (mounted) {
         setState(
@@ -166,13 +299,55 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     }
   }
 
+  Widget _embeddedPaymentOptions() {
+    final session = _paymentSession;
+    final error = session?.loadingError;
+    if (error != null) {
+      return BookingPanel(
+        padding: 16,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Payment options unavailable', style: bookingHeading(16)),
+            const SizedBox(height: 6),
+            Text(error, style: bookingText(12)),
+            TextButton(
+              key: const ValueKey('retry-payment-options'),
+              onPressed: _processing || _loading
+                  ? null
+                  : _retryPaymentSelection,
+              child: const Text('Retry payment options'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (session == null) return const _PaymentOptionsSkeleton();
+    return AbsorbPointer(
+      absorbing: _processing || _closing || _paymentSubmitted,
+      child: Stack(
+        children: [
+          Opacity(
+            opacity: session.isReady || _paymentSubmitted ? 1 : 0,
+            child: session.buildView(),
+          ),
+          if (!session.isReady && !_paymentSubmitted)
+            const _PaymentOptionsSkeleton(),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final preview = _preview;
     return Theme(
       data: FieldrushAuthTheme.theme(context),
       child: PopScope<OpenQueueBooking>(
-        canPop: !_processing,
+        canPop: _allowPop,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop && !_processing && !_closing) _close();
+        },
         child: SafeArea(
           top: false,
           child: ConstrainedBox(
@@ -205,9 +380,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       ),
                       IconButton(
                         tooltip: 'Close checkout',
-                        onPressed: _processing
-                            ? null
-                            : () => Navigator.of(context).pop(),
+                        onPressed: _processing || _closing ? null : _close,
                         icon: const Icon(Icons.close),
                       ),
                     ],
@@ -259,46 +432,51 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                     ),
                   ),
                   const SizedBox(height: 18),
-                  Text('PAY WITH', style: bookingText(10, bold: true)),
-                  const SizedBox(height: 9),
-                  BookingPanel(
-                    padding: 16,
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.credit_card,
-                          color: FieldrushAuthTheme.ink,
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Card or Apple Pay',
-                                style: bookingText(
-                                  13,
-                                  color: FieldrushAuthTheme.ink,
-                                  bold: true,
-                                ),
+                  if (!_embedded || preview?.totalFils != 0) ...[
+                    Text('PAY WITH', style: bookingText(10, bold: true)),
+                    const SizedBox(height: 9),
+                    if (_embedded)
+                      _embeddedPaymentOptions()
+                    else
+                      BookingPanel(
+                        padding: 16,
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.credit_card,
+                              color: FieldrushAuthTheme.ink,
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Card or Apple Pay',
+                                    style: bookingText(
+                                      13,
+                                      color: FieldrushAuthTheme.ink,
+                                      bold: true,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Choose securely in the app. Apple Pay appears on supported devices.',
+                                    style: bookingText(11),
+                                  ),
+                                ],
                               ),
-                              Text(
-                                'Choose securely in the app. Apple Pay appears on supported devices.',
-                                style: bookingText(11),
-                              ),
-                            ],
-                          ),
+                            ),
+                            const Icon(
+                              Icons.lock_outline,
+                              size: 18,
+                              color: FieldrushAuthTheme.muted,
+                            ),
+                          ],
                         ),
-                        const Icon(
-                          Icons.lock_outline,
-                          size: 18,
-                          color: FieldrushAuthTheme.muted,
-                        ),
-                      ],
-                    ),
-                  ),
+                      ),
+                  ],
                   const SizedBox(height: 16),
-                  if (_loading)
+                  if (_loading && preview == null)
                     const Padding(
                       padding: EdgeInsets.all(12),
                       child: Center(child: CircularProgressIndicator()),
@@ -353,9 +531,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                   const SizedBox(height: 16),
                   FilledButton(
                     key: const ValueKey('open-queue-confirm-payment'),
-                    onPressed: _loading || _processing || preview == null
-                        ? null
-                        : _pay,
+                    onPressed: _canPay ? _pay : null,
                     child: _processing
                         ? const Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -373,7 +549,11 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                             ],
                           )
                         : Text(
-                            'Continue to Pay${preview == null ? '' : ' · ${preview.totalLabel}'}',
+                            _embedded
+                                ? preview?.totalFils == 0
+                                      ? 'Confirm booking'
+                                      : '${_resumePayment ? 'Resume payment' : 'Pay'}${preview == null ? '' : ' · ${preview.totalLabel}'}'
+                                : 'Continue to Pay${preview == null ? '' : ' · ${preview.totalLabel}'}',
                           ),
                   ),
                   const SizedBox(height: 10),
@@ -390,4 +570,52 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       ),
     );
   }
+}
+
+class _PaymentOptionsSkeleton extends StatelessWidget {
+  const _PaymentOptionsSkeleton();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Loading secure payment options',
+    liveRegion: true,
+    child: ExcludeSemantics(
+      child: Column(
+        children: [
+          for (var index = 0; index < 2; index++)
+            Container(
+              height: 55,
+              margin: EdgeInsets.only(bottom: index == 0 ? 8 : 0),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: FieldrushAuthTheme.border),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 24,
+                    height: 18,
+                    decoration: BoxDecoration(
+                      color: FieldrushAuthTheme.watermark,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Container(
+                    width: 104,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: FieldrushAuthTheme.watermark,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
 }

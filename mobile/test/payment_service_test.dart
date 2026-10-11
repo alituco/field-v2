@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:field/src/payments/payment_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _payload = {'game_id': 'game', 'role': 'DEF'};
 Map<String, dynamic> _prepared() => {
@@ -22,6 +23,352 @@ Map<String, dynamic> _completed() => {
 };
 
 void main() {
+  test(
+    'embedded collector receives authoritative USD cents before verification',
+    () async {
+      final actions = <String>[];
+      PaymentCollectionRequest? collected;
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          return body['action'] == 'prepare' ? _prepared() : _completed();
+        },
+        paymentCollector: (request) async {
+          expect(actions, ['prepare']);
+          collected = request;
+        },
+        sheetPresenter: (_) async =>
+            fail('Embedded checkout must not open a sheet'),
+      );
+      final result = await service.pay(
+        purpose: PaymentPurpose.soloBooking,
+        payload: _payload,
+      );
+      expect(collected?.clientSecret, 'pi_1_secret_test');
+      expect(collected?.currency, 'USD');
+      expect(collected?.amountFils, 13000);
+      expect(collected?.amountMinor, 1300);
+      expect(result.resourceId, 'booking-1');
+      expect(actions, ['prepare', 'confirm']);
+    },
+  );
+
+  for (final free in [false, true]) {
+    test(
+      'already finalized ${free ? 'free' : 'paid'} checkout skips collection and amount parsing',
+      () async {
+        final service = PaymentService(
+          functionInvoker: (_) async => {
+            ..._completed(),
+            if (free) 'payment_method': 'FREE',
+            if (free) 'intent_id': null,
+            'amount_fils': 0,
+            'currency': null,
+          },
+          paymentCollector: (_) async =>
+              fail('Must not collect a completed payment'),
+        );
+        final result = await service.pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: _payload,
+        );
+        expect(result.resourceId, 'booking-1');
+        expect(result.intentId, free ? null : 'attempt-1');
+      },
+    );
+  }
+
+  test(
+    'embedded processing recovery skips collection and invalid amount parsing',
+    () async {
+      final actions = <String>[];
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          return body['action'] == 'prepare'
+              ? {'status': 'PROCESSING', 'intent_id': 'attempt-1'}
+              : _completed();
+        },
+        paymentCollector: (_) async => fail('Must reconcile the same payment'),
+      );
+      expect(
+        (await service.pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: _payload,
+        )).resourceId,
+        'booking-1',
+      );
+      expect(actions, ['prepare', 'confirm']);
+    },
+  );
+
+  for (final invalid in <Map<String, dynamic>>[
+    {'amount_fils': 0},
+    {'amount_fils': -10},
+    {'amount_fils': 13001},
+    {'amount_fils': 13000.0},
+    {'amount_fils': '13000'},
+    {'amount_fils': null},
+    {'amount_fils': 1000000000},
+    {'currency': 'BHD'},
+    {'currency': null},
+  ]) {
+    test(
+      'embedded collection rejects an invalid prepared total $invalid',
+      () async {
+        final actions = <String>[];
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            actions.add(body['action'] as String);
+            return {..._prepared(), ...invalid};
+          },
+          paymentCollector: (_) async =>
+              fail('Must not confirm an invalid total'),
+        );
+        await expectLater(
+          service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+          throwsA(isA<PaymentException>()),
+        );
+        expect(actions, ['prepare']);
+      },
+    );
+  }
+
+  test(
+    'legacy sheet presenter does not require embedded amount fields',
+    () async {
+      var presentations = 0;
+      final service = PaymentService(
+        functionInvoker: (body) async => body['action'] == 'prepare'
+            ? (_prepared()
+                ..remove('amount_fils')
+                ..remove('currency'))
+            : _completed(),
+        sheetPresenter: (_) async => presentations++,
+      );
+      await service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload);
+      expect(presentations, 1);
+    },
+  );
+
+  test(
+    'embedded duplicate calls share prepare and native confirmation',
+    () async {
+      final collection = Completer<void>();
+      var prepares = 0;
+      var confirmations = 0;
+      var collections = 0;
+      Future<Map<String, dynamic>> invoke(Map<String, dynamic> body) async {
+        if (body['action'] == 'prepare') {
+          prepares++;
+          return _prepared();
+        }
+        confirmations++;
+        return _completed();
+      }
+
+      Future<void> collect(PaymentCollectionRequest _) {
+        collections++;
+        return collection.future;
+      }
+
+      final first = PaymentService(
+        functionInvoker: invoke,
+        paymentCollector: collect,
+      ).pay(purpose: PaymentPurpose.soloBooking, payload: _payload);
+      final second =
+          PaymentService(
+            functionInvoker: invoke,
+            paymentCollector: collect,
+          ).pay(
+            purpose: PaymentPurpose.soloBooking,
+            payload: {'role': 'DEF', 'game_id': 'game'},
+          );
+      await Future<void>.delayed(Duration.zero);
+      expect(prepares, 1);
+      expect(collections, 1);
+      expect(confirmations, 0);
+      collection.complete();
+      expect((await first).resourceId, (await second).resourceId);
+      expect(confirmations, 1);
+    },
+  );
+
+  test(
+    'changed quote cancels the same prepared attempt before allowing review',
+    () async {
+      final actions = <String>[];
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          if (body['action'] == 'prepare') return _prepared();
+          expect(body['intent_id'], 'attempt-1');
+          return {'status': 'CANCELLED'};
+        },
+        paymentCollector: (_) async =>
+            throw const PaymentQuoteChangedException(),
+      );
+      await expectLater(
+        service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+        throwsA(isA<PaymentQuoteChangedException>()),
+      );
+      expect(actions, ['prepare', 'cancel']);
+    },
+  );
+
+  for (final cancelStatus in ['FINALIZED', 'PROCESSING']) {
+    test(
+      'quote cancellation racing $cancelStatus recovers the original booking',
+      () async {
+        final actions = <String>[];
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            actions.add(body['action'] as String);
+            if (body['action'] == 'prepare') return _prepared();
+            expect(body['intent_id'], 'attempt-1');
+            if (body['action'] == 'cancel' && cancelStatus == 'PROCESSING') {
+              return {'status': 'PROCESSING'};
+            }
+            return _completed();
+          },
+          paymentCollector: (_) async =>
+              throw const PaymentQuoteChangedException(),
+        );
+        final result = await service.pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: _payload,
+        );
+        expect(result.resourceId, 'booking-1');
+        expect(actions, [
+          'prepare',
+          'cancel',
+          if (cancelStatus == 'PROCESSING') 'confirm',
+        ]);
+      },
+    );
+  }
+
+  for (final cancelStatus in ['PENDING', 'PROCESSING', 'FAILED', 'EXPIRED']) {
+    test(
+      'unresolved quote cancellation $cancelStatus remains pending',
+      () async {
+        final actions = <String>[];
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            actions.add(body['action'] as String);
+            if (body['action'] == 'prepare') return _prepared();
+            expect(body['intent_id'], 'attempt-1');
+            return {'status': cancelStatus};
+          },
+          paymentCollector: (_) async =>
+              throw const PaymentQuoteChangedException(),
+          confirmationAttempts: 1,
+        );
+        await expectLater(
+          service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+          throwsA(isA<PaymentPendingException>()),
+        );
+        expect(actions.where((action) => action == 'prepare').length, 1);
+        expect(actions, contains('cancel'));
+      },
+    );
+  }
+
+  for (final error in <Object>[
+    TimeoutException('Cancellation response lost'),
+    const PaymentException('Cancellation could not be validated'),
+  ]) {
+    test('failed quote cancellation $error remains pending', () async {
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          if (body['action'] == 'prepare') return _prepared();
+          expect(body['action'], 'cancel');
+          throw error;
+        },
+        paymentCollector: (_) async =>
+            throw const PaymentQuoteChangedException(),
+      );
+      await expectLater(
+        service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+        throwsA(isA<PaymentPendingException>()),
+      );
+    });
+  }
+
+  test(
+    'failed reconciliation after unresolved quote cancellation remains pending',
+    () async {
+      final actions = <String>[];
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          if (body['action'] == 'prepare') return _prepared();
+          if (body['action'] == 'cancel') return {'status': 'PROCESSING'};
+          throw const PaymentException('Confirmation could not be validated');
+        },
+        paymentCollector: (_) async =>
+            throw const PaymentQuoteChangedException(),
+        confirmationAttempts: 1,
+      );
+      await expectLater(
+        service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+        throwsA(isA<PaymentPendingException>()),
+      );
+      expect(actions, ['prepare', 'cancel', 'confirm']);
+    },
+  );
+
+  test('incomplete finalized cancellation response remains pending', () async {
+    final service = PaymentService(
+      functionInvoker: (body) async =>
+          body['action'] == 'prepare' ? _prepared() : {'status': 'FINALIZED'},
+      paymentCollector: (_) async => throw const PaymentQuoteChangedException(),
+    );
+    await expectLater(
+      service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+      throwsA(isA<PaymentPendingException>()),
+    );
+  });
+
+  test(
+    'declared native failure does not trigger server confirmation or cancellation',
+    () async {
+      final actions = <String>[];
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          return _prepared();
+        },
+        paymentCollector: (_) async =>
+            throw const PaymentException('Card declined'),
+      );
+      await expectLater(
+        service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+        throwsA(
+          isA<PaymentException>().having(
+            (error) => error.message,
+            'message',
+            'Card declined',
+          ),
+        ),
+      );
+      expect(actions, ['prepare']);
+    },
+  );
+
+  test(
+    'shared native configuration has no payment secret or deferred intent',
+    () {
+      final configuration = PaymentService.nativeSheetConfiguration;
+      expect(configuration.paymentIntentClientSecret, isNull);
+      expect(configuration.setupIntentClientSecret, isNull);
+      expect(configuration.intentConfiguration, isNull);
+      expect(configuration.merchantDisplayName, 'Fieldrush');
+      expect(configuration.allowsDelayedPaymentMethods, isFalse);
+      expect(configuration.returnURL, endsWith('://safepay'));
+    },
+  );
+
   test(
     'free booking finalizes without a payment key or native sheet',
     () async {
@@ -125,6 +472,99 @@ void main() {
     await service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload);
     expect(confirms, 2);
   });
+
+  for (final error in <Object>[
+    const FunctionException(status: 401, details: {'error': 'Session expired'}),
+    const FunctionException(
+      status: 409,
+      details: {'error': 'Invalid reference'},
+    ),
+    const PaymentException('Checkout returned an invalid response.'),
+  ]) {
+    test(
+      'unverified confirmation error $error preserves pending payment',
+      () async {
+        final actions = <String>[];
+        var collections = 0;
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            actions.add(body['action'] as String);
+            if (body['action'] == 'prepare') return _prepared();
+            expect(body['intent_id'], 'attempt-1');
+            throw error;
+          },
+          paymentCollector: (_) async => collections++,
+          confirmationAttempts: 2,
+          delay: (_) async {},
+        );
+        await expectLater(
+          service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+          throwsA(isA<PaymentPendingException>()),
+        );
+        expect(collections, 1);
+        expect(actions, ['prepare', 'confirm', 'confirm']);
+      },
+    );
+  }
+
+  test(
+    'incomplete finalized confirmation retries without collecting again',
+    () async {
+      var confirms = 0;
+      var collections = 0;
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          if (body['action'] == 'prepare') return _prepared();
+          expect(body['intent_id'], 'attempt-1');
+          return ++confirms == 1 ? {'status': 'FINALIZED'} : _completed();
+        },
+        paymentCollector: (_) async => collections++,
+        delay: (_) async {},
+      );
+      final result = await service.pay(
+        purpose: PaymentPurpose.soloBooking,
+        payload: _payload,
+      );
+      expect(result.resourceId, 'booking-1');
+      expect(confirms, 2);
+      expect(collections, 1);
+    },
+  );
+
+  for (final status in [
+    'CANCELLED',
+    'FAILED',
+    'EXPIRED',
+    'REFUNDED',
+    'REQUIRES_REFUND',
+  ]) {
+    test(
+      'explicit confirmation terminal status $status remains terminal',
+      () async {
+        var confirms = 0;
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            if (body['action'] == 'prepare') return _prepared();
+            confirms++;
+            return {'status': status};
+          },
+          paymentCollector: (_) async {},
+          delay: (_) async {},
+        );
+        await expectLater(
+          service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+          throwsA(
+            isA<PaymentException>().having(
+              (error) => error is PaymentPendingException,
+              'is pending',
+              isFalse,
+            ),
+          ),
+        );
+        expect(confirms, 1);
+      },
+    );
+  }
 
   test(
     'unresolved payment is pending rather than a successful booking',

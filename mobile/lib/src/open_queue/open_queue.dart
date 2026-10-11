@@ -867,6 +867,20 @@ class OpenQueueCancellationPreview {
     return '${_moneyLabel(refundAmountFils, currency)} to $label';
   }
 
+  /// Older policy previews contain wallet wording even when the payment-aware
+  /// quote routes the refund back to Stripe. Keep the server policy narrative
+  /// intact except for that destination, and retain raw text for quote checks.
+  String? get displayExplanation {
+    final destination = refundDestination?.trim().toUpperCase();
+    if (destination != 'ORIGINAL_PAYMENT_METHOD' && destination != 'STRIPE') {
+      return explanation;
+    }
+    return explanation?.replaceAll(
+      RegExp(r'\bto your field wallet\b', caseSensitive: false),
+      'to your original payment method',
+    );
+  }
+
   bool hasSameConsequencesAs(OpenQueueCancellationPreview other) {
     return canCancel == other.canCancel &&
         currency == other.currency &&

@@ -211,8 +211,8 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
               ? 'Updated ${preview.outcomeLabel}'
               : preview.outcomeLabel,
           title: updated ? 'Cancellation terms changed' : 'Leave this game?',
-          message: preview.explanation?.trim().isNotEmpty == true
-              ? preview.explanation!
+          message: preview.displayExplanation?.trim().isNotEmpty == true
+              ? preview.displayExplanation!
               : 'Your position will reopen. These terms use server time and the policy active for this game.',
           detail: [
             preview.refundDestinationLabel,

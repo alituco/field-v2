@@ -183,6 +183,50 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  for (final destination in ['ORIGINAL_PAYMENT_METHOD', 'FIELD_WALLET']) {
+    testWidgets('cancellation narrative respects $destination refund routing', (
+      tester,
+    ) async {
+      const explanation =
+          'Cancellation outcome: Cancelled early. No reliability strike is added. '
+          '100% of the match fee returns to your Field Wallet.';
+      final repository = _Repository(_detail(booked: true));
+      repository.booking = _booking(repository.detail.game);
+      repository.previews = [
+        OpenQueueCancellationPreview(
+          canCancel: true,
+          refundPercent: 100,
+          refundAmountFils: 10000,
+          refundCutoffAt: null,
+          currency: 'USD',
+          refundDestination: destination,
+          explanation: explanation,
+        ),
+      ];
+      await show(tester, repository);
+      await tester.tap(find.text('Leave game'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('Leave this game?'), findsOneWidget);
+      final expected = destination == 'ORIGINAL_PAYMENT_METHOD'
+          ? explanation.replaceAll('Field Wallet', 'original payment method')
+          : explanation;
+      expect(find.text(expected), findsOneWidget);
+      if (destination == 'ORIGINAL_PAYMENT_METHOD') {
+        expect(find.text(explanation), findsNothing);
+        expect(
+          find.textContaining('100% to your original payment method'),
+          findsOneWidget,
+        );
+      }
+      expect(repository.cancelCalls, 0);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.text('Stay in game'));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
   testWidgets('cancellation revalidates changed terms before writing', (
     tester,
   ) async {

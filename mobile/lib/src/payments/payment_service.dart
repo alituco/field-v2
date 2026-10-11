@@ -15,6 +15,7 @@ class PaymentService {
     SupabaseClient? client,
     PaymentFunctionInvoker? functionInvoker,
     PaymentSheetPresenter? sheetPresenter,
+    PaymentCollector? paymentCollector,
     Future<void> Function(Duration)? delay,
     this.confirmationAttempts = 12,
     this.pollInterval = const Duration(seconds: 2),
@@ -23,12 +24,14 @@ class PaymentService {
   }) : _client = client,
        _functionInvoker = functionInvoker,
        _sheetPresenter = sheetPresenter ?? _presentStripeSheet,
+       _paymentCollector = paymentCollector,
        _hasInjectedPresenter = sheetPresenter != null,
        _delay = delay ?? Future<void>.delayed;
 
   final SupabaseClient? _client;
   final PaymentFunctionInvoker? _functionInvoker;
   final PaymentSheetPresenter _sheetPresenter;
+  final PaymentCollector? _paymentCollector;
   final bool _hasInjectedPresenter;
   final Future<void> Function(Duration) _delay;
   final int confirmationAttempts;
@@ -83,49 +86,85 @@ class PaymentService {
     // A retry after payment or a delayed webhook must resume verification,
     // rather than request another payment from the customer.
     if (status != 'PENDING') return _confirm(intentId);
-    if (!_hasInjectedPresenter) _validateConfiguration();
     final clientSecret = _requiredString(preparation['client_secret']);
     try {
-      await _sheetPresenter(clientSecret);
-    } on PaymentCancelledException {
-      // Closing the sheet can race a successful payment. The server resolves
-      // that race before we describe the attempt as cancelled.
-      try {
-        final cancellation = await _invoke({
-          'action': 'cancel',
-          'intent_id': intentId,
-        });
-        if (_status(cancellation) == 'FINALIZED') {
-          return _finalized(cancellation);
+      final collector = _paymentCollector;
+      if (collector != null) {
+        final amount = preparation['amount_fils'];
+        final currency = preparation['currency'];
+        if (amount is! int || currency is! String) {
+          throw const PaymentException('Checkout returned an invalid total.');
         }
-        _throwTerminal(cancellation);
-        if (_status(cancellation) != 'CANCELLED') return _confirm(intentId);
-      } on PaymentPendingException {
-        rethrow;
-      } on PaymentCancelledException {
-        rethrow;
-      } on PaymentException {
-        rethrow;
-      } catch (_) {
-        throw const PaymentPendingException();
+        await collector(
+          PaymentCollectionRequest(
+            clientSecret: clientSecret,
+            amountFils: amount,
+            currency: currency,
+          ),
+        );
+      } else {
+        if (!_hasInjectedPresenter) _validateConfiguration();
+        await _sheetPresenter(clientSecret);
       }
-      throw const PaymentCancelledException();
+    } on PaymentQuoteChangedException catch (error) {
+      return _cancelAndReconcile(intentId, error);
+    } on PaymentCancelledException catch (error) {
+      return _cancelAndReconcile(intentId, error);
     }
     return _confirm(intentId);
   }
 
-  Future<PaymentResult> _confirm(String intentId) async {
+  Future<PaymentResult> _cancelAndReconcile(
+    String intentId,
+    PaymentException reason,
+  ) async {
+    // Both abandoning checkout and rejecting a changed quote can race a
+    // successful payment. Only an authoritative cancellation permits a fresh
+    // checkout; transport/validation failures here remain ambiguous.
+    final Map<String, dynamic> cancellation;
+    try {
+      cancellation = await _invoke({'action': 'cancel', 'intent_id': intentId});
+    } catch (_) {
+      throw const PaymentPendingException();
+    }
+    if (_status(cancellation) == 'FINALIZED') {
+      try {
+        return _finalized(cancellation);
+      } on PaymentException {
+        throw const PaymentPendingException();
+      }
+    }
+    _throwCancellationTerminal(cancellation, reason);
+    return _confirm(intentId, cancellationReason: reason);
+  }
+
+  Future<PaymentResult> _confirm(
+    String intentId, {
+    PaymentException? cancellationReason,
+  }) async {
     final elapsed = Stopwatch()..start();
     for (var attempt = 0; attempt < confirmationAttempts; attempt++) {
       final remaining = confirmationTimeout - elapsed.elapsed;
       if (remaining <= Duration.zero) break;
       try {
-        final response = await _invoke({
-          'action': 'confirm',
-          'intent_id': intentId,
-        }, timeout: remaining < requestTimeout ? remaining : requestTimeout);
-        if (_status(response) == 'FINALIZED') return _finalized(response);
-        _throwTerminal(response);
+        final Map<String, dynamic> response;
+        try {
+          response = await _invoke({
+            'action': 'confirm',
+            'intent_id': intentId,
+          }, timeout: remaining < requestTimeout ? remaining : requestTimeout);
+          if (_status(response) == 'FINALIZED') return _finalized(response);
+        } on PaymentException {
+          // Authentication, transport, and malformed responses cannot establish
+          // that Stripe did not charge. Only explicit server terminal statuses
+          // below may release this attempt from the reconciliation path.
+          throw const PaymentPendingException();
+        }
+        if (cancellationReason != null) {
+          _throwCancellationTerminal(response, cancellationReason);
+        } else {
+          _throwTerminal(response);
+        }
       } on PaymentPendingException {
         // Temporary transport errors can follow a successful native payment.
         // Retry this same attempt; never initiate a replacement payment here.
@@ -187,23 +226,39 @@ class PaymentService {
     }
   }
 
+  /// Applies the same guarded native configuration to embedded and sheet flows.
+  static Future<void> configureNativePayments() async {
+    _validateConfiguration();
+    Stripe.publishableKey = _publishableKey;
+    Stripe.merchantIdentifier = _appleMerchantId;
+    Stripe.urlScheme = _returnScheme;
+    await Stripe.instance.applySettings();
+  }
+
+  /// Shared appearance and wallet configuration, deliberately without a secret.
+  static SetupPaymentSheetParameters get nativeSheetConfiguration =>
+      SetupPaymentSheetParameters(
+        merchantDisplayName: 'Fieldrush',
+        returnURL: '$_returnScheme://safepay',
+        allowsDelayedPaymentMethods: false,
+        applePay: _appleMerchantId.isEmpty
+            ? null
+            : const PaymentSheetApplePay(merchantCountryCode: 'US'),
+        style: ThemeMode.light,
+        appearance: fieldrushPaymentSheetAppearance,
+      );
+
+  /// This only skips native collection; the existing server E2E gate remains.
+  static bool get stagingE2EBypass =>
+      _stagingE2EPaymentBypass &&
+      (_environment == 'staging' || _environment == 'local');
+
   static Future<void> _presentStripeSheet(String clientSecret) async {
     try {
-      Stripe.publishableKey = _publishableKey;
-      Stripe.merchantIdentifier = _appleMerchantId;
-      Stripe.urlScheme = _returnScheme;
-      await Stripe.instance.applySettings();
+      await configureNativePayments();
       await Stripe.instance.initPaymentSheet(
-        paymentSheetParameters: SetupPaymentSheetParameters(
+        paymentSheetParameters: nativeSheetConfiguration.copyWith(
           paymentIntentClientSecret: clientSecret,
-          merchantDisplayName: 'Fieldrush',
-          returnURL: '$_returnScheme://safepay',
-          allowsDelayedPaymentMethods: false,
-          applePay: _appleMerchantId.isEmpty
-              ? null
-              : const PaymentSheetApplePay(merchantCountryCode: 'US'),
-          style: ThemeMode.light,
-          appearance: fieldrushPaymentSheetAppearance,
         ),
       );
       // The native sheet owns interaction time, including bank authentication.
@@ -262,6 +317,23 @@ class PaymentService {
     }
   }
 
+  static void _throwCancellationTerminal(
+    Map<String, dynamic> response,
+    PaymentException reason,
+  ) {
+    switch (_status(response)) {
+      case 'CANCELLED':
+        throw reason;
+      case 'FAILED':
+      case 'EXPIRED':
+        // These are not confirmation that the requested cancellation reached
+        // Stripe. Do not turn an ambiguous cancellation into a new charge.
+        throw const PaymentPendingException();
+      default:
+        _throwTerminal(response);
+    }
+  }
+
   static String _status(Map<String, dynamic> response) =>
       response['status']?.toString().toUpperCase() ?? '';
 
@@ -297,6 +369,44 @@ const _stagingE2ERunId = String.fromEnvironment('E2E_RUN_ID');
 typedef PaymentFunctionInvoker =
     Future<Map<String, dynamic>> Function(Map<String, dynamic> body);
 typedef PaymentSheetPresenter = Future<void> Function(String clientSecret);
+typedef PaymentCollector =
+    Future<void> Function(PaymentCollectionRequest request);
+
+/// The immutable, server-prepared total supplied only after an explicit pay.
+class PaymentCollectionRequest {
+  factory PaymentCollectionRequest({
+    required String clientSecret,
+    required int amountFils,
+    required String currency,
+  }) {
+    final normalizedCurrency = currency.trim().toUpperCase();
+    if (clientSecret.trim().isEmpty ||
+        normalizedCurrency != 'USD' ||
+        amountFils <= 0 ||
+        amountFils % 10 != 0 ||
+        amountFils ~/ 10 > 99999999) {
+      throw const PaymentException('Checkout returned an invalid total.');
+    }
+    return PaymentCollectionRequest._(
+      clientSecret: clientSecret,
+      amountFils: amountFils,
+      currency: normalizedCurrency,
+      amountMinor: amountFils ~/ 10,
+    );
+  }
+
+  const PaymentCollectionRequest._({
+    required this.clientSecret,
+    required this.amountFils,
+    required this.currency,
+    required this.amountMinor,
+  });
+
+  final String clientSecret;
+  final int amountFils;
+  final String currency;
+  final int amountMinor;
+}
 
 enum PaymentPurpose {
   soloBooking('SOLO_BOOKING'),
@@ -333,6 +443,13 @@ class PaymentException implements Exception {
 
 class PaymentCancelledException extends PaymentException {
   const PaymentCancelledException() : super('Payment was cancelled.');
+}
+
+class PaymentQuoteChangedException extends PaymentException {
+  const PaymentQuoteChangedException()
+    : super(
+        'Your booking total changed. Review the updated total, then confirm again.',
+      );
 }
 
 class PaymentPendingException extends PaymentException {
