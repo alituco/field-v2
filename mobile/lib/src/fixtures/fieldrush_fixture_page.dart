@@ -533,9 +533,14 @@ class _FixtureCalendarState extends State<_FixtureCalendar> {
 
   void _reveal() => WidgetsBinding.instance.addPostFrameCallback((_) {
     if (!mounted || !_scroll.hasClients) return;
-    final scale = MediaQuery.textScalerOf(context).scale(18) / 18;
+    final scale = (MediaQuery.textScalerOf(context).scale(18) / 18).clamp(
+      1.0,
+      3.0,
+    );
     final offset =
-        (widget.dates.indexOf(widget.selected) * (44.0 * scale + 7) - 100)
+        (widget.dates.indexOf(widget.selected) * (44.0 * scale + 7) +
+                22 * scale -
+                _scroll.position.viewportDimension / 2)
             .clamp(0.0, _scroll.position.maxScrollExtent);
     _scroll.animateTo(
       offset,
@@ -601,54 +606,67 @@ class _FixtureCalendarState extends State<_FixtureCalendar> {
           const SizedBox(height: 3),
           SizedBox(
             height: 61 * scale,
-            child: ListView.separated(
-              controller: _scroll,
-              scrollDirection: Axis.horizontal,
-              itemCount: widget.dates.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 7),
-              itemBuilder: (_, i) {
-                final date = widget.dates[i];
-                final active = date == widget.selected;
-                return Semantics(
-                  selected: active,
-                  button: true,
-                  label:
-                      '${_weekdays[date.weekday - 1]}, ${_months[date.month - 1]} ${date.day}, ${date.year}',
-                  child: Material(
-                    color: active ? _green : _wash,
-                    borderRadius: BorderRadius.circular(13),
-                    child: InkWell(
-                      key: ValueKey('fixtures-date-${_dateKey(date)}'),
-                      onTap: () => widget.onSelected(date),
-                      borderRadius: BorderRadius.circular(13),
-                      child: SizedBox(
-                        width: 44 * scale,
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Text(
-                              _weekdays[date.weekday - 1].toUpperCase(),
-                              style: _jakarta(
-                                9,
-                                color: active
-                                    ? const Color(0xFFC7DD9B)
-                                    : _muted,
-                                tracking: .8,
-                              ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final contentWidth =
+                    widget.dates.length * 44 * scale +
+                    (widget.dates.length - 1) * 7;
+                final inset = ((constraints.maxWidth - contentWidth) / 2).clamp(
+                  0.0,
+                  constraints.maxWidth,
+                );
+                return ListView.separated(
+                  key: const ValueKey('fixtures-date-strip'),
+                  padding: EdgeInsets.symmetric(horizontal: inset),
+                  controller: _scroll,
+                  scrollDirection: Axis.horizontal,
+                  itemCount: widget.dates.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 7),
+                  itemBuilder: (_, i) {
+                    final date = widget.dates[i];
+                    final active = date == widget.selected;
+                    return Semantics(
+                      selected: active,
+                      button: true,
+                      label:
+                          '${_weekdays[date.weekday - 1]}, ${_months[date.month - 1]} ${date.day}, ${date.year}',
+                      child: Material(
+                        color: active ? _green : _wash,
+                        borderRadius: BorderRadius.circular(13),
+                        child: InkWell(
+                          key: ValueKey('fixtures-date-${_dateKey(date)}'),
+                          onTap: () => widget.onSelected(date),
+                          borderRadius: BorderRadius.circular(13),
+                          child: SizedBox(
+                            width: 44 * scale,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  _weekdays[date.weekday - 1].toUpperCase(),
+                                  style: _jakarta(
+                                    9,
+                                    color: active
+                                        ? const Color(0xFFC7DD9B)
+                                        : _muted,
+                                    tracking: .8,
+                                  ),
+                                ),
+                                const SizedBox(height: 7),
+                                Text(
+                                  '${date.day}',
+                                  style: _outfit(
+                                    18,
+                                    color: active ? Colors.white : _ink,
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 7),
-                            Text(
-                              '${date.day}',
-                              style: _outfit(
-                                18,
-                                color: active ? Colors.white : _ink,
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 );
               },
             ),
@@ -781,8 +799,7 @@ class FieldrushFixtureCard extends StatelessWidget {
                     if (average != null) ...[
                       FieldrushDivisionShield(
                         division: divisionFromRating(average).number,
-                        size: 24,
-                        mini: true,
+                        size: 20,
                       ),
                       const SizedBox(width: 7),
                       Text(
@@ -832,8 +849,7 @@ class FieldrushFixtureCard extends StatelessWidget {
                   children: [
                     FieldrushDivisionShield(
                       division: divisionFromRating(average).number,
-                      size: 24,
-                      mini: true,
+                      size: 20,
                     ),
                     const SizedBox(width: 9),
                     Text(

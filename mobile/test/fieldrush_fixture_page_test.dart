@@ -5,6 +5,7 @@ import 'package:field/src/fixtures/fieldrush_fixture_page.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/fixtures/fixtures_screen.dart';
+import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,56 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2026, 10, 10, 17);
 
 void main() {
+  testWidgets('overflowing date strip centers the selected matchday', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _Repository(
+        fixtures: [
+          for (var day = 1; day <= 22; day++)
+            _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+        ],
+      ),
+      width: 320,
+    );
+    final selected = tester.getRect(
+      find.byKey(const ValueKey('fixtures-date-2026-10-10')),
+    );
+    final strip = tester.getRect(
+      find.byKey(const ValueKey('fixtures-date-strip')),
+    );
+    expect(selected.center.dx, closeTo(strip.center.dx, .1));
+  });
+  testWidgets('short matchday row is centered and lobby crest retains stars', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _Repository(
+        upcoming: [
+          _game('one', average: 1700),
+          _game('two', start: DateTime.utc(2026, 10, 14, 3)),
+        ],
+      ),
+    );
+    final first = tester.getRect(
+      find.byKey(const ValueKey('fixtures-date-2026-10-10')),
+    );
+    final last = tester.getRect(
+      find.byKey(const ValueKey('fixtures-date-2026-10-13')),
+    );
+    final strip = tester.getRect(
+      find.byKey(const ValueKey('fixtures-date-strip')),
+    );
+    expect((first.left + last.right) / 2, closeTo(strip.center.dx, .01));
+    final crest = tester.widget<FieldrushDivisionShield>(
+      find.byType(FieldrushDivisionShield).first,
+    );
+    expect(crest.division, 1);
+    expect(crest.mini, isFalse);
+    expect(crest.size, 20);
+  });
   testWidgets(
     'production FixturesScreen exposes Fieldrush, not legacy clan scheduling',
     (tester) async {

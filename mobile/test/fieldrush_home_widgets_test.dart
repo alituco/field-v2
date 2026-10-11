@@ -14,6 +14,25 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('division shield star counts follow the HTML, including placement', () {
+    for (var division = 1; division <= 5; division++) {
+      expect(
+        FieldrushDivisionShieldPainter(division: division).starCount,
+        5 - division,
+      );
+      expect(
+        FieldrushDivisionShieldPainter(
+          division: division,
+          placement: true,
+        ).starCount,
+        0,
+      );
+    }
+    expect(
+      const FieldrushDivisionShieldPainter(division: 1, mini: true).starCount,
+      0,
+    );
+  });
   final now = DateTime.utc(2099, 6, 1);
 
   testWidgets(
