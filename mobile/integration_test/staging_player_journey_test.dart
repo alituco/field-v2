@@ -852,7 +852,10 @@ Future<void> _expectGameDetail(WidgetTester tester, String gameId) async {
 Future<void> _goHomeFromGame(WidgetTester tester) async {
   await tapWhenVisible(
     tester,
-    find.byKey(const ValueKey('field-bottom-nav-item-0')).last,
+    find.descendant(
+      of: find.byType(FieldrushGameDetailScreen),
+      matching: find.byKey(const ValueKey('field-bottom-nav-item-0')),
+    ),
   );
   await pumpUntilAbsent(
     tester,
@@ -868,9 +871,10 @@ Future<void> _createAndSendPartyInvite(
   required String inviteeId,
 }) async {
   final party = find.byKey(const ValueKey('fieldrush-game-party'));
-  final inviteSlot = find
-      .descendant(of: party, matching: find.text('Invite'))
-      .first;
+  // Party context loads independently of the game hero. Keep the finder
+  // unsliced so an empty/loading frame can be polled instead of throwing
+  // StateError from Finder.first before tapAfterScroll can wait or scroll.
+  final inviteSlot = find.descendant(of: party, matching: find.text('Invite'));
   await tapAfterScroll(
     tester,
     inviteSlot,
