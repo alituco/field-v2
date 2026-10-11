@@ -75,6 +75,31 @@ test("all six baseline checks are independently plan-gated after preflight", () 
   assert.match(job("flutter-ios"), /flutter build ios/);
 });
 
+test("Flutter golden comparisons remain part of the mandatory unfiltered test run", () => {
+  const source = job("flutter");
+  const run = stepContaining(source, "name: Run Flutter tests");
+  assert.match(run, /^        id: flutter-tests$/m);
+  assert.match(run, /^        run: flutter test$/m);
+  assert.doesNotMatch(run, /^        (?:if|continue-on-error):|--update-goldens|\|\|\s*true/m);
+  assert.doesNotMatch(source, /^    continue-on-error:/m);
+});
+
+test("Flutter golden failure diagnostics upload only generated PNGs without masking test failures", () => {
+  const source = job("flutter");
+  const run = stepContaining(source, "name: Run Flutter tests");
+  const upload = stepContaining(source, "name: Upload Flutter golden failure images");
+  assert.ok(source.indexOf(run) < source.indexOf(upload));
+  assert.match(upload, /^        if: failure\(\) && steps\.flutter-tests\.outcome == 'failure'$/m);
+  assert.match(upload, /^        uses: actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02(?: #.*)?$/m);
+  assert.match(upload, /^        continue-on-error: true$/m);
+  assert.match(upload, /^          name: flutter-golden-failures-\$\{\{ runner\.os \}\}$/m);
+  // LocalFileComparator writes relative to the test, not the golden image path.
+  assert.match(upload, /^          path: mobile\/test\/failures\/\*\.png$/m);
+  assert.match(upload, /^          if-no-files-found: ignore$/m);
+  assert.match(upload, /^          retention-days: 7$/m);
+  assert.doesNotMatch(upload, /secrets\.|include-hidden-files:\s*true/);
+});
+
 test("backend deploy starts after fast app and database checks, not native builds", () => {
   const backend = job("backend-staging");
   assert.deepEqual(needs("backend-staging"), ["preflight", "flutter", "database"]);
