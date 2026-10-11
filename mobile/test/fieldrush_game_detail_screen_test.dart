@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
@@ -62,7 +64,9 @@ void main() {
     expect(tester.takeException(), isNull);
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/fieldrush_game_detail_open.png'),
+      matchesGoldenFile(
+        'goldens/${Platform.operatingSystem}/fieldrush_game_detail_open.png',
+      ),
     );
     await tester.pumpWidget(const SizedBox());
   });
@@ -282,7 +286,9 @@ void main() {
     expect(tester.takeException(), isNull);
     await expectLater(
       find.byType(MaterialApp),
-      matchesGoldenFile('goldens/fieldrush_game_detail_party.png'),
+      matchesGoldenFile(
+        'goldens/${Platform.operatingSystem}/fieldrush_game_detail_party.png',
+      ),
     );
     await tester.pumpWidget(const SizedBox());
   });
