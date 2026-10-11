@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:field/src/fixtures/fixture.dart';
@@ -9,6 +10,8 @@ import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../integration_test/helpers/staging_test_helpers.dart';
 
 void main() {
   setUpAll(() async {
@@ -25,6 +28,7 @@ void main() {
     WidgetTester tester,
     _Repository repository, {
     Future<void> Function(OpenQueueGame)? onJoin,
+    bool settle = true,
   }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
@@ -40,7 +44,11 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
   }
 
   testWidgets('join opens selection flow without making a booking', (
@@ -308,6 +316,68 @@ void main() {
       ),
       findsOneWidget,
     );
+    Object? failure;
+    try {
+      await tapAfterScroll(
+        tester,
+        find.descendant(
+          of: find.byKey(const ValueKey('fieldrush-game-party')),
+          matching: find.text('Invite'),
+        ),
+        timeout: const Duration(milliseconds: 500),
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure, isA<TestFailure>());
+    expect(repository.createPartyCalls, 0);
+    expect(
+      find.byKey(const ValueKey('party-invite-sheet-close')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('party invitation waits for delayed slots and creates once', (
+    tester,
+  ) async {
+    final ready = Completer<void>();
+    final repository = _PartyRepository(
+      _detail(booked: true),
+      initialLoad: ready.future,
+    );
+    repository.booking = _booking(repository.detail.game);
+    await show(tester, repository, settle: false);
+    final party = find.byKey(const ValueKey('fieldrush-game-party'));
+    await scrollUntilFound(tester, party);
+    // Keep the finder unsliced: .first throws while the async slots are absent,
+    // before tapAfterScroll can wait for the real party controls to appear.
+    final inviteSlots = find.descendant(
+      of: party,
+      matching: find.text('Invite'),
+    );
+    expect(inviteSlots, findsNothing);
+    expect(repository.createPartyCalls, 0);
+    final timer = Timer(
+      const Duration(milliseconds: 600),
+      () => ready.complete(),
+    );
+    addTearDown(timer.cancel);
+
+    await tapAfterScroll(tester, inviteSlots);
+    await pumpUntilFound(
+      tester,
+      find.byKey(const ValueKey('party-invite-sheet-close')),
+    );
+
+    expect(inviteSlots, findsNWidgets(3));
+    expect(find.text('Invite confirmed players'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('invite-party-player-target')),
+      findsOneWidget,
+    );
+    expect(repository.createPartyCalls, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -409,17 +479,52 @@ class _Repository implements OpenQueueRepository {
 }
 
 class _PartyRepository extends _Repository implements OpenQueuePartyRepository {
-  _PartyRepository(super.detail, {this.locked = false});
+  _PartyRepository(super.detail, {this.locked = false, this.initialLoad});
   final bool locked;
+  final Future<void>? initialLoad;
+  int createPartyCalls = 0;
   @override
-  Future<OpenQueuePartyContext> getPartyContext(String gameId) async =>
-      OpenQueuePartyContext(
-        gameId: gameId,
-        gameStatus: 'OPEN',
-        canUseParties: !locked,
-        maxPartySize: 4,
-        receivedInvites: const [],
-        eligiblePlayers: const [],
-        partyLockAt: DateTime.utc(2030, 1, 12, 0, 30),
-      );
+  Future<OpenQueuePartyContext> getPartyContext(String gameId) async {
+    if (initialLoad != null) await initialLoad;
+    return OpenQueuePartyContext(
+      gameId: gameId,
+      gameStatus: 'OPEN',
+      canUseParties: !locked,
+      maxPartySize: 4,
+      receivedInvites: const [],
+      eligiblePlayers: const [
+        OpenQueuePartyPlayer(
+          profileId: 'target',
+          displayName: 'Target Player',
+          role: OpenQueueRole.defender,
+        ),
+      ],
+      myParty: createPartyCalls == 0
+          ? null
+          : const OpenQueueParty(
+              id: 'party',
+              ownerProfileId: 'me',
+              isOwner: true,
+              acceptedCount: 1,
+              members: [
+                OpenQueuePartyMember(
+                  membershipId: 'owner-member',
+                  profileId: 'me',
+                  displayName: 'Main Player',
+                  role: OpenQueueRole.attacker,
+                  status: OpenQueuePartyMemberStatus.accepted,
+                  isOwner: true,
+                  invitedAt: null,
+                ),
+              ],
+            ),
+      partyLockAt: DateTime.utc(2030, 1, 12, 0, 30),
+    );
+  }
+
+  @override
+  Future<String> createParty(String gameId) async {
+    createPartyCalls++;
+    return 'party';
+  }
 }
