@@ -75,6 +75,19 @@ test("all six baseline checks are independently plan-gated after preflight", () 
   assert.match(job("flutter-ios"), /flutter build ios/);
 });
 
+test("the shared admin inbox navigation is verified before hosted deployments", () => {
+  const source = job("referee");
+  const browser = stepContaining(source, "npm run test:ui -- admin-inbox-navigation.spec.ts --project=chromium");
+  assert.match(source, /npx playwright install --with-deps chromium/);
+  assert.ok(source.indexOf("Check admin inbox navigation") < source.indexOf("Build referee app"));
+  assert.doesNotMatch(browser, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.doesNotMatch(source, /^    environment:|secrets\./m);
+  const hosted = readFileSync(new URL("../../referee/e2e/staging-referee-admin.spec.ts", import.meta.url), "utf8");
+  const isolated = readFileSync(new URL("../../referee/ui-tests/admin-inbox-navigation.spec.ts", import.meta.url), "utf8");
+  assert.match(hosted, /verifyAdminRequestInboxes\(page, manifest\.markers\)/);
+  assert.match(isolated, /verifyAdminRequestInboxes/);
+});
+
 test("saved field permissions and location snapshots are checked before full schema replay", () => {
   const source = job("database");
   const check = stepContaining(source, "node supabase/scripts/test_saved_fields.mjs");
