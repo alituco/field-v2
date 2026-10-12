@@ -148,6 +148,13 @@ reused; fixture-bearing APKs are not reused across new runs. Reruns use the orig
 commit, so a code fix needs a new staging commit/run. A diagnostic, failed journey,
 or skipped required check never qualifies for TestFlight/PWA or production promotion.
 
+Keep manual staging testing separate from the reserved `field_e2e_*` CI accounts.
+Before new fixtures are created, setup checks that their checkout leases are clear.
+Cleanup expires only unpaid, expired `LEGACY` attempts belonging to protected test
+accounts and cancelled, admin-owned, tagged E2E games; it keeps the payment history
+and an admin audit event. Stripe, captured, linked, or ordinary-game attempts are
+left untouched and reported for explicit reconciliation, not silently discarded.
+
 The daily **Staging smoke** repeats the non-mutating hosted check at 05:15 UTC.
 
 `supabase/config.toml` is local-development configuration. Hosted Auth,

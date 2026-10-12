@@ -1,5 +1,6 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
+import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
 
 import {
   type AdminClient,
@@ -171,6 +172,11 @@ await admin.from("referee_profiles").upsert(
 logStep("Closing stale transient E2E state from earlier interrupted runs.");
 await closeStaleTransientState(admin, e2eAdmin, [...players, onboarding]);
 await assertPoolHasNoForeignUpcomingBookings(
+  admin,
+  [...players, onboarding],
+  e2eAdmin,
+);
+await cleanAndAssertE2ECheckoutPool(
   admin,
   [...players, onboarding],
   e2eAdmin,
