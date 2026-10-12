@@ -271,5 +271,142 @@ await db.exec(direct(crowded,await player()));
 await rejects(direct(crowded,await player()),/position just filled/);
 for(const role of ['anon','authenticated']) await check(`select has_function_privilege(${q(role)},'assert_player_has_one_game(uuid,text,uuid,boolean)','EXECUTE')`,false);
 await rejects(`select assert_player_has_one_game(null,'SOLO',${q(crowded)},true)`,/player and game/);
+// Admin cancellation must still work when an uninitialized clan roster includes
+// someone booked into another active game. Replay the real production RPC chain,
+// including expected-roster insertion and attendance correction; do not bypass
+// the one-game trigger or replace cancellation with a test-only wrapper.
+await db.exec(`
+alter table fixtures add column home_clan_id uuid, add column away_clan_id uuid,
+  add column created_by uuid, add column cancellation_code text, add column cancellation_reason text,
+  add column cancelled_at timestamptz, add column cancelled_by uuid, add column cancellation_context jsonb;
+alter table match_reliability_terms add column match_kind text default 'SOLO', add column fixture_id uuid,
+  add column kickoff_at timestamptz, add column check_in_opens_at timestamptz, add column no_show_cutoff_at timestamptz;
+alter table fixture_reliability_roster_history add column clan_id uuid, add column confirmed_by uuid, add column note text;
+alter table match_attendance_records add column id uuid default gen_random_uuid(), add column terms_id uuid,
+  add column booking_id uuid, add column clan_id uuid, add column side text, add column policy_version_id uuid,
+  add column check_in_deadline_at timestamptz, add column no_show_cutoff_at timestamptz,
+  add column expected_for_match boolean default true, add column cancelled_at timestamptz,
+  add column strike_delta integer default 0, add column refund_bps integer default 0,
+  add column refund_amount_fils integer default 0, add column positive_sr_multiplier_bps integer default 10000,
+  add column negative_sr_multiplier_bps integer default 10000, add column finalized_at timestamptz,
+  add column consequence_snapshot jsonb default '{}'::jsonb;
+create unique index clan_attendance_once on match_attendance_records(fixture_id,profile_id) where match_kind='CLAN';
+create table referee_profiles(profile_id uuid primary key,role text,is_active boolean);
+create table reliability_policy_versions(id uuid primary key default gen_random_uuid(),state text,effective_from timestamptz);
+create table clan_members(clan_id uuid,profile_id uuid,role text default 'member',created_at timestamptz default now(),left_at timestamptz);
+create table fixture_player_appearances(fixture_id uuid,clan_id uuid,profile_id uuid,played boolean);
+create table attendance_events(attendance_id uuid,event_type text,actor_referee_id uuid,event_at timestamptz,
+  detail jsonb,idempotency_key text unique);
+create table reliability_incidents(id uuid default gen_random_uuid(),subject_type text,profile_id uuid,clan_id uuid,
+  attendance_id uuid,booking_id uuid,fixture_id uuid,outcome text,strike_delta integer,occurred_at timestamptz,
+  expires_at timestamptz,policy_version_id uuid,reversal_of uuid,active_count_before integer,active_count_after integer,detail jsonb);
+create table reliability_sanctions(incident_id uuid,revoked_at timestamptz,revoked_by uuid,revocation_reason text);
+create table reliability_appeals(attendance_id uuid,status text,reviewed_by uuid,reviewed_at timestamptz,resolution_note text);
+create table fixture_clock_states(fixture_id uuid,status text,started_at timestamptz);
+create table fixture_blue_cards(fixture_id uuid,status text);
+create table admin_audit_events(actor_referee_id uuid,action text,entity_type text,entity_id uuid,reason text,
+  before_state jsonb,after_state jsonb);
+create function profile_has_active_play_restriction(uuid) returns boolean language sql stable as $$select false$$;
+create or replace function ensure_match_reliability_terms(text,uuid) returns match_reliability_terms language sql stable as $$
+  select t from match_reliability_terms t
+  where (t.match_kind='SOLO' and $1='SOLO' and t.open_queue_game_id=$2)
+     or (t.match_kind='CLAN' and $1='CLAN' and t.fixture_id=$2)
+$$;
+`);
+await db.exec(fn(await source('20260715000002_create_moderation_system.sql'),'is_active_moderation_admin'));
+await db.exec(fn(await source('20260716000002_enforce_reliability_attendance.sql'),'ensure_match_attendance_records'));
+const rosterSource=await source('20260716000005_enforce_reliability_match_effects.sql');
+for(const name of ['sync_fixture_reliability_expected_roster','initialize_fixture_reliability_roster','active_clan_reliability_strikes']) await db.exec(fn(rosterSource,name));
+const cancellationSource=await source('20260716000006_harden_reliability_privacy_and_field_cancellations.sql');
+for(const name of ['reverse_match_reliability_incidents_for_field_cancel','apply_policy_field_cancellation','admin_cancel_match']) {
+  await db.exec(fn(cancellationSource,name));
+}
+// Stripe exposes a refund-summary wrapper; the mutable captain policy body is
+// deliberately loaded under its real, renamed function identity.
+await db.exec(fn(await source('20260716000008_create_policy_backed_clan_checkout_and_cancellation.sql'),'cancel_clan_fixture_booking')
+  .replace('function public.cancel_clan_fixture_booking(', 'function public.cancel_clan_fixture_booking_policy('));
+await db.exec(fn(await source('20261010001100_original_payment_refunds.sql'),'cancel_clan_fixture_booking'));
+const cancellationAdmin=await player(); const committedClanPlayer=await player(); const opposingClanPlayer=await player();
+const unaffectedSolo=await game(); await db.exec(direct(unaffectedSolo,committedClanPlayer));
+const homeClan=await value('select gen_random_uuid()'); const awayClan=await value('select gen_random_uuid()');
+const cancellationPolicy=await value("insert into reliability_policy_versions(state,effective_from) values('PUBLISHED',now()-interval '1 day') returning id");
+await db.exec(`insert into referee_profiles values(${q(cancellationAdmin)},'admin',true);
+  insert into clan_members(clan_id,profile_id) values(${q(homeClan)},${q(committedClanPlayer)}),(${q(awayClan)},${q(opposingClanPlayer)});`);
+async function cancellableFixture() {
+  const fixture=await value(`insert into fixtures(status,home_clan_id,away_clan_id,created_by)
+    values('LIVE',${q(homeClan)},${q(awayClan)},${q(cancellationAdmin)}) returning id`);
+  await db.exec(`insert into match_reliability_terms(match_kind,fixture_id,policy_version_id,kickoff_at,
+      check_in_opens_at,check_in_deadline_at,no_show_cutoff_at,policy_snapshot)
+    values('CLAN',${q(fixture)},${q(cancellationPolicy)},now()+interval '14 days',now(),now(),now(),'{"clan":{"playersPerSide":6}}');
+    insert into fixture_clock_states values(${q(fixture)},'RUNNING',now());
+    insert into fixture_blue_cards values(${q(fixture)},'ACTIVE');`);
+  return fixture;
+}
+const cancelFixture=await cancellableFixture();
+const cancel=(fixture,reason='Unsafe pitch; admin cancellation regression')=>
+  `select admin_cancel_match(${q(cancellationAdmin)},'CLAN',${q(fixture)},'SAFETY',${q(reason)})`;
+// This is the original CI failure, not a mocked error: the old RPC inserts a
+// CONFIRMED expected roster while its target fixture is still LIVE.
+await rejects(cancel(cancelFixture),limit);
+await check(`select status from fixtures where id=${q(cancelFixture)}`,'LIVE');
+await check(`select count(*)::integer from fixture_reliability_roster_history where fixture_id=${q(cancelFixture)}`,0);
+await check(`select count(*)::integer from match_attendance_records where fixture_id=${q(cancelFixture)}`,0);
+await check(`select count(*)::integer from admin_audit_events where entity_id=${q(cancelFixture)}`,0);
+// An existing clan penalty must be reversed by the identified admin before
+// status settlement, then counted once by the common cancellation correction.
+const originalIncident=await value(`insert into reliability_incidents(subject_type,clan_id,fixture_id,
+    outcome,strike_delta,occurred_at,policy_version_id,detail)
+  values('CLAN',${q(homeClan)},${q(cancelFixture)},'NO_SHOW',2,now()-interval '1 minute',
+    ${q(cancellationPolicy)},jsonb_build_object('fixture_id',${q(cancelFixture)})) returning id`);
+await db.exec(`insert into reliability_sanctions(incident_id) values(${q(originalIncident)})`);
+await check(`select active_clan_reliability_strikes(${q(homeClan)})`,2);
+// Load the forward production fix, then retry the exact same fixture and RPC.
+await db.exec(await source('20261012000300_allow_cancellation_with_existing_game.sql'));
+await db.exec(cancel(cancelFixture));
+await check(`select status='CANCELLED' and cancelled_by=${q(cancellationAdmin)}
+  and cancellation_code='SAFETY' and cancellation_context->>'previous_status'='LIVE'
+  and cancellation_context#>>'{reliability,policy_applied}'='true'
+  and cancellation_context#>>'{reliability,affected_count}'='2'
+  and cancellation_context#>>'{reliability,reversed_incident_count}'='1'
+  from fixtures where id=${q(cancelFixture)}`);
+await check(`select count(*)::integer from reliability_incidents where reversal_of=${q(originalIncident)}`,1);
+await check(`select subject_type='CLAN' and clan_id=${q(homeClan)} and fixture_id=${q(cancelFixture)}
+  and outcome='FIELD_CANCELLED' and strike_delta=-2 and active_count_before=2 and active_count_after=0
+  and detail->>'cancelled_by'=${q(cancellationAdmin)} and detail->>'reason'='Unsafe pitch; admin cancellation regression'
+  from reliability_incidents where reversal_of=${q(originalIncident)}`);
+await check(`select strike_delta=2 and reversal_of is null from reliability_incidents where id=${q(originalIncident)}`);
+await check(`select active_clan_reliability_strikes(${q(homeClan)})`,0);
+await check(`select revoked_by=${q(cancellationAdmin)} and revoked_at is not null
+  and revocation_reason='Match cancelled by Field: Unsafe pitch; admin cancellation regression'
+  from reliability_sanctions where incident_id=${q(originalIncident)}`);
+await check(`select count(*)::integer from fixture_reliability_roster_history where fixture_id=${q(cancelFixture)} and status='CONFIRMED'`,2);
+await check(`select count(*)::integer from match_attendance_records where fixture_id=${q(cancelFixture)}
+  and expected_for_match and outcome='FIELD_CANCELLED' and strike_delta=0 and finalized_at is not null`,2);
+await check(`select count(*)::integer from attendance_events event join match_attendance_records attendance
+  on attendance.id=event.attendance_id where attendance.fixture_id=${q(cancelFixture)} and event.event_type='ADMIN_CORRECTION'`,2);
+await check(`select status='ENDED' and started_at is null from fixture_clock_states where fixture_id=${q(cancelFixture)}`);
+await check(`select status from fixture_blue_cards where fixture_id=${q(cancelFixture)}`,'CLEARED');
+await check(`select actor_referee_id=${q(cancellationAdmin)} and action='MATCH_CANCELLED'
+  and before_state->>'status'='LIVE' and after_state->>'status'='CANCELLED'
+  and reason='Unsafe pitch; admin cancellation regression' from admin_audit_events where entity_id=${q(cancelFixture)}`);
+await check(`select status from open_queue_bookings where game_id=${q(unaffectedSolo)} and profile_id=${q(committedClanPlayer)}`,'CONFIRMED');
+await rejects(cancel(cancelFixture),/already cancelled/);
+await check(`select count(*)::integer from admin_audit_events where entity_id=${q(cancelFixture)}`,1);
+await check(`select count(*)::integer from reliability_incidents where reversal_of=${q(originalIncident)}`,1);
+// The earlier state change must be part of the same atomic cancellation. An
+// error after roster/attendance processing must roll back every side effect.
+const rollbackFixture=await cancellableFixture();
+await db.exec(`create function reject_test_cancellation_audit() returns trigger language plpgsql as $$
+  begin if new.reason='Regression: fail final audit' then raise exception 'Injected cancellation audit failure'; end if; return new; end;
+  $$;
+  create trigger reject_test_cancellation_audit before insert on admin_audit_events for each row execute function reject_test_cancellation_audit();`);
+await rejects(cancel(rollbackFixture,'Regression: fail final audit'),/Injected cancellation audit failure/);
+await check(`select status='LIVE' and cancelled_at is null and cancellation_context is null from fixtures where id=${q(rollbackFixture)}`);
+await check(`select count(*)::integer from fixture_reliability_roster_history where fixture_id=${q(rollbackFixture)}`,0);
+await check(`select count(*)::integer from match_attendance_records where fixture_id=${q(rollbackFixture)}`,0);
+await check(`select count(*)::integer from admin_audit_events where entity_id=${q(rollbackFixture)}`,0);
+await check(`select status='RUNNING' and started_at is not null from fixture_clock_states where fixture_id=${q(rollbackFixture)}`);
+await check(`select status from fixture_blue_cards where fixture_id=${q(rollbackFixture)}`,'ACTIVE');
+await check(`select status from open_queue_bookings where game_id=${q(unaffectedSolo)} and profile_id=${q(committedClanPlayer)}`,'CONFIRMED');
 console.log(`single-active-game: ${checks} isolated behavioral checks passed`);
 await db.close();
