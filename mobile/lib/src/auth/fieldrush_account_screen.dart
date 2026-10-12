@@ -11,6 +11,7 @@ import 'fieldrush_auth_theme.dart';
 import 'fieldrush_phone_field.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
+import '../home/navigation_profile_scope.dart';
 import '../ui/field_loading.dart';
 
 class _AccountLoadingView extends StatelessWidget {
@@ -164,9 +165,13 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
   Future<void> _loadProfile() async {
     final repository = widget.profileRepository;
     if (repository == null) return;
+    final navigationProfile = FieldNavigationProfileScope.beginRead(context);
     try {
       final profile = await repository.getCurrentProfile();
-      if (mounted) setState(() => _profile = profile);
+      if (mounted) {
+        navigationProfile?.complete(profile);
+        setState(() => _profile = profile);
+      }
     } catch (_) {
       if (mounted) {
         setState(() => _photoError = 'Could not load your photo. Try again.');
@@ -219,6 +224,7 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
       );
       final updated = await repository.getCurrentProfile();
       if (mounted) {
+        FieldNavigationProfileScope.profileChanged(context, updated);
         setState(() {
           _profile = updated;
           _notice = reset ? 'Photo reset.' : 'Photo updated.';

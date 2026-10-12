@@ -2,6 +2,7 @@ import 'package:field/src/auth/auth_repository.dart';
 import 'package:field/src/auth/fieldrush_account.dart';
 import 'package:field/src/auth/fieldrush_account_screen.dart';
 import 'package:field/src/auth/fieldrush_recovery_screen.dart';
+import 'package:field/src/home/navigation_profile_scope.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:flutter/material.dart';
@@ -27,6 +28,7 @@ void main() {
     WidgetTester tester, {
     Size size = const Size(600, 2600),
     bool routed = false,
+    bool withNavigationAvatar = false,
     Widget? bottomNavigationBar,
     Widget Function(Future<bool> Function() confirmLeave)?
     bottomNavigationBuilder,
@@ -42,9 +44,24 @@ void main() {
       bottomNavigationBuilder: bottomNavigationBuilder,
     );
     final navigatorKey = GlobalKey<NavigatorState>();
+    if (withNavigationAvatar) {
+      auth.navigationUser = User(
+        id: 'player-1',
+        appMetadata: const {},
+        userMetadata: const {},
+        aud: 'authenticated',
+        createdAt: '2026-01-01T00:00:00Z',
+      );
+    }
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
+        builder: withNavigationAvatar
+            ? (context, child) => FieldNavigationProfileScope(
+                authRepository: auth,
+                child: child!,
+              )
+            : null,
         home: routed ? const Scaffold(body: Text('SIGNED OUT ROOT')) : screen,
       ),
     );
@@ -579,7 +596,11 @@ void main() {
       name: 'photo.png',
       mimeType: 'image/png',
     );
-    await showAccount(tester);
+    await showAccount(
+      tester,
+      withNavigationAvatar: true,
+      bottomNavigationBar: const _NavigationAvatarProbe(),
+    );
     profiles.bio = 'New bio from another screen';
     await tester.tap(find.byKey(const Key('fieldrush-change-photo')));
     await tester.pumpAndSettle();
@@ -589,13 +610,25 @@ void main() {
     expect(profiles.saved?.avatarUrl, 'https://example.com/uploaded.png');
     expect(find.text('Photo updated.'), findsOneWidget);
     expect(find.byKey(const Key('fieldrush-reset-photo')), findsOneWidget);
+    expect(
+      find.text('NAV AVATAR: https://example.com/uploaded.png'),
+      findsOneWidget,
+    );
   });
 
   testWidgets(
     'photo reset persists removal and retains other profile details',
     (tester) async {
       profiles.avatar = 'https://example.com/avatar.png';
-      await showAccount(tester);
+      await showAccount(
+        tester,
+        withNavigationAvatar: true,
+        bottomNavigationBar: const _NavigationAvatarProbe(),
+      );
+      expect(
+        find.text('NAV AVATAR: https://example.com/avatar.png'),
+        findsOneWidget,
+      );
       await tester.tap(find.byKey(const Key('fieldrush-reset-photo')));
       await tester.pumpAndSettle();
       expect(profiles.saved?.avatarUrl, '');
@@ -603,6 +636,7 @@ void main() {
       expect(profiles.uploadCalls, 0);
       expect(find.text('Photo reset.'), findsOneWidget);
       expect(find.byKey(const Key('fieldrush-reset-photo')), findsNothing);
+      expect(find.text('NAV AVATAR: HOME ICON'), findsOneWidget);
     },
   );
 
@@ -757,15 +791,28 @@ class _AccountRepository extends Fake implements FieldrushAccountRepository {
 class _AuthRepository extends Fake implements AuthRepository {
   int signOutCalls = 0;
   Object? signOutError;
+  User? navigationUser;
 
   @override
-  User? get currentUser => null;
+  User? get currentUser => navigationUser;
+
+  @override
+  Stream<AuthState> get authStateChanges => const Stream.empty();
 
   @override
   Future<void> signOut() async {
     signOutCalls++;
     if (signOutError != null) throw signOutError!;
   }
+}
+
+class _NavigationAvatarProbe extends StatelessWidget {
+  const _NavigationAvatarProbe();
+
+  @override
+  Widget build(BuildContext context) => Text(
+    'NAV AVATAR: ${FieldNavigationProfileScope.avatarUrlOf(context) ?? 'HOME ICON'}',
+  );
 }
 
 class _ProfileRepository extends Fake implements ProfileRepository {

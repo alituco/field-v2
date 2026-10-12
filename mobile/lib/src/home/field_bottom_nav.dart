@@ -1,110 +1,216 @@
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
+import 'native_glass_surface.dart';
+import 'navigation_profile_scope.dart';
 
-/// The floating, frosted navigation from the Fieldrush reference.
-class FieldBottomNav extends StatelessWidget {
+/// Compact glass dock. iOS can scrub across tabs before committing on release.
+class FieldBottomNav extends StatefulWidget {
   const FieldBottomNav({
     super.key,
     required this.selectedIndex,
     required this.onSelected,
+    this.homeAvatarUrl,
   });
 
   final int? selectedIndex;
   final ValueChanged<int> onSelected;
+  final String? homeAvatarUrl;
+
+  @override
+  State<FieldBottomNav> createState() => _FieldBottomNavState();
+}
+
+class _FieldBottomNavState extends State<FieldBottomNav> {
   static const _labels = ['Home', 'Fixtures', 'Clans', 'Ranks', 'You'];
+  final _dockKey = GlobalKey();
+  double? _scrubPosition;
+  bool _scrubInside = true;
+
+  void _moveScrub(Offset globalPosition) {
+    final box = _dockKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null) return;
+    final local = box.globalToLocal(globalPosition);
+    final width = (box.size.width - 8) / _labels.length;
+    final position = ((local.dx - 4) / width - .5).clamp(0.0, 4.0);
+    final inside = (Offset.zero & box.size).inflate(24).contains(local);
+    if (_scrubPosition?.round() != position.round() && inside) {
+      HapticFeedback.selectionClick();
+    }
+    setState(() {
+      _scrubPosition = position;
+      _scrubInside = inside;
+    });
+  }
+
+  void _endScrub() {
+    final target = _scrubInside ? _scrubPosition?.round() : null;
+    _cancelScrub();
+    // One callback per gesture: account/checkout routes may ask before leaving.
+    if (target != null && target != widget.selectedIndex) {
+      widget.onSelected(target);
+    }
+  }
+
+  void _cancelScrub() {
+    if (_scrubPosition == null) return;
+    setState(() {
+      _scrubPosition = null;
+      _scrubInside = true;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     if (MediaQuery.viewInsetsOf(context).bottom > 0) {
       return const SizedBox.shrink();
     }
+    final ios = Theme.of(context).platform == TargetPlatform.iOS;
+    final avatarUrl =
+        widget.homeAvatarUrl ??
+        FieldNavigationProfileScope.avatarUrlOf(context);
+    final preview = _scrubInside ? _scrubPosition : null;
+    final selected = preview?.round() ?? widget.selectedIndex;
+    final position = preview ?? widget.selectedIndex?.toDouble();
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final duration = reduceMotion || preview != null
+        ? Duration.zero
+        : const Duration(milliseconds: 240);
     return SafeArea(
       top: false,
-      minimum: const EdgeInsets.fromLTRB(13, 0, 13, 15),
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(32),
-          boxShadow: [
-            BoxShadow(
-              color: FieldrushAuthTheme.ink.withValues(alpha: .3),
-              blurRadius: 34,
-              spreadRadius: -10,
-              offset: const Offset(0, 14),
+      minimum: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      child: Align(
+        heightFactor: 1,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              boxShadow: [
+                BoxShadow(
+                  color: FieldrushAuthTheme.ink.withValues(alpha: .16),
+                  blurRadius: 24,
+                  spreadRadius: -7,
+                  offset: const Offset(0, 8),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(32),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: 30, sigmaY: 30),
-            child: Container(
-              key: const ValueKey('field-liquid-glass-nav'),
-              constraints: const BoxConstraints(minHeight: 64),
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
-              decoration: BoxDecoration(
-                color: FieldrushAuthTheme.cream.withValues(alpha: .58),
-                border: Border.all(color: Colors.white.withValues(alpha: .8)),
-                borderRadius: BorderRadius.circular(32),
-              ),
-              child: Row(
-                children: [
-                  for (var index = 0; index < _labels.length; index++)
-                    Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 1),
-                        child: Semantics(
-                          selected: selectedIndex == index,
-                          button: true,
-                          label: _labels[index],
-                          onTap: () => onSelected(index),
-                          excludeSemantics: true,
-                          child: AnimatedContainer(
-                            key: selectedIndex == index
-                                ? const ValueKey('field-liquid-glass-selection')
-                                : null,
-                            duration: const Duration(milliseconds: 180),
-                            decoration: BoxDecoration(
-                              color: selectedIndex == index
-                                  ? FieldrushAuthTheme.forest
-                                  : Colors.transparent,
-                              borderRadius: BorderRadius.circular(25),
-                              boxShadow: selectedIndex == index
-                                  ? [
-                                      BoxShadow(
-                                        color: FieldrushAuthTheme.ink
-                                            .withValues(alpha: .42),
-                                        offset: const Offset(0, 4),
-                                        blurRadius: 12,
-                                        spreadRadius: -2,
-                                      ),
-                                    ]
-                                  : null,
+            child: GestureDetector(
+              key: _dockKey,
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragStart: ios
+                  ? (details) => _moveScrub(details.globalPosition)
+                  : null,
+              onHorizontalDragUpdate: ios
+                  ? (details) => _moveScrub(details.globalPosition)
+                  : null,
+              onHorizontalDragEnd: ios ? (_) => _endScrub() : null,
+              onHorizontalDragCancel: ios ? _cancelScrub : null,
+              onLongPressStart: ios
+                  ? (details) => _moveScrub(details.globalPosition)
+                  : null,
+              onLongPressMoveUpdate: ios
+                  ? (details) => _moveScrub(details.globalPosition)
+                  : null,
+              onLongPressEnd: ios ? (_) => _endScrub() : null,
+              onLongPressCancel: ios ? _cancelScrub : null,
+              child: SizedBox(
+                key: const ValueKey('field-liquid-glass-nav'),
+                height: 56,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    const NativeGlassSurface(),
+                    if (position != null)
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => AnimatedAlign(
+                            alignment: Alignment(-1 + position / 2, 0),
+                            duration: duration,
+                            curve: Curves.easeOutCubic,
+                            child: AnimatedScale(
+                              scale: preview == null || reduceMotion ? 1 : 1.04,
+                              duration: reduceMotion
+                                  ? Duration.zero
+                                  : const Duration(milliseconds: 140),
+                              child: Container(
+                                key: const ValueKey(
+                                  'field-liquid-glass-selection',
+                                ),
+                                width: constraints.maxWidth / _labels.length,
+                                height: 46,
+                                decoration: BoxDecoration(
+                                  color: ios
+                                      ? FieldrushAuthTheme.forest.withValues(
+                                          alpha: .12,
+                                        )
+                                      : FieldrushAuthTheme.forest,
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: ios
+                                      ? Border.all(
+                                          color: Colors.white.withValues(
+                                            alpha: .75,
+                                          ),
+                                        )
+                                      : null,
+                                  gradient: ios
+                                      ? LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            Colors.white.withValues(alpha: .45),
+                                            FieldrushAuthTheme.forest
+                                                .withValues(alpha: .10),
+                                          ],
+                                        )
+                                      : null,
+                                ),
+                              ),
                             ),
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                key: ValueKey('field-bottom-nav-item-$index'),
-                                borderRadius: BorderRadius.circular(25),
-                                onTap: () => onSelected(index),
-                                child: SizedBox(
-                                  height: 52,
-                                  width: double.infinity,
-                                  child: Center(
+                          ),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Row(
+                        children: [
+                          for (var index = 0; index < _labels.length; index++)
+                            Expanded(
+                              child: Semantics(
+                                selected: widget.selectedIndex == index,
+                                button: true,
+                                label: _labels[index],
+                                onTap: () => widget.onSelected(index),
+                                excludeSemantics: true,
+                                child: Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    key: ValueKey(
+                                      'field-bottom-nav-item-$index',
+                                    ),
+                                    borderRadius: BorderRadius.circular(24),
+                                    onTap: () => widget.onSelected(index),
                                     child: SizedBox(
-                                      key: ValueKey(
-                                        'field-bottom-nav-icon-$index',
-                                      ),
-                                      width: 36,
-                                      height: 36,
-                                      child: CustomPaint(
-                                        painter: _NavIcon(
-                                          index,
-                                          selectedIndex == index
-                                              ? Colors.white
-                                              : const Color(0xFF414A42),
+                                      height: 48,
+                                      width: double.infinity,
+                                      child: Center(
+                                        child: SizedBox(
+                                          key: ValueKey(
+                                            'field-bottom-nav-icon-$index',
+                                          ),
+                                          width: 32,
+                                          height: 32,
+                                          child: _icon(
+                                            index,
+                                            selected == index && !ios
+                                                ? Colors.white
+                                                : selected == index
+                                                ? FieldrushAuthTheme.forest
+                                                : const Color(0xFF414A42),
+                                            avatarUrl,
+                                          ),
                                         ),
                                       ),
                                     ),
@@ -112,15 +218,35 @@ class FieldBottomNav extends StatelessWidget {
                                 ),
                               ),
                             ),
-                          ),
-                        ),
+                        ],
                       ),
                     ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _icon(int index, Color color, String? avatarUrl) {
+    final fallback = CustomPaint(painter: _NavIcon(index, color));
+    if (index != 0 || avatarUrl == null || avatarUrl.trim().isEmpty) {
+      return fallback;
+    }
+    return ClipOval(
+      child: Image.network(
+        avatarUrl.trim(),
+        key: const ValueKey('field-home-nav-avatar'),
+        width: 32,
+        height: 32,
+        fit: BoxFit.cover,
+        excludeFromSemantics: true,
+        frameBuilder: (context, child, frame, synchronous) =>
+            frame == null && !synchronous ? fallback : child,
+        errorBuilder: (context, error, stackTrace) => fallback,
       ),
     );
   }

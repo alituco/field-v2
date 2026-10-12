@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
+import '../home/navigation_profile_scope.dart';
 
 import '../auth/fieldrush_account.dart';
 import '../auth/fieldrush_auth_theme.dart';
@@ -98,6 +99,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
 
   Future<void> _load() async {
     final version = ++_loadVersion;
+    final navigationProfile = FieldNavigationProfileScope.beginRead(context);
     setState(() {
       // A refresh must not replace an already loaded rank/profile with a
       // skeleton on every navigation. First load still uses the full skeleton.
@@ -127,6 +129,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
         optional(widget.settingsRepository.loadWallet()),
       ]);
       if (!mounted || version != _loadVersion) return;
+      navigationProfile?.complete(data[0] as PlayerProfile);
       setState(() {
         _profile = data[0] as PlayerProfile;
         _rating = data[1] as PlayerRatingLeaderboardEntry?;
