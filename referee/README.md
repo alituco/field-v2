@@ -127,6 +127,11 @@ audited reason. Started, cancelled, under-review and legacy games are read-only.
 payment-quote preservation and original-amount refunds. Web unit/browser tests
 cover validation, audit requests and the payment history UI.
 
+Apply `20261011000400_enforce_bookable_game_prices.sql` with these changes.
+New one-off games and new or edited schedule prices accept free entry or
+$0.50–$100 in whole cents, matching Stripe's minimum charge. Historical games
+and payments retain their recorded prices and remain operable.
+
 ## Current Flow
 
 - Referee signs in with phone OTP.

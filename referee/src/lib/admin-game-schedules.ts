@@ -57,7 +57,7 @@ export function parseGameDuration(value: unknown): number {
 export function parseSchedulePrice(value: unknown): number {
   if ((typeof value !== "string" && typeof value !== "number") || !/^\d{1,3}(?:\.\d{1,2})?$/.test(String(value).trim())) throw new Error("Price must be a valid USD amount with up to 2 decimals.");
   const mills = Math.round(Number(value) * 1000);
-  if (!Number.isSafeInteger(mills) || mills < 0 || mills > 100000) throw new Error("Price must be between $0 and $100 USD.");
+  if (!Number.isSafeInteger(mills) || mills > 100000 || (mills !== 0 && mills < 500)) throw new Error("Price must be $0 for a free game, or between $0.50 and $100 USD.");
   return mills;
 }
 

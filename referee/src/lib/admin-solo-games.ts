@@ -60,8 +60,8 @@ function parsePriceFils(value: unknown) {
     throw new Error("Price must be a valid USD amount with up to 2 decimals.");
   }
   const priceFils = Math.round(Number(raw) * 1000);
-  if (!Number.isSafeInteger(priceFils) || priceFils < 0 || priceFils > 100_000) {
-    throw new Error("Price must be between $0 and $100 USD.");
+  if (!Number.isSafeInteger(priceFils) || priceFils > 100_000 || (priceFils !== 0 && priceFils < 500)) {
+    throw new Error("Price must be $0 for a free game, or between $0.50 and $100 USD.");
   }
   return priceFils;
 }

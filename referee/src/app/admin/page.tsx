@@ -3506,12 +3506,15 @@ function SoloGameManagementDialog({
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const creating = dialog.kind === "create";
+  const priceFils = /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim())
+    ? Math.round(Number(priceUsd.trim()) * 1000) : null;
+  const validPrice = priceFils !== null && (priceFils === 0 || priceFils >= 500 && priceFils <= 100_000);
   const createReady =
     !!selectedField &&
     matchDate.length === 10 &&
     /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(kickoffTime) &&
     Number.isInteger(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 180 &&
-    /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim()) &&
+    validPrice &&
     ageLabel.trim().length >= 2;
   const removeReady =
     reason.trim().length >= 8 &&
@@ -3569,12 +3572,17 @@ function SoloGameManagementDialog({
             <label className="admin-modal-field">
               <span>Price per player (USD)</span>
               <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
                 inputMode="decimal"
+                aria-invalid={!validPrice}
                 onChange={(event) => setPriceUsd(event.target.value)}
                 placeholder="13.00"
                 value={priceUsd}
               />
-              <small>Defaults to $13.00. Set this game’s price here (up to 2 decimals).</small>
+              <small>Defaults to $13.00. Use $0 for free, or $0.50–$100 with up to 2 decimals.</small>
             </label>
           </div>
           <label className="admin-modal-field">

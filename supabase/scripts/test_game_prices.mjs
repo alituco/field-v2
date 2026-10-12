@@ -91,10 +91,20 @@ await db.exec(`create trigger enforce_capacity before insert or update of game_i
 for each row execute function enforce_open_queue_booking_capacity();`);
 const migration = await source('20261011000300_edit_solo_game_prices.sql');
 await db.exec(migration);
+// A pre-upgrade low-price game must remain cancellable, without being repriced.
+const legacyLow = '20000000-0000-0000-0000-000000000001';
+await db.exec(`insert into open_queue_games(id,price_fils) values('${legacyLow}',490)`);
+await db.exec(await source('20261011000400_enforce_bookable_game_prices.sql'));
 let checks=0;
 async function value(sql) { return Object.values((await db.query(sql)).rows[0])[0]; }
 async function check(sql, expected=true) { assert.deepEqual(await value(sql),expected,sql); checks++; }
 async function rejects(sql,message) { await assert.rejects(db.exec(sql),message); checks++; }
+await db.exec(`update open_queue_games set status='CANCELLED' where id='${legacyLow}'`);
+await check(`select status='CANCELLED' and price_fils=490 from open_queue_games where id='${legacyLow}'`);
+await rejects(`insert into open_queue_games(price_fils) values(490)`, /free or between 0.50/);
+await rejects(`update open_queue_games set price_fils=480 where id='${legacyLow}'`, /free or between 0.50/);
+await db.exec(`insert into open_queue_games(price_fils) values(0),(500)`);
+await check(`select count(*)::integer from open_queue_games where price_fils in (0,500)`,2);
 const update = (id,price,expected=13000,actor=admin,reason='Adjust price for future bookings') =>
   `select admin_update_open_queue_game_price(${q(actor)},${q(id)},${price??'null'},${expected??'null'},${q(reason)})`;
 async function game(extra={}) {

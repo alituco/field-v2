@@ -53,11 +53,14 @@ test("dates, kickoff and duration remain strictly validated", () => {
   for (const matchDate of ["2099-02-29", "2099-04-31", "2000-01-01"]) assert.throws(() => parseAdminSoloGameCreateInput({ ...base, matchDate }), /date|future/);
 });
 
-test("USD price defaults to13 and stays configurable in whole cents", () => {
+test("USD price defaults to $13 and accepts free games or whole cents from $0.50 to $100", () => {
   const base = { matchDate: "2099-07-24", fieldId, ageLabel: "18+" };
   assert.equal(parseAdminSoloGameCreateInput(base).priceFils, 13000);
   assert.equal(parseAdminSoloGameCreateInput({ ...base, priceUsd: "9.99" }).priceFils, 9990);
-  for (const priceUsd of ["13.001", "-1", "101", "NaN", "1e2"]) {
+  for (const priceUsd of ["0", "0.00", 0, "0.50", 0.5, "100.00", 100]) {
+    assert.equal(parseAdminSoloGameCreateInput({ ...base, priceUsd }).priceFils, Math.round(Number(priceUsd) * 1000));
+  }
+  for (const priceUsd of ["0.01", "0.49", 0.01, 0.49, "13.001", "-1", "100.01", "101", "NaN", "1e2"]) {
     assert.throws(() => parseAdminSoloGameCreateInput({ ...base, priceUsd }), /Price/);
   }
   assert.throws(() => parseAdminSoloGameCreateInput({ ...base, priceBhd: "3.000" }), /Refresh/);

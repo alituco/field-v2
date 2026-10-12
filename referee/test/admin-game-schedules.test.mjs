@@ -31,6 +31,18 @@ test("schedule input rejects invalid and duplicate weekdays, dates, money, durat
   ]) assert.throws(() => parse({ ...base, ...invalid }), JSON.stringify(invalid));
 });
 
+test("schedule creation and partial price edits accept free games or whole cents from $0.50 to $100", () => {
+  for (const priceUsd of ["0", "0.00", 0, "0.50", 0.5, "100.00", 100]) {
+    const expected = Math.round(Number(priceUsd) * 1000);
+    assert.equal(parse({ ...base, priceUsd }).price_fils, expected);
+    assert.deepEqual(parse({ priceUsd }, true), { price_fils: expected });
+  }
+  for (const priceUsd of ["0.01", "0.49", 0.01, 0.49, "0.001", "100.01"]) {
+    assert.throws(() => parse({ ...base, priceUsd }), /Price/);
+    assert.throws(() => parse({ priceUsd }, true), /Price/);
+  }
+});
+
 test("pausing only changes active state; partial edits cannot silently clear missing settings", () => {
   assert.deepEqual(parse({ isActive: false }, true), { is_active: false });
   assert.deepEqual(parse({ priceUsd: "0" }, true), { price_fils: 0 });

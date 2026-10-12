@@ -70,7 +70,35 @@ const allDays = [1,2,3,4,5,6,7];
 const details = {name:'Everyday football',field_id:field,weekdays:allDays,kickoff_time:'18:00',starts_on:tomorrow,booking_window_days:7};
 async function save(values, id = null, actor = admin) { return value(`select admin_save_game_schedule(${q(actor)},${id?q(id):'null'},${json(values)})`); }
 async function generate(id) { return value(`select admin_generate_game_schedule('${admin}',${q(id)})`); }
-const createGame = (pitch, timestamp, minutes=60, actor=admin) => `select admin_create_open_queue_game(${q(actor)},${q(pitch)}::uuid,${q(timestamp)}::timestamptz,13000,'18+',${minutes})`;
+const createGame = (pitch, timestamp, minutes=60, actor=admin, price=13000) => `select admin_create_open_queue_game(${q(actor)},${q(pitch)}::uuid,${q(timestamp)}::timestamptz,${price},'18+',${minutes})`;
+
+// Seed the pre-upgrade state before loading the additive minimum-price guard.
+const legacyLow = await value(`insert into game_schedules(name,field_id,weekdays,kickoff_time,starts_on,booking_window_days,price_fils,created_by)
+values('Legacy low-priced rule',${q(field3)},array[1,2,3,4,5,6,7],'05:00',${q(tomorrow)},7,490,'${admin}') returning id`);
+await db.exec(await source('20261011000400_enforce_bookable_game_prices.sql'));
+await save({is_active:false},legacyLow);
+await check(`select not is_active and price_fils=490 from game_schedules where id=${q(legacyLow)}`);
+await assert.rejects(save({price_fils:480},legacyLow), /free or between 0.50/); checks++;
+await save({is_active:true},legacyLow);
+await check(`select count(*)::integer from game_schedule_occurrences where schedule_id=${q(legacyLow)} and status='CONFLICT'
+and error_message like '%free or between 0.50%'`,6);
+await check(`select count(*)::integer from game_schedule_occurrences where schedule_id=${q(legacyLow)} and game_id is not null`,0);
+await save({price_fils:500},legacyLow);
+await check(`select count(*)::integer from game_schedule_occurrences o join open_queue_games g on g.id=o.game_id
+where o.schedule_id=${q(legacyLow)} and o.status='CREATED' and g.price_fils=500`,6);
+const freeSchedule = await save({...details,name:'Free schedule',field_id:field3,is_active:false,price_fils:0});
+await check(`select price_fils=0 from game_schedules where id=${q(freeSchedule.id)}`);
+await assert.rejects(save({...details,name:'Unbookable schedule',field_id:field3,is_active:false,price_fils:490}), /free or between 0.50/); checks++;
+const minimumSchedule = await save({...details,name:'Minimum schedule',field_id:field3,is_active:false,price_fils:500});
+await check(`select price_fils=500 from game_schedules where id=${q(minimumSchedule.id)}`);
+await assert.rejects(save({price_fils:490},minimumSchedule.id), /free or between 0.50/); checks++;
+await save({price_fils:0},minimumSchedule.id);
+await check(`select price_fils=0 from game_schedules where id=${q(minimumSchedule.id)}`);
+await db.exec(createGame(field3,'2099-03-01T11:00:00-07:00',60,admin,0));
+await check(`select price_fils=0 from open_queue_games where starts_at='2099-03-01T11:00:00-07:00'`);
+await rejects(createGame(field3,'2099-03-01T12:00:00-07:00',60,admin,490), /free or between 0.50/);
+await db.exec(createGame(field3,'2099-03-01T12:00:00-07:00',60,admin,500));
+await check(`select price_fils=500 from open_queue_games where starts_at='2099-03-01T12:00:00-07:00'`);
 
 await check(`select format_version='LEGACY_6V6' and currency='BHD' and field_id is null and starts_at='2025-10-03T17:30Z' from open_queue_games where id='${legacy}'`);
 // One-off Saturday, all seven weekdays, whole-minute arbitrary kickoffs and duration.

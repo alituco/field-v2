@@ -18,11 +18,14 @@ select exists(select 1 from referee_profiles where profile_id=$1 and role='admin
 create function public.set_updated_at() returns trigger language plpgsql as $$begin new.updated_at=now();return new;end$$;
 create table public.admin_audit_events(actor_referee_id uuid,action text,entity_type text,entity_id uuid,reason text,before_state jsonb,after_state jsonb);
 create table public.open_queue_games(id uuid primary key default gen_random_uuid(),status text default 'OPEN',venue text not null,
-starts_at timestamptz,ends_at timestamptz,timezone text default 'America/Phoenix',price_fils integer,age_label text,created_by uuid);
+starts_at timestamptz,ends_at timestamptz,timezone text default 'America/Phoenix',price_fils integer not null default 13000,
+currency text not null default 'USD',format_version text not null default 'FIELDRUSH_7V7',age_label text,created_by uuid);
+create table public.game_schedules(id uuid primary key default gen_random_uuid(),price_fils integer not null default 13000);
 insert into open_queue_games(id,venue,starts_at,ends_at) values('${legacy}','Historical free-text venue','2025-10-01Z','2025-10-02Z');
 `);
 const migration = await readFile(new URL('../migrations/20261011000100_saved_fields_and_game_locations.sql', import.meta.url), 'utf8');
 await db.exec(migration);
+await db.exec(await readFile(new URL('../migrations/20261011000400_enforce_bookable_game_prices.sql', import.meta.url), 'utf8'));
 let checks = 0;
 async function check(sql, expected = true) {
   const { rows } = await db.query(sql); assert.equal(Object.values(rows[0])[0], expected, sql); checks++;
@@ -69,6 +72,11 @@ await db.exec(`select admin_save_field('${admin}','${field}','{"is_active":true}
 await db.exec(`select admin_create_open_queue_game('${admin}','${field}'::uuid,'2099-10-30T03:30:00Z',13000,'18+')`);
 await check(`select venue='Renamed pitch' and location_address='456 Future Street' and location_latitude=33.5
  from open_queue_games where starts_at='2099-10-30T03:30:00Z'`);
+await db.exec(`select admin_create_open_queue_game('${admin}','${field}'::uuid,'2099-11-10T03:30:00Z',0,'18+')`);
+await check(`select price_fils=0 from open_queue_games where starts_at='2099-11-10T03:30:00Z'`);
+await rejects(`select admin_create_open_queue_game('${admin}','${field}'::uuid,'2099-11-11T03:30:00Z',490,'18+')`, /free or between 0.50/);
+await db.exec(`select admin_create_open_queue_game('${admin}','${field}'::uuid,'2099-11-11T03:30:00Z',500,'18+')`);
+await check(`select price_fils=500 from open_queue_games where starts_at='2099-11-11T03:30:00Z'`);
 await rejects(`delete from fields where id='${field}'`, /foreign key constraint/);
 await rejects(`insert into open_queue_games(venue,location_latitude,location_longitude) values('No field',1,2)`, /saved field/);
 await db.exec(`insert into open_queue_games(venue,starts_at) values('Synthetic test helper','2099-11-01T03:30:00Z')`);
