@@ -59,6 +59,7 @@ class FieldBottomNav extends StatelessWidget {
                           selected: selectedIndex == index,
                           button: true,
                           label: _labels[index],
+                          onTap: () => onSelected(index),
                           excludeSemantics: true,
                           child: AnimatedContainer(
                             key: selectedIndex == index
@@ -88,42 +89,25 @@ class FieldBottomNav extends StatelessWidget {
                                 key: ValueKey('field-bottom-nav-item-$index'),
                                 borderRadius: BorderRadius.circular(25),
                                 onTap: () => onSelected(index),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 7,
-                                  ),
-                                  child: Column(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      SizedBox(
-                                        width: 21,
-                                        height: 21,
-                                        child: CustomPaint(
-                                          painter: _NavIcon(
-                                            index,
-                                            selectedIndex == index
-                                                ? Colors.white
-                                                : const Color(0xFF414A42),
-                                          ),
-                                        ),
+                                child: SizedBox(
+                                  height: 52,
+                                  width: double.infinity,
+                                  child: Center(
+                                    child: SizedBox(
+                                      key: ValueKey(
+                                        'field-bottom-nav-icon-$index',
                                       ),
-                                      const SizedBox(height: 4),
-                                      Text(
-                                        _labels[index],
-                                        maxLines: 1,
-                                        style: TextStyle(
-                                          fontFamily: 'PlusJakartaSans',
-                                          fontSize: 10,
-                                          height: 1.1,
-                                          fontWeight: selectedIndex == index
-                                              ? FontWeight.w800
-                                              : FontWeight.w700,
-                                          color: selectedIndex == index
+                                      width: 36,
+                                      height: 36,
+                                      child: CustomPaint(
+                                        painter: _NavIcon(
+                                          index,
+                                          selectedIndex == index
                                               ? Colors.white
                                               : const Color(0xFF414A42),
                                         ),
                                       ),
-                                    ],
+                                    ),
                                   ),
                                 ),
                               ),

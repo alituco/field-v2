@@ -39,7 +39,7 @@ await verifyFinalRoleRace();
 await verifyWaitlistStateIsRejected();
 await verifyFullGameReopensWithPolicyRefund();
 console.log(
-  "Open Queue verified locally: USD 13, 7v7 hard caps, atomic final spot, no waitlist, original-method policy refund with no wallet credit, and FULL→OPEN.",
+  "Open Queue verified locally: USD 13, 7v7 hard caps, atomic final spot, one upcoming/active game total, no waitlist, original-method policy refund with no wallet credit, and FULL→OPEN.",
 );
 
 async function verifyFinalRoleRace() {
@@ -75,6 +75,46 @@ async function verifyFinalRoleRace() {
       .includes("position just filled"),
     "The losing booking should receive the position-filled business error.",
   );
+
+  // A different non-overlapping day is still a second registration. Verify
+  // both the player-facing preflight and direct fixture insertion reject it.
+  const nextGame = await createGame(futurePhoenixOpenQueueStart(3), "LIMIT");
+  const winningClient = results[0].data?.status === "FINALIZED"
+    ? firstClient
+    : secondClient;
+  const { error: limitError } = await winningClient.rpc(
+    "preview_open_queue_booking_cost",
+    { game_id_to_book: nextGame.id, role_to_book: "DEF" },
+  );
+  assert(
+    limitError?.message.includes("one upcoming or active game") === true,
+    "A player with one registered game must not start checkout for another day.",
+  );
+  let directRejected = false;
+  try {
+    await insertBooking(nextGame.id, participants[2], "DEF", "verify-limit");
+  } catch (error) {
+    assert(
+      (error as { message?: string }).message?.includes(
+        "one upcoming or active game",
+      ) === true,
+      "Direct second-game registration must fail at the same one-game rule.",
+    );
+    directRejected = true;
+  }
+  assert(directRejected, "Direct registration bypassed the one-game limit.");
+
+  // Retire this completed synthetic scenario before the next scenario reuses
+  // its participants. Never bypass the registration guard or erase payments.
+  const { error: retireError } = await admin.from("open_queue_games").update({
+    status: "CANCELLED",
+    cancellation_code: "ADMIN_DECISION",
+    cancellation_reason: "Open Queue final-spot verification completed.",
+    cancelled_at: new Date().toISOString(),
+    cancelled_by: first.id,
+    cancellation_context: { source: "OPEN_QUEUE_VERIFICATION" },
+  }).eq("id", game.id);
+  if (retireError) throw retireError;
 }
 
 async function prepareCapturedPayment(

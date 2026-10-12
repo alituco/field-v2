@@ -499,4 +499,6 @@ class _Discovery implements HomeDiscoveryRepository {
   Future<List<HomeNotification>> notifications() async => [];
   @override
   Future<void> markRead(String id) async {}
+  @override
+  Future<void> dismiss(String id) async {}
 }

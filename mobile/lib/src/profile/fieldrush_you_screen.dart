@@ -10,6 +10,7 @@ import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../leaderboard/leaderboard.dart';
 import '../leaderboard/leaderboard_repository.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability.dart';
 import '../reliability/reliability_repository.dart';
@@ -98,7 +99,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   Future<void> _load() async {
     final version = ++_loadVersion;
     setState(() {
-      _loading = true;
+      // A refresh must not replace an already loaded rank/profile with a
+      // skeleton on every navigation. First load still uses the full skeleton.
+      _loading = _profile == null;
       _error = null;
     });
     Future<T?> optional<T>(Future<T> future) async {
@@ -231,9 +234,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       final detail = game.isSolo
           ? await widget.openQueueRepository.getMatchDetail(game.id)
           : null;
-      final fixture =
-          detail?.toFixture() ??
-          await widget.fixtureRepository.getFixture(game.id);
+      final fixture = game.isSolo
+          ? null
+          : await widget.fixtureRepository.getFixture(game.id);
       if (!mounted ||
           !historyContext.mounted ||
           ModalRoute.of(historyContext)?.isCurrent != true) {
@@ -244,32 +247,49 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
           .firstOrNull;
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
-          builder: (_) => FixtureDetailScreen(
-            fixture: fixture,
-            fixtureRepository: widget.fixtureRepository,
-            clanRepository: widget.clanRepository,
-            profileRepository: widget.profileRepository,
-            myClanMembership: null,
-            sourceLabel: game.typeLabel,
-            showTeamRatings: !game.isSolo,
-            playerRatingUpdate: event == null
-                ? detail?.viewerRatingUpdate
-                : FixturePlayerRatingUpdate(
-                    ratingBefore: event.ratingBefore,
-                    ratingChange: event.ratingChange,
-                    ratingAfter: event.ratingAfter,
-                    result: event.result,
-                    scoreMargin: event.scoreMargin,
-                    marginMultiplier: event.marginMultiplier,
-                    baseRatingChange: event.baseRatingChange,
-                    marginBonusApplied: event.marginBonusApplied,
+          builder: (_) => game.isSolo
+              ? FieldrushGameDetailScreen(
+                  repository: widget.openQueueRepository,
+                  gameId: game.id,
+                  initialDetail: detail,
+                  profileRepository: widget.profileRepository,
+                  fixtureRepository: widget.fixtureRepository,
+                  playerRatingUpdate: event == null
+                      ? detail?.viewerRatingUpdate
+                      : FixturePlayerRatingUpdate(
+                          ratingBefore: event.ratingBefore,
+                          ratingChange: event.ratingChange,
+                          ratingAfter: event.ratingAfter,
+                          result: event.result,
+                          scoreMargin: event.scoreMargin,
+                          marginMultiplier: event.marginMultiplier,
+                          baseRatingChange: event.baseRatingChange,
+                          marginBonusApplied: event.marginBonusApplied,
+                        ),
+                )
+              : Theme(
+                  data: FieldrushAuthTheme.theme(context),
+                  child: FixtureDetailScreen(
+                    fixture: fixture!,
+                    fixtureRepository: widget.fixtureRepository,
+                    clanRepository: widget.clanRepository,
+                    profileRepository: widget.profileRepository,
+                    myClanMembership: null,
+                    sourceLabel: game.typeLabel,
+                    playerRatingUpdate: event == null
+                        ? null
+                        : FixturePlayerRatingUpdate(
+                            ratingBefore: event.ratingBefore,
+                            ratingChange: event.ratingChange,
+                            ratingAfter: event.ratingAfter,
+                            result: event.result,
+                            scoreMargin: event.scoreMargin,
+                            marginMultiplier: event.marginMultiplier,
+                            baseRatingChange: event.baseRatingChange,
+                            marginBonusApplied: event.marginBonusApplied,
+                          ),
                   ),
-            refreshFixture: game.isSolo
-                ? () async => (await widget.openQueueRepository.getMatchDetail(
-                    game.id,
-                  )).toFixture()
-                : null,
-          ),
+                ),
         ),
       );
     } catch (error) {

@@ -86,7 +86,7 @@ declare
   players uuid[]:=array[gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid()];
   intents uuid[]:=array[gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid()];
   game uuid:=gen_random_uuid(); free_game uuid:=gen_random_uuid(); overlap_game uuid:=gen_random_uuid(); quote jsonb; result jsonb;
-  booking uuid; refund uuid; refund2 uuid; item integer; rejected boolean; prior_wallet bigint;
+  booking uuid; free_booking uuid; refund uuid; refund2 uuid; item integer; rejected boolean; prior_wallet bigint;
   start_at timestamptz; row_booking public.open_queue_bookings%rowtype; lease jsonb; first_refund uuid; settings jsonb;
 begin
   if to_regclass('public.tap_payment_intents') is not null or to_regprocedure('public.finalize_tap_payment_intent(uuid)') is not null then
@@ -171,6 +171,31 @@ begin
       values(intents[item],players[item],'SOLO_BOOKING','USD',13000,jsonb_build_object('game_id',game,'role','GK'),quote,
         'verify_'||intents[item],'pi_verify_'||intents[item]);
   end loop;
+  -- Checkout leases span different days, not just the same game's unique key.
+  -- Provider confirmation, not elapsed time alone, is required to release one.
+  perform set_config('request.jwt.claim.sub',players[1]::text,true);
+  rejected:=false;
+  begin perform public.preview_open_queue_booking_cost(free_game,'DEF');
+    exception when raise_exception then rejected:=position('earlier game checkout' in sqlerrm)>0; end;
+  if not rejected then raise exception 'A pending checkout allowed a second game preflight.'; end if;
+  rejected:=false;
+  begin
+    insert into public.payment_intents(profile_id,purpose,currency,amount_fils,payload,quote_snapshot,transaction_reference)
+    values(players[1],'SOLO_BOOKING','USD',13000,jsonb_build_object('game_id',free_game,'role','DEF'),quote,'verify_second_lease_'||gen_random_uuid());
+  exception when raise_exception then rejected:=position('earlier game checkout' in sqlerrm)>0; end;
+  if not rejected then raise exception 'A stale quote created a second game checkout lease.'; end if;
+  rejected:=false;
+  begin
+    insert into public.payment_intents(profile_id,purpose,currency,amount_fils,payload,quote_snapshot,transaction_reference)
+    values(players[1],'SOLO_BOOKING','USD',13000,jsonb_build_object('game_id',game,'role','DEF'),quote,'verify_same_lease_'||gen_random_uuid());
+  exception when unique_violation then rejected:=true; end;
+  if not rejected then raise exception 'A same-game checkout retry created a second lease.'; end if;
+  update public.payment_intents set expires_at=clock_timestamp()-interval '1 minute' where id=intents[1];
+  rejected:=false;
+  begin perform public.preview_open_queue_booking_cost(free_game,'DEF');
+    exception when raise_exception then rejected:=position('earlier game checkout' in sqlerrm)>0; end;
+  if not rejected then raise exception 'Elapsed expiry silently released an unconfirmed provider checkout.'; end if;
+  update public.payment_intents set expires_at=clock_timestamp()+interval '20 minutes' where id=intents[1];
   rejected:=false;
   begin update public.payment_intents set amount_fils=14000 where id=intents[1]; exception when invalid_parameter_value then rejected:=true; end;
   if not rejected then raise exception 'A payment quote could be changed.'; end if;
@@ -194,6 +219,10 @@ begin
   rejected:=false;
   begin perform public.preview_open_queue_booking_cost(overlap_game,'DEF'); exception when raise_exception then rejected:=position('another game at this time' in sqlerrm)>0; end;
   if not rejected then raise exception 'An overlapping booking could begin paid checkout.'; end if;
+  rejected:=false;
+  begin perform public.preview_open_queue_booking_cost(free_game,'DEF');
+    exception when raise_exception then rejected:=position('one upcoming or active game' in sqlerrm)>0; end;
+  if not rejected then raise exception 'A non-overlapping second game could begin checkout.'; end if;
   if (public.record_stripe_payment_capture(intents[1],'pi_verify_'||intents[1],'ch_verify_'||intents[1],1300,'USD','VISA')->>'resource_id')::uuid<>booking
     or (select count(*) from public.open_queue_bookings where payment_intent_id=intents[1])<>1 then
     raise exception 'Repeated capture created a duplicate booking.'; end if;
@@ -254,8 +283,20 @@ begin
 
   result:=public.finalize_free_checkout(players[5],'SOLO_BOOKING',jsonb_build_object('game_id',free_game,'role','DEF'));
   if result->>'status'<>'FINALIZED' or result->>'payment_method'<>'FREE' then raise exception 'Free booking required a provider charge.'; end if;
-  rejected:=false; begin perform public.finalize_free_checkout(players[5],'SOLO_BOOKING',jsonb_build_object('game_id',game,'role','DEF'));
-    exception when raise_exception then rejected:=true; end;
+  free_booking:=(result->>'resource_id')::uuid;
+  rejected:=false;
+  begin perform public.finalize_free_checkout(players[5],'SOLO_BOOKING',jsonb_build_object('game_id',game,'role','DEF'));
+    exception when raise_exception then rejected:=position('one upcoming or active game' in sqlerrm)>0; end;
+  if not rejected then raise exception 'Free checkout bypassed the one-game limit.'; end if;
+  if (public.finalize_free_checkout(players[5],'SOLO_BOOKING',jsonb_build_object('game_id',free_game,'role','DEF'))->>'resource_id')::uuid<>free_booking then
+    raise exception 'Free checkout retry was not idempotent under the one-game limit.'; end if;
+  -- Release the sole commitment before the independent synthetic paid case.
+  perform set_config('request.jwt.claim.sub',players[5]::text,true);
+  row_booking:=public.cancel_open_queue_booking(free_booking);
+  if row_booking.status<>'CANCELLED' then raise exception 'Free booking cancellation did not release the player.'; end if;
+  rejected:=false;
+  begin perform public.finalize_free_checkout(players[5],'SOLO_BOOKING',jsonb_build_object('game_id',game,'role','DEF'));
+    exception when raise_exception then rejected:=position('requires payment' in sqlerrm)>0; end;
   if not rejected then raise exception 'Free checkout bypassed a paid game.'; end if;
 
   -- Hosted staging's synthetic provider uses the SAME domain finalization and
@@ -316,7 +357,7 @@ begin
   update public.payment_webhook_events set status='PROCESSED',processed_at=now(),locked_until=null where event_id='evt_verify_'||game;
   lease:=public.claim_payment_webhook('evt_verify_'||game,'payment_intent.succeeded','pi_verify_'||intents[1]);
   if lease->>'claimed'<>'false' or lease->>'status'<>'PROCESSED' then raise exception 'Processed webhook was replayed.'; end if;
-  raise notice 'Stripe SQL verified: fixture pricing column ACLs, permissions, paused clans, admin pricing, immutable USD quotes, idempotency, capacity, cancellation, refund rounding, retry generations, external-refund review, account deletion guard, staging E2E, free checkout and webhook lease.';
+  raise notice 'Stripe SQL verified: fixture pricing column ACLs, permissions, paused clans, admin pricing, immutable USD quotes, one-game preflight and checkout leases, idempotency, capacity, cancellation, refund rounding, retry generations, external-refund review, account deletion guard, staging E2E, free checkout and webhook lease.';
 end;
 $verify$;
 rollback;

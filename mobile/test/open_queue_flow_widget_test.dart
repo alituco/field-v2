@@ -170,11 +170,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Anywhere'), findsOneWidget);
     expect(find.text('See matching games'), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Fixtures'), findsOneWidget);
-    expect(find.text('Clans'), findsOneWidget);
-    expect(find.text('Ranks'), findsOneWidget);
-    expect(find.text('You'), findsOneWidget);
+    for (final label in ['Home', 'Fixtures', 'Clans', 'Ranks', 'You']) {
+      expect(find.text(label), findsNothing);
+      expect(find.bySemanticsLabel(label), findsOneWidget);
+    }
   });
 
   testWidgets('games screen separates the main role from faster backup games', (
@@ -207,7 +206,7 @@ void main() {
     expect(find.textContaining('waitlist', findRichText: true), findsNothing);
   });
 
-  testWidgets('one existing booking leaves a clear second-game slot', (
+  testWidgets('one existing booking replaces the wizard with that game', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -224,14 +223,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('open-queue-one-of-two-booked')),
-      findsOneWidget,
-    );
-    expect(find.text('1 OF 2 GAMES BOOKED'), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-queue-game-limit')), findsOneWidget);
+    expect(find.text('ONE GAME AT A TIME'), findsOneWidget);
     expect(find.textContaining('One slot left'), findsNothing);
-    expect(find.textContaining(booking.game.prominentDateLabel), findsNothing);
-    expect(find.text('WHERE DO YOU PLAY?'), findsOneWidget);
+    expect(find.text('You’re already in a game'), findsOneWidget);
+    expect(find.text('WHERE DO YOU PLAY?'), findsNothing);
   });
 
   testWidgets('two existing bookings replace the wizard with both games', (
@@ -259,12 +255,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('open-queue-two-game-limit')),
-      findsOneWidget,
-    );
-    expect(find.text('2 / 2 SOLO GAME LIMIT'), findsOneWidget);
-    expect(find.text('You’re already booked for two games'), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-queue-game-limit')), findsOneWidget);
+    expect(find.text('ONE GAME AT A TIME'), findsOneWidget);
+    expect(find.text('You’re already in a game'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('open-queue-limit-booking-booking-one')),
       findsOneWidget,
@@ -277,7 +270,9 @@ void main() {
     expect(find.text('See matching games'), findsNothing);
   });
 
-  testWidgets('matching games hide the game already booked', (tester) async {
+  testWidgets('matching games block a second booking on another day', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final games = _delayedMainGames();
@@ -299,7 +294,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Next Week Arena'), findsNothing);
-    expect(find.text('Sooner Midfield'), findsWidgets);
+    expect(find.text('Sooner Midfield'), findsNothing);
+    expect(
+      find.textContaining('One upcoming or active game at a time.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Your next attacker option'), findsNothing);
   });
 

@@ -199,7 +199,13 @@ String? _messageForKnownError(String message) {
     return 'Your clan already has 2 upcoming matches. Finish or cancel one before scheduling another.';
   }
   if (message.contains('maximum of 2 upcoming solo games')) {
-    return 'You already have 2 upcoming solo games. Cancel one before booking another.';
+    return 'You already have an upcoming or active game. Finish or cancel it before booking another.';
+  }
+  if (message.contains('one upcoming or active game')) {
+    return 'You already have an upcoming or active game. Finish or cancel it before booking another.';
+  }
+  if (message.contains('earlier game checkout')) {
+    return 'Finish or cancel your earlier checkout before booking another game.';
   }
   if (message.contains('maximum of 20 players')) {
     return 'This clan is full. Clans can have up to 20 players.';

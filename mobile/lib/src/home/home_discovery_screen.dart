@@ -34,6 +34,9 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
   List<HomePlayerResult> _players = [];
   List<HomeNotification> _notifications = [];
   final _read = <String>{};
+  final _dismissed = <String>{};
+  final _dismissing = <String>{};
+  final _dismissErrors = <String, String>{};
 
   @override
   void initState() {
@@ -75,7 +78,11 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
       } else {
         final notifications = await widget.repository.notifications();
         if (!mounted || request != _request) return;
-        setState(() => _notifications = notifications);
+        setState(
+          () => _notifications = notifications
+              .where((item) => !_dismissed.contains(item.id))
+              .toList(),
+        );
       }
     } catch (error) {
       if (mounted && request == _request) {
@@ -99,6 +106,32 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
       // A read receipt must not prevent opening the relevant game.
     }
     if (mounted) await widget.onNotification(item);
+  }
+
+  Future<void> _dismiss(HomeNotification item) async {
+    if (_dismissing.contains(item.id)) return;
+    setState(() {
+      _dismissing.add(item.id);
+      _dismissErrors.remove(item.id);
+    });
+    try {
+      await widget.repository.dismiss(item.id);
+      if (!mounted) return;
+      setState(() {
+        _dismissed.add(item.id);
+        _notifications.removeWhere((notice) => notice.id == item.id);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _dismissErrors[item.id] = userFacingError(
+          error,
+          fallback: 'Could not resolve this notification. Tap to retry.',
+        );
+      });
+    } finally {
+      if (mounted) setState(() => _dismissing.remove(item.id));
+    }
   }
 
   @override
@@ -128,15 +161,61 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
                   controller: _query,
                   autofocus: true,
                   onChanged: _search,
+                  cursorColor: FieldrushAuthTheme.forest,
+                  style: const TextStyle(
+                    fontFamily: 'PlusJakartaSans',
+                    color: FieldrushAuthTheme.ink,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                   decoration: InputDecoration(
                     hintText: 'Name or @username',
-                    prefixIcon: const Icon(Icons.search),
+                    hintStyle: const TextStyle(
+                      fontFamily: 'PlusJakartaSans',
+                      color: FieldrushAuthTheme.muted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                      letterSpacing: 0,
+                    ),
+                    prefixIcon: const Icon(
+                      Icons.search_rounded,
+                      color: FieldrushAuthTheme.forest,
+                      size: 22,
+                    ),
+                    suffixIcon: _query.text.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'Clear search',
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                            color: FieldrushAuthTheme.muted,
+                            onPressed: () {
+                              _query.clear();
+                              _search('');
+                            },
+                          ),
                     filled: true,
                     fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 17,
+                    ),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(16),
                       borderSide: const BorderSide(
                         color: FieldrushAuthTheme.border,
+                      ),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(
+                        color: FieldrushAuthTheme.border,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(
+                        color: FieldrushAuthTheme.forest,
+                        width: 1.5,
                       ),
                     ),
                   ),
@@ -196,6 +275,11 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
                               child: player.avatarUrl == null
                                   ? Text(
                                       player.name.characters.firstOrNull ?? '?',
+                                      style: const TextStyle(
+                                        fontFamily: 'Outfit',
+                                        color: FieldrushAuthTheme.forest,
+                                        fontWeight: FontWeight.w800,
+                                      ),
                                     )
                                   : null,
                             ),
@@ -206,48 +290,25 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
                                 fontWeight: FontWeight.w800,
                               ),
                             ),
-                            subtitle: Text('@${player.username}'),
-                            trailing: const Icon(Icons.chevron_right),
+                            subtitle: Text(
+                              '@${player.username}',
+                              style: const TextStyle(
+                                fontFamily: 'PlusJakartaSans',
+                                color: FieldrushAuthTheme.muted,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            trailing: const Icon(
+                              Icons.chevron_right_rounded,
+                              color: FieldrushAuthTheme.muted,
+                            ),
                             onTap: () => widget.onPlayer(player.id),
                           ),
                         )
                     else
                       for (final item in _notifications)
-                        _card(
-                          ListTile(
-                            key: ValueKey('home-notification-${item.id}'),
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 10,
-                            ),
-                            leading: Icon(
-                              Icons.notifications_none_rounded,
-                              color:
-                                  item.readAt == null &&
-                                      !_read.contains(item.id)
-                                  ? FieldrushAuthTheme.forest
-                                  : FieldrushAuthTheme.muted,
-                            ),
-                            title: Text(
-                              item.title,
-                              style: const TextStyle(
-                                fontFamily: 'Outfit',
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 6),
-                              child: Text(
-                                item.body,
-                                style: const TextStyle(
-                                  fontSize: 12,
-                                  height: 1.5,
-                                ),
-                              ),
-                            ),
-                            onTap: () => _open(item),
-                          ),
-                        ),
+                        _notificationCard(item),
                   ],
                 ),
               ),
@@ -257,6 +318,140 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
       ),
     ),
   );
+
+  Widget _notificationCard(HomeNotification item) {
+    final unread = item.readAt == null && !_read.contains(item.id);
+    final dismissing = _dismissing.contains(item.id);
+    final error = _dismissErrors[item.id];
+    return _card(
+      Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            key: ValueKey('home-notification-${item.id}'),
+            onTap: () => _open(item),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 4, 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      color: unread
+                          ? const Color(0xFFE4F0D5)
+                          : const Color(0xFFF2EFE3),
+                      borderRadius: BorderRadius.circular(11),
+                    ),
+                    child: Icon(
+                      Icons.notifications_none_rounded,
+                      size: 18,
+                      color: unread
+                          ? FieldrushAuthTheme.forest
+                          : FieldrushAuthTheme.muted,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                item.title,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontFamily: 'Outfit',
+                                  color: FieldrushAuthTheme.ink,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1.15,
+                                ),
+                              ),
+                            ),
+                            if (unread) ...[
+                              const SizedBox(width: 6),
+                              Semantics(
+                                label: 'Unread',
+                                child: const SizedBox(
+                                  key: ValueKey('activity-unread-dot'),
+                                  width: 6,
+                                  height: 6,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      color: FieldrushAuthTheme.forest,
+                                      shape: BoxShape.circle,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          item.body,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontFamily: 'PlusJakartaSans',
+                            color: FieldrushAuthTheme.muted,
+                            fontWeight: FontWeight.w500,
+                            fontSize: 11.5,
+                            height: 1.35,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  IconButton(
+                    key: ValueKey('home-notification-resolve-${item.id}'),
+                    tooltip: error == null
+                        ? 'Resolve notification'
+                        : 'Retry resolving notification',
+                    onPressed: dismissing ? null : () => _dismiss(item),
+                    color: FieldrushAuthTheme.forest,
+                    iconSize: 20,
+                    icon: dismissing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: FieldLoadingIndicator(
+                              label: 'Resolving notification',
+                            ),
+                          )
+                        : Icon(
+                            error == null
+                                ? Icons.check_circle_outline_rounded
+                                : Icons.refresh_rounded,
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+              child: Text(
+                error,
+                key: ValueKey('home-notification-resolve-error-${item.id}'),
+                style: const TextStyle(
+                  fontFamily: 'PlusJakartaSans',
+                  color: FieldrushAuthTheme.danger,
+                  fontSize: 11,
+                  height: 1.4,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   Widget _empty(String title, String body) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 12),
@@ -285,12 +480,12 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
     ),
   );
   Widget _card(Widget child) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.only(bottom: 8),
     child: Material(
       color: Colors.white,
       shape: RoundedRectangleBorder(
         side: const BorderSide(color: FieldrushAuthTheme.border),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
       ),
       clipBehavior: Clip.antiAlias,
       child: child,

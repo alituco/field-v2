@@ -283,7 +283,10 @@ void main() {
         find.byKey(const ValueKey('home-rating-placement')),
         findsOneWidget,
       );
-      expect(find.text('1 / 2 ›'), findsOneWidget);
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.text('????'), findsOneWidget);
+      expect(find.byType(FieldrushPlacementRatingCard), findsOneWidget);
+      expect(find.textContaining('#? IN'), findsOneWidget);
       expect(find.text('1 game to reveal your division'), findsOneWidget);
       expect(find.textContaining('SEASON 0'), findsNothing);
       await _pump(

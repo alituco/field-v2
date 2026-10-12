@@ -3,6 +3,15 @@
 -- Run after the local development seed. Every mutation is rolled back.
 begin;
 
+create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
+returns boolean language plpgsql as $availability$
+begin
+  perform public.assert_player_has_one_game(player_id,'SOLO','00000000-0000-0000-0000-000000000000',true);
+  return true;
+exception when raise_exception then return false;
+end;
+$availability$;
+
 do $verify$
 declare
   admin_id uuid;
@@ -710,15 +719,7 @@ begin
       and not public.profile_has_active_reliability_booking_restriction(
         profile.id
       )
-      and (
-        select count(*)
-        from public.open_queue_bookings booking
-        join public.open_queue_games game on game.id = booking.game_id
-        where booking.profile_id = profile.id
-          and booking.status = 'CONFIRMED'
-          and game.status in ('OPEN', 'FULL')
-          and game.starts_at > clock_timestamp()
-      ) < 2
+      and pg_temp.verification_player_has_free_game_slot(profile.id)
     order by profile.id
     limit 3
   ) candidate;

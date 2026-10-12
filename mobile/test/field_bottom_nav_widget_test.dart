@@ -20,8 +20,27 @@ void main() {
       find.byKey(const ValueKey('field-liquid-glass-nav')),
       findsOneWidget,
     );
-    for (final label in ['Home', 'Fixtures', 'Clans', 'Ranks', 'You']) {
-      expect(find.text(label), findsOneWidget);
+    final labels = ['Home', 'Fixtures', 'Clans', 'Ranks', 'You'];
+    for (var index = 0; index < labels.length; index++) {
+      expect(find.text(labels[index]), findsNothing);
+      final item = find.byKey(ValueKey('field-bottom-nav-item-$index'));
+      expect(tester.getSize(item).height, 52);
+      expect(tester.getSize(item).width, greaterThan(50));
+      expect(
+        tester.getSize(find.byKey(ValueKey('field-bottom-nav-icon-$index'))),
+        const Size(36, 36),
+      );
+      final labelsForItem = tester.widgetList<Semantics>(
+        find.ancestor(of: item, matching: find.byType(Semantics)),
+      );
+      expect(
+        labelsForItem.any(
+          (semantics) =>
+              semantics.properties.label == labels[index] &&
+              semantics.properties.onTap != null,
+        ),
+        isTrue,
+      );
     }
 
     final fixturesSemantics = tester.widgetList<Semantics>(

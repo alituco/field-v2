@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/moderation/account_restriction_screen.dart';
 import 'package:field/src/moderation/moderation.dart';
 import 'package:field/src/profile/profile.dart';
@@ -83,6 +84,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(contactSupportSheetKey), findsOneWidget);
+    expect(
+      Theme.of(
+        tester.element(find.byKey(contactSupportSheetKey)),
+      ).textTheme.bodyMedium?.fontFamily,
+      'PlusJakartaSans',
+    );
+    expect(
+      tester.widget<Text>(find.text('How can we help?')).style?.fontFamily,
+      'Outfit',
+    );
+    final surface = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(contactSupportSheetKey),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    expect(
+      (surface.decoration! as BoxDecoration).color,
+      FieldrushAuthTheme.cream,
+    );
     final submit = find.byKey(const ValueKey('support-submit'));
     expect(tester.widget<FilledButton>(submit).onPressed, isNull);
 

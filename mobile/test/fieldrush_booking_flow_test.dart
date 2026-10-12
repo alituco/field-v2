@@ -157,7 +157,7 @@ void main() {
   );
 
   testWidgets(
-    'specific fixture requires a position and excludes booked games',
+    'specific fixture requires a position and stops after an existing booking',
     (tester) async {
       final game = _game('one');
       final repository = _Repository([game]);
@@ -193,12 +193,73 @@ void main() {
       await tester.drag(find.byType(ListView), const Offset(0, 500));
       await tester.pumpAndSettle();
       expect(
-        find.text('This game is no longer available. Pick another game.'),
+        find.byKey(const ValueKey('booking-active-game-limit')),
         findsOneWidget,
       );
       expect(repository.bookCalls, 0);
+      expect(find.byType(FieldrushCheckoutSheet), findsNothing);
+      expect(
+        find.byKey(const ValueKey('booking-continue-payment')),
+        findsNothing,
+      );
     },
   );
+
+  testWidgets('one upcoming game blocks a different-day second checkout', (
+    tester,
+  ) async {
+    final current = _game('already-booked');
+    final next = _game('different-day', days: 5);
+    final repository = _Repository([current, next])
+      ..bookings = [_booking(current)];
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: repository,
+        initialGame: next,
+        now: _now,
+      ),
+    );
+    expect(find.text('You’re already in a game'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('booking-view-active-game')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('booking-continue-payment')),
+      findsNothing,
+    );
+    expect(find.byType(FieldrushCheckoutSheet), findsNothing);
+    expect(repository.bookCalls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('finalized and cancelled games do not block a new booking flow', (
+    tester,
+  ) async {
+    final finished = _game('finished', status: 'FINAL');
+    final cancelled = _game('cancelled', status: 'CANCELLED');
+    final next = _game('next');
+    final repository = _Repository([next])
+      ..bookings = [_booking(finished), _booking(cancelled)];
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: repository,
+        initialGame: next,
+        now: _now,
+      ),
+    );
+    expect(
+      find.byKey(const ValueKey('booking-active-game-limit')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('booking-continue-payment')),
+      findsOneWidget,
+    );
+    expect(repository.bookCalls, 0);
+  });
 
   testWidgets('empty feed has no invented games or checkout', (tester) async {
     await _pump(

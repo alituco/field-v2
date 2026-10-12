@@ -11,7 +11,7 @@ type FlowEdge = {
   capacity: number;
 };
 
-const maxUpcomingBookingsPerProfile = 2;
+const maxUpcomingBookingsPerProfile = 1;
 
 const url = requireEnv("SUPABASE_URL");
 assertSafeDevDataTarget(url, "Open Queue data seed");

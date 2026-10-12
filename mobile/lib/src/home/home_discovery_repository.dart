@@ -73,6 +73,7 @@ abstract interface class HomeDiscoveryRepository {
   Future<List<HomePlayerResult>> searchPlayers(String query);
   Future<List<HomeNotification>> notifications();
   Future<void> markRead(String notificationId);
+  Future<void> dismiss(String notificationId);
 }
 
 class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
@@ -121,6 +122,7 @@ class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
         )
         .eq('recipient_profile_id', user.id)
         .isFilter('resolved_at', null)
+        .isFilter('dismissed_at', null)
         .order('created_at', ascending: false)
         .limit(50);
     return [for (final row in rows) HomeNotification.fromJson(row)];
@@ -130,6 +132,14 @@ class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
   Future<void> markRead(String notificationId) async {
     await _client.rpc(
       'mark_my_home_notification_read',
+      params: {'notification_id_to_use': notificationId},
+    );
+  }
+
+  @override
+  Future<void> dismiss(String notificationId) async {
+    await _client.rpc(
+      'dismiss_my_home_notification',
       params: {'notification_id_to_use': notificationId},
     );
   }

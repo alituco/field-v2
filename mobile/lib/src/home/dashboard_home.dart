@@ -106,7 +106,8 @@ class _DashboardHomeState extends State<DashboardHome> {
   Future<void> _load() async {
     final version = ++_loadVersion;
     setState(() {
-      _loading = true;
+      // Keep a valid feed visible while refreshing it in the background.
+      _loading = _profile == null;
       _error = null;
     });
     try {
