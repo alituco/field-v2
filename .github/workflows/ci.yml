@@ -355,7 +355,8 @@ jobs:
             supabase/functions/fieldrush-delete-account/request_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
-            supabase/scripts/e2e/_shared_test.ts
+            supabase/scripts/e2e/_shared_test.ts \
+            supabase/scripts/e2e/checkouts_test.ts
 
       - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
         shell: bash
@@ -377,6 +378,8 @@ jobs:
             node supabase/scripts/test_single_active_game.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_home_activity_dismissals.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_e2e_checkout_cleanup.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
         run: >-

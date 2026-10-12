@@ -7,6 +7,7 @@ import {
   unwrapRpcRow,
   updateAuthUser,
 } from "./_shared.ts";
+import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -35,6 +36,15 @@ const errors: string[] = [];
 
 logStep(`Cleaning transient state for E2E run ${manifest.runId}.`);
 await bestEffort("cancel transient E2E games", cancelTransientGames);
+await bestEffort(
+  "close unpaid legacy E2E checkouts",
+  () =>
+    cleanAndAssertE2ECheckoutPool(
+      admin,
+      [...manifest.accounts.players, manifest.accounts.onboarding],
+      manifest.accounts.admin,
+    ),
+);
 await bestEffort("remove E2E referee assignment", removeRefereeAssignment);
 await bestEffort("dismiss E2E moderation reports", dismissReports);
 await bestEffort("close E2E support requests", closeSupportTickets);

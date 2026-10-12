@@ -115,15 +115,34 @@ test("price edits preserve captured quotes, paid bookings and refunds before ful
   assert.ok(source.indexOf("test_game_prices.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
 });
 
-test("single-game registration and private activity dismissals are checked before full schema replay", () => {
+test("single-game registration, activity dismissals, and safe checkout cleanup are checked before full schema replay", () => {
   const source = job("database");
-  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs"]) {
+  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs"]) {
     const check = stepContaining(source, `node supabase/scripts/${script}`);
     assert.match(check, /set -euo pipefail/);
     assert.match(check, /PGLITE_MODULE=/);
     assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
     assert.ok(source.indexOf(script) < source.indexOf("Replay migrations on a fresh local Supabase stack"));
   }
+});
+
+test("checkout preflight regression tests run with the mandatory Deno suite", () => {
+  const source = job("database");
+  const check = stepContaining(source, "name: Check Edge Functions and database verifier");
+  assert.match(check, /deno test[\s\S]*supabase\/scripts\/e2e\/checkouts_test\.ts/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true/);
+});
+
+test("checkout preflight runs before creating fixtures and after cleanup cancels tagged games", () => {
+  const setup = readFileSync(new URL("../../supabase/scripts/e2e/setup_staging.ts", import.meta.url), "utf8");
+  const cleanup = readFileSync(new URL("../../supabase/scripts/e2e/cleanup_staging.ts", import.meta.url), "utf8");
+  const preflight = setup.indexOf("await cleanAndAssertE2ECheckoutPool(");
+  assert.ok(preflight > setup.indexOf("await closeStaleTransientState("));
+  assert.ok(preflight < setup.indexOf("const createdGames:"));
+  const cancel = cleanup.search(/await bestEffort\(\s*"cancel transient E2E games"/);
+  const checkout = cleanup.search(/await bestEffort\(\s*"close unpaid legacy E2E checkouts"/);
+  assert.ok(cancel >= 0 && checkout > cancel);
+  assert.match(cleanup.slice(checkout), /cleanAndAssertE2ECheckoutPool\(/);
 });
 
 test("Flutter golden comparisons remain part of the mandatory unfiltered test run", () => {
