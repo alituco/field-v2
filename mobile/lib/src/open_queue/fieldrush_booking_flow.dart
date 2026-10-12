@@ -4,6 +4,7 @@ import '../ui/field_loading.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
+import '../fixtures/fixture.dart';
 import '../home/field_bottom_nav.dart';
 import 'fieldrush_booking_widgets.dart';
 import 'fieldrush_checkout_sheet.dart';
@@ -68,6 +69,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
   late OpenQueueGame? _selectedGame = widget.initialGame;
   OpenQueueRole? _selectedRole;
   OpenQueueBooking? _confirmed;
+  OpenQueueBooking? _activeBooking;
+  bool _openingActiveGame = false;
   List<OpenQueueGame> _games = [];
   bool _loading = true;
   String? _error;
@@ -122,9 +125,16 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
         repository.getMyUpcomingBookings(),
       ]);
       if (!mounted || generation != _generation) return;
-      final bookedIds = (result[1] as List<OpenQueueBooking>)
-          .map((b) => b.gameId)
-          .toSet();
+      final bookings = result[1] as List<OpenQueueBooking>;
+      final activeBooking = bookings.where((booking) {
+        final game = booking.game;
+        return booking.status == 'CONFIRMED' &&
+            !['CANCELLED', 'FINAL'].contains(game.status) &&
+            (game.status == 'LIVE' ||
+                (game.operationalState != MatchOperationalState.noData &&
+                    game.endsAt.isAfter(_now)));
+      }).firstOrNull;
+      final bookedIds = bookings.map((b) => b.gameId).toSet();
       final games =
           (result[0] as List<OpenQueueGame>)
               .where(
@@ -137,6 +147,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               .toList()
             ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
       setState(() {
+        _activeBooking = activeBooking;
         _games = games;
         final selected = _selectedGame;
         if (selected != null) {
@@ -200,6 +211,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
     final game = _selectedGame;
     final role = _selectedRole;
     if (_loading ||
+        _activeBooking != null ||
         game == null ||
         role == null ||
         !game.canBookAt(role, _now)) {
@@ -333,6 +345,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
                           label: 'Loading available positions and games',
                           rows: 3,
                         )
+                      else if (_activeBooking != null)
+                        _activeGameNotice(_activeBooking!)
                       else ...[
                         if (_error != null) ...[
                           Text(
@@ -359,6 +373,69 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
                 ),
         ),
       ),
+    ),
+  );
+
+  Future<void> _openActiveGame() async {
+    final booking = _activeBooking;
+    if (booking == null || _openingActiveGame) return;
+    setState(() => _openingActiveGame = true);
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => FieldrushGameDetailScreen(
+            repository: widget.repository,
+            gameId: booking.gameId,
+            initialGame: booking.game,
+            onNavigateTab: widget.onNavigateTab,
+          ),
+        ),
+      );
+      if (mounted) await _load();
+    } finally {
+      if (mounted) setState(() => _openingActiveGame = false);
+    }
+  }
+
+  Widget _activeGameNotice(OpenQueueBooking booking) => Container(
+    key: const ValueKey('booking-active-game-limit'),
+    padding: const EdgeInsets.all(22),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(24),
+      border: Border.all(color: FieldrushAuthTheme.border),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(
+          Icons.event_available_rounded,
+          color: FieldrushAuthTheme.forest,
+          size: 32,
+        ),
+        const SizedBox(height: 14),
+        Text('You’re already in a game', style: bookingHeading(24)),
+        const SizedBox(height: 9),
+        Text(
+          'One upcoming or active game at a time. Finish or cancel your current booking before joining another.',
+          style: bookingText(13),
+        ),
+        const SizedBox(height: 18),
+        Text(booking.game.venue, style: bookingHeading(16)),
+        const SizedBox(height: 5),
+        Text(booking.game.prominentDateLabel, style: bookingText(12)),
+        const SizedBox(height: 18),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
+            key: const ValueKey('booking-view-active-game'),
+            onPressed: _openingActiveGame ? null : _openActiveGame,
+            child: Text(
+              _openingActiveGame ? 'Opening game…' : 'View your game',
+            ),
+          ),
+        ),
+      ],
     ),
   );
 

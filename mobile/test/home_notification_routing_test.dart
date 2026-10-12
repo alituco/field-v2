@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:field/src/clans/clan.dart';
 import 'package:field/src/clans/clan_repository.dart';
@@ -20,12 +22,72 @@ import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  testWidgets('optional themed activity and search visual previews', (
+    tester,
+  ) async {
+    final directory =
+        Platform.environment['FIELDRUSH_DISCOVERY_SCREENSHOT_DIR'];
+    if (directory == null) return;
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.runAsync(() async {
+      for (final font in ['Outfit', 'PlusJakartaSans']) {
+        await (FontLoader(
+          font,
+        )..addFont(rootBundle.load('assets/fonts/$font.ttf'))).load();
+      }
+      await (FontLoader(
+        'MaterialIcons',
+      )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    });
+    for (final search in [false, true]) {
+      final boundaryKey = GlobalKey();
+      await tester.pumpWidget(
+        RepaintBoundary(
+          key: boundaryKey,
+          child: MaterialApp(
+            debugShowCheckedModeBanner: false,
+            home: HomeDiscoveryScreen(
+              repository: _PreviewDiscovery(),
+              search: search,
+              onPlayer: (_) async {},
+              onNotification: (_) async {},
+            ),
+          ),
+        ),
+      );
+      if (search) {
+        await tester.enterText(
+          find.byKey(const Key('home-player-search')),
+          'Alex',
+        );
+        await tester.pump(const Duration(milliseconds: 310));
+      }
+      await tester.pumpAndSettle();
+      final boundary =
+          boundaryKey.currentContext!.findRenderObject()!
+              as RenderRepaintBoundary;
+      await tester.runAsync(() async {
+        final picture = await boundary.toImage(pixelRatio: 1);
+        final bytes = await picture.toByteData(format: ui.ImageByteFormat.png);
+        await Directory(directory).create(recursive: true);
+        await File(
+          '$directory/${search ? 'search' : 'activity'}.png',
+        ).writeAsBytes(bytes!.buffer.asUint8List());
+        picture.dispose();
+      });
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   test('notification payload maps only explicitly supported entity types', () {
     final party = HomeNotification.fromJson(
       _notificationJson(
@@ -98,9 +160,24 @@ void main() {
       expect(query['select'], contains('data'));
       expect(query['recipient_profile_id'], 'eq.profile');
       expect(query['resolved_at'], 'is.null');
+      expect(query['dismissed_at'], 'is.null');
       expect(query['order'], startsWith('created_at.desc'));
     },
   );
+
+  test('dismissal uses the recipient-owned activity receipt RPC', () async {
+    final requests = <http.Request>[];
+    final client = _client(requests, (_) => null);
+    addTearDown(client.dispose);
+    await SupabaseHomeDiscoveryRepository(client: client).dismiss('notice');
+    expect(
+      requests.single.url.path,
+      '/rest/v1/rpc/dismiss_my_home_notification',
+    );
+    expect(jsonDecode(requests.single.body), {
+      'notification_id_to_use': 'notice',
+    });
+  });
 
   test(
     'public search normalizes blank avatar URLs without private fields',
@@ -165,6 +242,12 @@ void main() {
         const ValueKey('home-search-player-found-player'),
       );
       expect(tile, findsOneWidget);
+      final search = tester.widget<TextField>(
+        find.byKey(const Key('home-player-search')),
+      );
+      expect(search.style?.fontFamily, 'PlusJakartaSans');
+      expect(search.decoration?.enabledBorder, isA<OutlineInputBorder>());
+      expect(search.decoration?.focusedBorder, isA<OutlineInputBorder>());
       expect(tester.takeException(), isNull);
       await tester.tap(tile);
       await tester.pumpAndSettle();
@@ -172,6 +255,86 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'activity is compact and resolution persists without opening it',
+    (tester) async {
+      final repository = _Discovery(
+        _notice('SUPPORT_TICKET', 'support'),
+        readFails: false,
+      );
+      var opens = 0;
+      Widget screen() => MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async => opens++,
+        ),
+      );
+      await tester.pumpWidget(screen());
+      await tester.pumpAndSettle();
+      final tile = find.byKey(const ValueKey('home-notification-notification'));
+      expect(tester.getSize(tile).height, lessThan(100));
+      expect(find.byKey(const ValueKey('activity-unread-dot')), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('home-notification-resolve-notification')),
+      );
+      await tester.pumpAndSettle();
+      expect(repository.dismissedIds, ['notification']);
+      expect(opens, 0);
+      expect(repository.readIds, isEmpty);
+      expect(tile, findsNothing);
+      expect(find.text('You’re all caught up'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(screen());
+      await tester.pumpAndSettle();
+      expect(tile, findsNothing);
+      expect(find.text('You’re all caught up'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('failed activity resolution leaves the item and supports retry', (
+    tester,
+  ) async {
+    final repository = _Discovery(
+      _notice('SUPPORT_TICKET', 'support'),
+      readFails: false,
+      dismissFails: true,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final resolve = find.byKey(
+      const ValueKey('home-notification-resolve-notification'),
+    );
+    await tester.tap(resolve);
+    await tester.pumpAndSettle();
+    expect(repository.dismissedIds, isEmpty);
+    expect(
+      find.byKey(
+        const ValueKey('home-notification-resolve-error-notification'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-notification-notification')),
+      findsOneWidget,
+    );
+    repository.dismissFails = false;
+    await tester.tap(resolve);
+    await tester.pumpAndSettle();
+    expect(repository.dismissedIds, ['notification']);
+    expect(find.text('You’re all caught up'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('game activity opens a known booking instead of checkout', (
     tester,
@@ -526,7 +689,7 @@ Map<String, dynamic> _notificationJson({
 
 SupabaseClient _client(
   List<http.Request> requests,
-  Object Function(http.Request) response,
+  Object? Function(http.Request) response,
 ) => SupabaseClient(
   'https://fieldrush-tests.invalid',
   'test-anon-key-not-a-secret',
@@ -714,19 +877,77 @@ class _Fixtures extends Fake implements FixtureRepository {
 }
 
 class _Discovery implements HomeDiscoveryRepository {
-  _Discovery(this.item, {required this.readFails});
+  _Discovery(this.item, {required this.readFails, this.dismissFails = false});
   final HomeNotification item;
   final bool readFails;
+  bool dismissFails;
   final readIds = <String>[];
+  final dismissedIds = <String>[];
   @override
   Future<List<HomePlayerResult>> searchPlayers(String query) async => [
     const HomePlayerResult(id: 'found-player', name: 'Dana', username: 'dana'),
   ];
   @override
-  Future<List<HomeNotification>> notifications() async => [item];
+  Future<List<HomeNotification>> notifications() async =>
+      dismissedIds.contains(item.id) ? [] : [item];
   @override
   Future<void> markRead(String id) async {
     readIds.add(id);
     if (readFails) throw Exception('test read receipt failed');
   }
+
+  @override
+  Future<void> dismiss(String id) async {
+    if (dismissFails) throw Exception('test dismiss failed');
+    dismissedIds.add(id);
+  }
+}
+
+class _PreviewDiscovery extends Fake implements HomeDiscoveryRepository {
+  @override
+  Future<List<HomeNotification>> notifications() async => [
+    for (final (id, title, body, read) in [
+      (
+        'game',
+        'Your spot is confirmed',
+        'Phoenix Sports Park · Friday, 7:30 PM. Get ready for game night.',
+        false,
+      ),
+      (
+        'invite',
+        'Party invite from Sam',
+        'Sam wants to team up for your next game.',
+        false,
+      ),
+      (
+        'support',
+        'Your support ticket has an update',
+        'We replied to your question. Tap to view the details.',
+        true,
+      ),
+      (
+        'rating',
+        'Match result posted',
+        'Your latest game has been added to match history.',
+        true,
+      ),
+    ])
+      HomeNotification(
+        id: id,
+        title: title,
+        body: body,
+        createdAt: DateTime(2026, 10, 12),
+        readAt: read ? DateTime(2026, 10, 12) : null,
+      ),
+  ];
+
+  @override
+  Future<List<HomePlayerResult>> searchPlayers(String query) async => const [
+    HomePlayerResult(id: 'alex', name: 'Alex Morgan', username: 'alexm'),
+    HomePlayerResult(
+      id: 'alexandra',
+      name: 'Alexandra Reyes',
+      username: 'alexreyes',
+    ),
+  ];
 }

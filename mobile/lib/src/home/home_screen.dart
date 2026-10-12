@@ -25,6 +25,7 @@ import '../support/support_repository.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
 import 'home_discovery_repository.dart';
+import 'tab_refresh_policy.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -65,6 +66,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
   int _youActivationTick = 0;
+  final _tabRefresh = TabRefreshPolicy();
   bool _isSigningOut = false;
   String? _shownModerationNoticeSignature;
 
@@ -119,18 +121,20 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _selectTab(int index) {
+    if (index == _selectedIndex) return;
+    final refresh = _tabRefresh.activate(index);
     setState(() {
-      if (index == 0) {
+      if (refresh && index == 0) {
         _homeActivationTick++;
       }
-      if (index == 1) _fixturesActivationTick++;
-      if (index == 2) {
+      if (refresh && index == 1) _fixturesActivationTick++;
+      if (refresh && index == 2) {
         _clansActivationTick++;
       }
-      if (index == 3) {
+      if (refresh && index == 3) {
         _ranksActivationTick++;
       }
-      if (index == 4) _youActivationTick++;
+      if (refresh && index == 4) _youActivationTick++;
       _selectedIndex = index;
     });
   }
@@ -169,6 +173,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (mounted) {
+      _tabRefresh.refreshed(0);
+      _tabRefresh.refreshed(1);
       setState(() {
         _fixturesActivationTick++;
         _homeActivationTick++;
@@ -190,6 +196,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
     if (mounted) {
+      _tabRefresh.refreshed(0);
+      _tabRefresh.refreshed(1);
       setState(() {
         _fixturesActivationTick++;
         _homeActivationTick++;

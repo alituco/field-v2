@@ -25,6 +25,7 @@ import '../profile/profile_screen.dart';
 import 'fieldrush_home_widgets.dart';
 import 'home_discovery_repository.dart';
 import 'home_discovery_screen.dart';
+import 'navigation_profile_scope.dart';
 
 class DashboardHome extends StatefulWidget {
   const DashboardHome({
@@ -105,8 +106,10 @@ class _DashboardHomeState extends State<DashboardHome> {
 
   Future<void> _load() async {
     final version = ++_loadVersion;
+    final navigationProfile = FieldNavigationProfileScope.beginRead(context);
     setState(() {
-      _loading = true;
+      // Keep a valid feed visible while refreshing it in the background.
+      _loading = _profile == null;
       _error = null;
     });
     try {
@@ -201,6 +204,7 @@ class _DashboardHomeState extends State<DashboardHome> {
       }
       final party = await _loadParty(bookings);
       if (!mounted || version != _loadVersion) return;
+      navigationProfile?.complete(profile);
       setState(() {
         _profile = profile;
         _rating = data[1] as PlayerRatingLeaderboardEntry?;

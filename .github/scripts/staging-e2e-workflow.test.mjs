@@ -115,6 +115,17 @@ test("price edits preserve captured quotes, paid bookings and refunds before ful
   assert.ok(source.indexOf("test_game_prices.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
 });
 
+test("single-game registration and private activity dismissals are checked before full schema replay", () => {
+  const source = job("database");
+  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs"]) {
+    const check = stepContaining(source, `node supabase/scripts/${script}`);
+    assert.match(check, /set -euo pipefail/);
+    assert.match(check, /PGLITE_MODULE=/);
+    assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+    assert.ok(source.indexOf(script) < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  }
+});
+
 test("Flutter golden comparisons remain part of the mandatory unfiltered test run", () => {
   const source = job("flutter");
   const run = stepContaining(source, "name: Run Flutter tests");

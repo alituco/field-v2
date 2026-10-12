@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 
@@ -337,6 +338,27 @@ void main() {
     expect(find.byKey(const ValueKey('solo-fixture-second')), findsOneWidget);
   });
 
+  testWidgets(
+    'fixture refresh keeps loaded games visible until fresh data arrives',
+    (tester) async {
+      final repository = _Repository(fixtures: [_game('cached')]);
+      await _pump(tester, repository);
+      final response = Completer<List<OpenQueueGame>>();
+      repository.fixtureResponse = response;
+      await _pump(tester, repository, activation: 1);
+      expect(find.byKey(const ValueKey('solo-fixture-cached')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('fixtures-loading-skeleton')),
+        findsNothing,
+      );
+      response.complete([_game('fresh')]);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('solo-fixture-fresh')), findsOneWidget);
+      expect(find.byKey(const ValueKey('solo-fixture-cached')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('compact width and enlarged text do not overflow', (
     tester,
   ) async {
@@ -499,10 +521,12 @@ class _Repository implements OpenQueueRepository, OpenQueueMarketRepository {
   int fixtureCalls = 0;
   int listGamesCalls = 0;
   String? marketRequested;
+  Completer<List<OpenQueueGame>>? fixtureResponse;
   @override
   Future<List<OpenQueueGame>> listFixtureGames() async {
     fixtureCalls++;
     if (fail) throw StateError('offline');
+    if (fixtureResponse != null) return fixtureResponse!.future;
     return fixtures;
   }
 

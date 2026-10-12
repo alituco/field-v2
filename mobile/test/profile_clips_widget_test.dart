@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
@@ -93,6 +94,23 @@ void main() {
     final downloader = _FakeGoalClipDownloader();
 
     await _pumpClip(tester, repository: repository, downloader: downloader);
+
+    final clipScreen = find.byKey(
+      const ValueKey('fieldrush-profile-clip-screen'),
+    );
+    expect(
+      tester.widget<Scaffold>(clipScreen).backgroundColor,
+      FieldrushAuthTheme.cream,
+    );
+    expect(
+      Theme.of(tester.element(clipScreen)).textTheme.bodyMedium?.fontFamily,
+      'PlusJakartaSans',
+    );
+    expect(tester.widget<Text>(find.text('Clip')).style?.fontFamily, 'Outfit');
+    expect(
+      tester.widget<Text>(find.text('Top corner finish')).style?.fontFamily,
+      'Outfit',
+    );
 
     final downloadButton = find.byKey(const ValueKey('download-goal-clip'));
     await tester.ensureVisible(downloadButton);

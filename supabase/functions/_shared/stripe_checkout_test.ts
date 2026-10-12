@@ -6,6 +6,7 @@ import {
   expectedLiveMode,
   normalizedCheckout,
   PaymentDatabase,
+  PaymentError,
   PaymentIntent,
   processRefunds,
   reconcilePayment,
@@ -344,6 +345,47 @@ Deno.test("infrastructure finalization failure stays retryable and does not fabr
   await assert.rejects(() =>
     reconcilePayment(admin, {} as Stripe, intent, false, payment())
   );
+});
+
+Deno.test("only provider-confirmed cancellation releases an abandoned checkout lease", async () => {
+  for (const status of ["requires_payment_method", "processing", "canceled"]) {
+    let saved: Record<string, unknown> | undefined;
+    const admin = {
+      from(table: string) {
+        assert.equal(table, "payment_intents");
+        const chain = {
+          update(updates: Record<string, unknown>) {
+            saved = updates;
+            return chain;
+          },
+          eq: () => chain,
+          then: (resolve: (value: unknown) => unknown) =>
+            Promise.resolve({ error: null }).then(resolve),
+        };
+        return chain;
+      },
+    } as unknown as PaymentDatabase;
+    const result = await reconcilePayment(
+      admin,
+      {} as Stripe,
+      intent,
+      false,
+      payment({ status, amount_received: 0, latest_charge: null }),
+    );
+    assert.equal(saved?.provider_status, status);
+    assert.equal(
+      saved?.status,
+      status === "canceled" ? "CANCELLED" : undefined,
+    );
+    assert.equal(
+      result.status,
+      status === "canceled"
+        ? "CANCELLED"
+        : status === "processing"
+        ? "PROCESSING"
+        : "PENDING",
+    );
+  }
 });
 
 const refundRow = {
@@ -701,11 +743,13 @@ Deno.test("refund batches bound concurrency and leave unstarted leases retryable
 function checkoutContext(options: {
   pending?: boolean;
   pendingIntent?: PaymentIntent;
+  finalizedIntent?: PaymentIntent;
   providerPayment?: Stripe.PaymentIntent;
   allowPendingQuote?: boolean;
   quote?: Record<string, unknown>;
   quoteError?: string;
   freeBooking?: Record<string, unknown>;
+  insertError?: { code: string; message: string };
 }) {
   let captured = false;
   const admin = {
@@ -735,6 +779,8 @@ function checkoutContext(options: {
               : statuses
               ? (statuses.includes("PENDING") && options.pending
                 ? options.pendingIntent ?? intent
+                : statuses.includes("FINALIZED") && options.finalizedIntent
+                ? options.finalizedIntent
                 : null)
               : { ...intent, status: captured ? "REQUIRES_REFUND" : "PENDING" },
             error: null,
@@ -744,7 +790,17 @@ function checkoutContext(options: {
           return Promise.resolve({ data: [{ status: "PENDING" }], error: null })
             .then(resolve);
         },
-        insert: () => assert.fail("No new checkout should be created."),
+        insert: () => {
+          if (!options.insertError) {
+            assert.fail("No new checkout should be created.");
+          }
+          return {
+            select: () => ({
+              single: () =>
+                Promise.resolve({ data: null, error: options.insertError }),
+            }),
+          };
+        },
       };
       return chain;
     },
@@ -846,6 +902,31 @@ Deno.test("free checkout reconnect returns only the caller's matching confirmed 
   }
 });
 
+Deno.test("finalized paid checkout retries return the original booking before the new-game limit quote", async () => {
+  const finalizedIntent = {
+    ...intent,
+    status: "FINALIZED",
+    resource_type: "OPEN_QUEUE_BOOKING",
+    resource_id: "paid-booking",
+  };
+  const result = await prepareCheckout(
+    checkoutContext({
+      finalizedIntent,
+      freeBooking: {
+        id: "paid-booking",
+        profile_id: intent.profile_id,
+        status: "CONFIRMED",
+        payment_method: "CARD",
+      },
+      quoteError: "You can only be registered in one upcoming or active game.",
+    }),
+    { purpose: "SOLO_BOOKING", payload: intent.payload },
+  );
+  assert.equal(result.status, "FINALIZED");
+  assert.equal(result.resource_id, "paid-booking");
+  assert.equal(result.intent_id, intent.id);
+});
+
 Deno.test("retired-currency quotes fail before creating an intent, including a free quote", async () => {
   for (const total_fils of [0, 13000]) {
     await assert.rejects(
@@ -891,6 +972,36 @@ const fixedSoloQuote = {
   reliability_deposit_fils: 0,
   total_fils: 13000,
 };
+
+Deno.test("a concurrent one-game conflict is returned before any Stripe intent can be created", async () => {
+  const message =
+    "You can only be registered in one upcoming or active game. Finish or cancel your current game before booking another.";
+  await assert.rejects(
+    prepareCheckout(
+      checkoutContext({
+        quote: fixedSoloQuote,
+        insertError: { code: "P0001", message },
+      }),
+      { purpose: "SOLO_BOOKING", payload: intent.payload },
+    ),
+    (error: unknown) =>
+      error instanceof PaymentError && error.status === 409 &&
+      error.message === message,
+  );
+});
+
+Deno.test("a one-game preflight failure does not create a checkout or charge", async () => {
+  await assert.rejects(
+    prepareCheckout(
+      checkoutContext({
+        quoteError:
+          "Finish or cancel your earlier game checkout before booking another game.",
+      }),
+      { purpose: "SOLO_BOOKING", payload: intent.payload },
+    ),
+    /earlier game checkout/,
+  );
+});
 
 Deno.test("an unexpired solo PaymentSheet keeps its exact quote after a price increase, reduction or free conversion", async () => {
   for (const currentPrice of [16000, 9000, 0]) {

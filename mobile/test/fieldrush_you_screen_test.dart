@@ -8,6 +8,7 @@ import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/profile/fieldrush_match_history_screen.dart';
 import 'package:field/src/profile/fieldrush_you_screen.dart';
 import 'package:field/src/profile/fieldrush_you_settings.dart';
@@ -58,33 +59,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reactivating You keeps identity visible with a rank skeleton', (
-    tester,
-  ) async {
-    final response = Completer<PlayerRatingLeaderboardEntry>();
-    final profiles = _Profiles();
-    final ratings = _Ratings(refresh: response);
-    await tester.pumpWidget(_app(profiles: profiles, ratings: ratings));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+  testWidgets(
+    'reactivating You keeps its loaded rank during background refresh',
+    (tester) async {
+      final response = Completer<PlayerRatingLeaderboardEntry>();
+      final profiles = _Profiles();
+      final ratings = _Ratings(refresh: response);
+      await tester.pumpWidget(_app(profiles: profiles, ratings: ratings));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
 
-    await tester.pumpWidget(
-      _app(profiles: profiles, ratings: ratings, activationTick: 1),
-    );
-    await tester.pump();
-    expect(find.text('Ali A.'), findsOneWidget);
-    expect(find.byKey(const ValueKey('you-rating-loading')), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.byKey(const ValueKey('you-rating-unavailable')), findsNothing);
+      await tester.pumpWidget(
+        _app(profiles: profiles, ratings: ratings, activationTick: 1),
+      );
+      await tester.pump();
+      expect(find.text('Ali A.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-rating-loading')), findsNothing);
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(
+        find.byKey(const ValueKey('you-rating-unavailable')),
+        findsNothing,
+      );
 
-    response.complete(
-      await _Ratings().loadCurrentPlayerRating(activeLeaderboardSeason),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('you-rating-loading')), findsNothing);
-    expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
+      response.complete(
+        await _Ratings().loadCurrentPlayerRating(activeLeaderboardSeason),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('you-rating-loading')), findsNothing);
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('You uses season stats and refreshes identity after Edit', (
     tester,
@@ -211,6 +217,7 @@ void main() {
     response.complete(_matchDetail());
     await tester.pumpAndSettle();
     expect(find.byType(FixtureDetailScreen), findsNothing);
+    expect(find.byType(FieldrushGameDetailScreen), findsNothing);
     expect(find.byType(FieldrushYouScreen), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -238,7 +245,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('an older solo match keeps the detail response player rating', (
+  testWidgets('solo history uses the current game UI and keeps player rating', (
     tester,
   ) async {
     final detail = _matchDetail();
@@ -256,14 +263,56 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('you-history-older-solo')));
     await tester.pumpAndSettle();
-    final screen = tester.widget<FixtureDetailScreen>(
-      find.byType(FixtureDetailScreen),
+    final screen = tester.widget<FieldrushGameDetailScreen>(
+      find.byType(FieldrushGameDetailScreen),
     );
-    expect(screen.fixture.id, 'older-solo');
+    expect(screen.gameId, 'older-solo');
+    expect(screen.initialDetail, same(detail));
     expect(screen.playerRatingUpdate?.ratingBefore, 1188);
     expect(screen.playerRatingUpdate?.ratingChange, 11);
     expect(screen.playerRatingUpdate?.ratingAfter, 1199);
-    expect(screen.showTeamRatings, isFalse);
+    expect(find.text('1188 → 1199'), findsOneWidget);
+    expect(find.text('+11 SR'), findsOneWidget);
+    expect(find.byType(FixtureDetailScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('history keeps its frozen SR event in the current game screen', (
+    tester,
+  ) async {
+    final profile = _Profiles(
+      games: [_historyGame()],
+      events: [
+        ProfileRatingEvent(
+          id: 'frozen-event',
+          sourceType: 'OPEN_QUEUE',
+          sourceId: 'older-solo',
+          playedAt: DateTime.utc(2026, 9, 10, 3, 30),
+          opponentLabel: 'Black',
+          side: 'WHITE',
+          result: 'WIN',
+          ratingBefore: 1350,
+          ratingChange: 23,
+          ratingAfter: 1373,
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      _app(
+        profiles: profile,
+        queue: _Queue(detail: _matchDetail()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final historyButton = find.byKey(const ValueKey('you-match-history'));
+    await tester.ensureVisible(historyButton);
+    await tester.tap(historyButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('you-history-older-solo')));
+    await tester.pumpAndSettle();
+    expect(find.text('1350 → 1373'), findsOneWidget);
+    expect(find.text('+23 SR'), findsOneWidget);
+    expect(find.text('1188 → 1199'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -394,9 +443,10 @@ Widget _app({
 );
 
 class _Profiles implements ProfileRepository {
-  _Profiles({this.first, this.games = const []});
+  _Profiles({this.first, this.games = const [], this.events = const []});
   final Completer<PlayerProfile>? first;
   final List<ProfilePreviousGame> games;
+  final List<ProfileRatingEvent> events;
   String name = 'Ali A.';
   int loads = 0;
   @override
@@ -405,7 +455,7 @@ class _Profiles implements ProfileRepository {
   Future<PlayerProfile> getCurrentProfile() async {
     loads++;
     if (loads == 1 && first != null) return first!.future;
-    return _profile(name: name, games: games);
+    return _profile(name: name, games: games, events: events);
   }
 
   @override

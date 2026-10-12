@@ -362,6 +362,11 @@ export async function prepareCheckout(
       if (error.code === "23505") {
         return prepareCheckout(ctx, body, attempt + 1);
       }
+      // A concurrent checkout/registration can win after the read-only quote.
+      // Surface the database's booking rule before creating any Stripe intent.
+      if (error.code === "P0001" || error.code === "22023") {
+        throw new PaymentError(error.message, 409);
+      }
       throw error;
     }
     intent = data as PaymentIntent;

@@ -71,11 +71,11 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
   }
 
   Future<void> _openReview(OpenQueueGame game, OpenQueueRole role) async {
-    if (_upcomingBookings.length >= 2) {
+    if (_upcomingBookings.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'You already have 2 upcoming solo games. Cancel one before booking another.',
+            'You already have an upcoming or active game. Finish or cancel it before booking another.',
           ),
         ),
       );
@@ -159,11 +159,11 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
                   action: 'Try again',
                   onAction: _load,
                 )
-              else if (_upcomingBookings.length >= 2)
+              else if (_upcomingBookings.isNotEmpty)
                 const _QueueGamesEmpty(
                   icon: Icons.event_busy_rounded,
                   message:
-                      'You are already booked for 2 of 2 solo games. Cancel one before choosing another match.',
+                      'One upcoming or active game at a time. Finish or cancel your current booking before joining another.',
                 )
               else ...[
                 if (showFastestBackup) ...[

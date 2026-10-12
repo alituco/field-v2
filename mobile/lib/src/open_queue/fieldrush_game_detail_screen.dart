@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
+import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../home/field_bottom_nav.dart';
@@ -57,6 +58,8 @@ class FieldrushGameDetailScreen extends StatefulWidget {
     required this.repository,
     required this.gameId,
     this.initialGame,
+    this.initialDetail,
+    this.playerRatingUpdate,
     this.onJoin,
     this.onNavigateTab,
     this.profileRepository,
@@ -67,6 +70,8 @@ class FieldrushGameDetailScreen extends StatefulWidget {
   final OpenQueueRepository repository;
   final String gameId;
   final OpenQueueGame? initialGame;
+  final OpenQueueMatchDetail? initialDetail;
+  final FixturePlayerRatingUpdate? playerRatingUpdate;
   final Future<void> Function(OpenQueueGame game)? onJoin;
   final ValueChanged<int>? onNavigateTab;
   final ProfileRepository? profileRepository;
@@ -81,10 +86,10 @@ class FieldrushGameDetailScreen extends StatefulWidget {
 enum _Section { watch, timeline, lineup }
 
 class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
-  OpenQueueMatchDetail? _detail;
+  late OpenQueueMatchDetail? _detail = widget.initialDetail;
   OpenQueueBooking? _booking;
   String? _error;
-  bool _loading = true;
+  late bool _loading = widget.initialDetail == null;
   bool _acting = false;
   bool _refreshing = false;
   int _loadGeneration = 0;
@@ -101,7 +106,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   @override
   void initState() {
     super.initState();
-    unawaited(_load());
+    unawaited(_load(quiet: _detail != null));
     _timer = Timer.periodic(const Duration(seconds: 20), (_) {
       if (mounted && !_acting && (ModalRoute.of(context)?.isCurrent ?? false)) {
         unawaited(_load(quiet: true));
@@ -319,19 +324,23 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     if (detail == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => FixtureDetailScreen(
-          fixture: detail.toFixture(),
-          fixtureRepository:
-              widget.fixtureRepository ?? SupabaseFixtureRepository(),
-          myClanMembership: null,
-          sourceLabel: 'SOLO',
-          showTeamRatings: false,
-          playerRatingUpdate: detail.viewerRatingUpdate,
-          initiallyShowWatch: true,
-          profileRepository: widget.profileRepository,
-          refreshFixture: () async => (await widget.repository.getMatchDetail(
-            widget.gameId,
-          )).toFixture(),
+        builder: (_) => Theme(
+          data: FieldrushAuthTheme.theme(context),
+          child: FixtureDetailScreen(
+            fixture: detail.toFixture(),
+            fixtureRepository:
+                widget.fixtureRepository ?? SupabaseFixtureRepository(),
+            myClanMembership: null,
+            sourceLabel: 'SOLO',
+            showTeamRatings: false,
+            playerRatingUpdate:
+                widget.playerRatingUpdate ?? detail.viewerRatingUpdate,
+            initiallyShowWatch: true,
+            profileRepository: widget.profileRepository,
+            refreshFixture: () async => (await widget.repository.getMatchDetail(
+              widget.gameId,
+            )).toFixture(),
+          ),
         ),
       ),
     );
@@ -402,6 +411,11 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 if (game != null) ...[
                   const SizedBox(height: 16),
                   _hero(game),
+                  if ((widget.playerRatingUpdate ?? _detail?.viewerRatingUpdate)
+                      case final ratingUpdate? when game.status == 'FINAL') ...[
+                    const SizedBox(height: 12),
+                    _ratingSummary(ratingUpdate),
+                  ],
                   const SizedBox(height: 16),
                   Container(
                     padding: const EdgeInsets.all(5),
@@ -729,6 +743,45 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
       ),
     );
   }
+
+  Widget _ratingSummary(FixturePlayerRatingUpdate rating) => _Card(
+    child: Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _Label('PLAYER SR'),
+              const SizedBox(height: 7),
+              Text(
+                '${rating.ratingBefore} → ${rating.ratingAfter}',
+                style: _display(23),
+              ),
+              const SizedBox(height: 4),
+              Text('Rating from this match', style: _body(10.5)),
+            ],
+          ),
+        ),
+        Container(
+          key: const ValueKey('fieldrush-match-rating-change'),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: rating.ratingChange < 0 ? const Color(0xFFF8E8E4) : _light,
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Text(
+            '${rating.ratingChange > 0 ? '+' : ''}${rating.ratingChange} SR',
+            style: _display(
+              22,
+              color: rating.ratingChange < 0
+                  ? FieldrushAuthTheme.danger
+                  : _green,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _score(String label, int? score, {bool right = false}) => Column(
     crossAxisAlignment: right

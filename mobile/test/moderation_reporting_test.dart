@@ -1,3 +1,4 @@
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/clans/clan.dart';
 import 'package:field/src/clans/clan_detail_screen.dart';
 import 'package:field/src/clans/clan_repository.dart';
@@ -74,6 +75,28 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(moderationReportSheetKey), findsOneWidget);
     expect(find.text('Report Noor Saleh'), findsOneWidget);
+    expect(
+      Theme.of(
+        tester.element(find.byKey(moderationReportSheetKey)),
+      ).textTheme.bodyMedium?.fontFamily,
+      'PlusJakartaSans',
+    );
+    expect(
+      tester.widget<Text>(find.text('Report Noor Saleh')).style?.fontFamily,
+      'Outfit',
+    );
+    final surface = tester.widget<Container>(
+      find
+          .descendant(
+            of: find.byKey(moderationReportSheetKey),
+            matching: find.byType(Container),
+          )
+          .first,
+    );
+    expect(
+      (surface.decoration! as BoxDecoration).color,
+      FieldrushAuthTheme.cream,
+    );
     await tester.tap(
       find.byKey(const ValueKey('moderation-category-harassment')),
     );

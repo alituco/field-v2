@@ -73,7 +73,7 @@ void main() {
           'The staging fixture must pre-book the party target into the E2E match.',
     );
 
-    _logStage('book the main player and send a party invite');
+    _logStage('verify the main player journey');
     await _switchToProfile(
       tester,
       profileId: config.mainProfileId,
@@ -82,6 +82,10 @@ void main() {
     final mainId = _currentUserId();
     _logStage('verify Phoenix leaderboards and season navigation');
     await _verifyLeaderboards(tester);
+    // The player may hold only one upcoming/active booking. Exercise the
+    // cancellation first, then book the match used by the referee/admin phase.
+    await _verifyCancellationThroughUi(tester, repository, config);
+    _logStage('book the main player and send a party invite');
     final matchGame = await _gameById(repository, config.matchGameId);
     expect(matchGame.confirmedCount, 13);
     expect(matchGame.spotsFor(OpenQueueRole.defender), 1);
@@ -134,44 +138,6 @@ void main() {
       details: config.reportDetails,
     );
 
-    _logStage('book and cancel the isolated cancellation game');
-    final cancellationGame = await _gameById(
-      repository,
-      config.cancellationGameId,
-    );
-    expect(cancellationGame.confirmedCount, 0);
-    final openAttackerSpots = cancellationGame.spotsFor(OpenQueueRole.attacker);
-    expect(openAttackerSpots, greaterThan(0));
-
-    await _bookGameThroughUi(
-      tester,
-      game: cancellationGame,
-      role: OpenQueueRole.attacker,
-    );
-    final cancellationBooking = await _boundedRemoteStep(
-      'load cancellation-game booking',
-      repository.getMyUpcomingBookingForGame(cancellationGame.id),
-    );
-    expect(cancellationBooking, isNotNull);
-    await _cancelCurrentBooking(tester);
-
-    final cancelledBooking = await _waitForCancelledBooking(
-      cancellationBooking!.id,
-    );
-    expect(cancelledBooking['status'], 'CANCELLED');
-    expect(cancelledBooking['cancelled_at'], isNotNull);
-    expect(cancelledBooking['refund_bps'], isNotNull);
-    expect(cancelledBooking['refund_amount_fils'], isNotNull);
-
-    final reopenedGame = await _gameById(repository, config.cancellationGameId);
-    expect(reopenedGame.status, 'OPEN');
-    expect(reopenedGame.confirmedCount, 0);
-    expect(
-      reopenedGame.spotsFor(OpenQueueRole.attacker),
-      openAttackerSpots,
-      reason: 'Cancelling must reopen the attacker position immediately.',
-    );
-
     final preservedMatch = await _gameById(repository, config.matchGameId);
     expect(preservedMatch.status, 'FULL');
     expect(preservedMatch.confirmedCount, 14);
@@ -186,6 +152,38 @@ void main() {
     );
     _logStage('player journey complete');
   }, timeout: const Timeout(Duration(minutes: 8)));
+}
+
+Future<void> _verifyCancellationThroughUi(
+  WidgetTester tester,
+  SupabaseOpenQueueRepository repository,
+  StagingE2EConfig config,
+) async {
+  _logStage('book and cancel the isolated cancellation game');
+  final game = await _gameById(repository, config.cancellationGameId);
+  expect(game.confirmedCount, 0);
+  final attackerSpots = game.spotsFor(OpenQueueRole.attacker);
+  expect(attackerSpots, greaterThan(0));
+  await _bookGameThroughUi(tester, game: game, role: OpenQueueRole.attacker);
+  final booking = await _boundedRemoteStep(
+    'load cancellation-game booking',
+    repository.getMyUpcomingBookingForGame(game.id),
+  );
+  expect(booking, isNotNull);
+  await _cancelCurrentBooking(tester);
+  final cancelled = await _waitForCancelledBooking(booking!.id);
+  expect(cancelled['status'], 'CANCELLED');
+  expect(cancelled['cancelled_at'], isNotNull);
+  expect(cancelled['refund_bps'], isNotNull);
+  expect(cancelled['refund_amount_fils'], isNotNull);
+  final reopened = await _gameById(repository, game.id);
+  expect(reopened.status, 'OPEN');
+  expect(reopened.confirmedCount, 0);
+  expect(
+    reopened.spotsFor(OpenQueueRole.attacker),
+    attackerSpots,
+    reason: 'Cancelling must reopen the attacker position immediately.',
+  );
 }
 
 enum _SignedInDestination { home, onboarding }

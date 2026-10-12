@@ -240,8 +240,8 @@ for (const booking of bookings) {
   }
 }
 assert(
-  [...upcomingSoloCounts.values()].every((count) => count <= 2),
-  "A player exceeds two upcoming solo games.",
+  [...upcomingSoloCounts.values()].every((count) => count <= 1),
+  "A player exceeds one upcoming solo game.",
 );
 
 const currentFixtureIds = new Set(finalFixtures.map((fixture) => fixture.id));

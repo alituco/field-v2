@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -291,6 +292,31 @@ class FieldrushQuickGameCard extends StatefulWidget {
 
 class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
   final Set<OpenQueueRole> _selected = {};
+  Timer? _positionHintTimer;
+  bool _positionHint = false;
+
+  void _showPositionHint() {
+    _positionHintTimer?.cancel();
+    setState(() => _positionHint = true);
+    // Match the reference's brief invitation to choose an available position.
+    _positionHintTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _positionHint = false);
+    });
+  }
+
+  void _togglePosition(OpenQueueRole role) {
+    _positionHintTimer?.cancel();
+    setState(() {
+      _positionHint = false;
+      if (!_selected.remove(role)) _selected.add(role);
+    });
+  }
+
+  @override
+  void dispose() {
+    _positionHintTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -396,14 +422,11 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                             child: _PitchPosition(
                               role: _roles[i],
                               selected: _selected.contains(_roles[i]),
+                              hint: _positionHint && _selected.isEmpty,
                               enabled: games.any(
                                 (g) => g.canBookAt(_roles[i], now),
                               ),
-                              onTap: () => setState(() {
-                                if (!_selected.remove(_roles[i])) {
-                                  _selected.add(_roles[i]);
-                                }
-                              }),
+                              onTap: () => _togglePosition(_roles[i]),
                             ),
                           ),
                       ],
@@ -416,7 +439,9 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 width: double.infinity,
                 child: FilledButton(
                   key: const ValueKey('home-quick-play'),
-                  onPressed: game == null
+                  onPressed: _selected.isEmpty
+                      ? _showPositionHint
+                      : game == null
                       ? null
                       : () => widget.onPlay(
                           game,
@@ -425,8 +450,10 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                           Set.unmodifiable(_selected),
                         ),
                   style: FilledButton.styleFrom(
-                    backgroundColor: _green,
-                    foregroundColor: Colors.white,
+                    backgroundColor: game == null ? _wash : _green,
+                    foregroundColor: game == null
+                        ? const Color(0xFF9C9683)
+                        : Colors.white,
                     disabledBackgroundColor: _wash,
                     disabledForegroundColor: const Color(0xFF9C9683),
                     minimumSize: const Size(0, 54),
@@ -459,11 +486,13 @@ class _PitchPosition extends StatelessWidget {
   const _PitchPosition({
     required this.role,
     required this.selected,
+    required this.hint,
     required this.enabled,
     required this.onTap,
   });
   final OpenQueueRole role;
   final bool selected;
+  final bool hint;
   final bool enabled;
   final VoidCallback onTap;
 
@@ -481,7 +510,11 @@ class _PitchPosition extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
+            AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 250),
+              curve: Curves.ease,
               width: selected ? 43 : 40,
               height: selected ? 43 : 40,
               decoration: BoxDecoration(
@@ -493,8 +526,10 @@ class _PitchPosition extends StatelessWidget {
                 boxShadow: [
                   if (!selected)
                     BoxShadow(
-                      color: Colors.white.withValues(alpha: .3),
-                      spreadRadius: 4,
+                      color: Colors.white.withValues(
+                        alpha: enabled && hint ? .5 : .3,
+                      ),
+                      spreadRadius: enabled && hint ? 9 : 4,
                     ),
                   BoxShadow(
                     color: Colors.black.withValues(alpha: .35),
@@ -1347,11 +1382,43 @@ class FieldrushHomeRating extends StatelessWidget {
     );
   }
 
-  Widget _placement(int matches) {
-    final played = matches.clamp(0, 2);
-    final left = 2 - played;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+  Widget _placement(int matches) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+    child: FieldrushPlacementRatingCard(
+      matchesPlayed: matches,
+      cityLabel: rating?.region ?? profile.playerRating?.region ?? '',
+      onTap: onTap,
+      actionKey: const ValueKey('home-rating-placement'),
+    ),
+  );
+
+  Widget _unavailable() => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+    child: TextButton(onPressed: onTap, child: const Text('View your rating')),
+  );
+}
+
+/// The shared placement reveal card used on Home and You.
+class FieldrushPlacementRatingCard extends StatelessWidget {
+  const FieldrushPlacementRatingCard({
+    super.key,
+    required this.matchesPlayed,
+    required this.cityLabel,
+    required this.onTap,
+    this.actionKey,
+  });
+
+  final int matchesPlayed;
+  final String cityLabel;
+  final VoidCallback onTap;
+  final Key? actionKey;
+
+  @override
+  Widget build(BuildContext context) {
+    final played = matchesPlayed.clamp(0, minimumPlayerLeaderboardMatches);
+    final left = minimumPlayerLeaderboardMatches - played;
+    final city = cityLabel.trim().split(',').first.toUpperCase();
+    return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: const LinearGradient(
@@ -1368,55 +1435,155 @@ class FieldrushHomeRating extends StatelessWidget {
           ),
         ],
       ),
-      child: CustomPaint(
-        painter: const _PlacementBackgroundPainter(),
-        child: Material(
-          color: Colors.transparent,
-          child: InkWell(
-            key: const ValueKey('home-rating-placement'),
-            onTap: onTap,
-            borderRadius: BorderRadius.circular(24),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _SpreadLabels(
-                    left: Text(
-                      '${_seasonLabel(season)} · PLACEMENT',
-                      style: _jakarta(
-                        9.5,
-                        color: const Color(0xFFC9C2AE),
-                        tracking: 1.7,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: CustomPaint(
+          painter: const _PlacementBackgroundPainter(),
+          child: Material(
+            color: Colors.transparent,
+            child: InkWell(
+              key: actionKey,
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(24),
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const FieldrushDivisionShield(
+                          size: 62,
+                          placement: true,
+                        ),
+                        const SizedBox(width: 15),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _SpreadLabels(
+                                left: Text(
+                                  'PLACEMENT',
+                                  style: _jakarta(
+                                    9.5,
+                                    color: const Color(0xFFC9C2AE),
+                                    tracking: 1.71,
+                                  ),
+                                ),
+                                right: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0x1FF3EBD6),
+                                    borderRadius: BorderRadius.circular(99),
+                                  ),
+                                  child: Text(
+                                    city.isEmpty
+                                        ? '#? ON THE LADDER'
+                                        : '#? IN $city',
+                                    style: _jakarta(
+                                      9,
+                                      color: const Color(0xFFF3EBD6),
+                                      tracking: .6,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 5,
+                                crossAxisAlignment: WrapCrossAlignment.end,
+                                children: [
+                                  Semantics(
+                                    label:
+                                        'Your skill rating is waiting to be revealed',
+                                    excludeSemantics: true,
+                                    child: ShaderMask(
+                                      blendMode: BlendMode.srcIn,
+                                      shaderCallback: (bounds) =>
+                                          const LinearGradient(
+                                            colors: [
+                                              Color(0xFFFFEDB3),
+                                              Color(0xFFC7DD9B),
+                                              Color(0xFFE9C97D),
+                                            ],
+                                          ).createShader(bounds),
+                                      child: Text(
+                                        '????',
+                                        key: const ValueKey(
+                                          'placement-mystery-rating',
+                                        ),
+                                        style: _outfit(
+                                          48,
+                                          color: Colors.white,
+                                          tracking: 3,
+                                        ).copyWith(height: .95),
+                                      ),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 3),
+                                    child: Text(
+                                      'SKILL RATING',
+                                      style: _jakarta(
+                                        10,
+                                        color: const Color(0xFFC9C2AE),
+                                        tracking: 1.2,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Row(
+                      children: [
+                        for (final n in [5, 4, 3, 2, 1])
+                          Expanded(
+                            child: Center(
+                              child: FieldrushDivisionShield(
+                                division: n,
+                                size: 24,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _Segments(
+                      count: minimumPlayerLeaderboardMatches,
+                      filled: played,
+                      on: const Color(0xFFF3EBD6),
+                      off: const Color(0x29F3EBD6),
+                    ),
+                    const SizedBox(height: 10),
+                    _SpreadLabels(
+                      left: Text(
+                        '$left ${left == 1 ? 'game' : 'games'} to reveal your division',
+                        style: _jakarta(
+                          11.5,
+                          color: const Color(0xFFF3EBD6),
+                        ).copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      right: Text(
+                        '$played / $minimumPlayerLeaderboardMatches',
+                        style: _jakarta(
+                          10,
+                          color: const Color(0xFFC9C2AE),
+                          tracking: .8,
+                        ),
                       ),
                     ),
-                    right: Text(
-                      '$played / 2 ›',
-                      style: _jakarta(
-                        10,
-                        color: const Color(0xFFA9B3A6),
-                        tracking: .8,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  const _ShieldLadder(),
-                  const SizedBox(height: 12),
-                  _Segments(
-                    count: 2,
-                    filled: played,
-                    on: const Color(0xFFF3EBD6),
-                    off: const Color(0x29F3EBD6),
-                  ),
-                  const SizedBox(height: 9),
-                  Text(
-                    '$left ${left == 1 ? 'game' : 'games'} to reveal your division',
-                    style: _jakarta(
-                      11.5,
-                      color: const Color(0xFFF3EBD6),
-                    ).copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
@@ -1424,11 +1591,6 @@ class FieldrushHomeRating extends StatelessWidget {
       ),
     );
   }
-
-  Widget _unavailable() => Padding(
-    padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-    child: TextButton(onPressed: onTap, child: const Text('View your rating')),
-  );
 }
 
 class _SpreadLabels extends StatelessWidget {

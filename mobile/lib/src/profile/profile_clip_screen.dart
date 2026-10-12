@@ -4,8 +4,7 @@ import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
 import 'package:video_player/video_player.dart';
 
-import '../clans/clan_widgets.dart';
-import '../core/field_confirmation_dialog.dart';
+import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import 'goal_clip_downloader.dart';
 import 'profile.dart';
@@ -295,19 +294,72 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
 
   Future<void> _deleteClip() async {
     if (!widget.canManage || _isDeleting || _isUpdatingVisibility) return;
-    final confirmed = await showFieldConfirmDialog(
+    final confirmed = await showDialog<bool>(
       context: context,
-      icon: Icons.delete_outline_rounded,
-      eyebrow: 'Remove clip',
-      title: 'Delete this clip?',
-      message:
-          '“${_highlight.title}” will be removed from your profile. The original match recording will not be affected.',
-      detail: 'This cannot be undone.',
-      confirmLabel: 'Delete clip',
-      cancelLabel: 'Keep clip',
-      destructive: true,
+      barrierColor: FieldrushAuthTheme.ink.withValues(alpha: 0.56),
+      builder: (dialogContext) => Theme(
+        data: FieldrushAuthTheme.theme(context),
+        child: AlertDialog(
+          key: const ValueKey('field-confirmation-dialog'),
+          backgroundColor: FieldrushAuthTheme.cream,
+          surfaceTintColor: Colors.transparent,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(24),
+            side: const BorderSide(color: FieldrushAuthTheme.border),
+          ),
+          icon: const Icon(
+            Icons.delete_outline_rounded,
+            color: FieldrushAuthTheme.danger,
+          ),
+          title: const Text(
+            'Delete this clip?',
+            style: TextStyle(
+              fontFamily: 'Outfit',
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+              color: FieldrushAuthTheme.ink,
+            ),
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '“${_highlight.title}” will be removed from your profile. The original match recording will not be affected.',
+                style: const TextStyle(
+                  color: FieldrushAuthTheme.muted,
+                  height: 1.5,
+                ),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'This cannot be undone.',
+                style: TextStyle(
+                  color: FieldrushAuthTheme.danger,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey('field-confirmation-cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Keep clip'),
+            ),
+            FilledButton(
+              key: const ValueKey('field-confirmation-confirm'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: FieldrushAuthTheme.danger,
+              ),
+              child: const Text('Delete clip'),
+            ),
+          ],
+        ),
+      ),
     );
-    if (!mounted || !confirmed) return;
+    if (!mounted || confirmed != true) return;
     setState(() => _isDeleting = true);
     try {
       await widget.profileRepository.deleteHighlight(_highlight.id);
@@ -335,165 +387,141 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   @override
   Widget build(BuildContext context) {
     final isMutating = _isUpdatingVisibility || _isDeleting;
-    return PopScope(
-      canPop: !isMutating,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) return;
-      },
-      child: Scaffold(
-        backgroundColor: const Color(0xFFF7F9FC),
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          leading: IconButton(
-            onPressed: isMutating
-                ? null
-                : () => Navigator.of(context).pop(_highlight),
-            icon: const Icon(Icons.arrow_back_rounded),
-          ),
-          title: const Text(
-            'CLIP',
-            style: TextStyle(
-              color: fieldGray900,
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.8,
+    return Theme(
+      data: FieldrushAuthTheme.theme(context),
+      child: PopScope(
+        canPop: !isMutating,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) return;
+        },
+        child: Scaffold(
+          key: const ValueKey('fieldrush-profile-clip-screen'),
+          backgroundColor: FieldrushAuthTheme.cream,
+          appBar: AppBar(
+            backgroundColor: FieldrushAuthTheme.cream,
+            surfaceTintColor: Colors.transparent,
+            leading: IconButton(
+              tooltip: 'Back',
+              onPressed: isMutating
+                  ? null
+                  : () => Navigator.of(context).pop(_highlight),
+              icon: const Icon(Icons.chevron_left_rounded),
             ),
-          ),
-          centerTitle: true,
-        ),
-        body: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: fieldGray100),
-                boxShadow: [
-                  BoxShadow(
-                    color: fieldGray900.withValues(alpha: 0.05),
-                    blurRadius: 24,
-                    offset: const Offset(0, 8),
-                  ),
-                ],
+            title: const Text(
+              'Clip',
+              style: TextStyle(
+                fontFamily: 'Outfit',
+                color: FieldrushAuthTheme.ink,
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
               ),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildVideo(),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(18, 17, 18, 18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _highlight.title,
-                          style: const TextStyle(
-                            color: fieldGray900,
-                            fontSize: 21,
-                            height: 1.15,
-                            fontWeight: FontWeight.w900,
+            ),
+            centerTitle: true,
+          ),
+          body: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: FieldrushAuthTheme.border),
+                  boxShadow: [
+                    BoxShadow(
+                      color: FieldrushAuthTheme.ink.withValues(alpha: 0.04),
+                      blurRadius: 24,
+                      offset: const Offset(0, 8),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildVideo(),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 17, 18, 18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _highlight.title,
+                            style: const TextStyle(
+                              fontFamily: 'Outfit',
+                              color: FieldrushAuthTheme.ink,
+                              fontSize: 24,
+                              height: 1.15,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.remove_red_eye_outlined,
-                              color: fieldGray400,
-                              size: 17,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              '${_highlight.views} ${_highlight.views == 1 ? 'view' : 'views'}',
-                              style: const TextStyle(
-                                color: fieldGray500,
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              const Icon(
+                                Icons.remove_red_eye_outlined,
+                                color: FieldrushAuthTheme.muted,
+                                size: 17,
                               ),
-                            ),
-                            if (_highlight.clanTag case final tag?) ...[
-                              const SizedBox(width: 9),
-                              const Text(
-                                '·',
-                                style: TextStyle(color: fieldGray300),
-                              ),
-                              const SizedBox(width: 9),
+                              const SizedBox(width: 6),
                               Text(
-                                tag,
+                                '${_highlight.views} ${_highlight.views == 1 ? 'view' : 'views'}',
                                 style: const TextStyle(
-                                  color: fieldGray500,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w900,
-                                  letterSpacing: 0.5,
+                                  color: FieldrushAuthTheme.muted,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
                                 ),
                               ),
+                              if (_highlight.clanTag case final tag?) ...[
+                                const SizedBox(width: 9),
+                                const Text(
+                                  '·',
+                                  style: TextStyle(
+                                    color: FieldrushAuthTheme.border,
+                                  ),
+                                ),
+                                const SizedBox(width: 9),
+                                Text(
+                                  tag,
+                                  style: const TextStyle(
+                                    color: FieldrushAuthTheme.muted,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 0.5,
+                                  ),
+                                ),
+                              ],
                             ],
+                          ),
+                          if (widget.canManage) ...[
+                            const SizedBox(height: 18),
+                            _ClipVisibilityCard(
+                              isPublic: _highlight.isPublic,
+                              isLoading: _isUpdatingVisibility,
+                              onChanged: (value) =>
+                                  unawaited(_setVisibility(value)),
+                            ),
                           ],
-                        ),
-                        if (widget.canManage) ...[
                           const SizedBox(height: 18),
-                          _ClipVisibilityCard(
-                            isPublic: _highlight.isPublic,
-                            isLoading: _isUpdatingVisibility,
-                            onChanged: (value) =>
-                                unawaited(_setVisibility(value)),
-                          ),
-                        ],
-                        const SizedBox(height: 18),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 50,
-                          child: FilledButton.icon(
-                            key: const ValueKey('download-goal-clip'),
-                            onPressed:
-                                _highlight.hasPlayableVideo && !_isDownloading
-                                ? _downloadClip
-                                : null,
-                            icon: const Icon(Icons.download_rounded),
-                            label: Text(
-                              _isDownloading
-                                  ? _downloadLabel(_downloadProgress)
-                                  : 'Save to Photos',
-                            ),
-                            style: FilledButton.styleFrom(
-                              backgroundColor: fieldEmerald600,
-                              foregroundColor: Colors.white,
-                              textStyle: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w900,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (widget.canManage) ...[
-                          const SizedBox(height: 10),
                           SizedBox(
                             width: double.infinity,
-                            height: 48,
-                            child: OutlinedButton.icon(
-                              key: const ValueKey('delete-profile-clip'),
-                              onPressed: _isDeleting || _isUpdatingVisibility
-                                  ? null
-                                  : () => unawaited(_deleteClip()),
-                              icon: const Icon(Icons.delete_outline_rounded),
+                            height: 50,
+                            child: FilledButton.icon(
+                              key: const ValueKey('download-goal-clip'),
+                              onPressed:
+                                  _highlight.hasPlayableVideo && !_isDownloading
+                                  ? _downloadClip
+                                  : null,
+                              icon: const Icon(Icons.download_rounded),
                               label: Text(
-                                _isDeleting
-                                    ? 'Deleting clip...'
-                                    : 'Delete clip',
+                                _isDownloading
+                                    ? _downloadLabel(_downloadProgress)
+                                    : 'Save to Photos',
                               ),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: const Color(0xFFDC2626),
-                                side: const BorderSide(
-                                  color: Color(0xFFFECACA),
-                                ),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: FieldrushAuthTheme.forest,
+                                foregroundColor: Colors.white,
                                 textStyle: const TextStyle(
-                                  fontSize: 13,
+                                  fontSize: 14,
                                   fontWeight: FontWeight.w900,
                                 ),
                                 shape: RoundedRectangleBorder(
@@ -502,14 +530,46 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                               ),
                             ),
                           ),
+                          if (widget.canManage) ...[
+                            const SizedBox(height: 10),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 48,
+                              child: OutlinedButton.icon(
+                                key: const ValueKey('delete-profile-clip'),
+                                onPressed: _isDeleting || _isUpdatingVisibility
+                                    ? null
+                                    : () => unawaited(_deleteClip()),
+                                icon: const Icon(Icons.delete_outline_rounded),
+                                label: Text(
+                                  _isDeleting
+                                      ? 'Deleting clip...'
+                                      : 'Delete clip',
+                                ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: FieldrushAuthTheme.danger,
+                                  side: const BorderSide(
+                                    color: FieldrushAuthTheme.border,
+                                  ),
+                                  textStyle: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -544,7 +604,7 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                       width: 62,
                       height: 62,
                       decoration: BoxDecoration(
-                        color: fieldGray900.withValues(alpha: 0.78),
+                        color: FieldrushAuthTheme.forest.withValues(alpha: 0.9),
                         shape: BoxShape.circle,
                         border: Border.all(
                           color: Colors.white.withValues(alpha: 0.22),
@@ -584,7 +644,7 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                         overlayShape: const RoundSliderOverlayShape(
                           overlayRadius: 14,
                         ),
-                        activeTrackColor: fieldEmerald500,
+                        activeTrackColor: const Color(0xFFC7DD9B),
                         inactiveTrackColor: Colors.white38,
                         thumbColor: Colors.white,
                       ),
@@ -616,7 +676,7 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     return AspectRatio(
       aspectRatio: 16 / 9,
       child: Container(
-        color: fieldGray900,
+        color: FieldrushAuthTheme.ink,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -699,9 +759,9 @@ class _ClipVisibilityCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: FieldrushAuthTheme.cream,
         borderRadius: BorderRadius.circular(15),
-        border: Border.all(color: fieldGray200),
+        border: Border.all(color: FieldrushAuthTheme.border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -710,14 +770,16 @@ class _ClipVisibilityCard extends StatelessWidget {
             children: [
               Icon(
                 isPublic ? Icons.public_rounded : Icons.lock_rounded,
-                color: isPublic ? fieldEmerald600 : fieldGray600,
+                color: isPublic
+                    ? FieldrushAuthTheme.forest
+                    : FieldrushAuthTheme.muted,
                 size: 18,
               ),
               const SizedBox(width: 7),
               const Text(
                 'VISIBILITY',
                 style: TextStyle(
-                  color: fieldGray700,
+                  color: FieldrushAuthTheme.ink,
                   fontSize: 11,
                   fontWeight: FontWeight.w900,
                   letterSpacing: 0.8,
@@ -759,10 +821,10 @@ class _ClipVisibilityCard extends StatelessWidget {
                   ? null
                   : (selection) => onChanged(selection.first),
               style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: fieldGray900,
+                selectedBackgroundColor: FieldrushAuthTheme.forest,
                 selectedForegroundColor: Colors.white,
-                foregroundColor: fieldGray600,
-                side: const BorderSide(color: fieldGray200),
+                foregroundColor: FieldrushAuthTheme.muted,
+                side: const BorderSide(color: FieldrushAuthTheme.border),
                 textStyle: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w900,
@@ -776,7 +838,7 @@ class _ClipVisibilityCard extends StatelessWidget {
                 ? 'Anyone can watch this clip from your profile.'
                 : 'Only you can see this clip on your profile.',
             style: const TextStyle(
-              color: fieldGray500,
+              color: FieldrushAuthTheme.muted,
               fontSize: 12,
               height: 1.35,
               fontWeight: FontWeight.w600,

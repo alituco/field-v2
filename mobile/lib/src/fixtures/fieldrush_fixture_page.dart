@@ -66,6 +66,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   Set<String> _bookedIds = const {};
   DateTime? _selectedDate;
   bool _loading = true;
+  bool _hasLoaded = false;
   bool _opening = false;
   String? _error;
   int _loadVersion = 0;
@@ -96,7 +97,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   Future<void> _load() async {
     final version = ++_loadVersion;
     setState(() {
-      _loading = true;
+      _loading = !_hasLoaded;
       _error = null;
     });
     try {
@@ -134,6 +135,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
               return time == 0 ? a.id.compareTo(b.id) : time;
             });
       setState(() {
+        _hasLoaded = true;
         _games = games;
         _bookedIds = {for (final booking in bookings) booking.gameId};
         final dates = _dates;

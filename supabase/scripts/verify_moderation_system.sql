@@ -5,6 +5,15 @@
 
 begin;
 
+create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
+returns boolean language plpgsql as $availability$
+begin
+  perform public.assert_player_has_one_game(player_id,'SOLO','00000000-0000-0000-0000-000000000000',true);
+  return true;
+exception when raise_exception then return false;
+end;
+$availability$;
+
 do $$
 declare
   reporter_id uuid;
@@ -31,15 +40,7 @@ begin
   select profile.id into target_id
   from public.profiles profile
   where profile.id <> reporter_id
-    and not exists (
-      select 1
-      from public.open_queue_bookings booking
-      join public.open_queue_games game on game.id = booking.game_id
-      where booking.profile_id = profile.id
-        and booking.status = 'CONFIRMED'
-        and game.status in ('OPEN', 'FULL')
-        and game.starts_at > now()
-    )
+    and pg_temp.verification_player_has_free_game_slot(profile.id)
   order by profile.created_at, profile.id
   limit 1;
 

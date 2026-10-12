@@ -732,23 +732,26 @@ class _RatingCard extends StatelessWidget {
     }
     final current = rating!;
     final placement = current.matchesPlayed < minimumPlayerLeaderboardMatches;
+    if (placement) {
+      return FieldrushPlacementRatingCard(
+        matchesPlayed: current.matchesPlayed,
+        cityLabel: current.region.trim().isNotEmpty
+            ? current.region
+            : cityLabel,
+        onTap: onTap,
+        actionKey: const ValueKey('you-rating-placement'),
+      );
+    }
     final division = divisionFromRating(current.skillRating);
-    final palette = placement ? _placementPalette : _palettes[division.number]!;
-    final count = placement ? minimumPlayerLeaderboardMatches : 10;
-    final filled = placement
-        ? current.matchesPlayed.clamp(0, minimumPlayerLeaderboardMatches)
-        : (division.progressFor(current.skillRating) * 10).round();
-    final gamesLeft = minimumPlayerLeaderboardMatches - filled;
+    final palette = _palettes[division.number]!;
+    const count = 10;
+    final filled = (division.progressFor(current.skillRating) * 10).round();
     final next = division.nextDivisionRating;
     final words = {1: 'ONE', 2: 'TWO', 3: 'THREE', 4: 'FOUR', 5: 'FIVE'};
     final city = current.region.trim().isNotEmpty
         ? current.region.toUpperCase()
         : cityLabel.split(',').first.toUpperCase();
-    final rank = placement
-        ? '#?'
-        : current.rank > 0
-        ? '#${current.rank}'
-        : '—';
+    final rank = current.rank > 0 ? '#${current.rank}' : '—';
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
@@ -772,16 +775,11 @@ class _RatingCard extends StatelessWidget {
             ),
           ),
           child: CustomPaint(
-            painter: _RatingBackgroundPainter(
-              palette: palette,
-              placement: placement,
-            ),
+            painter: _RatingBackgroundPainter(palette: palette),
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                key: ValueKey(
-                  placement ? 'you-rating-placement' : 'you-rating-ranked',
-                ),
+                key: const ValueKey('you-rating-ranked'),
                 onTap: onTap,
                 child: Padding(
                   padding: const EdgeInsets.all(18),
@@ -794,7 +792,6 @@ class _RatingCard extends StatelessWidget {
                           FieldrushDivisionShield(
                             division: division.number,
                             size: 62,
-                            placement: placement,
                           ),
                           const SizedBox(width: 15),
                           Expanded(
@@ -803,9 +800,7 @@ class _RatingCard extends StatelessWidget {
                               children: [
                                 _Spread(
                                   leading: Text(
-                                    placement
-                                        ? 'PLACEMENT'
-                                        : 'DIVISION ${words[division.number]}',
+                                    'DIVISION ${words[division.number]}',
                                     style: _jakarta(
                                       9.5,
                                       color: palette.accent,
@@ -838,14 +833,10 @@ class _RatingCard extends StatelessWidget {
                                   crossAxisAlignment: WrapCrossAlignment.end,
                                   children: [
                                     Text(
-                                      placement
-                                          ? '????'
-                                          : '${current.skillRating}',
+                                      '${current.skillRating}',
                                       style: _outfit(40, color: palette.ink)
                                           .copyWith(
-                                            letterSpacing: placement
-                                                ? 2.4
-                                                : -1.6,
+                                            letterSpacing: -1.6,
                                             height: .9,
                                           ),
                                     ),
@@ -867,22 +858,6 @@ class _RatingCard extends StatelessWidget {
                           ),
                         ],
                       ),
-                      if (placement) ...[
-                        const SizedBox(height: 18),
-                        Row(
-                          children: [
-                            for (final n in [5, 4, 3, 2, 1])
-                              Expanded(
-                                child: Center(
-                                  child: FieldrushDivisionShield(
-                                    division: n,
-                                    size: 24,
-                                  ),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
                       const SizedBox(height: 18),
                       Row(
                         children: [
@@ -905,17 +880,13 @@ class _RatingCard extends StatelessWidget {
                       const SizedBox(height: 10),
                       _Spread(
                         leading: Text(
-                          placement
-                              ? '$gamesLeft ${gamesLeft == 1 ? 'game' : 'games'} to reveal your division'
-                              : next == null
+                          next == null
                               ? 'Top division'
                               : '${next - current.skillRating} SR to Division ${division.number - 1}',
                           style: _jakarta(11.5, color: palette.ink),
                         ),
                         trailing: Text(
-                          placement
-                              ? '$filled / $minimumPlayerLeaderboardMatches'
-                              : next == null
+                          next == null
                               ? '1650+'
                               : '$next · D${division.number - 1} ›',
                           style: _jakarta(
@@ -1431,17 +1402,6 @@ class _RatingPalette {
   final Color ink, accent, chip, chipInk, segmentOn, segmentOff, lines, circle;
 }
 
-const _placementPalette = _RatingPalette(
-  [Color(0xFF1E2A23), Color(0xFF0B110D)],
-  Color(0xFFF3EBD6),
-  Color(0xFFC9C2AE),
-  Color(0x1FF3EBD6),
-  Color(0xFFF3EBD6),
-  Color(0xFFF3EBD6),
-  Color(0x29F3EBD6),
-  Color(0x0DFFFFFF),
-  Color(0x17FFFFFF),
-);
 const _palettes = {
   1: _RatingPalette(
     [Color(0xFF26251F), Color(0xFF0E0E0C)],
@@ -1501,38 +1461,11 @@ const _palettes = {
 };
 
 class _RatingBackgroundPainter extends CustomPainter {
-  const _RatingBackgroundPainter({
-    required this.palette,
-    required this.placement,
-  });
+  const _RatingBackgroundPainter({required this.palette});
   final _RatingPalette palette;
-  final bool placement;
 
   @override
   void paint(Canvas canvas, Size size) {
-    if (placement) {
-      for (final (center, radius, color) in [
-        (
-          Offset(size.width * .96, size.height * -.04),
-          130.0,
-          const Color(0x4DD9B04F),
-        ),
-        (
-          Offset(size.width * 1.04, size.height * .46),
-          150.0,
-          const Color(0x573A5E99),
-        ),
-      ]) {
-        canvas.drawRect(
-          Offset.zero & size,
-          Paint()
-            ..shader = RadialGradient(
-              colors: [color, color.withValues(alpha: 0)],
-              stops: const [0, .7],
-            ).createShader(Rect.fromCircle(center: center, radius: radius)),
-        );
-      }
-    }
     final paint = Paint()
       ..color = palette.lines
       ..strokeWidth = 1;
@@ -1564,7 +1497,7 @@ class _RatingBackgroundPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _RatingBackgroundPainter oldDelegate) =>
-      oldDelegate.palette != palette || oldDelegate.placement != placement;
+      oldDelegate.palette != palette;
 }
 
 class _DashedBorderPainter extends CustomPainter {

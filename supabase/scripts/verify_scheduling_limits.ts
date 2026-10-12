@@ -14,7 +14,8 @@ type BookingAttempt = {
   error: RpcError | null;
 };
 const SOLO_LIMIT_ERROR =
-  "You can have a maximum of 2 upcoming solo games. Cancel one before booking another.";
+  "You can only be registered in one upcoming or active game.";
+const CHECKOUT_LIMIT_ERROR = "Finish or cancel your earlier game checkout";
 const CLAN_PAUSED_ERROR = "Clan games are currently paused.";
 const url = requireEnv("SUPABASE_URL");
 assert(
@@ -39,7 +40,7 @@ try {
   await verifyClanCheckoutPaused(client, profile);
   await verifySoloSchedulingLimit(client, profile);
   console.log(
-    "Scheduling verified locally: clan checkout stays paused at its future USD 80 default; 7v7/USD 13 solo bookings enforce two upcoming games, concurrent limits, original-method refunds and released terminal slots.",
+    "Scheduling verified locally: clan checkout stays paused at its future USD 80 default; 7v7/USD 13 solo bookings enforce one upcoming/active game, concurrent checkout limits, original-method refunds and released terminal slots.",
   );
 } finally {
   await cleanup();
@@ -112,21 +113,39 @@ async function verifySoloSchedulingLimit(
   profile: ProfileRow,
 ) {
   const games = await Promise.all([0, 1, 2, 3].map(createOpenQueueGame));
-  const firstBooking = await bookOpenQueueGame(client, games[0]);
   const attempts = await Promise.all([
+    attemptBookOpenQueueGame(client, games[0]),
     attemptBookOpenQueueGame(client, games[1]),
-    attemptBookOpenQueueGame(client, games[2]),
   ]);
   const successes = attempts.filter((attempt) => attempt.error === null);
   const failures = attempts.filter((attempt) => attempt.error !== null);
   assert(
     successes.length === 1 && failures.length === 1,
-    "Exactly one concurrent solo booking must claim the second upcoming slot.",
+    "Exactly one concurrent solo checkout may claim the only upcoming slot.",
   );
+  assert(
+    failures[0].error?.message.includes(SOLO_LIMIT_ERROR) === true ||
+      failures[0].error?.message.includes(CHECKOUT_LIMIT_ERROR) === true,
+    `The concurrent second checkout returned the wrong error: ${
+      failures[0].error?.message
+    }`,
+  );
+  const firstBooking = successes[0].bookingId;
+  assert(firstBooking, "The winning checkout returned no booking id.");
+  assert(
+    await activeSoloBookingCount(profile.id) === 1,
+    "Concurrent checkouts must leave exactly one active registration.",
+  );
+  const priorIntentCount = intentIds.size;
+  const secondGame = await attemptBookOpenQueueGame(client, games[2]);
   assertError(
-    failures[0].error,
+    secondGame.error,
     SOLO_LIMIT_ERROR,
-    "Concurrent third solo booking",
+    "Non-overlapping second game",
+  );
+  assert(
+    intentIds.size === priorIntentCount,
+    "The single-game preflight must reject a second day before a payment intent exists.",
   );
 
   const { data: cancelled, error } = await client.rpc(
@@ -159,7 +178,7 @@ async function verifySoloSchedulingLimit(
     "A new-payment cancellation must not credit Field Wallet.",
   );
 
-  await bookOpenQueueGame(client, failures[0].game);
+  await bookOpenQueueGame(client, games[2]);
   const { error: terminalError } = await admin.from("open_queue_games").update({
     status: "CANCELLED",
     cancellation_code: "ADMIN_DECISION",
@@ -168,12 +187,12 @@ async function verifySoloSchedulingLimit(
     cancelled_at: new Date().toISOString(),
     cancelled_by: profile.id,
     cancellation_context: { source: "SCHEDULING_LIMIT_VERIFICATION" },
-  }).eq("id", successes[0].game.id);
+  }).eq("id", games[2].id);
   if (terminalError) throw terminalError;
   await bookOpenQueueGame(client, games[3]);
   assert(
-    await activeSoloBookingCount(profile.id) === 2,
-    "Cancelled bookings and terminal games must not consume upcoming solo slots.",
+    await activeSoloBookingCount(profile.id) === 1,
+    "Cancelled bookings and terminal games must release the sole upcoming slot.",
   );
 }
 
@@ -277,7 +296,7 @@ async function attemptBookOpenQueueGame(
     provider_status: "SUCCEEDED",
     captured_at: new Date().toISOString(),
   });
-  if (insertError) throw insertError;
+  if (insertError) return { game, bookingId: null, error: insertError };
   intentIds.add(id);
   const { data, error } = await admin.rpc("finalize_payment_intent", {
     intent_id_to_finalize: id,

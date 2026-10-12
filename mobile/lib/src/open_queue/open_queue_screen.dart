@@ -155,7 +155,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   Future<void> _continue() async {
     final role = _mainRole;
-    if (role == null || _upcomingBookings.length >= 2) return;
+    if (role == null || _upcomingBookings.isNotEmpty) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => OpenQueueGamesScreen(
@@ -189,7 +189,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loading && _upcomingBookings.length >= 2) {
+    if (!_loading && _upcomingBookings.isNotEmpty) {
       return _buildBookingLimitScreen();
     }
     return Scaffold(
@@ -208,10 +208,6 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
               bottom: _mainRole == null ? 116 : 218,
             ),
             children: [
-              if (_upcomingBookings case [final booking]) ...[
-                _QueueBookingAllowanceCard(onTap: () => _openBooking(booking)),
-                const SizedBox(height: 18),
-              ],
               const Text(
                 'WHERE DO YOU PLAY?',
                 style: TextStyle(
@@ -412,7 +408,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
             padding: fieldHeaderAwarePadding(context, top: 22, bottom: 116),
             children: [
               _QueueBookingLimitCard(
-                bookings: _upcomingBookings.take(2).toList(growable: false),
+                bookings: _upcomingBookings,
                 onBooking: _openBooking,
               ),
             ],
@@ -422,50 +418,6 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       bottomNavigationBar: FieldBottomNav(
         selectedIndex: null,
         onSelected: _navigateTab,
-      ),
-    );
-  }
-}
-
-class _QueueBookingAllowanceCard extends StatelessWidget {
-  const _QueueBookingAllowanceCard({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      key: const ValueKey('open-queue-one-of-two-booked'),
-      color: fieldEmerald50,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-          decoration: BoxDecoration(
-            border: Border.all(color: fieldEmerald100),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.event_available_rounded, color: fieldEmerald700),
-              const SizedBox(width: 11),
-              const Expanded(
-                child: Text(
-                  '1 OF 2 GAMES BOOKED',
-                  style: TextStyle(
-                    color: fieldEmerald700,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .7,
-                  ),
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: fieldEmerald700),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -483,7 +435,7 @@ class _QueueBookingLimitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      key: const ValueKey('open-queue-two-game-limit'),
+      key: const ValueKey('open-queue-game-limit'),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -520,7 +472,7 @@ class _QueueBookingLimitCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '2 / 2 SOLO GAME LIMIT',
+                      'ONE GAME AT A TIME',
                       style: TextStyle(
                         color: fieldEmerald700,
                         fontSize: 10,
@@ -530,7 +482,7 @@ class _QueueBookingLimitCard extends StatelessWidget {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'You’re already booked for two games',
+                      'You’re already in a game',
                       style: TextStyle(
                         color: fieldGray900,
                         fontSize: 19,
