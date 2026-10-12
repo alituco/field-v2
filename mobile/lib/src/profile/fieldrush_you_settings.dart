@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../reliability/reliability.dart';
+import '../ui/field_loading.dart';
 
 enum YouNotificationOption {
   gameReminders(
@@ -287,11 +288,7 @@ class _YouNotificationsScreenState extends State<YouNotificationsScreen> {
     return _SettingsScaffold(
       title: 'Notifications',
       trailing: _saving
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2, color: _forest),
-            )
+          ? Text('Saving…', style: _body(11, weight: FontWeight.w700))
           : preferences == null
           ? null
           : Text(
@@ -753,9 +750,12 @@ class _WhiteCard extends StatelessWidget {
 class _Loading extends StatelessWidget {
   const _Loading();
   @override
-  Widget build(BuildContext context) => const Padding(
-    padding: EdgeInsets.all(40),
-    child: Center(child: CircularProgressIndicator(color: _forest)),
+  Widget build(BuildContext context) => const _WhiteCard(
+    child: FieldLoadingContent(
+      label: 'Loading settings',
+      rows: 5,
+      compact: true,
+    ),
   );
 }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { isValidOverlayToken } from "@/lib/broadcast-agent-auth";
 import { createSupabaseAdmin } from "@/lib/supabase-admin";
+import { soloScheduledDurationSeconds } from "@/lib/match-duration";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
 
@@ -18,7 +19,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const [gameResult, clockResult, goalsResult] = await Promise.all([
       db.from("open_queue_games")
-        .select("id,status,white_score,black_score")
+        .select("id,status,white_score,black_score,starts_at,ends_at")
         .eq("id", gameId)
         .single(),
       db.from("open_queue_clock_states")
@@ -49,7 +50,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         status: "NOT_STARTED",
         started_at: null,
         accumulated_seconds: 0,
-        duration_seconds: 3600,
+        duration_seconds: soloScheduledDurationSeconds(gameResult.data.starts_at, gameResult.data.ends_at),
       },
     });
   } catch (error) {

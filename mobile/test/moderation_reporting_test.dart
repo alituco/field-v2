@@ -65,13 +65,12 @@ void main() {
     );
     await tester.pump();
 
-    expect(find.byKey(const ValueKey('profile-options-menu')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('profile-options-menu')));
-    await tester.pumpAndSettle();
-    expect(find.text('Share profile'), findsOneWidget);
+    // The reference exposes reporting directly rather than hiding it in a menu.
+    expect(find.byKey(const ValueKey('profile-options-menu')), findsNothing);
+    await tester.ensureVisible(find.text('Report player'));
     expect(find.text('Report player'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('profile-report-action')));
+    await tester.tap(find.text('Report player'));
     await tester.pumpAndSettle();
     expect(find.byKey(moderationReportSheetKey), findsOneWidget);
     expect(find.text('Report Noor Saleh'), findsOneWidget);
@@ -115,7 +114,7 @@ void main() {
     await tester.pump();
 
     expect(find.byKey(const ValueKey('profile-options-menu')), findsNothing);
-    expect(find.byTooltip('Share profile'), findsOneWidget);
+    expect(find.text('Share profile'), findsOneWidget);
     expect(find.text('Report player'), findsNothing);
     expect(tester.takeException(), isNull);
   });

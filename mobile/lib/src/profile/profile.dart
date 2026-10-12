@@ -19,6 +19,9 @@ class PlayerProfile {
     this.phone,
     this.avatarUrl,
     this.clan,
+    this.position,
+    this.showUpPercent,
+    this.isFollowedByMe = false,
   });
 
   final String id;
@@ -38,10 +41,54 @@ class PlayerProfile {
   final List<ProfilePreviousGame> previousGames;
   final ProfilePlayerRating? playerRating;
 
+  /// Null until a public, player-owned position is available. A historical
+  /// booking role is not a declaration of the player's preferred position.
+  final String? position;
+
+  /// A public attendance aggregate, if supplied. Private reliability records
+  /// and played-match history cannot establish a public show-up percentage.
+  final double? showUpPercent;
+  final bool isFollowedByMe;
+
+  // The history RPC returns every verified, played FINAL match across solo
+  // and clan play. Legacy appearances are current-clan-only, while SR totals
+  // can reset; neither is the player's lifetime public match record.
+  List<ProfilePreviousGame> get _publicPlayedGames {
+    final byMatch = <String, ProfilePreviousGame>{};
+    for (final game in previousGames) {
+      if (game.id.trim().isEmpty) continue;
+      byMatch.putIfAbsent('${game.type.name}:${game.id}', () => game);
+    }
+    return byMatch.values.toList()..sort((a, b) {
+      final byDate = b.playedAt.compareTo(a.playedAt);
+      if (byDate != 0) return byDate;
+      final byType = a.type.index.compareTo(b.type.index);
+      return byType != 0 ? byType : a.id.compareTo(b.id);
+    });
+  }
+
+  int get playedCount => _publicPlayedGames.length;
+
+  /// Unknown or absent results must not be represented as a 0% win rate.
+  double? get winRatePercent {
+    final games = _publicPlayedGames;
+    if (games.isEmpty || games.any((game) => game.outcome == null)) return null;
+    final wins = games.where((game) => game.outcome == ProfileGameOutcome.win);
+    return wins.length * 100 / games.length;
+  }
+
+  /// Newest first. An unresolved score/side keeps its place as an unknown
+  /// result, rather than silently substituting an older match.
+  List<ProfileGameOutcome?> get lastFiveResults => _publicPlayedGames
+      .take(5)
+      .map((game) => game.outcome)
+      .toList(growable: false);
+
   PlayerProfile copyWith({
     int? followingCount,
     int? fansCount,
     List<ProfileHighlight>? highlights,
+    bool? isFollowedByMe,
   }) {
     return PlayerProfile(
       id: id,
@@ -60,6 +107,9 @@ class PlayerProfile {
       career: career,
       previousGames: previousGames,
       playerRating: playerRating,
+      position: position,
+      showUpPercent: showUpPercent,
+      isFollowedByMe: isFollowedByMe ?? this.isFollowedByMe,
     );
   }
 
@@ -730,6 +780,7 @@ class ProfilePreviousGame {
     required this.playerSide,
     this.playerRole,
     this.timezone,
+    this.hasFinalScore = true,
   });
 
   final String id;
@@ -747,6 +798,7 @@ class ProfilePreviousGame {
   final String playerSide;
   final String? playerRole;
   final String? timezone;
+  final bool hasFinalScore;
 
   bool get isSolo => type == ProfileGameType.solo;
 
@@ -761,6 +813,7 @@ class ProfilePreviousGame {
   }
 
   ProfileGameOutcome? get outcome {
+    if (!hasFinalScore) return null;
     final isHomeSide = switch (playerSide.trim().toUpperCase()) {
       'HOME' || 'WHITE' => true,
       'AWAY' || 'BLACK' => false,
@@ -785,6 +838,8 @@ class ProfilePreviousGame {
         : 'Asia/Bahrain';
     final playedAtValue =
         json['played_at'] ?? json['starts_at'] ?? json['match_date'];
+    final homeScore = _asNullableInt(json['home_score'] ?? json['white_score']);
+    final awayScore = _asNullableInt(json['away_score'] ?? json['black_score']);
     return ProfilePreviousGame(
       id: (json['match_id'] ?? json['source_id'] ?? json['id'] ?? '')
           .toString(),
@@ -804,8 +859,13 @@ class ProfilePreviousGame {
           .trim()
           .toUpperCase(),
       awayEmblem: json['away_emblem'] as String? ?? (isSolo ? '⚫' : '⚽'),
-      homeScore: _asInt(json['home_score'] ?? json['white_score']),
-      awayScore: _asInt(json['away_score'] ?? json['black_score']),
+      homeScore: homeScore ?? 0,
+      awayScore: awayScore ?? 0,
+      hasFinalScore:
+          homeScore != null &&
+          awayScore != null &&
+          homeScore >= 0 &&
+          awayScore >= 0,
       playerSide: (json['player_side'] ?? json['side'] ?? '')
           .toString()
           .toUpperCase(),

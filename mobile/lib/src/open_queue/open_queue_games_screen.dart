@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
@@ -135,7 +137,7 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Games for you', showBack: true),
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: fieldEmerald600,
           onRefresh: _load,
           child: ListView(

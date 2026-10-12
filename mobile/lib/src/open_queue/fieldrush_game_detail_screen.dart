@@ -14,7 +14,9 @@ import '../home/field_bottom_nav.dart';
 import '../payments/refund_status.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../ui/field_loading.dart';
 import 'fieldrush_game_detail_party.dart';
+import 'fieldrush_game_loading.dart';
 import 'open_queue.dart';
 import 'open_queue_repository.dart';
 
@@ -265,24 +267,18 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   }
 
   Future<void> _directions() async {
-    final venue = _game?.venue.trim();
-    if (venue == null || venue.isEmpty) return;
-    final market = _game!.timezone == 'America/Phoenix'
-        ? 'Phoenix AZ'
-        : _game!.timezone == 'Asia/Bahrain'
-        ? 'Bahrain'
-        : '';
+    final game = _game;
+    final destination = game?.directionsUri;
+    if (game == null || destination == null) return;
+    final location = game.locationLabel ?? game.venue;
     try {
       final opened = await launchUrl(
-        Uri.https('www.google.com', '/maps/search/', {
-          'api': '1',
-          'query': '$venue $market',
-        }),
+        destination,
         mode: LaunchMode.externalApplication,
       );
-      if (!opened) _message('Directions could not be opened. Venue: $venue');
+      if (!opened) _message('Directions could not be opened. Venue: $location');
     } catch (_) {
-      _message('Directions could not be opened. Venue: $venue');
+      _message('Directions could not be opened. Venue: $location');
     }
   }
 
@@ -360,7 +356,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
               ),
         body: SafeArea(
           bottom: false,
-          child: RefreshIndicator(
+          child: FieldRefreshIndicator(
             color: _green,
             onRefresh: _load,
             child: ListView(
@@ -386,11 +382,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                           ),
                         ),
                 ),
-                if (_loading && game == null)
-                  const Padding(
-                    padding: EdgeInsets.all(48),
-                    child: Center(child: CircularProgressIndicator()),
-                  ),
+                if (_loading && game == null) const FieldrushGameLoading(),
                 if (_error != null)
                   _Card(
                     child: Column(
@@ -451,10 +443,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                     ),
                   ),
                   if (_detail == null && _loading)
-                    const Padding(
-                      padding: EdgeInsets.all(24),
-                      child: Center(child: CircularProgressIndicator()),
-                    ),
+                    const FieldLoadingContent(label: 'Loading lineup', rows: 4),
                   if (_detail case final detail?)
                     switch (_section) {
                       _Section.lineup => _lineup(detail),
@@ -534,6 +523,14 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
               ),
             ],
           ),
+          if (game.locationLabel case final String address) ...[
+            const SizedBox(height: 12),
+            Text(
+              address,
+              key: const ValueKey('fieldrush-game-address'),
+              style: _body(11.5, color: _light),
+            ),
+          ],
           const SizedBox(height: 18),
           Container(
             padding: const EdgeInsets.all(15),
@@ -695,11 +692,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                       padding: const EdgeInsets.symmetric(horizontal: 12),
                     ),
                     child: _acting
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                        ? Text(_isBooked ? 'Leaving…' : 'Joining…')
                         : Text(
                             _isBooked
                                 ? 'Leave game'
@@ -714,7 +707,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 ),
                 const SizedBox(width: 9),
                 OutlinedButton(
-                  onPressed: game.venue.isEmpty ? null : _directions,
+                  onPressed: game.directionsUri == null ? null : _directions,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white,
                     side: const BorderSide(color: Colors.white54),
@@ -1670,7 +1663,10 @@ class _GameWatchState extends State<_GameWatch> {
                     ),
                   ),
                   if (_loading)
-                    const CircularProgressIndicator(color: Colors.white)
+                    const FieldLoadingIndicator(
+                      label: 'Loading video',
+                      color: Colors.white54,
+                    )
                   else
                     IconButton(
                       onPressed: hasUrl ? _play : null,

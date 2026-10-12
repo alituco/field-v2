@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../ui/field_loading.dart';
 
 import '../auth/fieldrush_account.dart';
 import '../auth/fieldrush_auth_theme.dart';
@@ -171,6 +172,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       MaterialPageRoute<ProfileConnectionCounts>(
         builder: (_) => ProfileConnectionsScreen(
           profileRepository: widget.profileRepository,
+          username: _profile?.username,
           initialTab: tab,
           onOpenProfile: (id) async {
             if (id == widget.profileRepository.currentUserId) return;
@@ -421,7 +423,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                           ),
                         ),
                       )
-              : RefreshIndicator(
+              : FieldRefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
                     key: const ValueKey('you-content'),

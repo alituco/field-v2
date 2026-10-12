@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/fixture_repository.dart';
 import 'clan.dart';
@@ -174,7 +175,7 @@ class _ClansScreenState extends State<ClansScreen> {
                 onPressed: _openCreateClan,
               ),
       ),
-      child: RefreshIndicator(
+      child: FieldRefreshIndicator(
         color: fieldEmerald600,
         edgeOffset: fieldPageHeaderExtent(context),
         onRefresh: _loadClans,

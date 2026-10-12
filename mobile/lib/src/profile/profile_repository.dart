@@ -276,6 +276,7 @@ class SupabaseProfileRepository implements ProfileRepository {
       clan: clan,
       followingCount: connectionCounts.following,
       fansCount: connectionCounts.fans,
+      isFollowedByMe: connectionCounts.isFollowedByMe,
       appearances: stats.appearances,
       goals: stats.goals,
       assists: stats.assists,
@@ -293,25 +294,12 @@ class SupabaseProfileRepository implements ProfileRepository {
       throw const AuthException('You need to sign in again.');
     }
 
-    final followingRows = await _client
-        .from('profile_follows')
-        .select('following_id')
-        .eq('follower_id', user.id)
-        .order('created_at', ascending: false);
-    final fanRows = await _client
-        .from('profile_follows')
-        .select('follower_id')
-        .eq('following_id', user.id)
-        .order('created_at', ascending: false);
-
-    final followingIds = [
-      for (final row in followingRows as List<dynamic>)
-        Map<String, dynamic>.from(row as Map)['following_id'] as String,
-    ];
-    final fanIds = [
-      for (final row in fanRows as List<dynamic>)
-        Map<String, dynamic>.from(row as Map)['follower_id'] as String,
-    ];
+    final relatedIds = await Future.wait([
+      _loadConnectionIds(user.id, following: true),
+      _loadConnectionIds(user.id, following: false),
+    ]);
+    final followingIds = relatedIds[0];
+    final fanIds = relatedIds[1];
     final followedByMe = followingIds.toSet();
 
     final profilesResponse = await _client
@@ -323,10 +311,16 @@ class SupabaseProfileRepository implements ProfileRepository {
       for (final row in profilesResponse as List<dynamic>)
         Map<String, dynamic>.from(row as Map),
     ];
-    final profilesById = {
-      for (final row in profileRows) row['id'] as String: row,
-    };
-    final clansByProfileId = await _loadClansForProfiles(profilesById.keys);
+    // Discovery is intentionally one page, but relationships must not depend
+    // on that page. Direct profile reads still enforce active-account RLS.
+    final profilesById = await _loadConnectionProfiles({
+      ...followingIds,
+      ...fanIds,
+    });
+    final clansByProfileId = await _loadClansForProfiles({
+      ...profilesById.keys,
+      for (final row in profileRows) row['id'] as String,
+    });
 
     ProfileConnection? buildConnection(String profileId) {
       final row = profilesById[profileId];
@@ -361,6 +355,46 @@ class SupabaseProfileRepository implements ProfileRepository {
       fans: fans,
       discover: discover,
     );
+  }
+
+  Future<List<String>> _loadConnectionIds(
+    String userId, {
+    required bool following,
+  }) async {
+    const pageSize = 500;
+    final relatedColumn = following ? 'following_id' : 'follower_id';
+    final ownerColumn = following ? 'follower_id' : 'following_id';
+    final ids = <String>{};
+    for (var offset = 0; ; offset += pageSize) {
+      final rows = await _client
+          .from('profile_follows')
+          .select(relatedColumn)
+          .eq(ownerColumn, userId)
+          .order('created_at', ascending: false)
+          .order(relatedColumn, ascending: true)
+          .range(offset, offset + pageSize - 1);
+      ids.addAll([for (final row in rows) row[relatedColumn] as String]);
+      if (rows.length < pageSize) break;
+    }
+    return ids.toList(growable: false);
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadConnectionProfiles(
+    Set<String> profileIds,
+  ) async {
+    final ids = profileIds.toList(growable: false);
+    final profiles = <String, Map<String, dynamic>>{};
+    for (var offset = 0; offset < ids.length; offset += 100) {
+      final end = (offset + 100).clamp(0, ids.length);
+      final rows = await _client
+          .from('profiles')
+          .select('id, display_name, username, avatar_url')
+          .inFilter('id', ids.sublist(offset, end));
+      for (final row in rows) {
+        profiles[row['id'] as String] = Map<String, dynamic>.from(row);
+      }
+    }
+    return profiles;
   }
 
   @override
@@ -514,9 +548,12 @@ class SupabaseProfileRepository implements ProfileRepository {
     final ids = profileIds.toList();
     if (ids.isEmpty) return const {};
 
-    final response = await _client
-        .from('clan_members')
-        .select('''
+    final clans = <String, ProfileClan>{};
+    for (var offset = 0; offset < ids.length; offset += 100) {
+      final end = (offset + 100).clamp(0, ids.length);
+      final response = await _client
+          .from('clan_members')
+          .select('''
           profile_id,
           clans(
             id,
@@ -527,17 +564,15 @@ class SupabaseProfileRepository implements ProfileRepository {
             pattern_id,
             skill_rating
           )
-        ''')
-        .inFilter('profile_id', ids)
-        .isFilter('left_at', null);
-    final rows = response as List<dynamic>;
-
-    return {
-      for (final row in rows)
-        if (_connectionClanFromRow(Map<String, dynamic>.from(row as Map))
-            case final entry?)
-          entry.key: entry.value,
-    };
+          ''')
+          .inFilter('profile_id', ids.sublist(offset, end))
+          .isFilter('left_at', null);
+      for (final row in response) {
+        final entry = _connectionClanFromRow(Map<String, dynamic>.from(row));
+        if (entry != null) clans[entry.key] = entry.value;
+      }
+    }
+    return clans;
   }
 
   Future<_ProfileStats> _loadStats(String userId, String clanId) async {
@@ -606,18 +641,40 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<_ConnectionCounts> _loadConnectionCounts(String userId) async {
-    final followingRows = await _client
+    final viewerId = currentUserId;
+    // Count only relationships whose other profile is visible under RLS, as
+    // getConnections does. Exact totals are independent of server page caps.
+    final following = await _client
         .from('profile_follows')
-        .select('following_id')
-        .eq('follower_id', userId);
-    final fanRows = await _client
+        .select(
+          'following_id, profile:profiles!profile_follows_following_id_fkey!inner(id)',
+        )
+        .eq('follower_id', userId)
+        .limit(1)
+        .count(CountOption.exact);
+    final fans = await _client
         .from('profile_follows')
-        .select('follower_id')
-        .eq('following_id', userId);
+        .select(
+          'follower_id, profile:profiles!profile_follows_follower_id_fkey!inner(id)',
+        )
+        .eq('following_id', userId)
+        .limit(1)
+        .count(CountOption.exact);
+    // List responses can be capped by the server. Check the unique viewer /
+    // player pair directly rather than inferring it from a page of fans.
+    final viewerFollow = viewerId == null || viewerId == userId
+        ? null
+        : await _client
+              .from('profile_follows')
+              .select('follower_id')
+              .eq('following_id', userId)
+              .eq('follower_id', viewerId)
+              .maybeSingle();
 
     return _ConnectionCounts(
-      following: (followingRows as List<dynamic>).length,
-      fans: (fanRows as List<dynamic>).length,
+      following: following.count,
+      fans: fans.count,
+      isFollowedByMe: viewerFollow != null,
     );
   }
 
@@ -639,18 +696,27 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<List<ProfilePreviousGame>> _loadPreviousGames(String userId) async {
-    final response = await _client.rpc(
-      'list_profile_previous_games',
-      params: {'profile_id_to_use': userId},
-    );
-    final rows = switch (response) {
-      final List value => value,
-      final Map value => [value],
-      _ => const <dynamic>[],
-    };
-    final records = [
-      for (final row in rows) Map<String, dynamic>.from(row as Map),
-    ];
+    // This table-returning RPC is subject to PostgREST's 1,000-row cap.
+    // Public lifetime totals must not silently become the most recent page.
+    const pageSize = 500;
+    final records = <Map<String, dynamic>>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final response = await _client
+          .rpc(
+            'list_profile_previous_games',
+            params: {'profile_id_to_use': userId},
+          )
+          .range(offset, offset + pageSize - 1);
+      final rows = switch (response) {
+        final List value => value,
+        final Map value => [value],
+        _ => const <dynamic>[],
+      };
+      records.addAll([
+        for (final row in rows) Map<String, dynamic>.from(row as Map),
+      ]);
+      if (rows.length < pageSize) break;
+    }
     final games = [
       for (final row in records) ProfilePreviousGame.fromJson(row),
     ];
@@ -763,10 +829,15 @@ class _ProfileStats {
 }
 
 class _ConnectionCounts {
-  const _ConnectionCounts({required this.following, required this.fans});
+  const _ConnectionCounts({
+    required this.following,
+    required this.fans,
+    required this.isFollowedByMe,
+  });
 
   final int following;
   final int fans;
+  final bool isFollowedByMe;
 }
 
 MapEntry<String, ProfileClan>? _connectionClanFromRow(

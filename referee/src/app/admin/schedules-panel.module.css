@@ -1,0 +1,77 @@
+.stack { display: grid; gap: 24px; }
+.intro { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 32px; border: 1px solid var(--line); border-radius: 24px; background: var(--surface); }
+.intro h2, .editor h2 { margin: 8px 0 12px; color: var(--ink); font-size: clamp(25px, 3vw, 36px); letter-spacing: -.055em; line-height: 1.15; }
+.intro p, .editor header p { max-width: 590px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.intro button { flex-shrink: 0; }
+.hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.cards { display: grid; gap: 24px; }
+.card { padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; min-width: 0; }
+.cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.cardHeader h3 { margin: 16px 0 5px; color: var(--ink); font-size: 23px; letter-spacing: -.04em; overflow-wrap: anywhere; }
+.cardHeader p { color: var(--muted); font-size: 13px; margin: 0; }
+.active, .paused { display: inline-block; padding: 6px 11px; border-radius: 20px; font-size: 11px; font-weight: 750; background: var(--background); color: var(--green); }
+.paused { color: var(--muted); }
+.summary { color: var(--ink); margin: 22px 0 14px; font-size: 15px; line-height: 1.6; font-weight: 750; }
+.facts { display: flex; flex-wrap: wrap; gap: 12px 26px; font-size: 12px; color: var(--muted); line-height: 1.7; }
+.facts strong { color: var(--ink); font-weight: 650; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; margin: 22px 0 12px; }
+.quiet, .back { background: transparent; color: var(--green); padding: 10px 4px; min-height: 44px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.quiet:disabled { opacity: .5; cursor: default; }
+.back { padding-left: 0; justify-self: start; }
+.details { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 20px; }
+.details summary { color: var(--ink); font-size: 13px; font-weight: 750; cursor: pointer; min-height: 30px; }
+.details summary span { margin-left: 12px; color: var(--muted); font-size: 11px; font-weight: 550; }
+.dateList { padding: 0; margin: 10px 0 0; list-style: none; }
+.dateList li { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.dateList strong { font-size: 12px; color: var(--ink); }
+.dateList p { color: var(--muted); font-size: 12px; line-height: 1.6; margin: 4px 0 0; overflow-wrap: anywhere; }
+.gameLink { font-size: 12px; font-weight: 750; color: var(--green); flex-shrink: 0; }
+.conflict, .dateList .conflict { color: var(--red); font-size: 12px; line-height: 1.7; }
+.empty { display: grid; justify-items: center; text-align: center; padding: 60px 24px; border: 1px dashed var(--line); border-radius: 24px; color: var(--muted); }
+.empty h3 { color: var(--ink); font-size: 25px; letter-spacing: -.045em; margin: 0; }
+.empty p { max-width: 450px; font-size: 14px; line-height: 1.7; margin: 16px 0 26px; }
+.skeleton { min-height: 270px; border-radius: 24px; background: var(--line); opacity: .45; }
+.editor { display: grid; gap: 26px; max-width: 880px; margin: 0 auto; }
+.formFields { min-width: 0; padding: 0; margin: 0; border: none; display: grid; gap: 22px; }
+.formFields section { display: grid; gap: 22px; padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; }
+.formFields h3 { margin: 0; font-size: 18px; color: var(--ink); letter-spacing: -.03em; }
+.formFields label { display: grid; align-content: start; gap: 9px; min-width: 0; }
+.formFields label > span, .weekdays legend { color: var(--ink); font-size: 12px; font-weight: 750; }
+.formFields input:not([type="checkbox"]), .formFields select { box-sizing: border-box; width: 100%; min-height: 48px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.formFields input:focus-visible, .formFields select:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.formFields small { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.row { display: flex; gap: 18px; }
+.row > label { flex: 1; }
+.help { padding: 16px 18px; background: var(--background); border: 1px solid var(--line); border-radius: 12px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.help strong { color: var(--ink); }
+.help p { margin: 7px 0 16px; }
+.weekdays { display: flex; flex-wrap: wrap; gap: 10px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.weekdays legend { padding: 0; margin-bottom: 12px; }
+.weekdays label { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 11px; padding: 11px 12px; background: var(--background); cursor: pointer; }
+.weekdays label:has(input:checked) { border-color: var(--green); background: var(--surface); }
+.weekdays input, .check input { accent-color: var(--green); width: 17px; height: 17px; margin: 0; }
+.formFields .check { display: flex; align-items: center; gap: 11px; }
+.preview { background: var(--background); padding: 26px; border: 1px solid var(--line); border-radius: 24px; }
+.preview h3 { color: var(--ink); margin: 12px 0; font-size: 18px; line-height: 1.5; }
+.preview p, .preview li { color: var(--muted); font-size: 13px; line-height: 1.7; }
+.preview ul { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; list-style: none; }
+.preview li { padding: 7px 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.preview small { color: var(--muted); font-size: 11px; line-height: 1.7; }
+.editorFooter { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+.editorFooter p { max-width: 390px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.editorFooter button { flex-shrink: 0; }
+.skipForm { background: var(--background); border: 1px solid var(--line); border-radius: 15px; padding: 22px; margin-top: 20px; }
+.skipForm h4 { margin: 0; color: var(--ink); font-size: 15px; }
+.skipForm > p { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.skipForm .actions { margin: 0; }
+@media (max-width: 700px) {
+  .intro, .cardHeader, .row, .editorFooter { flex-direction: column; align-items: stretch; }
+  .intro, .card { padding: 22px; }
+  .formFields section { padding: 22px 18px; }
+  .formFields input:not([type="checkbox"]), .formFields select { font-size: 16px; }
+  .dateList li { gap: 12px; }
+  .details summary span { display: block; margin: 8px 0; }
+  .weekdays { gap: 8px; }
+  .weekdays label { flex: 1 0 calc(50% - 8px); box-sizing: border-box; }
+  .editorFooter { gap: 8px; }
+}

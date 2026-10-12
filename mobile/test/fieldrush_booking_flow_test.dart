@@ -103,6 +103,36 @@ void main() {
     expect(repository.bookCalls, 0);
   });
 
+  testWidgets('Saturday game keeps its configured kickoff and 90-minute slot', (
+    tester,
+  ) async {
+    // Sunday UTC is still Saturday evening at the Phoenix field.
+    final game = _game(
+      'saturday',
+      start: DateTime.utc(2099, 6, 7, 1, 15),
+      durationMinutes: 90,
+    );
+    final repository = _Repository([game]);
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: repository,
+        now: _now,
+        startAtGames: true,
+        initialRoles: const {OpenQueueRole.defender},
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('booking-game-saturday')));
+    await tester.pumpAndSettle();
+    expect(find.text('STEP 3 OF 3'), findsOneWidget);
+    expect(find.text('SAT, 6 JUN'), findsOneWidget);
+    expect(find.text('SOLO SLOT · 6:15 PM'), findsOneWidget);
+    expect(find.text('Reach 11 Fields · 90 min'), findsOneWidget);
+    expect(find.text('7v7'), findsOneWidget);
+    expect(repository.bookCalls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'no preference matches offers explicit sooner out-of-position game',
     (tester) async {
@@ -446,12 +476,16 @@ OpenQueueGame _game(
   int days = 2,
   int keeper = 2,
   String status = 'OPEN',
+  DateTime? start,
+  int durationMinutes = 60,
 }) => OpenQueueGame(
   id: id,
   status: status,
   venue: 'Reach 11 Fields',
-  startsAt: _now.add(Duration(days: days, hours: 3, minutes: 30)),
-  endsAt: _now.add(Duration(days: days, hours: 4, minutes: 30)),
+  startsAt: start ?? _now.add(Duration(days: days, hours: 3, minutes: 30)),
+  endsAt: (start ?? _now.add(Duration(days: days, hours: 3, minutes: 30))).add(
+    Duration(minutes: durationMinutes),
+  ),
   timezone: 'America/Phoenix',
   currency: 'USD',
   priceFils: 13000,

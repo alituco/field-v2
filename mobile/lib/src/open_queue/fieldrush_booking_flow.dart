@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
@@ -250,7 +252,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
           bottom: false,
           child: _confirmed != null
               ? _confirmation(_confirmed!)
-              : RefreshIndicator(
+              : FieldRefreshIndicator(
                   onRefresh: _load,
                   child: ListView(
                     key: ValueKey('booking-step-$_step'),
@@ -327,9 +329,9 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
                       ),
                       const SizedBox(height: 18),
                       if (_loading)
-                        const Padding(
-                          padding: EdgeInsets.all(24),
-                          child: Center(child: CircularProgressIndicator()),
+                        const FieldLoadingContent(
+                          label: 'Loading available positions and games',
+                          rows: 3,
                         )
                       else ...[
                         if (_error != null) ...[
@@ -731,6 +733,10 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               '${game.venue} · ${game.endsAt.difference(game.startsAt).inMinutes} min',
               style: bookingText(12),
             ),
+            if (game.locationLabel case final String address) ...[
+              const SizedBox(height: 6),
+              Text(address, style: bookingText(12)),
+            ],
             const Divider(height: 32, color: FieldrushAuthTheme.border),
             if (_selectedRole != null)
               BookingValueRow('Your position', bookingRoleName(_selectedRole!)),
@@ -835,7 +841,11 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
             const SizedBox(height: 10),
             Text(booking.game.startTimeLabel, style: bookingHeading(34)),
             const SizedBox(height: 9),
-            Text('${booking.game.venue} · Phoenix', style: bookingText(12)),
+            Text(booking.game.venue, style: bookingText(12)),
+            if (booking.game.locationLabel case final String address) ...[
+              const SizedBox(height: 6),
+              Text(address, style: bookingText(12)),
+            ],
             const Divider(height: 32, color: FieldrushAuthTheme.border),
             BookingValueRow('POSITION', bookingRoleName(booking.role)),
             BookingValueRow(

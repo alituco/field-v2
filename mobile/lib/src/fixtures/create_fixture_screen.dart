@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'fixture.dart';
@@ -535,7 +536,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: FieldLoadingIndicator(),
                 )
               : const Icon(Icons.lock_rounded),
           label: Text(
@@ -578,29 +579,7 @@ class _ClanAccessLoadingStep extends StatelessWidget {
     return ListView(
       padding: fieldHeaderAwarePadding(context, top: 72, bottom: 40),
       children: const [
-        Center(
-          child: Column(
-            children: [
-              SizedBox(
-                width: 34,
-                height: 34,
-                child: CircularProgressIndicator(
-                  color: fieldEmerald600,
-                  strokeWidth: 3,
-                ),
-              ),
-              SizedBox(height: 18),
-              Text(
-                'Checking clan access…',
-                style: TextStyle(
-                  color: fieldGray700,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
+        FieldLoadingContent(label: 'Checking clan access', rows: 3),
       ],
     );
   }
@@ -1870,23 +1849,10 @@ class _ChargePreviewLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        SizedBox(width: 10),
-        Text(
-          'Calculating the exact checkout total…',
-          style: TextStyle(
-            color: fieldGray500,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
+    return const FieldLoadingContent(
+      label: 'Calculating the exact checkout total',
+      rows: 2,
+      compact: true,
     );
   }
 }

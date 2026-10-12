@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../clans/clan_widgets.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
@@ -464,7 +466,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Booking Details', showBack: true),
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: fieldEmerald600,
           edgeOffset: fieldPageHeaderExtent(context),
           onRefresh: _refreshAll,
@@ -618,11 +620,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                   ),
                 ),
                 child: _cancelling
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const Text('Cancelling…')
                     : const Text(
                         'Cancel booking',
                         style: TextStyle(fontWeight: FontWeight.w900),
@@ -896,8 +894,8 @@ class _BookingPlayerStatusCard extends StatelessWidget {
                     ? SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                        child: FieldLoadingIndicator(
+                          label: 'Refreshing player count',
                           color: accent,
                         ),
                       )

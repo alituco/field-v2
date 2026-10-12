@@ -50,7 +50,7 @@ export default function AdminSubjectDetailPage() {
   }, []);
   useEffect(() => { if (token) void load(); else if (sessionChecked) setLoading(false); }, [load, sessionChecked, token]);
 
-  if (!sessionChecked || loading) return <main className={styles.loading}><i /><i /><i /></main>;
+  if (!sessionChecked || loading) return <main className={styles.loading} role="status" aria-label="Loading account history"><i aria-hidden="true" /><i aria-hidden="true" /><i aria-hidden="true" /></main>;
   if (!token || !detail) return <State title={!token ? "Sign in required" : "Record unavailable"} detail={error ?? "This record could not be found."} />;
 
   const activeStrikes = detail.incidents.reduce((total, incident) => total + (incident.expiresAt && Date.parse(incident.expiresAt) <= Date.now() ? 0 : incident.strikeDelta), 0);

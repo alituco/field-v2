@@ -275,7 +275,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('you-fans')));
     await tester.pumpAndSettle();
     expect(find.byType(ProfileConnectionsScreen), findsOneWidget);
-    await tester.tap(find.byIcon(Icons.arrow_back_rounded));
+    await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(find.text('You'), findsOneWidget);
     expect(tester.takeException(), isNull);

@@ -202,16 +202,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                         ),
-                        icon: _isPickingImage
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.photo_library_rounded, size: 18),
+                        icon: const Icon(Icons.photo_library_rounded, size: 18),
                         label: Text(
                           _isPickingImage ? 'Opening' : 'Choose Photo',
                         ),
@@ -270,14 +261,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                 ),
                 child: _isSaving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                    ? const Text('SAVING PROFILE…')
                     : const Text(
                         'SAVE PROFILE',
                         style: TextStyle(

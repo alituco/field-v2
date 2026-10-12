@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'moderation.dart';
@@ -401,10 +402,7 @@ class _ReportIssueSheetState extends State<ReportIssueSheet> {
                 icon: _isSubmitting
                     ? const SizedBox.square(
                         dimension: 18,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
+                        child: FieldLoadingIndicator(color: Colors.white),
                       )
                     : const Icon(Icons.outlined_flag_rounded, size: 20),
                 label: Text(

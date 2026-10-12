@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../home/fieldrush_home_widgets.dart';
@@ -275,7 +277,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
         color: _cream,
         child: SafeArea(
           bottom: false,
-          child: RefreshIndicator(
+          child: FieldRefreshIndicator(
             color: _green,
             onRefresh: _load,
             child: ListView(
@@ -418,8 +420,12 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                 ),
                 if (_loading)
                   const Padding(
-                    padding: EdgeInsets.all(52),
-                    child: Center(child: CircularProgressIndicator()),
+                    key: ValueKey('fixtures-loading-skeleton'),
+                    padding: EdgeInsets.all(16),
+                    child: FieldLoadingContent(
+                      label: 'Loading fixtures',
+                      rows: 3,
+                    ),
                   )
                 else if (_error != null)
                   _FixtureState(

@@ -7,6 +7,7 @@ import 'package:field/src/auth/fieldrush_auth_screen.dart';
 import 'package:field/src/moderation/account_restriction_screen.dart';
 import 'package:field/src/moderation/moderation.dart';
 import 'package:field/src/moderation/moderation_repository.dart';
+import 'package:field/src/ui/field_loading.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -42,6 +43,21 @@ void main() {
     );
     if (settle) await tester.pumpAndSettle();
   }
+
+  testWidgets('account loading uses a skeleton and then enters the real app', (
+    tester,
+  ) async {
+    final pending = Completer<FieldrushAccount>();
+    accounts.nextLoad = () => pending.future;
+    await showGate(tester, settle: false);
+    expect(find.byType(FieldLoadingContent), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('AUTHENTICATED APP'), findsNothing);
+    pending.complete(accounts.account);
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldLoadingContent), findsNothing);
+    expect(find.text('AUTHENTICATED APP'), findsOneWidget);
+  });
 
   testWidgets('editable auth metadata cannot bypass incomplete onboarding', (
     tester,

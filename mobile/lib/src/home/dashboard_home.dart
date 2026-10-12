@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan.dart';
 import '../clans/clan_repository.dart';
@@ -541,7 +543,7 @@ class _DashboardHomeState extends State<DashboardHome> {
         color: FieldrushAuthTheme.cream,
         child: SafeArea(
           bottom: false,
-          child: RefreshIndicator(
+          child: FieldRefreshIndicator(
             onRefresh: _load,
             color: FieldrushAuthTheme.forest,
             child: ListView(
@@ -550,10 +552,7 @@ class _DashboardHomeState extends State<DashboardHome> {
               padding: const EdgeInsets.only(bottom: 132),
               children: [
                 if (_loading && profile == null)
-                  const Padding(
-                    padding: EdgeInsets.only(top: 100),
-                    child: Center(child: CircularProgressIndicator()),
-                  )
+                  const _HomeLoading()
                 else if (profile == null)
                   Padding(
                     padding: const EdgeInsets.all(24),
@@ -742,6 +741,55 @@ class _DashboardHomeState extends State<DashboardHome> {
           ),
         ),
       ],
+    ),
+  );
+}
+
+class _HomeLoading extends StatelessWidget {
+  const _HomeLoading();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Loading Home',
+    liveRegion: true,
+    child: const ExcludeSemantics(
+      child: Padding(
+        key: ValueKey('home-loading-skeleton'),
+        padding: EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                FieldSkeleton(width: 48, height: 48, radius: 24),
+                SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      FieldSkeleton(width: 92, height: 12),
+                      SizedBox(height: 9),
+                      FieldSkeleton(width: 158, height: 24),
+                    ],
+                  ),
+                ),
+                FieldSkeleton(width: 36, height: 36, radius: 18),
+              ],
+            ),
+            SizedBox(height: 28),
+            FieldSkeleton(height: 218, radius: 24),
+            SizedBox(height: 24),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FieldSkeleton(width: 140, height: 16),
+            ),
+            SizedBox(height: 14),
+            FieldSkeleton(height: 148, radius: 24),
+            SizedBox(height: 16),
+            FieldSkeleton(height: 112, radius: 24),
+          ],
+        ),
+      ),
     ),
   );
 }

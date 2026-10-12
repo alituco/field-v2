@@ -1265,13 +1265,9 @@ class _CreateClanBottomBar extends StatelessWidget {
             child: Container(
               alignment: Alignment.center,
               child: isSaving
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2.5,
-                        color: Colors.white,
-                      ),
+                  ? const Text(
+                      'Creating clan…',
+                      style: TextStyle(fontWeight: FontWeight.w900),
                     )
                   : Row(
                       mainAxisSize: MainAxisSize.min,

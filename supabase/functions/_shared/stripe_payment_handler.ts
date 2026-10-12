@@ -311,8 +311,19 @@ export async function prepareCheckout(
     }
   }
   const authoritativeQuote = await quote(ctx.user, purpose, payload);
-  const amount = authoritativeQuote.total_fils as number;
-  const currency = String(authoritativeQuote.currency).toUpperCase();
+  // Still recheck current availability above, but an unexpired server-owned
+  // solo checkout keeps its agreed price/deposit. Admin repricing must not
+  // silently change an already-open PaymentSheet or cancel its Stripe intent.
+  const checkoutQuote = intent && canReuseSoloCheckoutQuote(
+      intent,
+      purpose,
+      payload,
+      authoritativeQuote,
+    )
+    ? intent.quote_snapshot
+    : authoritativeQuote;
+  const amount = checkoutQuote.total_fils as number;
+  const currency = String(checkoutQuote.currency).toUpperCase();
   if (amount === 0) {
     if (intent) {
       const canceled = await cancelAtProvider(ctx, intent);
@@ -365,7 +376,7 @@ export async function prepareCheckout(
     intent.currency !== currency ||
     canonicalJson(intent.payload) !== canonicalJson(payload) ||
     canonicalJson(intent.quote_snapshot) !==
-      canonicalJson(authoritativeQuote) ||
+      canonicalJson(checkoutQuote) ||
     Date.parse(intent.expires_at) <= Date.now();
   if (changed || payment.status === "canceled") {
     const canceled = payment.status === "canceled"
@@ -393,6 +404,50 @@ export async function prepareCheckout(
     currency,
     expires_at: intent.expires_at,
   };
+}
+
+export function canReuseSoloCheckoutQuote(
+  intent: PaymentIntent,
+  purpose: PaymentPurpose,
+  payload: Record<string, unknown>,
+  currentQuote: Record<string, unknown>,
+  now = Date.now(),
+): boolean {
+  if (
+    purpose !== "SOLO_BOOKING" || intent.purpose !== purpose ||
+    intent.provider !== "STRIPE" || intent.status !== "PENDING" ||
+    intent.currency !== "USD" ||
+    !Number.isFinite(Date.parse(intent.expires_at)) ||
+    Date.parse(intent.expires_at) <= now ||
+    canonicalJson(intent.payload) !== canonicalJson(payload)
+  ) return false;
+  const saved = intent.quote_snapshot;
+  if (
+    saved.currency !== intent.currency ||
+    saved.currency !== currentQuote.currency ||
+    !text(saved.policy_version_id) ||
+    saved.policy_version_id !== currentQuote.policy_version_id
+  ) return false;
+  const amounts = [
+    saved.standard_match_fee_fils,
+    saved.match_fee_fils,
+    saved.reliability_deposit_fils,
+    saved.total_fils,
+  ];
+  if (
+    amounts.some((amount) =>
+      typeof amount !== "number" || !Number.isSafeInteger(amount) ||
+      amount < 0 || amount % 10 !== 0
+    ) || typeof saved.replacement_discount_bps !== "number" ||
+    !Number.isInteger(saved.replacement_discount_bps) ||
+    saved.replacement_discount_bps < 0 ||
+    saved.replacement_discount_bps > 10000
+  ) return false;
+  return intent.amount_fils >= 500 &&
+    saved.total_fils === intent.amount_fils &&
+    Number(saved.match_fee_fils) <= Number(saved.standard_match_fee_fils) &&
+    Number(saved.match_fee_fils) + Number(saved.reliability_deposit_fils) ===
+      saved.total_fils;
 }
 
 async function cancelAtProvider(ctx: Runtime, intent: PaymentIntent) {

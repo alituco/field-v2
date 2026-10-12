@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support.dart';
@@ -55,11 +56,17 @@ class ModerationStatusLoadingScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 22),
                 const SizedBox(
-                  width: 26,
-                  height: 26,
-                  child: CircularProgressIndicator(
-                    color: fieldEmerald500,
-                    strokeWidth: 2.5,
+                  width: 220,
+                  child: Column(
+                    children: [
+                      FieldSkeleton(height: 14, color: Colors.white24),
+                      SizedBox(height: 10),
+                      FieldSkeleton(
+                        width: 140,
+                        height: 14,
+                        color: Colors.white24,
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 14),
@@ -390,14 +397,7 @@ class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
                             ),
                           ),
                           child: _isSigningOut
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
+                              ? const Text('Signing out…')
                               : const Text('Sign out'),
                         ),
                       ],

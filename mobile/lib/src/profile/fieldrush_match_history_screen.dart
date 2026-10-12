@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../ui/field_loading.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import 'profile.dart';
@@ -221,7 +222,7 @@ class _FieldrushMatchHistoryScreenState
               const SizedBox(
                 width: 18,
                 height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                child: FieldLoadingIndicator(label: 'Opening match'),
               )
             else ...[
               if (delta != null)

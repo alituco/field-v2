@@ -590,13 +590,9 @@ class _CustomizeBottomBar extends StatelessWidget {
                   : null,
             ),
             child: isSaving
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2.5,
-                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
-                    ),
+                ? const Text(
+                    'Saving changes…',
+                    style: TextStyle(fontWeight: FontWeight.w900),
                   )
                 : const Row(
                     mainAxisAlignment: MainAxisAlignment.center,

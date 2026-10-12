@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import 'home_discovery_repository.dart';
@@ -141,16 +143,18 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
                 ),
               ),
             Expanded(
-              child: RefreshIndicator(
+              child: FieldRefreshIndicator(
                 onRefresh: _load,
                 child: ListView(
                   physics: const AlwaysScrollableScrollPhysics(),
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 32),
                   children: [
                     if (_loading)
-                      const Padding(
-                        padding: EdgeInsets.all(30),
-                        child: Center(child: CircularProgressIndicator()),
+                      FieldLoadingContent(
+                        label: widget.search
+                            ? 'Searching players'
+                            : 'Loading activity',
+                        rows: 4,
                       ),
                     if (_error != null) ...[
                       Text(

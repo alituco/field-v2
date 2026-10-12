@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'reliability.dart';
@@ -314,16 +315,27 @@ class _ReliabilityLoadingCard extends StatelessWidget {
     return Container(
       key: const ValueKey('profile-reliability-loading'),
       height: 112,
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: fieldGray100),
       ),
       alignment: Alignment.center,
-      child: const SizedBox(
-        width: 22,
-        height: 22,
-        child: CircularProgressIndicator(strokeWidth: 2.4),
+      child: Semantics(
+        label: 'Loading reliability status',
+        liveRegion: true,
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FieldSkeleton(width: 160, height: 16),
+            SizedBox(height: 12),
+            FieldSkeleton(height: 12),
+            SizedBox(height: 8),
+            FieldSkeleton(width: 210, height: 10),
+          ],
+        ),
       ),
     );
   }
@@ -565,13 +577,9 @@ Future<bool> showReliabilityAppealSheet({
                         ),
                       ),
                       child: submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
+                          ? const Text(
+                              'Submitting appeal…',
+                              style: TextStyle(fontWeight: FontWeight.w900),
                             )
                           : const Text(
                               'Submit appeal',

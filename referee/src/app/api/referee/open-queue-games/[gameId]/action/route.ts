@@ -16,6 +16,7 @@ import {
   parseRefereeVerifiedInjuryInput,
 } from "@/lib/match-action-input";
 import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock";
+import { soloScheduledDurationSeconds, soloStartDurationSeconds } from "@/lib/match-duration";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
@@ -415,16 +416,15 @@ async function startGame(
   if (selectedIds.length === 0) {
     throw new Error("Select at least one player from each team.");
   }
-  const safeDuration = clamp(Math.round(durationSeconds ?? 3600), 600, 7200);
-
   const { data: game, error: gameError } = await db
     .from("open_queue_games")
-    .select("status,starts_at,teams_assigned_at,capacity")
+    .select("status,starts_at,ends_at,teams_assigned_at,capacity")
     .eq("id", gameId)
     .single();
   if (gameError || !game) {
     throw new Error(`Could not load solo game: ${gameError?.message ?? "Game not found."}`);
   }
+  const safeDuration = soloStartDurationSeconds(game.starts_at, game.ends_at, durationSeconds);
 
   const scheduledStartMs = new Date(String(game.starts_at)).getTime();
   const isEarlyStart = Number.isFinite(scheduledStartMs) &&
@@ -724,18 +724,27 @@ async function loadClock(db: SupabaseClient, gameId: string): Promise<ClockRow> 
     .eq("game_id", gameId)
     .maybeSingle();
   if (error) throw new Error(`Could not load clock: ${error.message}`);
+  let scheduledDuration = 3600;
+  if (!data || data.duration_seconds === null) {
+    const { data: game, error: gameError } = await db.from("open_queue_games")
+      .select("starts_at,ends_at")
+      .eq("id", gameId)
+      .single();
+    if (gameError) throw new Error(`Could not load solo game duration: ${gameError.message}`);
+    scheduledDuration = soloScheduledDurationSeconds(game?.starts_at, game?.ends_at);
+  }
   return data
     ? {
         status: String(data.status),
         started_at: data.started_at ? String(data.started_at) : null,
         accumulated_seconds: Number(data.accumulated_seconds ?? 0),
-        duration_seconds: Number(data.duration_seconds ?? 3600),
+        duration_seconds: Number(data.duration_seconds ?? scheduledDuration),
       }
     : {
         status: "NOT_STARTED",
         started_at: null,
         accumulated_seconds: 0,
-        duration_seconds: 3600,
+        duration_seconds: scheduledDuration,
       };
 }
 
