@@ -75,12 +75,11 @@ void main() {
         tester.getSize(find.byKey(const ValueKey('home-quick-pitch'))).height,
         118,
       );
-      expect(
-        tester
-            .widget<FilledButton>(find.byKey(const ValueKey('home-quick-play')))
-            .onPressed,
-        isNull,
-      );
+      await tester.tap(find.byKey(const ValueKey('home-quick-play')));
+      await tester.pump();
+      expect(chosen, isNull);
+      expect(roles, isNull);
+      expect(find.text('✓'), findsNothing);
 
       await tester.tap(find.byKey(const ValueKey('home-position-DEF')));
       await tester.pump();
@@ -99,6 +98,84 @@ void main() {
       expect(find.textContaining(soonest.priceLabel), findsOneWidget);
       expect(find.textContaining(r'$13.00'), findsOneWidget);
       expect(find.textContaining('BHD'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('idle Play hints only available positions then clears', (
+    tester,
+  ) async {
+    var playCalls = 0;
+    await _pump(
+      tester,
+      FieldrushQuickGameCard(
+        games: [_game(defenderSpots: 0)],
+        now: now,
+        onPlay: (_, _) => playCalls++,
+      ),
+    );
+    final play = find.byKey(const ValueKey('home-quick-play'));
+    final idleButton = tester.widget<FilledButton>(play);
+    expect(
+      idleButton.style!.backgroundColor!.resolve({}),
+      const Color(0xFFF2EFE3),
+    );
+    expect(_positionHalo(tester, 'GK')?.spreadRadius, 4);
+    await tester.tap(play);
+    await tester.pump();
+    expect(playCalls, 0);
+    expect(find.text('✓'), findsNothing);
+    for (final role in ['GK', 'ATT']) {
+      expect(_positionHalo(tester, role)?.spreadRadius, 9);
+      expect(_positionHalo(tester, role)?.color.a, closeTo(.5, .01));
+    }
+    expect(_positionHalo(tester, 'DEF')?.spreadRadius, 4);
+    await tester.pump(const Duration(milliseconds: 899));
+    expect(_positionHalo(tester, 'GK')?.spreadRadius, 9);
+    await tester.pump(const Duration(milliseconds: 1));
+    for (final role in ['GK', 'DEF', 'ATT']) {
+      expect(_positionHalo(tester, role)?.spreadRadius, 4);
+    }
+    expect(playCalls, 0);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'repeated Play restarts the hint and choosing a position clears it',
+    (tester) async {
+      var playCalls = 0;
+      Set<OpenQueueRole>? chosen;
+      await _pump(
+        tester,
+        FieldrushQuickGameCard(
+          games: [_game()],
+          now: now,
+          onPlay: (_, roles) {
+            playCalls++;
+            chosen = roles;
+          },
+        ),
+      );
+      final play = find.byKey(const ValueKey('home-quick-play'));
+      await tester.tap(play);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.tap(play);
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(playCalls, 0);
+      expect(_positionHalo(tester, 'ATT')?.spreadRadius, 9);
+
+      await tester.tap(find.byKey(const ValueKey('home-position-GK')));
+      await tester.pump();
+      expect(_positionHalo(tester, 'GK'), isNull);
+      expect(_positionHalo(tester, 'DEF')?.spreadRadius, 4);
+      expect(_positionHalo(tester, 'ATT')?.spreadRadius, 4);
+      expect(find.text('✓'), findsOneWidget);
+      expect(playCalls, 0);
+      await tester.pump(const Duration(milliseconds: 900));
+      await tester.tap(play);
+      expect(playCalls, 1);
+      expect(chosen, {OpenQueueRole.goalkeeper});
       expect(tester.takeException(), isNull);
     },
   );
@@ -589,6 +666,18 @@ Future<void> _pump(
     ),
   );
   await tester.pump();
+}
+
+BoxShadow? _positionHalo(WidgetTester tester, String role) {
+  final dot = tester.widget<AnimatedContainer>(
+    find.descendant(
+      of: find.byKey(ValueKey('home-position-$role')),
+      matching: find.byType(AnimatedContainer),
+    ),
+  );
+  return (dot.decoration! as BoxDecoration).boxShadow
+      ?.where((shadow) => shadow.spreadRadius > 0)
+      .firstOrNull;
 }
 
 OpenQueueGame _game({

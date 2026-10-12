@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -291,6 +292,31 @@ class FieldrushQuickGameCard extends StatefulWidget {
 
 class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
   final Set<OpenQueueRole> _selected = {};
+  Timer? _positionHintTimer;
+  bool _positionHint = false;
+
+  void _showPositionHint() {
+    _positionHintTimer?.cancel();
+    setState(() => _positionHint = true);
+    // Match the reference's brief invitation to choose an available position.
+    _positionHintTimer = Timer(const Duration(milliseconds: 900), () {
+      if (mounted) setState(() => _positionHint = false);
+    });
+  }
+
+  void _togglePosition(OpenQueueRole role) {
+    _positionHintTimer?.cancel();
+    setState(() {
+      _positionHint = false;
+      if (!_selected.remove(role)) _selected.add(role);
+    });
+  }
+
+  @override
+  void dispose() {
+    _positionHintTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -396,14 +422,11 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                             child: _PitchPosition(
                               role: _roles[i],
                               selected: _selected.contains(_roles[i]),
+                              hint: _positionHint && _selected.isEmpty,
                               enabled: games.any(
                                 (g) => g.canBookAt(_roles[i], now),
                               ),
-                              onTap: () => setState(() {
-                                if (!_selected.remove(_roles[i])) {
-                                  _selected.add(_roles[i]);
-                                }
-                              }),
+                              onTap: () => _togglePosition(_roles[i]),
                             ),
                           ),
                       ],
@@ -416,7 +439,9 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 width: double.infinity,
                 child: FilledButton(
                   key: const ValueKey('home-quick-play'),
-                  onPressed: game == null
+                  onPressed: _selected.isEmpty
+                      ? _showPositionHint
+                      : game == null
                       ? null
                       : () => widget.onPlay(
                           game,
@@ -425,8 +450,10 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                           Set.unmodifiable(_selected),
                         ),
                   style: FilledButton.styleFrom(
-                    backgroundColor: _green,
-                    foregroundColor: Colors.white,
+                    backgroundColor: game == null ? _wash : _green,
+                    foregroundColor: game == null
+                        ? const Color(0xFF9C9683)
+                        : Colors.white,
                     disabledBackgroundColor: _wash,
                     disabledForegroundColor: const Color(0xFF9C9683),
                     minimumSize: const Size(0, 54),
@@ -459,11 +486,13 @@ class _PitchPosition extends StatelessWidget {
   const _PitchPosition({
     required this.role,
     required this.selected,
+    required this.hint,
     required this.enabled,
     required this.onTap,
   });
   final OpenQueueRole role;
   final bool selected;
+  final bool hint;
   final bool enabled;
   final VoidCallback onTap;
 
@@ -481,7 +510,11 @@ class _PitchPosition extends StatelessWidget {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Container(
+            AnimatedContainer(
+              duration: MediaQuery.disableAnimationsOf(context)
+                  ? Duration.zero
+                  : const Duration(milliseconds: 250),
+              curve: Curves.ease,
               width: selected ? 43 : 40,
               height: selected ? 43 : 40,
               decoration: BoxDecoration(
@@ -493,8 +526,10 @@ class _PitchPosition extends StatelessWidget {
                 boxShadow: [
                   if (!selected)
                     BoxShadow(
-                      color: Colors.white.withValues(alpha: .3),
-                      spreadRadius: 4,
+                      color: Colors.white.withValues(
+                        alpha: enabled && hint ? .5 : .3,
+                      ),
+                      spreadRadius: enabled && hint ? 9 : 4,
                     ),
                   BoxShadow(
                     color: Colors.black.withValues(alpha: .35),
