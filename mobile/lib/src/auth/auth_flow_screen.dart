@@ -1632,23 +1632,8 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (widget.isLoading) ...[
-                SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      disabled
-                          ? Colors.white.withValues(alpha: 0.30)
-                          : const Color(0xFF022C22),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-              ],
               Text(
-                widget.label.toUpperCase(),
+                widget.isLoading ? 'PLEASE WAIT…' : widget.label.toUpperCase(),
                 style: TextStyle(
                   color: disabled
                       ? Colors.white.withValues(alpha: 0.30)

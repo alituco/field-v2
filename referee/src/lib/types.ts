@@ -258,6 +258,8 @@ export type RefereeFixture = {
   day: string;
   timeSlot: string;
   matchDate: string;
+  /** Saved solo slot length; optional for older responses and clan fixtures. */
+  scheduledDurationSeconds?: number;
   cancellationCode: string | null;
   cancellationReason: string | null;
   cancelledAt: string | null;

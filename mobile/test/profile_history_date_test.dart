@@ -105,7 +105,11 @@ void main() {
             return http.Response(
               jsonEncode(payload),
               status,
-              headers: {'content-type': 'application/json'},
+              headers: {
+                'content-type': 'application/json',
+                if (request.headers['prefer']?.contains('count=exact') == true)
+                  'content-range': '*/0',
+              },
               request: request,
             );
           }),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
@@ -330,7 +331,7 @@ class _FixturesScreenState extends State<LegacyFixturesScreen> {
           onPressed: _openPlay,
         ),
       ),
-      child: RefreshIndicator(
+      child: FieldRefreshIndicator(
         color: fieldEmerald600,
         edgeOffset: fieldPageHeaderExtent(context),
         onRefresh: _load,

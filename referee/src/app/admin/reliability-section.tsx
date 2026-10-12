@@ -1676,7 +1676,7 @@ function TimelinePoint({ label, time, tone }: { label: string; time: string; ton
 }
 
 function ReliabilitySkeleton() {
-  return <div className={styles.skeleton}><span /><div><span /><span /><span /></div><section><span /><span /></section></div>;
+  return <div className={styles.skeleton} role="status" aria-label="Loading reliability policy"><span aria-hidden="true" /><div aria-hidden="true"><span /><span /><span /></div><section aria-hidden="true"><span /><span /></section></div>;
 }
 
 function numberField(path: string, label: string, unit: string, minimum: number, maximum: number): FieldSpec {

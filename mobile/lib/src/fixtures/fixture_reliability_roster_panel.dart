@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import 'fixture_reliability_roster.dart';
 
@@ -166,29 +167,28 @@ class FixtureReliabilityRosterLoadingCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: fieldGray200),
       ),
-      child: const Row(
-        children: [
-          SizedBox.square(
-            dimension: 22,
-            child: CircularProgressIndicator(
-              strokeWidth: 2.5,
-              color: fieldEmerald600,
+      child: Semantics(
+        label: 'Loading your matchday roster',
+        liveRegion: true,
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FieldSkeleton(width: 190, height: 16),
+            SizedBox(height: 14),
+            Row(
+              children: [
+                FieldSkeleton(width: 34, height: 34, radius: 17),
+                SizedBox(width: 8),
+                FieldSkeleton(width: 34, height: 34, radius: 17),
+                SizedBox(width: 8),
+                FieldSkeleton(width: 34, height: 34, radius: 17),
+                SizedBox(width: 18),
+                Expanded(child: FieldSkeleton(height: 12)),
+              ],
             ),
-          ),
-          SizedBox(width: 14),
-          Expanded(
-            child: Text(
-              'Loading your matchday roster…',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: fieldGray700,
-                fontSize: 15,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

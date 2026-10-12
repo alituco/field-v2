@@ -65,12 +65,27 @@ class SupabaseOpenQueueRepository
         OpenQueueEmbeddedCheckoutRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseOpenQueueRepository({SupabaseClient? client}) : _supabase = client;
+
+  final SupabaseClient? _supabase;
+  SupabaseClient get _client => _supabase ?? Supabase.instance.client;
 
   @override
   SupabaseClient get partyClient => _client;
 
-  static const _bookingSelect = '''
+  static const _gameMetadataSelect = '''
+    currency,
+    field_id,
+    location_address,
+    location_city,
+    location_state,
+    location_country_code,
+    location_latitude,
+    location_longitude
+  ''';
+
+  static const _bookingSelect =
+      '''
     id,
     game_id,
     profile_id,
@@ -95,7 +110,7 @@ class SupabaseOpenQueueRepository
       ends_at,
       timezone,
       price_fils,
-      currency,
+      $_gameMetadataSelect,
       age_label,
       capacity,
       white_score,
@@ -111,7 +126,7 @@ class SupabaseOpenQueueRepository
   @override
   Future<List<OpenQueueGame>> listGames() async {
     final response = await _client.rpc('list_open_queue_games');
-    final rows = await _withCurrencies(response as List<dynamic>);
+    final rows = await _withGameMetadata(response as List<dynamic>);
     return [for (final row in rows) OpenQueueGame.fromJson(row)];
   }
 
@@ -121,18 +136,18 @@ class SupabaseOpenQueueRepository
       'list_open_queue_games_for_market',
       params: {'timezone_to_use': timezone},
     );
-    final rows = await _withCurrencies(response as List<dynamic>);
+    final rows = await _withGameMetadata(response as List<dynamic>);
     return [for (final row in rows) OpenQueueGame.fromJson(row)];
   }
 
   @override
   Future<List<OpenQueueGame>> listFixtureGames() async {
     final response = await _client.rpc('list_open_queue_fixture_games');
-    final rows = await _withCurrencies(response as List<dynamic>);
+    final rows = await _withGameMetadata(response as List<dynamic>);
     return [for (final row in rows) OpenQueueGame.fromJson(row)];
   }
 
-  Future<List<Map<String, dynamic>>> _withCurrencies(
+  Future<List<Map<String, dynamic>>> _withGameMetadata(
     List<dynamic> values,
   ) async {
     final rows = [
@@ -140,15 +155,20 @@ class SupabaseOpenQueueRepository
     ];
     if (rows.isEmpty) return rows;
     // Existing table-returning RPC signatures remain compatible for history.
-    // Fetch explicit currency separately; fail closed on an unmigrated server.
-    final currencies = await _client
+    // Enrich with currency and the game's saved location snapshot, without
+    // exposing the admin-only fields catalog to player clients.
+    final metadata = await _client
         .from('open_queue_games')
-        .select('id, currency')
+        .select('id, $_gameMetadataSelect')
         .inFilter('id', [for (final row in rows) row['id'] as String]);
-    final byId = {for (final row in currencies) row['id']: row['currency']};
+    final byId = {for (final row in metadata) row['id']: row};
     return [
       for (final row in rows)
-        {...row, 'currency': _requiredCurrency(byId[row['id']])},
+        {
+          ...row,
+          ...?byId[row['id']],
+          'currency': _requiredCurrency(byId[row['id']]?['currency']),
+        },
     ];
   }
 
@@ -170,23 +190,23 @@ class SupabaseOpenQueueRepository
       ),
       _ => throw StateError('Solo match not found.'),
     };
-    final currencyRow = await _client
+    final metadata = await _client
         .from('open_queue_games')
-        .select('currency')
+        .select(_gameMetadataSelect)
         .eq('id', gameId)
         .single();
-    final currency = _requiredCurrency(currencyRow['currency']);
+    metadata['currency'] = _requiredCurrency(metadata['currency']);
     final gameKey = row['game'] is Map
         ? 'game'
         : row['open_queue_game'] is Map
         ? 'open_queue_game'
         : null;
     if (gameKey == null) {
-      row['currency'] = currency;
+      row.addAll(metadata);
     } else {
       row[gameKey] = {
         ...Map<String, dynamic>.from(row[gameKey] as Map),
-        'currency': currency,
+        ...metadata,
       };
     }
     return OpenQueueMatchDetail.fromJson(row);

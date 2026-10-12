@@ -17,7 +17,10 @@ import {
   verifyStripeRefund,
   verifyWebhook,
 } from "./stripe_checkout.ts";
-import { prepareCheckout } from "./stripe_payment_handler.ts";
+import {
+  canReuseSoloCheckoutQuote,
+  prepareCheckout,
+} from "./stripe_payment_handler.ts";
 
 const intent: PaymentIntent = {
   id: "a5287b6a-22f6-4e55-a230-5582f8ebf0b4",
@@ -697,6 +700,9 @@ Deno.test("refund batches bound concurrency and leave unstarted leases retryable
 
 function checkoutContext(options: {
   pending?: boolean;
+  pendingIntent?: PaymentIntent;
+  providerPayment?: Stripe.PaymentIntent;
+  allowPendingQuote?: boolean;
   quote?: Record<string, unknown>;
   quoteError?: string;
   freeBooking?: Record<string, unknown>;
@@ -728,7 +734,7 @@ function checkoutContext(options: {
                 : null
               : statuses
               ? (statuses.includes("PENDING") && options.pending
-                ? intent
+                ? options.pendingIntent ?? intent
                 : null)
               : { ...intent, status: captured ? "REQUIRES_REFUND" : "PENDING" },
             error: null,
@@ -760,7 +766,7 @@ function checkoutContext(options: {
     livemode: false,
     user: {
       rpc: () => {
-        if (options.pending) {
+        if (options.pending && !options.allowPendingQuote) {
           assert.fail(
             "A successful pending provider payment must reconcile before re-quoting an unavailable game.",
           );
@@ -772,7 +778,9 @@ function checkoutContext(options: {
       },
     },
     stripe: {
-      paymentIntents: { retrieve: () => Promise.resolve(payment()) },
+      paymentIntents: {
+        retrieve: () => Promise.resolve(options.providerPayment ?? payment()),
+      },
       refunds: {
         create: () =>
           assert.fail(
@@ -871,5 +879,132 @@ Deno.test("paused clan checkout fails at the authoritative quote before creating
       },
     ),
     /currently paused/,
+  );
+});
+
+const fixedSoloQuote = {
+  currency: "USD",
+  policy_version_id: "f5287b6a-22f6-4e55-a230-5582f8ebf0b4",
+  standard_match_fee_fils: 13000,
+  replacement_discount_bps: 0,
+  match_fee_fils: 13000,
+  reliability_deposit_fils: 0,
+  total_fils: 13000,
+};
+
+Deno.test("an unexpired solo PaymentSheet keeps its exact quote after a price increase, reduction or free conversion", async () => {
+  for (const currentPrice of [16000, 9000, 0]) {
+    const pendingIntent = {
+      ...intent,
+      quote_snapshot: fixedSoloQuote,
+      expires_at: new Date(Date.now() + 600000).toISOString(),
+    };
+    const result = await prepareCheckout(
+      checkoutContext({
+        pending: true,
+        pendingIntent,
+        allowPendingQuote: true,
+        quote: {
+          ...fixedSoloQuote,
+          standard_match_fee_fils: currentPrice,
+          match_fee_fils: currentPrice,
+          total_fils: currentPrice,
+        },
+        providerPayment: payment({
+          status: "requires_payment_method",
+          amount_received: 0,
+          client_secret: "test_client_secret",
+        }),
+      }),
+      { purpose: "SOLO_BOOKING", payload: intent.payload },
+    );
+    assert.equal(result.status, "PENDING");
+    assert.equal(result.intent_id, intent.id);
+    assert.equal(result.amount_fils, 13000);
+    assert.equal(result.currency, "USD");
+    // The mock has no cancellation/insertion APIs: invoking either also fails.
+  }
+});
+
+Deno.test("price-locked checkout still rechecks current game availability before returning the payment sheet", async () => {
+  await assert.rejects(
+    prepareCheckout(
+      checkoutContext({
+        pending: true,
+        pendingIntent: {
+          ...intent,
+          quote_snapshot: fixedSoloQuote,
+          expires_at: new Date(Date.now() + 600000).toISOString(),
+        },
+        allowPendingQuote: true,
+        quoteError: "This Open Queue game is no longer available.",
+        providerPayment: payment({
+          status: "requires_payment_method",
+          amount_received: 0,
+          client_secret: "test_client_secret",
+        }),
+      }),
+      { purpose: "SOLO_BOOKING", payload: intent.payload },
+    ),
+    /no longer available/,
+  );
+});
+
+Deno.test("expired, wrong-identity, retired-currency and malformed quotes cannot lock an old price", () => {
+  const now = Date.now();
+  const valid = {
+    ...intent,
+    quote_snapshot: fixedSoloQuote,
+    expires_at: new Date(now + 600000).toISOString(),
+  };
+  assert.equal(
+    canReuseSoloCheckoutQuote(
+      valid,
+      "SOLO_BOOKING",
+      intent.payload,
+      fixedSoloQuote,
+      now,
+    ),
+    true,
+  );
+  for (
+    const change of [
+      { expires_at: new Date(now).toISOString() },
+      { expires_at: "invalid" },
+      { status: "EXPIRED" },
+      { currency: "BHD" },
+      { provider: "LEGACY" as const },
+      { payload: { ...intent.payload, role: "GK" } },
+      { amount_fils: 15000 },
+      { quote_snapshot: { ...fixedSoloQuote, reliability_deposit_fils: 2000 } },
+      { quote_snapshot: { ...fixedSoloQuote, match_fee_fils: -1000 } },
+      { quote_snapshot: { ...fixedSoloQuote, total_fils: "13000" } },
+      { quote_snapshot: { ...fixedSoloQuote, standard_match_fee_fils: 13001 } },
+      {
+        quote_snapshot: { ...fixedSoloQuote, replacement_discount_bps: 10001 },
+      },
+      { quote_snapshot: { ...fixedSoloQuote, policy_version_id: "different" } },
+    ]
+  ) {
+    assert.equal(
+      canReuseSoloCheckoutQuote(
+        { ...valid, ...change },
+        "SOLO_BOOKING",
+        intent.payload,
+        fixedSoloQuote,
+        now,
+      ),
+      false,
+    );
+  }
+  assert.equal(
+    canReuseSoloCheckoutQuote(
+      valid,
+      "CLAN_JOIN",
+      intent.payload,
+      fixedSoloQuote,
+      now,
+    ),
+    false,
   );
 });

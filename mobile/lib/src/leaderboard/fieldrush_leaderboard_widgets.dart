@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import '../home/fieldrush_home_widgets.dart';
 import 'leaderboard.dart';
@@ -111,7 +113,7 @@ class FieldrushLeaderboardContent extends StatelessWidget {
       color: FieldrushAuthTheme.cream,
       child: SafeArea(
         bottom: false,
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: _green,
           onRefresh: onRefresh,
           child: ListView(
@@ -268,12 +270,7 @@ class FieldrushLeaderboardContent extends StatelessWidget {
               if (clans)
                 _ClanComingSoon(onSolo: () => onBoard(false))
               else if (loading)
-                const Padding(
-                  padding: EdgeInsets.all(48),
-                  child: Center(
-                    child: CircularProgressIndicator(color: _green),
-                  ),
-                )
+                const _RanksLoading()
               else if (error != null)
                 _MessageCard(
                   title: 'Ranks unavailable',
@@ -447,6 +444,40 @@ class FieldrushLeaderboardContent extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RanksLoading extends StatelessWidget {
+  const _RanksLoading();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Loading rankings',
+    liveRegion: true,
+    child: const ExcludeSemantics(
+      child: Padding(
+        key: ValueKey('ranks-loading-skeleton'),
+        padding: EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            FieldSkeleton(height: 136, radius: 22),
+            SizedBox(height: 28),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(child: FieldSkeleton(height: 112, radius: 16)),
+                SizedBox(width: 10),
+                Expanded(child: FieldSkeleton(height: 148, radius: 16)),
+                SizedBox(width: 10),
+                Expanded(child: FieldSkeleton(height: 112, radius: 16)),
+              ],
+            ),
+            FieldLoadingContent(label: 'Loading players', rows: 5),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _HeaderLayout extends StatelessWidget {

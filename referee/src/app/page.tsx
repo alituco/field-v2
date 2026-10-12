@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
 import { normalizePhoneNumber } from "@/lib/phone";
 import { formatPlayerSr } from "@/lib/open-queue-ratings";
+import { plannedMatchDurationSeconds } from "@/lib/match-duration";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   BlueCard,
@@ -32,6 +34,7 @@ const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export default function RefereePage() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
   const [phone, setPhone] = useState("");
   const [otp, setOtp] = useState("");
@@ -39,7 +42,7 @@ export default function RefereePage() {
   const [fixtures, setFixtures] = useState<RefereeFixture[]>([]);
   const [activeFixtureId, setActiveFixtureId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [goalClanId, setGoalClanId] = useState("");
   const [goalPlayerId, setGoalPlayerId] = useState("");
@@ -100,11 +103,16 @@ export default function RefereePage() {
     supabase.auth.getSession().then(({ data }) => {
       const token = data.session?.access_token ?? null;
       setAccessToken(token);
+      setSessionChecked(true);
+    }).catch(() => {
+      setError("Could not check your session. Please sign in again.");
+      setSessionChecked(true);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
         setAccessToken(session?.access_token ?? null);
+        setSessionChecked(true);
       },
     );
 
@@ -240,6 +248,8 @@ export default function RefereePage() {
     ? playersForClan(activeFixture, cardClanId || activeFixture.homeClan.id)
     : [];
 
+  if (!sessionChecked) return <main className="app-shell"><div className="content"><LoadingSkeleton label="Checking your referee session" layout="match" /></div></main>;
+
   if (!accessToken) {
     return (
       <main className="app-shell">
@@ -264,7 +274,7 @@ export default function RefereePage() {
                   disabled={submitting === "otp"}
                   type="submit"
                 >
-                  Send OTP
+                  {submitting === "otp" ? "Sending code…" : "Send OTP"}
                 </button>
               </form>
             ) : (
@@ -284,7 +294,7 @@ export default function RefereePage() {
                   disabled={submitting === "verify"}
                   type="submit"
                 >
-                  Verify
+                  {submitting === "verify" ? "Verifying…" : "Verify"}
                 </button>
                 <button
                   className="ghost-button"
@@ -427,6 +437,8 @@ function GamesView({
     setEventDialog(null);
     setView("match");
   }, [activeFixture?.id, activeFixture?.operationalState]);
+
+  if (isLoading && fixtures.length === 0) return <LoadingSkeleton label="Loading assigned games" layout="match" />;
 
   if (fixtures.length === 0) {
     return (
@@ -1490,6 +1502,8 @@ function BroadcastControl({
     !streamActive &&
     status !== "PROCESSING";
 
+  if (isLoading) return <section className="panel broadcast-control"><LoadingSkeleton label="Loading broadcast status" layout="form" /></section>;
+
   return (
     <section className="panel broadcast-control">
       <div className="broadcast-control-heading">
@@ -1591,7 +1605,7 @@ function TimerPanel({
   const now = useNowMs(status === "RUNNING");
   const rawElapsedSeconds = elapsedFromClock(fixture.clock, now);
   const elapsedSeconds = Math.min(rawElapsedSeconds, MAX_MATCH_SECONDS);
-  const duration = fixture.clock?.durationSeconds ?? 3600;
+  const duration = fixture.clock?.durationSeconds ?? plannedMatchDurationSeconds(fixture);
   const progress = Math.min(1, elapsedSeconds / duration);
   const resolutionLocked = ["NO_DATA", "UNDER_REVIEW"].includes(
     fixture.operationalState?.toUpperCase() ?? "",
@@ -1813,7 +1827,9 @@ function TimerPanel({
             onClick={() =>
               void onRunAction({
                 action: "start",
-                durationSeconds: 3600,
+                // The solo endpoint reads the saved slot from the database.
+                // Do not turn a stale browser default into an explicit override.
+                ...(fixture.matchKind === "SOLO" ? {} : { durationSeconds: 3600 }),
                 participantIds: selectedParticipantIds,
               })
             }

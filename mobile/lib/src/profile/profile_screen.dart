@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan.dart';
 import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
@@ -19,8 +20,10 @@ import '../reliability/reliability_repository.dart';
 import '../reliability/reliability_status_card.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
+import '../ui/field_loading.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
+import 'fieldrush_player_profile.dart';
 import 'profile.dart';
 import 'profile_clip_screen.dart';
 import 'profile_connections_screen.dart';
@@ -72,6 +75,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   PlayerProfile? _latestProfile;
   String? _openingGameId;
   bool _isOpeningClan = false;
+  bool _isUpdatingFollow = false;
+  int _profileLoadVersion = 0;
 
   bool get _isCurrentProfile => widget.profileId == null;
   bool get _canManageProfile =>
@@ -104,25 +109,80 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<PlayerProfile> _loadProfile() async {
+    final version = ++_profileLoadVersion;
     final profile = _isCurrentProfile
         ? await widget.profileRepository.getCurrentProfile()
         : await widget.profileRepository.getProfile(widget.profileId!);
-    _latestProfile = profile;
+    if (mounted && version == _profileLoadVersion) _latestProfile = profile;
     return profile;
   }
 
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profileId != widget.profileId ||
+        oldWidget.profileRepository != widget.profileRepository) {
+      _latestProfile = null;
+      _isUpdatingFollow = false;
+      _profileFuture = _loadProfile();
+    }
+  }
+
   Future<void> _refresh() async {
+    if (_isUpdatingFollow) return;
+    final request = _loadProfile();
+    final version = _profileLoadVersion;
     try {
-      final profile = await _loadProfile();
-      if (!mounted) return;
+      final profile = await request;
+      if (!mounted || version != _profileLoadVersion) return;
       setState(() {
         _profileFuture = Future.value(profile);
       });
     } catch (error, stackTrace) {
-      if (!mounted) return;
+      if (!mounted || version != _profileLoadVersion) return;
       setState(() {
         _profileFuture = Future.error(error, stackTrace);
       });
+    }
+  }
+
+  Future<void> _toggleViewedFollow() async {
+    final profile = _latestProfile;
+    if (_isUpdatingFollow || !_canReportProfile || profile == null) return;
+    final next = profile.copyWith(isFollowedByMe: !profile.isFollowedByMe);
+    setState(() {
+      // A read started before this write must not overwrite its confirmed state.
+      _profileLoadVersion++;
+      _isUpdatingFollow = true;
+      _latestProfile = next;
+      _profileFuture = Future.value(next);
+    });
+    try {
+      if (profile.isFollowedByMe) {
+        await widget.profileRepository.unfollowProfile(profile.id);
+      } else {
+        await widget.profileRepository.followProfile(profile.id);
+      }
+    } catch (error) {
+      if (!mounted || widget.profileId != profile.id) return;
+      setState(() {
+        _latestProfile = profile;
+        _profileFuture = Future.value(profile);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            userFacingError(
+              error,
+              fallback: 'We could not update that follow. Try again.',
+            ),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted && widget.profileId == profile.id) {
+        setState(() => _isUpdatingFollow = false);
+      }
     }
   }
 
@@ -284,6 +344,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       MaterialPageRoute<ProfileConnectionCounts>(
         builder: (_) => ProfileConnectionsScreen(
           profileRepository: widget.profileRepository,
+          username: _latestProfile?.username,
           initialTab: tab,
           onOpenProfile: _openPlayerProfile,
         ),
@@ -421,6 +482,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_isCurrentProfile) return _buildViewedProfile(context);
     return FieldHeaderOverlay(
       key: const ValueKey('profile-screen'),
       header: FieldPageHeader(
@@ -500,7 +562,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           }
 
           final profile = snapshot.data!;
-          return RefreshIndicator(
+          return FieldRefreshIndicator(
             color: fieldEmerald600,
             onRefresh: _refresh,
             child: ListView(
@@ -575,6 +637,180 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildViewedProfile(BuildContext context) => Theme(
+    data: FieldrushAuthTheme.theme(context),
+    child: PopScope(
+      canPop: !_isUpdatingFollow,
+      child: Scaffold(
+        key: const ValueKey('profile-screen'),
+        backgroundColor: FieldrushAuthTheme.cream,
+        body: SafeArea(
+          child: FutureBuilder<PlayerProfile>(
+            key: ValueKey(widget.profileId),
+            future: _profileFuture,
+            builder: (context, snapshot) {
+              void back() {
+                if (!_isUpdatingFollow) Navigator.of(context).pop();
+              }
+
+              if (!snapshot.hasData && !snapshot.hasError) {
+                return SingleChildScrollView(
+                  key: const ValueKey('profile-loading'),
+                  child: FieldrushPlayerProfileLoadingContent(onBack: back),
+                );
+              }
+              if (snapshot.hasError || !snapshot.hasData) {
+                return ListView(
+                  key: const ValueKey('profile-error'),
+                  padding: const EdgeInsets.all(20),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        tooltip: 'Back',
+                        onPressed: back,
+                        icon: const Icon(Icons.chevron_left),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Player unavailable',
+                      style: TextStyle(
+                        fontFamily: 'Outfit',
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      userFacingError(
+                        snapshot.error,
+                        fallback: 'We could not load this profile. Try again.',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () {
+                        final next = _loadProfile();
+                        setState(() {
+                          _profileFuture = next;
+                        });
+                      },
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                );
+              }
+              final profile = snapshot.data!;
+              return FieldRefreshIndicator(
+                color: FieldrushAuthTheme.forest,
+                onRefresh: _refresh,
+                child: ListView(
+                  key: const ValueKey('profile-content'),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.only(bottom: 32),
+                  children: [
+                    FieldrushPlayerProfileContent(
+                      profile: profile,
+                      isFollowing: profile.isFollowedByMe,
+                      followBusy: _isUpdatingFollow,
+                      onFollow: _canReportProfile ? _toggleViewedFollow : null,
+                      onReport: _canReportProfile ? _reportProfile : null,
+                      onOpenClan: profile.clan == null
+                          ? null
+                          : () => _openClan(
+                              clanId: profile.clan!.id,
+                              clanName: profile.clan!.name,
+                            ),
+                      onBack: _isUpdatingFollow ? null : back,
+                      positionLabel: profile.position ?? 'Position unavailable',
+                      played: profile.playedCount,
+                      winRate: profile.winRatePercent,
+                      showUpRate: profile.showUpPercent,
+                      recentResults: profile.lastFiveResults,
+                      trailingChildren: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 12,
+                            children: [
+                              TextButton.icon(
+                                onPressed: _copyProfileHandle,
+                                icon: const Icon(
+                                  Icons.ios_share_rounded,
+                                  size: 15,
+                                ),
+                                label: const Text('Share profile'),
+                              ),
+                              if (profile.previousGames.isNotEmpty ||
+                                  profile.highlights.isNotEmpty ||
+                                  profile.career.isNotEmpty)
+                                TextButton(
+                                  onPressed: () => _openPublicHistory(profile),
+                                  child: const Text('Match history & clips'),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _openPublicHistory(PlayerProfile profile) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (context) => Theme(
+          data: FieldrushAuthTheme.theme(context),
+          child: Scaffold(
+            appBar: AppBar(title: Text(profile.displayName)),
+            body: ListView(
+              padding: const EdgeInsets.all(16),
+              children: [
+                if (profile.previousGames.isNotEmpty)
+                  _MatchHistoryCard(
+                    games: profile.previousGames,
+                    openingMatchId: _openingGameId,
+                    onOpenGame: _openPreviousGame,
+                  ),
+                if (profile.highlights.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _HighlightsCard(
+                    highlights: profile.highlights,
+                    showEmptyState: false,
+                    onOpenHighlight: _openHighlight,
+                  ),
+                ],
+                if (profile.career.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  _CareerCard(
+                    entries: profile.career,
+                    onOpenClan: (entry) {
+                      if (entry.clanId != null) {
+                        _openClan(
+                          clanId: entry.clanId!,
+                          clanName: entry.clanName,
+                        );
+                      }
+                    },
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -1688,7 +1924,7 @@ class _PreviousGameRow extends StatelessWidget {
                   const SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(label: 'Opening game'),
                   )
                 else
                   Row(
@@ -2053,7 +2289,9 @@ class _HeaderIconButton extends StatelessWidget {
             child: isLoading
                 ? const Padding(
                     padding: EdgeInsets.all(10),
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(
+                      label: 'Opening profile action',
+                    ),
                   )
                 : Icon(icon, color: fieldGray600, size: 18),
           ),

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'support.dart';
@@ -386,10 +387,7 @@ class _ContactSupportSheetState extends State<ContactSupportSheet> {
                 icon: _isSubmitting
                     ? const SizedBox.square(
                         dimension: 18,
-                        child: CircularProgressIndicator(
-                          color: Colors.white,
-                          strokeWidth: 2,
-                        ),
+                        child: FieldLoadingIndicator(color: Colors.white),
                       )
                     : const Icon(Icons.send_rounded, size: 19),
                 label: Text(

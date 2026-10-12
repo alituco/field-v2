@@ -1,0 +1,972 @@
+import 'package:flutter/material.dart';
+
+import '../auth/fieldrush_auth_theme.dart';
+import '../home/fieldrush_home_widgets.dart';
+import '../leaderboard/leaderboard.dart';
+import '../ranking/rating_division.dart';
+import '../ui/field_loading.dart';
+import 'profile.dart';
+
+const _ink = FieldrushAuthTheme.ink;
+const _muted = FieldrushAuthTheme.muted;
+const _border = FieldrushAuthTheme.border;
+const _green = FieldrushAuthTheme.forest;
+const _danger = FieldrushAuthTheme.danger;
+
+TextStyle _jakarta(double size, {Color color = _ink, double tracking = 0}) =>
+    TextStyle(
+      fontFamily: 'PlusJakartaSans',
+      fontWeight: FontWeight.w800,
+      fontSize: size,
+      height: 1,
+      letterSpacing: tracking,
+      color: color,
+    );
+
+TextStyle _outfit(double size, {Color color = _ink, double height = 1}) =>
+    TextStyle(
+      fontFamily: 'Outfit',
+      fontWeight: FontWeight.w800,
+      fontSize: size,
+      height: height,
+      letterSpacing: -size * .02,
+      color: color,
+    );
+
+/// Reference-matched public player presentation. The owner supplies scrolling,
+/// safe areas, authenticated actions, and verified public statistics.
+///
+/// Rates are percentages (0–100). Results are supplied newest first and shown
+/// chronologically. Null results are unknown outcomes, never assumed draws.
+/// Missing values remain unknown; private account fields are never displayed.
+class FieldrushPlayerProfileContent extends StatelessWidget {
+  const FieldrushPlayerProfileContent({
+    super.key,
+    required this.profile,
+    required this.isFollowing,
+    required this.followBusy,
+    required this.onBack,
+    this.onFollow,
+    this.onReport,
+    this.onOpenClan,
+    this.positionLabel = 'Position unavailable',
+    this.played,
+    this.winRate,
+    this.showUpRate,
+    this.recentResults = const [],
+    this.trailingChildren = const [],
+  });
+
+  final PlayerProfile profile;
+  final bool isFollowing;
+  final bool followBusy;
+  final VoidCallback? onBack;
+  final VoidCallback? onFollow;
+  final VoidCallback? onReport;
+  final VoidCallback? onOpenClan;
+  final String positionLabel;
+  final int? played;
+  final double? winRate;
+  final double? showUpRate;
+  final List<ProfileGameOutcome?> recentResults;
+  final List<Widget> trailingChildren;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _PlayerHeader(name: profile.displayName, onBack: onBack),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: _PlayerRatingCard(
+          profile: profile,
+          positionLabel: positionLabel,
+          isFollowing: isFollowing,
+          followBusy: followBusy,
+          onFollow: onFollow,
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final columns = MediaQuery.textScalerOf(context).scale(21) > 31.5
+                ? 1
+                : 3;
+            final width = (constraints.maxWidth - (columns - 1) * 9) / columns;
+            return Wrap(
+              spacing: 9,
+              runSpacing: 9,
+              children: [
+                for (final stat in [
+                  (
+                    label: 'PLAYED',
+                    value: played != null && played! >= 0 ? '$played' : '—',
+                    definition: 'Verified played solo and clan games.',
+                  ),
+                  (
+                    label: 'WIN RATE',
+                    value: _percentage(winRate),
+                    definition:
+                        'Wins divided by verified played solo and clan games. Draws count as games played. Unavailable when a recorded result is unknown.',
+                  ),
+                  (
+                    label: 'SHOW-UP',
+                    value: _percentage(showUpRate),
+                    definition: showUpRate == null
+                        ? 'Public attendance data is unavailable.'
+                        : 'The percentage of attendance-eligible games the player attended.',
+                  ),
+                ])
+                  SizedBox(
+                    width: width,
+                    child: _PlayerStat(
+                      label: stat.label,
+                      value: stat.value,
+                      definition: stat.definition,
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: _LastFive(results: recentResults),
+      ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+        child: _PlayerClan(clan: profile.clan, onTap: onOpenClan),
+      ),
+      if (onReport != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+          child: Center(
+            child: TextButton.icon(
+              key: const ValueKey('player-report'),
+              onPressed: onReport,
+              style: TextButton.styleFrom(
+                foregroundColor: _danger,
+                minimumSize: const Size(44, 44),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                textStyle: _jakarta(12, color: _danger),
+                iconSize: 14,
+              ),
+              icon: const Icon(Icons.outlined_flag),
+              label: const Text('Report player'),
+            ),
+          ),
+        ),
+      ...trailingChildren,
+      const SizedBox(height: 28),
+    ],
+  );
+}
+
+String _percentage(double? value) =>
+    value == null || !value.isFinite || value < 0 || value > 100
+    ? '—'
+    : '${value.round()}%';
+
+class _PlayerHeader extends StatelessWidget {
+  const _PlayerHeader({required this.name, required this.onBack});
+  final String name;
+  final VoidCallback? onBack;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(16, 14, 20, 0),
+    child: Row(
+      children: [
+        Semantics(
+          button: true,
+          enabled: onBack != null,
+          label: 'Back',
+          child: InkResponse(
+            key: const ValueKey('player-back'),
+            onTap: onBack,
+            radius: 24,
+            child: SizedBox(
+              width: 44,
+              height: 44,
+              child: Center(
+                child: Container(
+                  width: 36,
+                  height: 36,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: _border),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: ExcludeSemantics(
+                    child: Text(
+                      '‹',
+                      style: _jakarta(20, color: const Color(0xFF3C4A38)),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: MediaQuery.textScalerOf(context).scale(18) > 25.2
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(name, style: _outfit(18)),
+                    const SizedBox(height: 8),
+                    Text(
+                      'VIEW ONLY',
+                      style: _jakarta(9.5, color: _muted, tracking: 1.14),
+                    ),
+                  ],
+                )
+              : Text(name, style: _outfit(18)),
+        ),
+        if (MediaQuery.textScalerOf(context).scale(18) <= 25.2) ...[
+          const SizedBox(width: 12),
+          Text(
+            'VIEW ONLY',
+            style: _jakarta(9.5, color: _muted, tracking: 1.14),
+          ),
+        ],
+      ],
+    ),
+  );
+}
+
+class _PlayerRatingCard extends StatelessWidget {
+  const _PlayerRatingCard({
+    required this.profile,
+    required this.positionLabel,
+    required this.isFollowing,
+    required this.followBusy,
+    required this.onFollow,
+  });
+  final PlayerProfile profile;
+  final String positionLabel;
+  final bool isFollowing;
+  final bool followBusy;
+  final VoidCallback? onFollow;
+
+  @override
+  Widget build(BuildContext context) {
+    final rating = profile.playerRating;
+    final placement =
+        rating != null &&
+        rating.matchesPlayed < minimumPlayerLeaderboardMatches;
+    final division = rating == null || placement
+        ? null
+        : divisionFromRating(rating.skillRating).number;
+    final palette = _palettes[division] ?? _placementPalette;
+    final light = division == 3 || division == 4;
+    final heading = rating == null
+        ? 'RATING UNAVAILABLE'
+        : placement
+        ? 'PLACEMENT'
+        : 'DIVISION $division';
+    return DecoratedBox(
+      key: const ValueKey('profile-player-rating-card'),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadow,
+            offset: const Offset(0, 18),
+            blurRadius: 34,
+            spreadRadius: -22,
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: DecoratedBox(
+          key: ValueKey(
+            rating == null
+                ? 'player-rating-unavailable'
+                : placement
+                ? 'player-rating-placement'
+                : 'player-rating-ranked',
+          ),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: const Alignment(-.423, -.906),
+              end: const Alignment(.423, .906),
+              colors: palette.background,
+            ),
+          ),
+          child: CustomPaint(
+            painter: _PlayerCardPainter(palette: palette),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(18, 18, 18, 19),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Stack(
+                        clipBehavior: Clip.none,
+                        children: [
+                          Container(
+                            width: 58,
+                            height: 58,
+                            alignment: Alignment.center,
+                            clipBehavior: Clip.antiAlias,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(
+                                alpha: light ? .55 : .14,
+                              ),
+                              border: Border.all(
+                                color: light
+                                    ? const Color(0x14000000)
+                                    : const Color(0x3DFFFFFF),
+                                width: 1.5,
+                              ),
+                              borderRadius: BorderRadius.circular(19),
+                            ),
+                            child: _PlayerAvatar(
+                              profile: profile,
+                              color: palette.ink,
+                            ),
+                          ),
+                          if (rating != null)
+                            Positioned(
+                              right: -8,
+                              bottom: -8,
+                              child: FieldrushDivisionShield(
+                                division: division ?? 5,
+                                size: 22,
+                                mini: true,
+                                placement: placement,
+                              ),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              heading,
+                              style: _jakarta(
+                                9.5,
+                                color: palette.accent,
+                                tracking: 1.71,
+                              ),
+                            ),
+                            const SizedBox(height: 9),
+                            Text(
+                              profile.displayName,
+                              style: _outfit(
+                                19,
+                                color: palette.ink,
+                                height: 1.1,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '@${profile.username}',
+                              style: _jakarta(
+                                12,
+                                color: palette.ink,
+                              ).copyWith(fontWeight: FontWeight.w700),
+                            ),
+                            const SizedBox(height: 7),
+                            Text(
+                              positionLabel,
+                              style: _jakarta(11, color: palette.accent)
+                                  .copyWith(
+                                    height: 1.35,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final scoreText = Text(
+                        rating == null
+                            ? '—'
+                            : placement
+                            ? '????'
+                            : '${rating.skillRating}',
+                        style: _outfit(
+                          40,
+                          color: palette.ink,
+                          height: .82,
+                        ).copyWith(letterSpacing: -1.6),
+                      );
+                      final scoreLabel = Text(
+                        'SKILL RATING',
+                        style: _jakarta(
+                          10,
+                          color: palette.accent,
+                          tracking: 1.2,
+                        ),
+                      );
+                      final largeText =
+                          MediaQuery.textScalerOf(context).scale(40) > 60;
+                      final score = Semantics(
+                        label: rating == null
+                            ? 'Skill rating unavailable'
+                            : placement
+                            ? 'Skill rating hidden until placement is complete'
+                            : 'Skill rating ${rating.skillRating}',
+                        child: ExcludeSemantics(
+                          child: largeText
+                              ? Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    scoreText,
+                                    const SizedBox(height: 8),
+                                    scoreLabel,
+                                  ],
+                                )
+                              : Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.baseline,
+                                  textBaseline: TextBaseline.alphabetic,
+                                  children: [
+                                    scoreText,
+                                    const SizedBox(width: 7),
+                                    Flexible(child: scoreLabel),
+                                  ],
+                                ),
+                        ),
+                      );
+                      final follow = _FollowButton(
+                        isFollowing: isFollowing,
+                        busy: followBusy,
+                        onPressed: onFollow,
+                        palette: palette,
+                        light: light,
+                      );
+                      if (constraints.maxWidth < 285 ||
+                          MediaQuery.textScalerOf(context).scale(12) > 15) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            score,
+                            const SizedBox(height: 12),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: follow,
+                            ),
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(child: score),
+                          const SizedBox(width: 12),
+                          follow,
+                        ],
+                      );
+                    },
+                  ),
+                  if (placement) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      '${rating.matchesPlayed}/$minimumPlayerLeaderboardMatches placement games',
+                      style: _jakarta(
+                        11,
+                        color: palette.accent,
+                      ).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PlayerAvatar extends StatelessWidget {
+  const _PlayerAvatar({required this.profile, required this.color});
+  final PlayerProfile profile;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = Center(
+      child: Text(profile.initials, style: _outfit(20, color: color)),
+    );
+    final url = profile.avatarUrl?.trim();
+    if (url == null || url.isEmpty) return initials;
+    return Image.network(
+      url,
+      width: 58,
+      height: 58,
+      fit: BoxFit.cover,
+      excludeFromSemantics: true,
+      errorBuilder: (context, error, stackTrace) => initials,
+      frameBuilder: (context, child, frame, synchronouslyLoaded) =>
+          frame == null ? initials : child,
+    );
+  }
+}
+
+class _FollowButton extends StatelessWidget {
+  const _FollowButton({
+    required this.isFollowing,
+    required this.busy,
+    required this.onPressed,
+    required this.palette,
+    required this.light,
+  });
+  final bool isFollowing;
+  final bool busy;
+  final VoidCallback? onPressed;
+  final _PlayerPalette palette;
+  final bool light;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    enabled: !busy && onPressed != null,
+    onTap: busy ? null : onPressed,
+    liveRegion: busy,
+    label: busy
+        ? 'Updating follow status'
+        : isFollowing
+        ? 'Following. Tap to unfollow'
+        : 'Follow player',
+    child: ExcludeSemantics(
+      child: TextButton(
+        key: const ValueKey('player-follow'),
+        onPressed: busy ? null : onPressed,
+        style: TextButton.styleFrom(
+          foregroundColor: isFollowing
+              ? palette.ink
+              : light
+              ? Colors.white
+              : palette.followInk,
+          disabledForegroundColor: isFollowing
+              ? palette.ink.withValues(alpha: .65)
+              : palette.followInk.withValues(alpha: .65),
+          backgroundColor: isFollowing ? Colors.transparent : palette.ink,
+          minimumSize: const Size(44, 38),
+          padding: EdgeInsets.symmetric(horizontal: isFollowing ? 16 : 18),
+          tapTargetSize: MaterialTapTargetSize.padded,
+          visualDensity: VisualDensity.standard,
+          shape: StadiumBorder(
+            side: isFollowing
+                ? BorderSide(color: palette.ink, width: 1.5)
+                : BorderSide.none,
+          ),
+          textStyle: _jakarta(12),
+        ),
+        child: Text(isFollowing ? 'Following' : 'Follow'),
+      ),
+    ),
+  );
+}
+
+class _PlayerStat extends StatelessWidget {
+  const _PlayerStat({
+    required this.label,
+    required this.value,
+    required this.definition,
+  });
+  final String label;
+  final String value;
+  final String definition;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: definition,
+    child: Semantics(
+      label: '$label: ${value == '—' ? 'unavailable' : value}. $definition',
+      child: ExcludeSemantics(
+        child: _WhiteCard(
+          radius: 17,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 15),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value, style: _outfit(21)),
+                const SizedBox(height: 6),
+                Text(label, style: _jakarta(9, color: _muted, tracking: .81)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _LastFive extends StatelessWidget {
+  const _LastFive({required this.results});
+  final List<ProfileGameOutcome?> results;
+
+  @override
+  Widget build(BuildContext context) {
+    final lastFive = results.take(5).toList().reversed.toList();
+    return _WhiteCard(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 17),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Tooltip(
+              message:
+                  'Most recent played solo and clan games, oldest to newest. A dash means the result is unavailable.',
+              child: Text(
+                'LAST FIVE',
+                style: _jakarta(
+                  11,
+                  color: const Color(0xFF24472C),
+                  tracking: 1.32,
+                ),
+              ),
+            ),
+            const SizedBox(height: 13),
+            Row(
+              children: [
+                for (var i = 0; i < 5; i++) ...[
+                  if (i != 0) const SizedBox(width: 7),
+                  Expanded(
+                    child: _ResultPip(
+                      key: ValueKey('player-result-$i'),
+                      result: i < lastFive.length ? lastFive[i] : null,
+                      hasGame: i < lastFive.length,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ResultPip extends StatelessWidget {
+  const _ResultPip({super.key, required this.result, required this.hasGame});
+  final ProfileGameOutcome? result;
+  final bool hasGame;
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label:
+        result?.label ?? (hasGame ? 'Result unavailable' : 'No completed game'),
+    child: ExcludeSemantics(
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 34),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(vertical: 7),
+        decoration: BoxDecoration(
+          color: switch (result) {
+            ProfileGameOutcome.win => _green,
+            ProfileGameOutcome.loss => const Color(0xFFF7E3E3),
+            _ => const Color(0xFFF2EFE3),
+          },
+          borderRadius: BorderRadius.circular(11),
+        ),
+        child: Text(
+          switch (result) {
+            ProfileGameOutcome.win => 'W',
+            ProfileGameOutcome.loss => 'L',
+            ProfileGameOutcome.draw => 'D',
+            null => '—',
+          },
+          style: _outfit(
+            13,
+            color: switch (result) {
+              ProfileGameOutcome.win => Colors.white,
+              ProfileGameOutcome.loss => _danger,
+              _ => _muted,
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _PlayerClan extends StatelessWidget {
+  const _PlayerClan({required this.clan, required this.onTap});
+  final ProfileClan? clan;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = clan;
+    if (current == null) {
+      return _WhiteCard(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+          child: Text(
+            'No clan · plays solo',
+            style: _jakarta(
+              12,
+              color: _muted,
+            ).copyWith(fontWeight: FontWeight.w600),
+          ),
+        ),
+      );
+    }
+    final initials = current.name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((word) => word.isNotEmpty)
+        .take(2)
+        .map((word) => word.substring(0, 1))
+        .join()
+        .toUpperCase();
+    return _WhiteCard(
+      child: InkWell(
+        key: const ValueKey('player-clan'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _green,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: Text(
+                  initials.isEmpty ? '?' : initials,
+                  style: _outfit(14, color: Colors.white),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'CLAN',
+                      style: _jakarta(9.5, color: _muted, tracking: 1.14),
+                    ),
+                    const SizedBox(height: 7),
+                    Text(current.name, style: _outfit(14)),
+                  ],
+                ),
+              ),
+              if (onTap != null) ...[
+                const SizedBox(width: 12),
+                Text('›', style: _jakarta(13, color: _muted)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _WhiteCard extends StatelessWidget {
+  const _WhiteCard({required this.child, this.radius = 20});
+  final Widget child;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Colors.white,
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(radius),
+      side: const BorderSide(color: _border),
+    ),
+    child: child,
+  );
+}
+
+/// Static, reduced-motion-safe initial state. Back navigation stays available.
+class FieldrushPlayerProfileLoadingContent extends StatelessWidget {
+  const FieldrushPlayerProfileLoadingContent({super.key, required this.onBack});
+  final VoidCallback onBack;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _PlayerHeader(name: 'Player', onBack: onBack),
+      Semantics(
+        key: const ValueKey('player-profile-loading'),
+        container: true,
+        liveRegion: true,
+        label: 'Loading player profile',
+        child: ExcludeSemantics(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+            child: Column(
+              children: [
+                const _Skeleton(height: 193, radius: 24),
+                const SizedBox(height: 12),
+                const Row(
+                  children: [
+                    Expanded(child: _Skeleton(height: 66, radius: 17)),
+                    SizedBox(width: 9),
+                    Expanded(child: _Skeleton(height: 66, radius: 17)),
+                    SizedBox(width: 9),
+                    Expanded(child: _Skeleton(height: 66, radius: 17)),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const _Skeleton(height: 93, radius: 20),
+                const SizedBox(height: 12),
+                const _Skeleton(height: 72, radius: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}
+
+class _Skeleton extends StatelessWidget {
+  const _Skeleton({required this.height, required this.radius});
+  final double height;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) => FieldSkeleton(
+    height: height,
+    radius: radius,
+    color: const Color(0x1A24472C),
+  );
+}
+
+class _PlayerPalette {
+  const _PlayerPalette(
+    this.background,
+    this.ink,
+    this.accent,
+    this.followInk,
+    this.lines,
+    this.circle,
+    this.rim,
+    this.shadow,
+  );
+  final List<Color> background;
+  final Color ink, accent, followInk, lines, circle, rim, shadow;
+}
+
+const _placementPalette = _PlayerPalette(
+  [Color(0xFF1E2A23), Color(0xFF0B110D)],
+  Color(0xFFF3EBD6),
+  Color(0xFFC9C2AE),
+  Color(0xFF1E2A23),
+  Color(0x0DFFFFFF),
+  Color(0x17FFFFFF),
+  Color(0x1FF3EBD6),
+  Color(0xB3000000),
+);
+const _palettes = {
+  1: _PlayerPalette(
+    [Color(0xFF26251F), Color(0xFF0E0E0C)],
+    Color(0xFFF6E7C1),
+    Color(0xFFD9B25C),
+    Color(0xFF2B281F),
+    Color(0x12FFFFFF),
+    Color(0x47D9B25C),
+    Color(0x99D9B25C),
+    Color(0xCC000000),
+  ),
+  2: _PlayerPalette(
+    [Color(0xFF22406F), Color(0xFF101F40)],
+    Colors.white,
+    Color(0xFFE9CB7E),
+    Color(0xFF0C1833),
+    Color(0x1AFFFFFF),
+    Color(0x3DE9CB7E),
+    Color(0x59D9B25C),
+    Color(0xD9081028),
+  ),
+  3: _PlayerPalette(
+    [Color(0xFFEBC86C), Color(0xFFAB7C28)],
+    Color(0xFF2B1E06),
+    Color(0xFF4A360B),
+    Colors.white,
+    Color(0x143C2805),
+    Color(0x263C2805),
+    Color(0x1F50370A),
+    Color(0x995A3C0A),
+  ),
+  4: _PlayerPalette(
+    [Color(0xFFE8ECEF), Color(0xFFA6AFB7)],
+    Color(0xFF1E252B),
+    Color(0xFF3A4550),
+    Colors.white,
+    Color(0x121E252B),
+    Color(0x211E252B),
+    Color(0x12000000),
+    Color(0x8C28323C),
+  ),
+  5: _PlayerPalette(
+    [Color(0xFF9A6236), Color(0xFF5A3519)],
+    Color(0xFFFFF4E8),
+    Color(0xFFF6D2AE),
+    Color(0xFF4A2C15),
+    Color(0x1FFFFFFF),
+    Color(0x26FFFFFF),
+    Color(0x0FFFFFFF),
+    Color(0xB3000000),
+  ),
+};
+
+class _PlayerCardPainter extends CustomPainter {
+  const _PlayerCardPainter({required this.palette});
+  final _PlayerPalette palette;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final stripe = Paint()
+      ..color = palette.lines
+      ..strokeWidth = 1;
+    for (double x = 0; x < size.width + size.height; x += 26) {
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x - size.height * .249, size.height),
+        stripe,
+      );
+    }
+    canvas.drawCircle(
+      Offset(47, size.height - 23),
+      93,
+      Paint()
+        ..color = palette.circle
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        (Offset.zero & size).deflate(.75),
+        const Radius.circular(24),
+      ),
+      Paint()
+        ..color = palette.rim
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _PlayerCardPainter oldDelegate) =>
+      oldDelegate.palette != palette;
+}

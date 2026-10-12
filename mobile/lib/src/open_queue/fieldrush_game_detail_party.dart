@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
@@ -294,9 +296,10 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
             ],
           ),
           if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: CircularProgressIndicator()),
+            const FieldLoadingContent(
+              label: 'Loading party',
+              rows: 2,
+              compact: true,
             ),
           if (_error != null)
             Padding(
@@ -399,9 +402,12 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
               ),
           ],
           if (_busy)
-            const Padding(
-              padding: EdgeInsets.only(top: 12),
-              child: LinearProgressIndicator(),
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Semantics(
+                liveRegion: true,
+                child: const Text('Updating party…'),
+              ),
             ),
         ],
       ),

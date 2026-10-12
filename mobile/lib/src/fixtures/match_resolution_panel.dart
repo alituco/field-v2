@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'match_resolution.dart';
@@ -260,7 +261,7 @@ class _MatchResolutionPanelState extends State<MatchResolutionPanel> {
                 icon: _isSubmitting
                     ? const SizedBox.square(
                         dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: FieldLoadingIndicator(),
                       )
                     : const Icon(Icons.flag_outlined, size: 18),
                 label: Text(

@@ -6,6 +6,7 @@ import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
 import 'fieldrush_booking_widgets.dart';
 import 'open_queue.dart';
+import 'fieldrush_game_loading.dart';
 import 'open_queue_repository.dart';
 
 /// Fieldrush review sheet with native, embedded payment-method selection.
@@ -477,10 +478,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                   ],
                   const SizedBox(height: 16),
                   if (_loading && preview == null)
-                    const Padding(
-                      padding: EdgeInsets.all(12),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
+                    const FieldrushPriceLoading()
                   else if (preview != null) ...[
                     BookingValueRow('Match fee', preview.standardMatchFeeLabel),
                     if (preview.discountAmountFils > 0)
@@ -533,21 +531,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                     key: const ValueKey('open-queue-confirm-payment'),
                     onPressed: _canPay ? _pay : null,
                     child: _processing
-                        ? const Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              SizedBox(width: 10),
-                              Text('Processing…'),
-                            ],
-                          )
+                        ? const Text('Processing…')
                         : Text(
                             _embedded
                                 ? preview?.totalFils == 0

@@ -1,9 +1,17 @@
 import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
 
 import { PwaInstallPrompt } from "@/components/pwa-install-prompt";
 import { resolveFieldEnvironment } from "@/lib/app-environment";
 
 import "./globals.css";
+
+const fieldrushFont = localFont({
+  src: "./fonts/PlusJakartaSans.ttf",
+  variable: "--font-fieldrush",
+  weight: "200 800",
+  display: "swap",
+});
 
 export function generateMetadata(): Metadata {
   const isStaging = process.env.NEXT_PUBLIC_APP_ENV === "staging";
@@ -52,7 +60,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
-  themeColor: "#f8fafc",
+  themeColor: "#faf7ef",
 };
 
 export default function RootLayout({
@@ -66,7 +74,7 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en">
+    <html lang="en" className={fieldrushFont.variable}>
       <body className={environment.label ? "field-nonproduction" : undefined}>
         {environment.label ? (
           <div

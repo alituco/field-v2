@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan.dart';
 import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
@@ -1411,10 +1413,7 @@ class _ScoreboardClan extends StatelessWidget {
           if (isOpening)
             const SizedBox.square(
               dimension: 12,
-              child: CircularProgressIndicator(
-                strokeWidth: 1.7,
-                color: fieldEmerald200,
-              ),
+              child: FieldLoadingIndicator(color: fieldEmerald200),
             )
           else
             const Row(
@@ -5477,15 +5476,25 @@ class _WatchMediaProgress extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(
-            width: 17,
-            height: 17,
-            child: CircularProgressIndicator(
-              value: value,
-              strokeWidth: 2.2,
-              color: onDark ? Colors.white : fieldEmerald600,
+          if (value == null)
+            SizedBox.square(
+              dimension: 17,
+              child: FieldLoadingIndicator(
+                label: label,
+                color: onDark ? Colors.white : fieldEmerald600,
+              ),
+            )
+          else
+            SizedBox(
+              width: 38,
+              child: LinearProgressIndicator(
+                value: value,
+                minHeight: 4,
+                borderRadius: BorderRadius.circular(4),
+                color: onDark ? Colors.white : fieldEmerald600,
+                backgroundColor: onDark ? Colors.white24 : fieldGray200,
+              ),
             ),
-          ),
           const SizedBox(width: 7),
           Text(
             _progressActionLabel(label, value),
@@ -5624,10 +5633,7 @@ class _GoalJumpBar extends StatelessWidget {
                   ? const SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
+                      child: FieldLoadingIndicator(color: Colors.white),
                     )
                   : const Icon(Icons.download_rounded, size: 18),
               label: Text(
@@ -5662,7 +5668,7 @@ class _GoalJumpBar extends StatelessWidget {
                     ? const SizedBox(
                         width: 16,
                         height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: FieldLoadingIndicator(),
                       )
                     : Icon(
                         isSelectedSaved
@@ -6675,7 +6681,7 @@ class _CancelClanBookingActionBar extends StatelessWidget {
               ? const SizedBox(
                   width: 17,
                   height: 17,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: FieldLoadingIndicator(),
                 )
               : const Icon(Icons.event_busy_rounded),
           label: Text(
@@ -6729,7 +6735,7 @@ class _JoinActionBar extends StatelessWidget {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(),
                   )
                 : const Icon(Icons.sports_mma_rounded),
             label: Text(isJoining ? 'Joining...' : 'Join Match'),
@@ -6783,7 +6789,7 @@ class _CompleteActionBar extends StatelessWidget {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(),
                   )
                 : const Icon(Icons.fact_check_rounded),
             label: Text(isCompleting ? 'Finalizing...' : 'Finalize Score'),

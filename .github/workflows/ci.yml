@@ -351,7 +351,7 @@ jobs:
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts
 
-      - name: Check Phoenix game rules, wallets, and leaderboard pages
+      - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
         shell: bash
         run: |
           set -euo pipefail
@@ -361,6 +361,12 @@ jobs:
             node supabase/scripts/test_fieldrush_market.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_fieldrush_leaderboard.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_saved_fields.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_game_schedules.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_game_prices.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
         run: >-

@@ -98,6 +98,39 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('saved field address is shown without changing legacy layouts', (
+    tester,
+  ) async {
+    await show(tester, _Repository(_detail(withLocation: true)));
+    expect(
+      find.byKey(const ValueKey('fieldrush-game-address')),
+      findsOneWidget,
+    );
+    expect(
+      find.text('2425 E Deer Valley Road, Phoenix, AZ, US'),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('Saturday fixture shows the actual kickoff and 90-minute slot', (
+    tester,
+  ) async {
+    final detail = _detail(
+      start: DateTime.utc(2030, 1, 13, 1, 15),
+      durationMinutes: 90,
+    );
+    await show(tester, _Repository(detail));
+    expect(find.textContaining('SAT, 12 JAN'), findsOneWidget);
+    expect(find.text('6:15 PM', findRichText: true), findsOneWidget);
+    final format = find.text('7-a-side · 90 min slot');
+    await tester.scrollUntilVisible(format, 250);
+    expect(format, findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('empty data does not invent ratings, events or a video', (
     tester,
   ) async {
@@ -388,6 +421,9 @@ OpenQueueMatchDetail _detail({
   int count = 3,
   bool booked = false,
   bool review = false,
+  bool withLocation = false,
+  DateTime? start,
+  int durationMinutes = 60,
   int? white,
   int? black,
   List<OpenQueuePlayer> players = const [],
@@ -396,8 +432,17 @@ OpenQueueMatchDetail _detail({
     id: 'game',
     status: status,
     venue: 'Reach 11 Fields · Field 2',
-    startsAt: DateTime.utc(2030, 1, 12, 1),
-    endsAt: DateTime.utc(2030, 1, 12, 2),
+    fieldId: withLocation ? 'field-1' : null,
+    locationAddress: withLocation ? '2425 E Deer Valley Road' : null,
+    locationCity: withLocation ? 'Phoenix' : null,
+    locationState: withLocation ? 'AZ' : null,
+    locationCountryCode: withLocation ? 'US' : null,
+    locationLatitude: withLocation ? 33.6849 : null,
+    locationLongitude: withLocation ? -112.0308 : null,
+    startsAt: start ?? DateTime.utc(2030, 1, 12, 1),
+    endsAt: (start ?? DateTime.utc(2030, 1, 12, 1)).add(
+      Duration(minutes: durationMinutes),
+    ),
     timezone: 'America/Phoenix',
     priceFils: 10000,
     currency: 'USD',

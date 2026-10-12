@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../ranking/division_crest.dart';
 import 'clan.dart';
 
@@ -28,7 +29,7 @@ const fieldBlue600 = Color(0xFF2563EB);
 
 enum HeaderActionTone { blue, pink }
 
-class FieldSkeletonBox extends StatefulWidget {
+class FieldSkeletonBox extends StatelessWidget {
   const FieldSkeletonBox({
     super.key,
     this.width,
@@ -41,52 +42,8 @@ class FieldSkeletonBox extends StatefulWidget {
   final double borderRadius;
 
   @override
-  State<FieldSkeletonBox> createState() => _FieldSkeletonBoxState();
-}
-
-class _FieldSkeletonBoxState extends State<FieldSkeletonBox>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1300),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(widget.borderRadius),
-      child: SizedBox(
-        width: widget.width ?? double.infinity,
-        height: widget.height,
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) {
-            return DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment(-1.8 + (_controller.value * 3.6), 0),
-                  end: Alignment(-0.4 + (_controller.value * 3.6), 0),
-                  colors: const [fieldGray100, Color(0xFFF9FAFB), fieldGray100],
-                  stops: const [0.1, 0.5, 0.9],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    );
+    return FieldSkeleton(width: width, height: height, radius: borderRadius);
   }
 }
 

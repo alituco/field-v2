@@ -11,6 +11,43 @@ import 'fieldrush_auth_theme.dart';
 import 'fieldrush_phone_field.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
+import '../ui/field_loading.dart';
+
+class _AccountLoadingView extends StatelessWidget {
+  const _AccountLoadingView();
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    label: 'Loading account details',
+    liveRegion: true,
+    child: ExcludeSemantics(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 18, 20, 36),
+        children: [
+          const Row(
+            children: [
+              FieldSkeleton(width: 36, height: 36, radius: 12),
+              SizedBox(width: 12),
+              FieldSkeleton(width: 154, height: 20),
+            ],
+          ),
+          const SizedBox(height: 26),
+          const Center(child: FieldSkeleton(width: 88, height: 88, radius: 28)),
+          const SizedBox(height: 24),
+          for (var index = 0; index < 6; index++) ...[
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: FieldSkeleton(width: 88, height: 10),
+            ),
+            const SizedBox(height: 10),
+            const FieldSkeleton(height: 32, radius: 10),
+            const SizedBox(height: 22),
+          ],
+        ],
+      ),
+    ),
+  );
+}
 
 class FieldrushAccountScreen extends StatefulWidget {
   const FieldrushAccountScreen({
@@ -458,7 +495,7 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
         bottomNavigationBar: navigation,
         body: SafeArea(
           child: _loading
-              ? const Center(child: CircularProgressIndicator())
+              ? const _AccountLoadingView()
               : account == null
               ? Center(
                   child: Padding(

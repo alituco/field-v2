@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
 import '../clans/clan_widgets.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
@@ -355,7 +356,7 @@ class _PlayChoiceCard extends StatelessWidget {
                 const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: FieldLoadingIndicator(),
                 )
               else
                 const Icon(Icons.chevron_right_rounded, color: fieldGray400),

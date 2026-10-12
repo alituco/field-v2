@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -29,10 +30,15 @@ import forfeitStyles from "./forfeit-review.module.css";
 import { ReliabilitySection } from "./reliability-section";
 import { GamePaymentSettingsPanel } from "./game-payment-settings";
 import { refundRetryNotice } from "@/lib/payment-refunds";
+import { FieldsPanel } from "./fields-panel";
+import { SchedulesPanel } from "./schedules-panel";
+import type { AdminField } from "@/lib/admin-fields";
 
 type AdminSection =
   | "overview"
   | "games"
+  | "schedules"
+  | "fields"
   | "reliability"
   | "support"
   | "reports"
@@ -207,9 +213,11 @@ type GameDialog =
   | null;
 
 type SoloGameDialog =
-  | { kind: "create" }
+  | { kind: "create"; fieldId?: string }
   | { kind: "remove"; fixture: RefereeFixture }
   | null;
+
+type SoloGameDraft = { matchDate: string; kickoffTime: string; durationMinutes: number; priceUsd: string; ageLabel: string };
 
 type ReportDialog =
   | { report: AdminReport; action: "RESOLVE" | "DISMISS" }
@@ -267,6 +275,14 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [gameDialog, setGameDialog] = useState<GameDialog>(null);
   const [soloGameDialog, setSoloGameDialog] = useState<SoloGameDialog>(null);
+  const [fields, setFields] = useState<AdminField[]>([]);
+  const [soloDraft, setSoloDraft] = useState<SoloGameDraft | null>(null);
+  const [addingField, setAddingField] = useState(false);
+  const [returnToSolo, setReturnToSolo] = useState(false);
+  const [returnToSchedules, setReturnToSchedules] = useState(false);
+  const [schedulesRefreshKey, setSchedulesRefreshKey] = useState(0);
+  const [scheduleAddedFieldId, setScheduleAddedFieldId] = useState<string | null>(null);
+  const [fieldsRefreshKey, setFieldsRefreshKey] = useState(0);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
   const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
@@ -446,6 +462,17 @@ export default function AdminPage() {
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("section");
+    if (window.location.pathname.startsWith("/admin/fields")) {
+      setSection("fields");
+      setAddingField(window.location.pathname.endsWith("/new"));
+      setReturnToSolo(new URLSearchParams(window.location.search).get("returnTo") === "solo");
+      setReturnToSchedules(new URLSearchParams(window.location.search).get("returnTo") === "schedules");
+      return;
+    }
+    if (window.location.pathname.startsWith("/admin/schedules")) {
+      setSection("schedules");
+      return;
+    }
     if (adminNavItems.some((item) => item.id === requested)) {
       setSection(requested as AdminSection);
     }
@@ -527,8 +554,10 @@ export default function AdminPage() {
   }
 
   async function createSoloGame(input: {
-    venue: string;
+    fieldId: string;
     matchDate: string;
+    kickoffTime: string;
+    durationMinutes: number;
     priceUsd: string;
     ageLabel: string;
   }) {
@@ -545,6 +574,43 @@ export default function AdminPage() {
       await Promise.all([loadGames(), loadOverview()]);
     } catch (actionError) {
       setError(errorMessage(actionError, "Could not create the solo game."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  function navigateSection(next: AdminSection) {
+    setSection(next);
+    setAddingField(false);
+    setReturnToSolo(false);
+    setReturnToSchedules(false);
+    window.history.replaceState(null, "", ["fields", "schedules"].includes(next) ? `/admin/${next}` : `/admin?section=${next}`);
+  }
+
+  function addFieldForGame(draft?: SoloGameDraft) {
+    if (draft) setSoloDraft(draft);
+    setSoloGameDialog(null);
+    setSection("fields");
+    setAddingField(true);
+    setReturnToSolo(true);
+    setReturnToSchedules(false);
+    window.history.replaceState(null, "", "/admin/fields/new?returnTo=solo");
+  }
+
+  async function startSoloGame() {
+    setSoloDraft(null);
+    setSubmitting("load-fields");
+    setError(null);
+    try {
+      const payload = await fetchJson<{ fields: AdminField[] }>("/api/referee/admin/fields", {
+        headers: authHeaders(), cache: "no-store",
+      });
+      const available = payload.fields.filter((field) => field.isActive);
+      setFields(available);
+      if (!available.length) addFieldForGame();
+      else setSoloGameDialog({ kind: "create" });
+    } catch (loadError) {
+      setError(errorMessage(loadError, "Could not load fields. Try again before creating a game."));
     } finally {
       setSubmitting(null);
     }
@@ -858,24 +924,28 @@ export default function AdminPage() {
             overview.attention.length +
             forfeits.filter((decision) => decision.status === "PENDING_REVIEW").length,
         }}
-        onSection={setSection}
+        onSection={navigateSection}
         onSignOut={() => void signOut()}
       />
 
       <div className="admin-main">
         <header className="admin-topbar">
           <div>
-            <div className="admin-mobile-brand">FIELD ADMIN</div>
+            <div className="admin-mobile-brand">FIELDRUSH OPERATIONS</div>
             <h1>{sectionTitle(section)}</h1>
             <p>{sectionSubtitle(section)}</p>
           </div>
           <div className="admin-topbar-actions">
-            <span className="admin-live-system"><i /> Systems online</span>
+            <span className="admin-live-system"><i /> Operations workspace</span>
             <button
               className="admin-icon-button"
               disabled={refreshing}
               onClick={() => {
-                if (section === "reliability") {
+                if (section === "fields") {
+                  setFieldsRefreshKey((value) => value + 1);
+                } else if (section === "schedules") {
+                  setSchedulesRefreshKey((value) => value + 1);
+                } else if (section === "reliability") {
                   setReliabilityRefreshKey((value) => value + 1);
                 } else if (section === "waitlist") {
                   void loadWaitlist(true);
@@ -896,7 +966,7 @@ export default function AdminPage() {
             <button
               className={section === item.id ? "active" : ""}
               key={item.id}
-              onClick={() => setSection(item.id)}
+              onClick={() => navigateSection(item.id)}
               type="button"
             >
               <AdminIcon name={item.icon} />
@@ -934,7 +1004,7 @@ export default function AdminPage() {
               games={games}
               reports={reports}
               forfeits={forfeits}
-              onNavigate={setSection}
+              onNavigate={navigateSection}
             />
           ) : section === "games" ? (
             <GamesSection
@@ -944,12 +1014,37 @@ export default function AdminPage() {
               submitting={submitting}
               onAssignReferee={assignReferee}
               onCancel={(fixture) => setGameDialog({ kind: "cancel", fixture })}
-              onCreateSoloGame={() => setSoloGameDialog({ kind: "create" })}
+              onCreateSoloGame={() => void startSoloGame()}
               onCreateReferee={createReferee}
               onOverrideScore={(fixture) => setGameDialog({ kind: "score", fixture })}
               onRemoveSoloGame={(fixture) =>
                 setSoloGameDialog({ kind: "remove", fixture })
               }
+            />
+          ) : section === "schedules" ? (
+            <SchedulesPanel accessToken={accessToken} refreshKey={schedulesRefreshKey} newlyAddedFieldId={scheduleAddedFieldId ?? undefined} onAddField={() => {
+              setSection("fields"); setAddingField(true); setReturnToSolo(false); setReturnToSchedules(true);
+              window.history.replaceState(null, "", "/admin/fields/new?returnTo=schedules");
+            }} />
+          ) : section === "fields" ? (
+            <FieldsPanel
+              accessToken={accessToken}
+              startAdding={addingField}
+              returnToSolo={returnToSolo || returnToSchedules}
+              returnToSchedules={returnToSchedules}
+              refreshKey={fieldsRefreshKey}
+              onNavigate={(adding) => {
+                setAddingField(adding);
+                window.history.replaceState(null, "", `/admin/fields${adding ? "/new" : ""}${returnToSolo ? "?returnTo=solo" : returnToSchedules ? "?returnTo=schedules" : ""}`);
+              }}
+              onReturnToGame={(field) => {
+                if (returnToSchedules) { setScheduleAddedFieldId(field?.id ?? null); navigateSection("schedules"); return; }
+                navigateSection("games");
+                if (field) {
+                  setFields((current) => [...current.filter((item) => item.id !== field.id), field]);
+                  setSoloGameDialog({ kind: "create", fieldId: field.id });
+                }
+              }}
             />
           ) : section === "reports" ? (
             <ReportsSection
@@ -1043,6 +1138,10 @@ export default function AdminPage() {
       {soloGameDialog ? (
         <SoloGameManagementDialog
           dialog={soloGameDialog}
+          fields={fields}
+          draft={soloDraft}
+          error={error}
+          onAddField={addFieldForGame}
           submitting={submitting !== null}
           onClose={() => setSoloGameDialog(null)}
           onCreate={(input) => void createSoloGame(input)}
@@ -1130,6 +1229,8 @@ const adminNavItems: Array<{
 }> = [
   { id: "overview", label: "Overview", shortLabel: "Home", icon: "overview" },
   { id: "games", label: "Games", shortLabel: "Games", icon: "games" },
+  { id: "schedules", label: "Schedules", shortLabel: "Schedules", icon: "games" },
+  { id: "fields", label: "Fields", shortLabel: "Fields", icon: "location" },
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
@@ -1157,7 +1258,7 @@ function AdminSidebar({
       <a className="admin-sidebar-brand" href="/admin">
         <span>F</span>
         <div>
-          <strong>FIELD</strong>
+          <strong>Fieldrush</strong>
           <small>OPERATIONS</small>
         </div>
       </a>
@@ -1873,6 +1974,7 @@ function GamesSection({
             <h2>Games</h2>
           </div>
           <div className="admin-games-head-actions">
+            <a className="admin-secondary-button" href="/admin/schedules">Recurring schedules</a>
             <div className="admin-display-switch" aria-label="Games display" role="group">
               <button className={display === "LIST" ? "active" : ""} onClick={() => setDisplay("LIST")} type="button">List</button>
               <button className={display === "CALENDAR" ? "active" : ""} onClick={() => {
@@ -2321,9 +2423,7 @@ function AdminGamePlayersPanel({
         {participants ? <b>{signedUpLabel}</b> : null}
       </div>
       {loading ? (
-        <div className="admin-player-loading" aria-label="Loading signed-up players">
-          <i /><i /><i />
-        </div>
+        <LoadingSkeleton label="Loading signed-up players" layout="rows" />
       ) : error ? (
         <p className="admin-inline-error">{error}</p>
       ) : !participants || signedUpPlayers.length === 0 ? (
@@ -3370,32 +3470,47 @@ function AuditSection({ audit }: { audit: AuditItem[] }) {
 
 function SoloGameManagementDialog({
   dialog,
+  fields,
+  draft,
+  error,
+  onAddField,
   submitting,
   onClose,
   onCreate,
   onRemove,
 }: {
   dialog: NonNullable<SoloGameDialog>;
+  fields: AdminField[];
+  draft: SoloGameDraft | null;
+  error: string | null;
+  onAddField: (draft: SoloGameDraft) => void;
   submitting: boolean;
   onClose: () => void;
   onCreate: (input: {
-    venue: string;
+    fieldId: string;
     matchDate: string;
+    kickoffTime: string;
+    durationMinutes: number;
     priceUsd: string;
     ageLabel: string;
   }) => void;
   onRemove: (fixture: RefereeFixture, reason: string) => void;
 }) {
-  const [venue, setVenue] = useState("");
-  const [matchDate, setMatchDate] = useState(nextSoloMatchDate());
-  const [priceUsd, setPriceUsd] = useState("13.00");
-  const [ageLabel, setAgeLabel] = useState("18+");
+  const [fieldId, setFieldId] = useState(dialog.kind === "create" ? dialog.fieldId ?? "" : "");
+  const selectedField = fields.find((field) => field.id === fieldId && field.isActive);
+  const [matchDate, setMatchDate] = useState(draft?.matchDate ?? nextSoloMatchDate());
+  const [kickoffTime, setKickoffTime] = useState(draft?.kickoffTime ?? "20:30");
+  const [durationMinutes, setDurationMinutes] = useState(draft?.durationMinutes ?? 60);
+  const [priceUsd, setPriceUsd] = useState(draft?.priceUsd ?? "13.00");
+  const [ageLabel, setAgeLabel] = useState(draft?.ageLabel ?? "18+");
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const creating = dialog.kind === "create";
   const createReady =
-    venue.trim().length >= 2 &&
+    !!selectedField &&
     matchDate.length === 10 &&
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(kickoffTime) &&
+    Number.isInteger(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 180 &&
     /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim()) &&
     ageLabel.trim().length >= 2;
   const removeReady =
@@ -3411,23 +3526,26 @@ function SoloGameManagementDialog({
         {creating ? "Open Queue schedule" : "Permanent audit record"}
       </span>
       <h2>{creating ? "Create a solo game" : "Remove this empty game?"}</h2>
+      {error ? <div role="alert" className="admin-banner danger">{error}</div> : null}
       {creating ? (
         <>
           <p className="admin-modal-lead">
             The game opens for player bookings as soon as it is created.
           </p>
           <div className="admin-modal-warning">
-            7-a-side · Tuesday or Friday · 8:30–9:30 PM Phoenix time. Prices are in USD.
+            7-a-side · Any day · Phoenix time. Games at the same pitch cannot overlap. Prices are in USD.
           </div>
           <label className="admin-modal-field">
-            <span>Venue</span>
-            <input
-              maxLength={80}
-              onChange={(event) => setVenue(event.target.value)}
-              placeholder="Venue in Phoenix"
-              value={venue}
-            />
+            <span>Field / pitch <span aria-hidden="true">*</span></span>
+            <select required value={fieldId} onChange={(event) => setFieldId(event.target.value)}>
+              <option value="">Select a saved field</option>
+              {fields.filter((field) => field.isActive).map((field) => (
+                <option key={field.id} value={field.id}>{field.name} · {field.city}</option>
+              ))}
+            </select>
+            <small>{selectedField ? `${selectedField.address}, ${selectedField.city}, ${selectedField.state}` : "Players will see this field’s address and map pin in the app."}</small>
           </label>
+          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, priceUsd, ageLabel })}>+ Add a new field</button>
           <div className="admin-solo-game-fields">
             <label className="admin-modal-field">
               <span>Match date</span>
@@ -3436,7 +3554,17 @@ function SoloGameManagementDialog({
                 type="date"
                 value={matchDate}
               />
-              <small>Tuesday or Friday</small>
+              <small>Choose any future date, including weekends.</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Kickoff time</span>
+              <input type="time" value={kickoffTime} onChange={(event) => setKickoffTime(event.target.value)} />
+              <small>America/Phoenix (Arizona time)</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Duration (minutes)</span>
+              <input type="number" min={30} max={180} step={1} value={durationMinutes || ""} onChange={(event) => setDurationMinutes(Number(event.target.value))} />
+              <small>30–180 minutes. Default: 60 minutes.</small>
             </label>
             <label className="admin-modal-field">
               <span>Price per player (USD)</span>
@@ -3505,8 +3633,10 @@ function SoloGameManagementDialog({
           onClick={() => {
             if (creating) {
               onCreate({
-                venue: venue.trim(),
+                fieldId,
                 matchDate,
+                kickoffTime,
+                durationMinutes,
                 priceUsd: priceUsd.trim(),
                 ageLabel: ageLabel.trim(),
               });
@@ -4201,20 +4331,14 @@ function CompactAuditList({ items }: { items: AuditItem[] }) {
 }
 
 function AdminLoadingScreen({ label }: { label: string }) {
-  return (
-    <main className="admin-loading-screen">
-      <div className="admin-loading-mark">F</div>
-      <div><span /><span /><span /></div>
-      <p>{label}</p>
-    </main>
-  );
+  return <main><LoadingSkeleton label={label} layout="dashboard" fullPage /></main>;
 }
 
 function AdminPageSkeleton() {
   return (
-    <div className="admin-page-skeleton">
-      <div className="admin-skeleton-metrics">{[1, 2, 3, 4].map((item) => <span key={item} />)}</div>
-      <div className="admin-skeleton-panels"><span /><span /></div>
+    <div className="admin-page-skeleton" role="status" aria-label="Loading admin overview">
+      <div className="admin-skeleton-metrics" aria-hidden="true">{[1, 2, 3, 4].map((item) => <span key={item} />)}</div>
+      <div className="admin-skeleton-panels" aria-hidden="true"><span /><span /></div>
     </div>
   );
 }
@@ -4223,10 +4347,11 @@ type AdminIconName =
   | "overview" | "games" | "policy" | "support" | "reports" | "waitlist" | "people" | "audit" | "referee"
   | "logout" | "refresh" | "alert" | "check" | "arrow" | "search"
   | "replay" | "external" | "edit" | "cancel" | "lock" | "dismiss"
-  | "close" | "live" | "shield";
+  | "close" | "live" | "shield" | "location";
 
 function AdminIcon({ name }: { name: AdminIconName }) {
   const paths: Record<AdminIconName, React.ReactNode> = {
+    location: <><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="3" /></>,
     overview: <><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></>,
     games: <><path d="M5 5h14v14H5z" /><path d="M8 3v4M16 3v4M5 10h14" /></>,
     policy: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="M8 9h8M8 13h5M8 17h3" /></>,
@@ -4520,8 +4645,10 @@ function upperString(value: unknown, fallback: string) {
 
 function sectionTitle(section: AdminSection) {
   return {
-    overview: "Good overview. Fast decisions.",
-    games: "Games control",
+    overview: "Every game starts here.",
+    games: "Games",
+    schedules: "Game schedules",
+    fields: "Fields & pitches",
     reliability: "Reliability policy",
     support: "Player support",
     reports: "Reports inbox",
@@ -4534,8 +4661,10 @@ function sectionTitle(section: AdminSection) {
 
 function sectionSubtitle(section: AdminSection) {
   return {
-    overview: "See what needs attention across Field today.",
+    overview: "Your Fieldrush matchdays, people and priorities in one place.",
     games: "Review, correct, cancel and watch every match.",
+    schedules: "Choose when and where you play. Publish upcoming games automatically.",
+    fields: "Save real locations once. Assign them to games. Help players find the pitch.",
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",
@@ -4741,14 +4870,13 @@ function nextSoloMatchDate() {
   ));
 
   for (let offset = 0; offset < 14; offset += 1) {
-    const weekday = candidate.getUTCDay();
     const value = [
       candidate.getUTCFullYear(),
       String(candidate.getUTCMonth() + 1).padStart(2, "0"),
       String(candidate.getUTCDate()).padStart(2, "0"),
     ].join("-");
     const kickoff = new Date(`${value}T20:30:00-07:00`);
-    if ((weekday === 2 || weekday === 5) && kickoff.getTime() > now.getTime()) {
+    if (kickoff.getTime() > now.getTime()) {
       return value;
     }
     candidate.setUTCDate(candidate.getUTCDate() + 1);

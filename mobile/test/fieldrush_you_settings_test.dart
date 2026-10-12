@@ -160,6 +160,8 @@ void main() {
       );
       await tester.pump();
       expect(repository.saveCalls, 1);
+      expect(find.text('Saving…'), findsOneWidget);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(
         tester
             .widget<Switch>(

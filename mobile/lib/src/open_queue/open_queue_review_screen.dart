@@ -5,6 +5,7 @@ import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
 import '../reliability/reliability_deadline_notice.dart';
 import 'open_queue.dart';
+import 'fieldrush_game_loading.dart';
 import 'open_queue_booking_screen.dart';
 import 'open_queue_repository.dart';
 
@@ -415,14 +416,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                 ),
               ),
               child: _processing
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2.5,
-                      ),
-                    )
+                  ? const Text('Processing payment…')
                   : Text(
                       'Continue to Pay · ${_costPreview?.totalLabel ?? 'Checking total…'}',
                       style: const TextStyle(fontWeight: FontWeight.w900),
@@ -654,25 +648,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
               ),
               const SizedBox(height: 13),
               if (snapshot.connectionState == ConnectionState.waiting)
-                const Row(
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Checking your exact total…',
-                        style: TextStyle(
-                          color: fieldGray600,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                )
+                const FieldrushPriceLoading()
               else if (snapshot.hasError || preview == null) ...[
                 const Text(
                   'We could not verify the exact price. Refresh before booking.',

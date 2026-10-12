@@ -145,6 +145,13 @@ class OpenQueueGame {
     required this.confirmedCount,
     required this.spots,
     this.currency = 'BHD',
+    this.fieldId,
+    this.locationAddress,
+    this.locationCity,
+    this.locationState,
+    this.locationCountryCode,
+    this.locationLatitude,
+    this.locationLongitude,
     this.whiteScore,
     this.blackScore,
     this.myBookingId,
@@ -178,6 +185,13 @@ class OpenQueueGame {
   final int confirmedCount;
   final Map<OpenQueueRole, int> spots;
   final String currency;
+  final String? fieldId;
+  final String? locationAddress;
+  final String? locationCity;
+  final String? locationState;
+  final String? locationCountryCode;
+  final double? locationLatitude;
+  final double? locationLongitude;
   final int? whiteScore;
   final int? blackScore;
   final String? myBookingId;
@@ -197,6 +211,51 @@ class OpenQueueGame {
   final MatchOperationalState operationalState;
   final DateTime? operationalStateUpdatedAt;
   final String? operationalReasonCode;
+
+  String? get locationLabel {
+    final parts = [
+      for (final part in [
+        locationAddress,
+        locationCity,
+        locationState,
+        locationCountryCode,
+      ])
+        if (part?.trim().isNotEmpty == true) part!.trim(),
+    ];
+    return parts.isEmpty ? null : parts.join(', ');
+  }
+
+  /// New games use the saved pitch coordinates, never a guessed map pin.
+  /// Historic venue-only games retain their original text-search fallback.
+  Uri? get directionsUri {
+    final latitude = locationLatitude;
+    final longitude = locationLongitude;
+    final hasCoordinates =
+        latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude.abs() <= 90 &&
+        longitude.abs() <= 180;
+    final String query;
+    if (hasCoordinates) {
+      query = '$latitude,$longitude';
+    } else if (locationLabel case final String address) {
+      query = address;
+    } else {
+      if (venue.trim().isEmpty) return null;
+      final market = switch (timezone) {
+        'America/Phoenix' => 'Phoenix AZ',
+        'Asia/Bahrain' => 'Bahrain',
+        _ => '',
+      };
+      query = '${venue.trim()} $market'.trim();
+    }
+    return Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query,
+    });
+  }
 
   bool get isFull => status == 'FULL' || confirmedCount >= capacity;
 
@@ -374,6 +433,13 @@ class OpenQueueGame {
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       currency: json['currency'] as String? ?? 'BHD',
+      fieldId: _nonEmptyString(json['field_id']),
+      locationAddress: _nonEmptyString(json['location_address']),
+      locationCity: _nonEmptyString(json['location_city']),
+      locationState: _nonEmptyString(json['location_state']),
+      locationCountryCode: _nonEmptyString(json['location_country_code']),
+      locationLatitude: _asNullableDouble(json['location_latitude']),
+      locationLongitude: _asNullableDouble(json['location_longitude']),
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
@@ -424,6 +490,13 @@ class OpenQueueGame {
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       currency: json['currency'] as String? ?? 'BHD',
+      fieldId: _nonEmptyString(json['field_id']),
+      locationAddress: _nonEmptyString(json['location_address']),
+      locationCity: _nonEmptyString(json['location_city']),
+      locationState: _nonEmptyString(json['location_state']),
+      locationCountryCode: _nonEmptyString(json['location_country_code']),
+      locationLatitude: _asNullableDouble(json['location_latitude']),
+      locationLongitude: _asNullableDouble(json['location_longitude']),
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
@@ -1115,6 +1188,12 @@ String? _nonEmptyString(Object? value) {
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
 }
+
+double? _asNullableDouble(Object? value) => switch (value) {
+  num number => number.toDouble(),
+  String number => double.tryParse(number),
+  _ => null,
+};
 
 String _clock(DateTime value) {
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;

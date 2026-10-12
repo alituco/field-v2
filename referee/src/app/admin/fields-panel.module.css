@@ -1,0 +1,59 @@
+.stack { display: grid; gap: 24px; }
+.intro { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 32px; border: 1px solid var(--line); border-radius: 24px; background: var(--surface); }
+.intro h2, .editor h2 { margin: 8px 0 12px; color: var(--ink); font-size: clamp(25px, 3vw, 36px); letter-spacing: -.055em; line-height: 1.15; }
+.intro p, .editor header p { max-width: 570px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.intro button { flex-shrink: 0; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; color: var(--muted); font-size: 12px; font-weight: 650; }
+.search { flex: 1; min-width: 220px; }
+.search input, .formFields input { box-sizing: border-box; width: 100%; min-height: 48px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--green); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 20px; }
+.card { min-width: 0; padding: 24px; border: 1px solid var(--line); border-radius: 22px; background: var(--surface); }
+.cardTop { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.pitch { display: grid; place-items: center; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 14px; background: var(--background); color: var(--green); font-size: 25px; }
+.active, .archived { padding: 6px 10px; border-radius: 20px; font-size: 11px; font-weight: 750; background: var(--background); color: var(--green); }
+.archived { color: var(--muted); }
+.card h3 { margin: 22px 0 8px; color: var(--ink); font-size: 19px; letter-spacing: -.035em; overflow-wrap: anywhere; }
+.card p { min-height: 48px; margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.7; overflow-wrap: anywhere; }
+.mapLink { display: inline-flex; align-items: center; min-height: 40px; color: var(--green); font-size: 12px; font-weight: 750; }
+.actions { display: flex; gap: 10px; justify-content: space-between; margin-top: 15px; padding-top: 18px; border-top: 1px solid var(--line); }
+.quiet, .back { background: transparent; color: var(--muted); padding: 10px 4px; min-height: 44px; font: inherit; font-size: 12px; font-weight: 750; cursor: pointer; }
+.back { color: var(--green); padding-left: 0; justify-self: start; }
+.empty { display: grid; justify-items: center; text-align: center; padding: 64px 24px; border: 1px dashed var(--line); border-radius: 24px; color: var(--muted); }
+.empty h3 { color: var(--ink); font-size: 24px; letter-spacing: -.045em; margin: 20px 0 0; }
+.empty p { max-width: 430px; margin-bottom: 24px; font-size: 14px; line-height: 1.7; }
+.skeleton { min-height: 270px; background: var(--line); border-radius: 22px; opacity: .45; }
+.editor { display: grid; gap: 26px; max-width: 880px; margin: 0 auto; }
+.editor header { padding-bottom: 6px; }
+.formFields { min-width: 0; padding: 0; margin: 0; border: none; display: grid; gap: 22px; }
+.formFields section { display: grid; gap: 22px; padding: 28px; background: var(--surface); border: 1px solid var(--line); border-radius: 24px; }
+.step { display: flex; align-items: start; gap: 15px; margin-bottom: 5px; }
+.step > span { display: grid; place-items: center; width: 35px; height: 35px; flex-shrink: 0; background: var(--background); color: var(--green); font-size: 12px; font-weight: 800; border-radius: 12px; }
+.step h3 { margin: 0 0 4px; color: var(--ink); font-size: 18px; letter-spacing: -.025em; }
+.step p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.formFields label { display: grid; align-content: start; gap: 9px; min-width: 0; }
+.formFields label > span { color: var(--ink); font-size: 12px; font-weight: 750; }
+.formFields em { margin-left: 6px; color: var(--muted); font-size: 10px; font-weight: 500; font-style: normal; }
+.formFields small, .pinHint { color: var(--muted); font-size: 11px; line-height: 1.6; }
+.formFields .coordinateError { color: var(--red); }
+.formFields input[aria-invalid="true"] { border-color: var(--red); }
+.formFields input:focus-visible, .search input:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.row { display: flex; gap: 18px; }
+.row > label { flex: 1; }
+.help { padding: 15px 18px; background: var(--background); border: 1px solid var(--line); border-radius: 12px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.pinPreview { display: flex; align-items: center; gap: 16px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--background); text-decoration: none; color: var(--green); }
+.pinPreview > span { font-size: 25px; }
+.pinPreview div { flex: 1; display: grid; gap: 5px; }
+.pinPreview strong { font-size: 13px; }
+.pinHint { margin: 0; }
+.editorFooter { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 30px; }
+.editorFooter p { max-width: 380px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.editorFooter button { flex-shrink: 0; }
+@media (max-width: 700px) {
+  .formFields input, .search input { font-size: 16px; }
+  .intro { flex-direction: column; align-items: stretch; padding: 24px; }
+  .row, .editorFooter { flex-direction: column; align-items: stretch; }
+  .formFields section { padding: 22px 18px; }
+  .editorFooter { gap: 8px; }
+}

@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { nullableSr, persistedOpenQueueTeam } from "./open-queue-ratings";
 import { loadMatchReliabilityContext } from "./match-reliability";
+import { soloScheduledDurationSeconds } from "./match-duration";
 import {
   loadRefereeRiskSignals,
   riskContextFor,
@@ -154,6 +155,7 @@ async function hydrateOpenQueueRows(
       day: zonedPart(startsAt, timezone, "weekday").toUpperCase(),
       timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,
       matchDate: zonedDate(startsAt, timezone),
+      scheduledDurationSeconds: soloScheduledDurationSeconds(startsAt, endsAt),
       cancellationCode: nullableString(row.cancellation_code),
       cancellationReason: nullableString(row.cancellation_reason),
       cancelledAt: nullableString(row.cancelled_at),

@@ -1035,17 +1035,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
               _ => _saveStep,
             },
       child: _busy
-          ? Semantics(
-              label: 'Please wait',
-              child: const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              ),
-            )
+          ? Semantics(liveRegion: true, child: const Text('Please wait…'))
           : Text(switch (_step) {
               _Step.code => _awaitingAccount ? 'Finish signing in' : 'Verify',
               _Step.review => 'Create account',

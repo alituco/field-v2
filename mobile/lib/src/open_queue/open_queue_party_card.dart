@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../clans/clan_widgets.dart';
 import 'open_queue.dart';
 import 'open_queue_party.dart';
@@ -213,7 +215,7 @@ class _CreatePartyCard extends StatelessWidget {
                 ? const SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(label: 'Creating party'),
                   )
                 : const Icon(Icons.add_rounded),
             label: Text(
@@ -499,9 +501,9 @@ class _IncomingPartyInviteCardState extends State<_IncomingPartyInviteCard> {
                                     ? const SizedBox(
                                         width: 17,
                                         height: 17,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2,
+                                        child: FieldLoadingIndicator(
+                                          label: 'Joining party',
+                                          color: Colors.white54,
                                         ),
                                       )
                                     : const Icon(
@@ -954,7 +956,9 @@ class _PartyMemberRow extends StatelessWidget {
                 ? const SizedBox(
                     width: 15,
                     height: 15,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(
+                      label: 'Cancelling invitation',
+                    ),
                   )
                 : const Icon(Icons.close_rounded, size: 18),
           ),
@@ -1462,12 +1466,11 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
                                   ),
                                 ),
                                 child: sending
-                                    ? const SizedBox(
-                                        width: 15,
-                                        height: 15,
-                                        child: CircularProgressIndicator(
-                                          color: Colors.white,
-                                          strokeWidth: 2,
+                                    ? const Text(
+                                        'Sending…',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w900,
                                         ),
                                       )
                                     : Text(

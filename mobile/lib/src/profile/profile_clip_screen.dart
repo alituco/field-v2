@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../ui/field_loading.dart';
 import 'package:video_player/video_player.dart';
 
 import '../clans/clan_widgets.dart';
@@ -451,16 +452,7 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                                 _highlight.hasPlayableVideo && !_isDownloading
                                 ? _downloadClip
                                 : null,
-                            icon: _isDownloading
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Icon(Icons.download_rounded),
+                            icon: const Icon(Icons.download_rounded),
                             label: Text(
                               _isDownloading
                                   ? _downloadLabel(_downloadProgress)
@@ -489,16 +481,7 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                               onPressed: _isDeleting || _isUpdatingVisibility
                                   ? null
                                   : () => unawaited(_deleteClip()),
-                              icon: _isDeleting
-                                  ? const SizedBox(
-                                      width: 17,
-                                      height: 17,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Color(0xFFDC2626),
-                                      ),
-                                    )
-                                  : const Icon(Icons.delete_outline_rounded),
+                              icon: const Icon(Icons.delete_outline_rounded),
                               label: Text(
                                 _isDeleting
                                     ? 'Deleting clip...'
@@ -649,7 +632,10 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                   ? const Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        CircularProgressIndicator(color: Colors.white),
+                        FieldLoadingIndicator(
+                          label: 'Loading video',
+                          color: Colors.white38,
+                        ),
                         SizedBox(height: 12),
                         Text(
                           'Preparing your goal clip...',
@@ -742,7 +728,9 @@ class _ClipVisibilityCard extends StatelessWidget {
                 const SizedBox(
                   width: 15,
                   height: 15,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: FieldLoadingIndicator(
+                    label: 'Saving video visibility',
+                  ),
                 ),
               ],
             ],

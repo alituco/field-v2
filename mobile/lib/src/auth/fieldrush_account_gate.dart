@@ -9,6 +9,7 @@ import '../moderation/account_restriction_screen.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../support/support_repository.dart';
+import '../ui/field_loading.dart';
 import 'auth_repository.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_auth_screen.dart';
@@ -147,7 +148,12 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
   @override
   Widget build(BuildContext context) {
     if (_initialLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        backgroundColor: FieldrushAuthTheme.cream,
+        body: SafeArea(
+          child: FieldLoadingContent(label: 'Loading your account'),
+        ),
+      );
     }
     if (_error != null || _account?.deletionPending == true) {
       final deleting = _account?.deletionPending == true;

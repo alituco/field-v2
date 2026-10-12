@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
 import type { GamePaymentSettings } from "@/lib/game-payment-settings";
 import styles from "./game-payment-settings.module.css";
 
@@ -14,6 +15,7 @@ export function GamePaymentSettingsPanel({ accessToken }: { accessToken: string 
   const [reload, setReload] = useState(0);
   useEffect(() => {
     let cancelled = false;
+    setError(null);
     void fetch("/api/referee/admin/game-payment-settings", {
       headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store",
     }).then(async (response) => {
@@ -58,7 +60,7 @@ export function GamePaymentSettingsPanel({ accessToken }: { accessToken: string 
         <label className="admin-modal-field"><span>Future clan price per team (USD)</span><input type="number" min="0.50" max="1000" step="0.01" value={price} onChange={(event) => setPrice(event.target.value)} disabled={saving} required /></label>
         <label className="admin-modal-field"><span>Reason for changing the price</span><input value={reason} onChange={(event) => setReason(event.target.value)} minLength={10} maxLength={1000} disabled={saving} required /><small>Recorded in the admin audit trail. At least 10 characters.</small></label>
         <button className="admin-primary-button" disabled={saving || reason.trim().length < 10} type="submit">{saving ? "Saving…" : "Save future clan price"}</button>
-      </form> : !error ? <p>Loading current pricing…</p> : null}
+      </form> : !error ? <LoadingSkeleton label="Loading current pricing" layout="form" /> : null}
       {error ? <p role="alert">{error} <button type="button" className="admin-row-action" onClick={() => setReload((value) => value + 1)}>Reload price</button></p> : null}
       {notice ? <p role="status">{notice}</p> : null}
     </div>

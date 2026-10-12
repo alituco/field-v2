@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import type {
   AdminGameDetail,
@@ -11,6 +12,7 @@ import type {
 } from "@/lib/admin-game-detail";
 import type { AdminGameParticipant } from "@/lib/admin-game-participants";
 import { formatGameMoney, type AdminGameCurrency } from "@/lib/admin-game-money";
+import type { AdminGamePricing } from "@/lib/admin-game-pricing";
 import type {
   AdminGameReserve,
   AdminReserveCandidate,
@@ -50,6 +52,7 @@ export default function AdminGameDetailPage() {
   const [clanActionId, setClanActionId] = useState<string | null>(null);
   const [assignReferee, setAssignReferee] = useState(false);
   const [cancelGame, setCancelGame] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(false);
   const [resolveCase, setResolveCase] = useState(false);
   const [retryRefund, setRetryRefund] =
     useState<AdminGameResolutionRefund | null>(null);
@@ -64,6 +67,7 @@ export default function AdminGameDetailPage() {
         { headers: auth(accessToken), cache: "no-store" },
       );
       setDetail(payload.detail);
+      return payload.detail;
     } catch (loadError) {
       setError(message(loadError, "Could not load this game."));
     } finally {
@@ -205,6 +209,10 @@ export default function AdminGameDetailPage() {
             ) : null}
           </section>
 
+          {detail.pricing ? (
+            <GamePricingPanel pricing={detail.pricing} onEdit={() => setEditingPrice(true)} />
+          ) : null}
+
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />
             <ParticipantGroups detail={detail} onPlayerAction={setPlayerAction} />
@@ -316,6 +324,20 @@ export default function AdminGameDetailPage() {
         </aside>
       </div>
 
+      {editingPrice && detail.pricing ? (
+        <EditGamePriceDialog
+          accessToken={accessToken}
+          gameId={fixture.id}
+          pricing={detail.pricing}
+          onClose={() => setEditingPrice(false)}
+          onRefresh={async () => (await load(true))?.pricing ?? null}
+          onSaved={async () => {
+            setEditingPrice(false);
+            setNotice("Game price updated for new bookings. Existing payments and refund amounts are unchanged.");
+            await load(true);
+          }}
+        />
+      ) : null}
       {addingReserve ? (
         <AddReserveDialog
           accessToken={accessToken}
@@ -420,6 +442,179 @@ export default function AdminGameDetailPage() {
       ) : null}
     </main>
   );
+}
+
+function GamePricingPanel({ pricing, onEdit }: {
+  pricing: AdminGamePricing;
+  onEdit: () => void;
+}) {
+  function recordedMoney(amount: number | null, currency: AdminGameCurrency) {
+    return amount === null ? "Not recorded" : formatGameMoney(amount, currency);
+  }
+  return (
+    <section className={styles.card} aria-labelledby="game-pricing-title">
+      <header className={styles.pricingHeader}>
+        <div className={styles.sectionHead}>
+          <span>BOOKINGS & PAYMENTS</span>
+          <h2 id="game-pricing-title">Game price</h2>
+        </div>
+        {pricing.canEdit ? (
+          <button id="edit-game-price" className={styles.primaryButton} onClick={onEdit} type="button">Edit price</button>
+        ) : null}
+      </header>
+      <div className={styles.currentPrice}>
+        <span>Current price per player</span>
+        <strong>{formatGameMoney(pricing.priceFils, pricing.currency)}</strong>
+        <p>Price changes apply to new bookings only. Players who already paid keep their original price—no extra charge, refund, or adjustment.</p>
+      </div>
+      {!pricing.canEdit && pricing.lockedReason ? <p className={styles.actionHint}>{pricing.lockedReason}</p> : null}
+      <h3 className={styles.paymentHistoryTitle}>Payment history <span>{pricing.bookings.length}</span></h3>
+      <p className={styles.actionHint}>Each booking keeps its own recorded amounts, including cancelled bookings. Total paid is the original payment, before refunds. Refunded includes completed refunds only; unrecorded amounts are never estimated from today’s price.</p>
+      {pricing.bookings.length ? (
+        <div className={styles.paymentsScroll} tabIndex={0} role="region" aria-label="Booking payment history">
+          <table className={styles.paymentsTable}>
+            <thead><tr><th scope="col">Player / booking</th><th scope="col">Match fee</th><th scope="col">Deposit</th><th scope="col">Total paid</th><th scope="col">Refunded</th><th scope="col">Status</th></tr></thead>
+            <tbody>{pricing.bookings.map((booking) => (
+              <tr key={booking.bookingId}>
+                <th scope="row">
+                  <Link href={`/admin/people/player/${booking.profileId}`}>{booking.displayName}</Link>
+                  <small>Booked {formatBookingDateTime(booking.bookedAt)}</small>
+                  <small>#{booking.bookingId.slice(0, 8)}</small>
+                </th>
+                <td>{recordedMoney(booking.matchFeeFils, booking.currency)}</td>
+                <td>{recordedMoney(booking.depositFils, booking.currency)}</td>
+                <td><strong>{recordedMoney(booking.paidTotalFils, booking.currency)}</strong></td>
+                <td>{recordedMoney(booking.refundedFils, booking.currency)}</td>
+                <td><span>{humanize(booking.status)}</span><small>{humanize(booking.paymentStatus)}</small></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <div className={styles.emptyList}>No bookings have been recorded for this game.</div>}
+    </section>
+  );
+}
+
+function EditGamePriceDialog({ accessToken, gameId, pricing, onClose, onRefresh, onSaved }: {
+  accessToken: string;
+  gameId: string;
+  pricing: AdminGamePricing;
+  onClose: () => void;
+  onRefresh: () => Promise<AdminGamePricing | null>;
+  onSaved: () => Promise<void>;
+}) {
+  const [priceUsd, setPriceUsd] = useState((pricing.priceFils / 1000).toFixed(2));
+  const [expectedPriceFils, setExpectedPriceFils] = useState(pricing.priceFils);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const busyRef = useRef(false);
+  busyRef.current = saving || refreshing;
+  const inputPrice = /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim())
+    ? Math.round(Number(priceUsd.trim()) * 1000) : null;
+  const validPrice = inputPrice !== null && (inputPrice === 0 || inputPrice >= 500 && inputPrice <= 100_000);
+  const unchanged = inputPrice === expectedPriceFils;
+  const reasonLength = reason.trim().length;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLInputElement>("input")?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busyRef.current) {
+        event.preventDefault();
+        closeRef.current();
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const controls = [...dialog.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled)")];
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      // Safari does not always focus buttons on mouse click, so retain the
+      // explicit trigger as the return target rather than returning to <body>.
+      const trigger = document.getElementById("edit-game-price");
+      if (trigger instanceof HTMLElement) trigger.focus();
+      else if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, []);
+
+  async function refreshPrice() {
+    setRefreshing(true);
+    const refreshed = await onRefresh();
+    setRefreshing(false);
+    if (!refreshed) {
+      setError("Could not refresh the current price. Your changes are still here. Try again.");
+      return;
+    }
+    setExpectedPriceFils(refreshed.priceFils);
+    setConflict(false);
+    setError(null);
+    setRefreshNotice(`Current price refreshed to ${formatGameMoney(refreshed.priceFils, refreshed.currency)}. Your draft is unchanged; review it before saving.`);
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!validPrice || unchanged || reasonLength < 8 || reasonLength > 1000 || !pricing.canEdit || conflict || saving) return;
+    setSaving(true); setError(null); setRefreshNotice(null);
+    try {
+      const response = await fetch(`/api/referee/admin/games/solo/${gameId}/price`, {
+        method: "PATCH",
+        headers: { ...auth(accessToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ priceUsd: priceUsd.trim(), expectedPriceFils, reason: reason.trim() }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        if (response.status === 409) setConflict(true);
+        throw new Error(payload.error ?? "Could not update this game’s price.");
+      }
+      await onSaved();
+    } catch (submitError) {
+      setError(message(submitError, "Could not update this game’s price. Your changes are still here."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={styles.modalBackdrop} role="presentation">
+      <section ref={dialogRef} aria-modal="true" aria-labelledby="edit-game-price-title" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
+        <header><div><span>THIS GAME ONLY</span><h2 id="edit-game-price-title">Edit game price</h2></div><button aria-label="Close price editor" disabled={saving || refreshing} onClick={onClose} type="button">×</button></header>
+        <p className={styles.modalIntro}>Current price: <strong>{formatGameMoney(expectedPriceFils, pricing.currency)}</strong> per player.</p>
+        <div className={styles.refundNotice}><strong>Existing payments stay exactly as they are</strong><p>No top-ups or automatic refunds. Cancellation refunds continue to use each booking’s original payment. Valid checkouts already in progress keep their quoted price until they expire. This changes only this game, not its recurring schedule or the default game price.</p></div>
+        <form onSubmit={(event) => void submit(event)}>
+          <label htmlFor="game-price-usd">New price per player (USD)</label>
+          <input id="game-price-usd" className={styles.priceInput} type="text" inputMode="decimal" autoComplete="off" value={priceUsd} disabled={saving || refreshing} onChange={(event) => setPriceUsd(event.target.value)} aria-describedby="game-price-help" aria-invalid={!validPrice} />
+          <p id="game-price-help" className={validPrice ? styles.actionHint : styles.priceError}>Enter $0 for free bookings, or $0.50–$100 with up to two decimal places. Card payments have a $0.50 minimum.</p>
+          <label htmlFor="game-price-reason">Reason for the price change</label>
+          <textarea id="game-price-reason" className={styles.priceInput} maxLength={1000} value={reason} disabled={saving || refreshing} onChange={(event) => setReason(event.target.value)} placeholder="For example, a discount for the remaining places." aria-describedby="game-price-reason-help" />
+          <p id="game-price-reason-help" className={styles.actionHint}>At least 8 characters. Stored in the game’s admin history.</p>
+          {!pricing.canEdit ? <p className={styles.modalError} role="alert">{pricing.lockedReason ?? "This game’s price can no longer be changed."}</p> : null}
+          {error ? <p className={styles.modalError} role="alert">{error}</p> : null}
+          {refreshNotice ? <p className={styles.refundNotice} role="status">{refreshNotice}</p> : null}
+          {conflict ? <button className={styles.secondaryButton} disabled={saving || refreshing} onClick={() => void refreshPrice()} type="button">{refreshing ? "Refreshing…" : "Refresh current price"}</button> : null}
+          <footer><button className={styles.cancelButton} disabled={saving || refreshing} onClick={onClose} type="button">Cancel</button><button className={styles.primaryButton} disabled={saving || refreshing || conflict || !pricing.canEdit || !validPrice || unchanged || reasonLength < 8 || reasonLength > 1000} type="submit">{saving ? "Saving…" : "Save new price"}</button></footer>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function formatBookingDateTime(value: string | null) {
+  if (!value) return "Unknown time";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown time" : new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium", timeStyle: "short", timeZone: "America/Phoenix",
+  }).format(date) + " (Phoenix)";
 }
 
 function ResolutionCaseBanner({
@@ -1248,7 +1443,7 @@ function AssignRefereeDialog({ accessToken, detail, onClose, onSaved }: {
       <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
         <header><div><span>MATCH OFFICIAL</span><h2>Assign referee</h2></div><button onClick={onClose}>×</button></header>
         <p className={styles.modalIntro}>Choose the official for this game without leaving its operations page. Only active referee and admin accounts appear here.</p>
-        <label>
+        {loading ? <LoadingSkeleton label="Loading available referees" layout="form" /> : <label>
           <span>Assigned official</span>
           <select autoFocus disabled={loading} onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
             <option value="">No referee assigned</option>
@@ -1258,7 +1453,7 @@ function AssignRefereeDialog({ accessToken, detail, onClose, onSaved }: {
               </option>
             ))}
           </select>
-        </label>
+        </label>}
         {error ? <p className={styles.modalError}>{error}</p> : null}
         <footer><button className={styles.cancelButton} disabled={saving} onClick={onClose}>Close</button><button className={styles.primaryButton} disabled={loading || saving || selectedId === (detail.assignedReferee?.profileId ?? "")} onClick={() => void save()}>{saving ? "Saving…" : "Save assignment"}</button></footer>
       </section>
@@ -1372,7 +1567,7 @@ function AddReserveDialog({ accessToken, detail, onClose, onSaved }: {
         <p className={styles.modalIntro}>Search every player on Field. Confirmed participants are excluded because the reserve must remain outside the official roster.</p>
         <label className={styles.search}><span>Search players</span><input autoFocus placeholder="Name or username" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
         <div className={styles.candidates}>
-          {loading ? <p>Searching players…</p> : candidates.length === 0 ? <p>No matching players found.</p> : candidates.map((candidate) => (
+          {loading ? <LoadingSkeleton label="Searching players" layout="rows" /> : candidates.length === 0 ? <p>No matching players found.</p> : candidates.map((candidate) => (
             <button
               className={selected?.profileId === candidate.profileId ? styles.selectedCandidate : ""}
               disabled={!candidate.eligible}
@@ -1647,7 +1842,7 @@ function Avatar({ name, url }: { name: string; url: string | null }) {
 }
 
 function GameDetailSkeleton() {
-  return <main className={styles.skeleton}><header /><section /><div><i /><i /><i /><i /></div></main>;
+  return <main className={styles.skeleton} role="status" aria-label="Loading game overview"><header aria-hidden="true" /><section aria-hidden="true" /><div aria-hidden="true"><i /><i /><i /><i /></div></main>;
 }
 
 function canManageReserves(status: string) { return ["OPEN", "FULL", "SCHEDULED"].includes(status); }

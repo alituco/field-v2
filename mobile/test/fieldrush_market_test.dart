@@ -9,12 +9,14 @@ void main() {
     String status = 'OPEN',
     String? booking,
     String currency = 'USD',
+    DateTime? start,
+    int durationMinutes = 60,
   }) => OpenQueueGame(
     id: 'game',
     status: status,
     venue: 'Phoenix',
-    startsAt: kickoff,
-    endsAt: kickoff.add(const Duration(hours: 1)),
+    startsAt: start ?? kickoff,
+    endsAt: (start ?? kickoff).add(Duration(minutes: durationMinutes)),
     timezone: 'America/Phoenix',
     priceFils: 13000,
     currency: currency,
@@ -55,6 +57,45 @@ void main() {
     );
     expect(game().canBookAt(OpenQueueRole.attacker, kickoff), isFalse);
   });
+
+  test(
+    'all seven Phoenix matchdays support configured kickoff and duration',
+    () {
+      final monday = DateTime.utc(2026, 10, 6, 1, 15);
+      for (var day = 0; day < 7; day++) {
+        for (final minutes in [30, 90, 180]) {
+          final start = monday.add(Duration(days: day));
+          final value = game(start: start, durationMinutes: minutes);
+          expect(value.localStartsAt.weekday, day + 1);
+          expect(value.startTimeLabel, '6:15 PM');
+          expect(
+            value.localEndsAt.difference(value.localStartsAt).inMinutes,
+            minutes,
+          );
+          expect(
+            value.canBookAt(
+              OpenQueueRole.defender,
+              start.subtract(const Duration(hours: 1)),
+            ),
+            isTrue,
+          );
+        }
+      }
+    },
+  );
+
+  test(
+    'late Saturday slot can finish Sunday without changing its matchday',
+    () {
+      final value = game(
+        start: DateTime.utc(2026, 10, 11, 6, 15),
+        durationMinutes: 90,
+      );
+      expect(value.calendarDateLabel, 'SAT, 10 OCT');
+      expect(value.timeLabel, '11:15 PM–12:45 AM');
+      expect(value.localEndsAt.weekday, DateTime.sunday);
+    },
+  );
   test('USD uses cents and legacy BHD is not relabeled', () {
     expect(game().priceLabel, r'$13.00');
     expect(game(currency: 'BHD').priceLabel, '13 BHD');

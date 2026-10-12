@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../ui/field_loading.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/create_fixture_screen.dart';
@@ -1506,30 +1508,10 @@ class _ClanReliabilityCard extends StatelessWidget {
       return const KeyedSubtree(
         key: ValueKey('clan-reliability-loading'),
         child: _Panel(
-          child: SizedBox(
-            height: 68,
-            child: Row(
-              children: [
-                SizedBox.square(
-                  dimension: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.4,
-                    color: fieldEmerald600,
-                  ),
-                ),
-                SizedBox(width: 13),
-                Expanded(
-                  child: Text(
-                    'Loading clan reliability…',
-                    style: TextStyle(
-                      color: fieldGray600,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          child: FieldLoadingContent(
+            label: 'Loading clan reliability',
+            rows: 2,
+            compact: true,
           ),
         ),
       );
@@ -1800,10 +1782,10 @@ class _ClanReliabilityCard extends StatelessWidget {
           ],
           if (isLoading) ...[
             const SizedBox(height: 12),
-            const LinearProgressIndicator(
-              minHeight: 2,
-              color: fieldEmerald600,
-              backgroundColor: fieldGray100,
+            const FieldLoadingContent(
+              label: 'Updating clan reliability',
+              rows: 1,
+              compact: true,
             ),
           ],
         ],
@@ -2559,7 +2541,7 @@ class _JoinRequestRow extends StatelessWidget {
             height: 38,
             child: Padding(
               padding: EdgeInsets.all(10),
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: FieldLoadingIndicator(),
             ),
           )
         else ...[
@@ -2834,7 +2816,7 @@ class _MemberRow extends StatelessWidget {
                   child: SizedBox(
                     width: 18,
                     height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(),
                   ),
                 )
               else if (_actions.isNotEmpty)
@@ -3742,7 +3724,7 @@ class _ClanActionBar extends StatelessWidget {
                       const SizedBox(
                         width: 20,
                         height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: FieldLoadingIndicator(),
                       )
                     else
                       Icon(
@@ -3752,7 +3734,7 @@ class _ClanActionBar extends StatelessWidget {
                       ),
                     const SizedBox(width: 9),
                     Text(
-                      label.toUpperCase(),
+                      isWorking ? 'PLEASE WAIT…' : label.toUpperCase(),
                       style: TextStyle(
                         color: enabled ? Colors.white : fieldGray500,
                         fontSize: 15,

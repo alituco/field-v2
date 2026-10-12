@@ -75,6 +75,33 @@ test("all six baseline checks are independently plan-gated after preflight", () 
   assert.match(job("flutter-ios"), /flutter build ios/);
 });
 
+test("saved field permissions and location snapshots are checked before full schema replay", () => {
+  const source = job("database");
+  const check = stepContaining(source, "node supabase/scripts/test_saved_fields.mjs");
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /PGLITE_MODULE=/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf("test_saved_fields.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+});
+
+test("recurring schedule permissions, idempotency and pitch conflicts are checked before full schema replay", () => {
+  const source = job("database");
+  const check = stepContaining(source, "node supabase/scripts/test_game_schedules.mjs");
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /PGLITE_MODULE=/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf("test_game_schedules.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+});
+
+test("price edits preserve captured quotes, paid bookings and refunds before full schema replay", () => {
+  const source = job("database");
+  const check = stepContaining(source, "node supabase/scripts/test_game_prices.mjs");
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /PGLITE_MODULE=/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf("test_game_prices.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+});
+
 test("Flutter golden comparisons remain part of the mandatory unfiltered test run", () => {
   const source = job("flutter");
   const run = stepContaining(source, "name: Run Flutter tests");
