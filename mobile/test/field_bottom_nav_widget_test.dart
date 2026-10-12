@@ -216,6 +216,158 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('iOS direct swipe tracks its first movement in the same frame', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final selected = <int>[];
+    await _pumpNav(
+      tester,
+      selectedIndex: 1,
+      platform: TargetPlatform.iOS,
+      onSelected: selected.add,
+    );
+    final gesture = await tester.startGesture(_tabCenter(tester, 1));
+    // Cross touch slop without a long press. Long-press cancellation must not
+    // reset the horizontal drag that just won the gesture arena.
+    await gesture.moveTo(_tabCenter(tester, 2));
+    await tester.pump();
+    expect(_selectionCenter(tester).dx, closeTo(_tabCenter(tester, 2).dx, .1));
+    expect(selected, isEmpty);
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(selected, isEmpty);
+    expect(_selectionCenter(tester).dx, closeTo(_tabCenter(tester, 1).dx, .1));
+  });
+
+  for (final frameMillis in [8, 16]) {
+    testWidgets(
+      'iOS held slider tracks reversals at ${frameMillis}ms cadence',
+      (tester) async {
+        await _setPhoneSize(tester);
+        final selected = <int>[];
+        await _pumpNav(
+          tester,
+          selectedIndex: 0,
+          platform: TargetPlatform.iOS,
+          onSelected: selected.add,
+        );
+        final gesture = await tester.startGesture(_tabCenter(tester, 0));
+        await tester.pump(const Duration(milliseconds: 600));
+        final origin = _tabCenter(tester, 0);
+        final slotWidth = _tabCenter(tester, 1).dx - origin.dx;
+        const positions = [
+          .3,
+          .75,
+          1.2,
+          1.49,
+          1.51,
+          2.1,
+          2.7,
+          2.5,
+          2.15,
+          1.8,
+          1.51,
+          1.49,
+          1.25,
+          1.6,
+          2.4,
+          3.2,
+        ];
+        for (final position in positions) {
+          final pointer = origin + Offset(slotWidth * position, 0);
+          await gesture.moveTo(pointer);
+          await tester.pump(Duration(milliseconds: frameMillis));
+          expect(
+            _selectionCenter(tester).dx,
+            closeTo(pointer.dx, .1),
+            reason:
+                'The capsule must stay under the finger at $position slots.',
+          );
+          expect(selected, isEmpty);
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+        expect(selected, [3]);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('iOS slider crosses half slots without a magnetic jump', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final selected = <int>[];
+    await _pumpNav(
+      tester,
+      selectedIndex: 0,
+      platform: TargetPlatform.iOS,
+      onSelected: selected.add,
+    );
+    final gesture = await tester.startGesture(_tabCenter(tester, 0));
+    await tester.pump(const Duration(milliseconds: 600));
+    final origin = _tabCenter(tester, 0);
+    final slotWidth = _tabCenter(tester, 1).dx - origin.dx;
+    await gesture.moveTo(origin + Offset(slotWidth * 1.49, 0));
+    await tester.pumpAndSettle();
+    final before = _selectionCenter(tester);
+    await gesture.moveTo(origin + Offset(slotWidth * 1.51, 0));
+    await tester.pumpAndSettle();
+    final after = _selectionCenter(tester);
+    expect(after.dx - before.dx, closeTo(slotWidth * .02, .1));
+    expect(selected, isEmpty);
+    final homeSemantics = tester.widgetList<Semantics>(
+      find.ancestor(
+        of: find.byKey(const ValueKey('field-bottom-nav-item-0')),
+        matching: find.byType(Semantics),
+      ),
+    );
+    expect(
+      homeSemantics.any((widget) => widget.properties.selected == true),
+      isTrue,
+    );
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(selected, isEmpty);
+  });
+
+  testWidgets('iOS press lift completes while frequent pointer events arrive', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final selected = <int>[];
+    await _pumpNav(
+      tester,
+      selectedIndex: 2,
+      platform: TargetPlatform.iOS,
+      onSelected: selected.add,
+    );
+    final origin = _tabCenter(tester, 2);
+    final gesture = await tester.startGesture(origin);
+    await tester.pump(const Duration(milliseconds: 600));
+    for (var event = 0; event < 32; event++) {
+      await gesture.moveTo(origin + Offset(event.isEven ? .5 : 1, 0));
+      await tester.pump(const Duration(milliseconds: 8));
+    }
+    final icon = find.byKey(const ValueKey('field-bottom-nav-icon-2'));
+    final movingCenter = tester.getCenter(icon);
+    final movingExtent = tester.getBottomRight(icon) - tester.getTopLeft(icon);
+    expect(selected, isEmpty);
+
+    // Stopping pointer updates must not be what finally lets the press
+    // animation finish: it should already be fully engaged while sliding.
+    await tester.pumpAndSettle();
+    final settledExtent = tester.getBottomRight(icon) - tester.getTopLeft(icon);
+    expect(settledExtent.dx, greaterThan(32));
+    expect(movingExtent.dx, closeTo(settledExtent.dx, .1));
+    expect(movingCenter.dy, closeTo(tester.getCenter(icon).dy, .1));
+    await gesture.cancel();
+    await tester.pumpAndSettle();
+    expect(selected, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('reduced motion keeps slide navigation without spring or lift', (
     tester,
   ) async {
@@ -326,6 +478,10 @@ void main() {
 
 Offset _tabCenter(WidgetTester tester, int index) =>
     tester.getCenter(find.byKey(ValueKey('field-bottom-nav-item-$index')));
+
+Offset _selectionCenter(WidgetTester tester) => tester.getCenter(
+  find.byKey(const ValueKey('field-liquid-glass-selection')),
+);
 
 Future<void> _setPhoneSize(WidgetTester tester) async {
   tester.view.physicalSize = const Size(390, 844);

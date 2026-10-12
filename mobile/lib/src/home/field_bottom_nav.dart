@@ -68,7 +68,7 @@ class _FieldBottomNavState extends State<FieldBottomNav>
 
   void _repaintMotion() => setState(() {});
 
-  void _animatePosition(double target, {bool dragging = false}) {
+  void _animatePosition(double target) {
     _motionTarget = target;
     if (_reduceMotion) {
       _position.value = target;
@@ -76,14 +76,10 @@ class _FieldBottomNavState extends State<FieldBottomNav>
     }
     _position.animateWith(
       SpringSimulation(
-        SpringDescription(
-          mass: 1,
-          stiffness: dragging ? 650 : 380,
-          damping: dragging ? 44 : 26,
-        ),
+        const SpringDescription(mass: 1, stiffness: 380, damping: 26),
         _position.value,
         target,
-        // Keep momentum when the finger changes direction or the tab settles.
+        // Preserve momentum when an in-flight settle is redirected.
         _position.velocity.clamp(-18.0, 18.0),
         tolerance: const Tolerance(distance: .001, velocity: .01),
         snapToEnd: true,
@@ -105,6 +101,7 @@ class _FieldBottomNavState extends State<FieldBottomNav>
     final width = (box.size.width - 8) / _labels.length;
     final position = ((local.dx - 4) / width - .5).clamp(0.0, 4.0);
     final inside = (Offset.zero & box.size).inflate(24).contains(local);
+    final wasInside = _scrubPosition != null && _scrubInside;
     if (_scrubPosition?.round() != position.round() && inside) {
       HapticFeedback.selectionClick();
     }
@@ -112,14 +109,17 @@ class _FieldBottomNavState extends State<FieldBottomNav>
       _scrubPosition = position;
       _scrubInside = inside;
     });
-    // A small pull toward each icon makes the glass feel magnetic without
-    // snapping the finger's continuous motion into discrete tab jumps.
-    final magneticPosition = position + (position.round() - position) * .16;
-    _animatePosition(
-      inside ? magneticPosition : widget.selectedIndex?.toDouble() ?? 0,
-      dragging: inside,
-    );
-    if (!_reduceMotion) {
+    if (inside) {
+      // Follow each pointer sample directly. Restarting a spring on every
+      // update can starve it of animation time, leaving the glass behind the
+      // finger. Only snap to a tab with a spring after the gesture finishes.
+      _motionTarget = position;
+      _position.value = position;
+    } else if (wasInside) {
+      _animatePosition(widget.selectedIndex?.toDouble() ?? 0);
+    }
+    // Let the press animation progress even while pointer events keep coming.
+    if (!_reduceMotion && inside != wasInside) {
       if (inside) {
         _press.forward();
       } else {
@@ -186,122 +186,132 @@ class _FieldBottomNavState extends State<FieldBottomNav>
                 ),
               ],
             ),
-            child: GestureDetector(
-              key: _dockKey,
-              behavior: HitTestBehavior.opaque,
-              onHorizontalDragStart: ios
-                  ? (details) => _moveScrub(details.globalPosition)
-                  : null,
-              onHorizontalDragUpdate: ios
-                  ? (details) => _moveScrub(details.globalPosition)
-                  : null,
-              onHorizontalDragEnd: ios ? (_) => _endScrub() : null,
-              onHorizontalDragCancel: ios ? _cancelScrub : null,
-              onLongPressStart: ios
-                  ? (details) => _moveScrub(details.globalPosition)
-                  : null,
-              onLongPressMoveUpdate: ios
-                  ? (details) => _moveScrub(details.globalPosition)
-                  : null,
-              onLongPressEnd: ios ? (_) => _endScrub() : null,
-              onLongPressCancel: ios ? _cancelScrub : null,
-              child: SizedBox(
-                key: const ValueKey('field-liquid-glass-nav'),
-                height: 56,
-                child: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    const NativeGlassSurface(),
-                    if (hasSelection)
-                      Padding(
-                        padding: const EdgeInsets.all(4),
-                        child: LayoutBuilder(
-                          builder: (context, constraints) => Align(
-                            alignment: Alignment(-1 + position / 2, 0),
-                            child: Transform.scale(
-                              scaleX: 1 + engagement * .04 + stretch,
-                              scaleY: 1 + engagement * .045 - stretch * .22,
-                              child: Container(
-                                key: const ValueKey(
-                                  'field-liquid-glass-selection',
-                                ),
-                                width: constraints.maxWidth / _labels.length,
-                                height: 46,
-                                decoration: BoxDecoration(
-                                  color: ios
-                                      ? FieldrushAuthTheme.forest.withValues(
-                                          alpha: .06,
-                                        )
-                                      : FieldrushAuthTheme.forest,
-                                  borderRadius: BorderRadius.circular(24),
-                                  border: ios
-                                      ? Border.all(
-                                          color: Colors.white.withValues(
-                                            alpha: .45,
-                                          ),
-                                        )
-                                      : null,
-                                  gradient: ios
-                                      ? LinearGradient(
-                                          begin: Alignment(-.7 + lag * .3, -1),
-                                          end: Alignment(.7 + lag * .3, 1),
-                                          colors: [
-                                            Colors.white.withValues(alpha: .20),
-                                            FieldrushAuthTheme.forest
-                                                .withValues(alpha: .04),
-                                          ],
-                                        )
-                                      : null,
+            // An accepted horizontal drag reports PointerCancel as onEnd.
+            // Clear its preview first so an OS interruption never changes tabs.
+            child: Listener(
+              onPointerCancel: ios ? (_) => _cancelScrub() : null,
+              child: GestureDetector(
+                key: _dockKey,
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragStart: ios
+                    ? (details) => _moveScrub(details.globalPosition)
+                    : null,
+                onHorizontalDragUpdate: ios
+                    ? (details) => _moveScrub(details.globalPosition)
+                    : null,
+                onHorizontalDragEnd: ios ? (_) => _endScrub() : null,
+                onHorizontalDragCancel: ios ? _cancelScrub : null,
+                onLongPressStart: ios
+                    ? (details) => _moveScrub(details.globalPosition)
+                    : null,
+                onLongPressMoveUpdate: ios
+                    ? (details) => _moveScrub(details.globalPosition)
+                    : null,
+                onLongPressEnd: ios ? (_) => _endScrub() : null,
+                onLongPressCancel: ios ? _cancelScrub : null,
+                child: SizedBox(
+                  key: const ValueKey('field-liquid-glass-nav'),
+                  height: 56,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      const NativeGlassSurface(),
+                      if (hasSelection)
+                        Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: LayoutBuilder(
+                            builder: (context, constraints) => Align(
+                              alignment: Alignment(-1 + position / 2, 0),
+                              child: Transform.scale(
+                                scaleX: 1 + engagement * .04 + stretch,
+                                scaleY: 1 + engagement * .045 - stretch * .22,
+                                child: Container(
+                                  key: const ValueKey(
+                                    'field-liquid-glass-selection',
+                                  ),
+                                  width: constraints.maxWidth / _labels.length,
+                                  height: 46,
+                                  decoration: BoxDecoration(
+                                    color: ios
+                                        ? FieldrushAuthTheme.forest.withValues(
+                                            alpha: .06,
+                                          )
+                                        : FieldrushAuthTheme.forest,
+                                    borderRadius: BorderRadius.circular(24),
+                                    border: ios
+                                        ? Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: .45,
+                                            ),
+                                          )
+                                        : null,
+                                    gradient: ios
+                                        ? LinearGradient(
+                                            begin: Alignment(
+                                              -.7 + lag * .3,
+                                              -1,
+                                            ),
+                                            end: Alignment(.7 + lag * .3, 1),
+                                            colors: [
+                                              Colors.white.withValues(
+                                                alpha: .20,
+                                              ),
+                                              FieldrushAuthTheme.forest
+                                                  .withValues(alpha: .04),
+                                            ],
+                                          )
+                                        : null,
+                                  ),
                                 ),
                               ),
                             ),
                           ),
                         ),
-                      ),
-                    Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Row(
-                        children: [
-                          for (var index = 0; index < _labels.length; index++)
-                            Expanded(
-                              child: Semantics(
-                                selected: widget.selectedIndex == index,
-                                button: true,
-                                label: _labels[index],
-                                onTap: () => widget.onSelected(index),
-                                excludeSemantics: true,
-                                child: Material(
-                                  color: Colors.transparent,
-                                  child: InkWell(
-                                    key: ValueKey(
-                                      'field-bottom-nav-item-$index',
-                                    ),
-                                    borderRadius: BorderRadius.circular(24),
-                                    onTap: () => widget.onSelected(index),
-                                    child: SizedBox(
-                                      height: 48,
-                                      width: double.infinity,
-                                      child: Center(
-                                        child: _animatedIcon(
-                                          index: index,
-                                          position: position,
-                                          engagement: ios ? engagement : 0,
-                                          lag: lag,
-                                          child: SizedBox(
-                                            key: ValueKey(
-                                              'field-bottom-nav-icon-$index',
-                                            ),
-                                            width: 32,
-                                            height: 32,
-                                            child: _icon(
-                                              index,
-                                              selected == index && !ios
-                                                  ? Colors.white
-                                                  : selected == index
-                                                  ? FieldrushAuthTheme.forest
-                                                  : const Color(0xFF414A42),
-                                              avatarUrl,
-                                              selected: selected == index,
+                      Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Row(
+                          children: [
+                            for (var index = 0; index < _labels.length; index++)
+                              Expanded(
+                                child: Semantics(
+                                  selected: widget.selectedIndex == index,
+                                  button: true,
+                                  label: _labels[index],
+                                  onTap: () => widget.onSelected(index),
+                                  excludeSemantics: true,
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      key: ValueKey(
+                                        'field-bottom-nav-item-$index',
+                                      ),
+                                      borderRadius: BorderRadius.circular(24),
+                                      onTap: () => widget.onSelected(index),
+                                      child: SizedBox(
+                                        height: 48,
+                                        width: double.infinity,
+                                        child: Center(
+                                          child: _animatedIcon(
+                                            index: index,
+                                            position: position,
+                                            engagement: ios ? engagement : 0,
+                                            lag: lag,
+                                            child: SizedBox(
+                                              key: ValueKey(
+                                                'field-bottom-nav-icon-$index',
+                                              ),
+                                              width: 32,
+                                              height: 32,
+                                              child: _icon(
+                                                index,
+                                                selected == index && !ios
+                                                    ? Colors.white
+                                                    : selected == index
+                                                    ? FieldrushAuthTheme.forest
+                                                    : const Color(0xFF414A42),
+                                                avatarUrl,
+                                                selected: selected == index,
+                                              ),
                                             ),
                                           ),
                                         ),
@@ -310,11 +320,11 @@ class _FieldBottomNavState extends State<FieldBottomNav>
                                   ),
                                 ),
                               ),
-                            ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
