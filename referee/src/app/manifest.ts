@@ -2,7 +2,6 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   const isStaging = process.env.NEXT_PUBLIC_APP_ENV === "staging";
-  const iconPrefix = isStaging ? "field-ops-staging" : "field-ops";
 
   return {
     id: "/",
@@ -12,25 +11,25 @@ export default function manifest(): MetadataRoute.Manifest {
     start_url: "/?source=pwa",
     scope: "/",
     display: "standalone",
-    background_color: "#f8fafc",
-    theme_color: isStaging ? "#d97706" : "#0b1512",
+    background_color: "#F2EFE3",
+    theme_color: "#386641",
     orientation: "portrait-primary",
     categories: ["sports", "productivity"],
     icons: [
       {
-        src: `/${iconPrefix}-192.png`,
+        src: "/icon-192.png",
         sizes: "192x192",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: `/${iconPrefix}-512.png`,
+        src: "/icon-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "any",
       },
       {
-        src: `/${iconPrefix}-512.png`,
+        src: "/icon-maskable-512.png",
         sizes: "512x512",
         type: "image/png",
         purpose: "maskable",

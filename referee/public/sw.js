@@ -1,9 +1,12 @@
-const STATIC_CACHE = "field-ops-static-v1";
+const STATIC_CACHE = "field-ops-static-v2";
 const STATIC_PATHS = new Set([
-  "/field-ops-icon-192.png",
-  "/field-ops-icon-512.png",
-  "/field-ops-staging-icon-192.png",
-  "/field-ops-staging-icon-512.png",
+  "/favicon.ico",
+  "/favicon.svg",
+  "/favicon-16x16.png",
+  "/favicon-32x32.png",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
   "/apple-touch-icon.png",
 ]);
 
