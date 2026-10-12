@@ -272,6 +272,12 @@ jobs:
       - name: Run referee tests
         run: npm test
 
+      - name: Install Chromium for isolated admin navigation checks
+        run: npx playwright install --with-deps chromium
+
+      - name: Check admin inbox navigation before hosted journeys
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts --project=chromium
+
       - name: Build referee app
         run: npm run build
 

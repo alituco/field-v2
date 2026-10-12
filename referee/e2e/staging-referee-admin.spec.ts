@@ -1,5 +1,6 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import { verifyAdminRequestInboxes } from "./support/admin-request-navigation";
 import {
   installAdminSession,
   loadStagingManifest,
@@ -112,32 +113,7 @@ test("referee runs the match and admin sees player-created requests", async ({
     manifest.markers.reportDetails,
   );
 
-  await page.goto("/admin");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
-
-  await page.locator(".admin-sidebar-nav").getByRole("button", {
-    name: /Support/,
-  }).click();
-  const supportSearch = page.getByPlaceholder("Search tickets");
-  await expect(supportSearch).toBeVisible();
-  await supportSearch.fill(manifest.markers.supportDetails);
-  await expect(
-    page.locator(
-      ".admin-support-detail .admin-report-description p",
-    ),
-  ).toHaveText(manifest.markers.supportDetails);
-
-  await page.locator(".admin-sidebar-nav").getByRole("button", {
-    name: /Reports/,
-  }).click();
-  const reportSearch = page.getByPlaceholder("Search reports");
-  await expect(reportSearch).toBeVisible();
-  await reportSearch.fill(manifest.markers.reportDetails);
-  await expect(
-    page.locator(
-      ".admin-report-detail:not(.admin-support-detail) .admin-report-description p",
-    ),
-  ).toHaveText(manifest.markers.reportDetails);
+  await verifyAdminRequestInboxes(page, manifest.markers);
 });
 
 async function openRoster(roster: Locator) {
