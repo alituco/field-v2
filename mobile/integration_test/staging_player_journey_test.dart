@@ -22,6 +22,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'helpers/fieldrush_fixture_auth_repository.dart';
+import 'helpers/staging_profile_navigation.dart';
 import 'helpers/staging_test_helpers.dart';
 
 void main() {
@@ -553,12 +554,9 @@ Future<void> _verifyLeaderboards(WidgetTester tester) async {
         tester.widget<ProfileScreen>(find.byType(ProfileScreen).last).profileId,
         top.profileId,
       );
-      await tapWhenVisible(
+      await returnFromViewedPlayerProfile(
         tester,
-        find.descendant(
-          of: find.byType(ProfileScreen),
-          matching: find.byIcon(Icons.arrow_back_rounded),
-        ),
+        expectedProfileId: top.profileId,
       );
     }
     content = await _loadedRanks(tester, season);
@@ -1054,15 +1052,7 @@ Future<void> _submitModerationReport(
       );
   await tester.pump();
 
-  await tapWhenVisible(
-    tester,
-    find.byKey(const ValueKey('profile-options-menu')),
-    reason: 'The party target profile did not load its options menu.',
-  );
-  await tapWhenVisible(
-    tester,
-    find.byKey(const ValueKey('profile-report-action')),
-  );
+  await openViewedPlayerReport(tester, expectedProfileId: subjectId);
   await pumpUntilFound(
     tester,
     find.byKey(const ValueKey('moderation-report-sheet')),
