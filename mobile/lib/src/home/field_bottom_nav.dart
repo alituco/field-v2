@@ -11,12 +11,12 @@ class FieldBottomNav extends StatefulWidget {
     super.key,
     required this.selectedIndex,
     required this.onSelected,
-    this.homeAvatarUrl,
+    this.profileAvatarUrl,
   });
 
   final int? selectedIndex;
   final ValueChanged<int> onSelected;
-  final String? homeAvatarUrl;
+  final String? profileAvatarUrl;
 
   @override
   State<FieldBottomNav> createState() => _FieldBottomNavState();
@@ -68,7 +68,7 @@ class _FieldBottomNavState extends State<FieldBottomNav> {
     }
     final ios = Theme.of(context).platform == TargetPlatform.iOS;
     final avatarUrl =
-        widget.homeAvatarUrl ??
+        widget.profileAvatarUrl ??
         FieldNavigationProfileScope.avatarUrlOf(context);
     final preview = _scrubInside ? _scrubPosition : null;
     final selected = preview?.round() ?? widget.selectedIndex;
@@ -89,7 +89,7 @@ class _FieldBottomNavState extends State<FieldBottomNav> {
               borderRadius: BorderRadius.circular(28),
               boxShadow: [
                 BoxShadow(
-                  color: FieldrushAuthTheme.ink.withValues(alpha: .16),
+                  color: FieldrushAuthTheme.ink.withValues(alpha: .10),
                   blurRadius: 24,
                   spreadRadius: -7,
                   offset: const Offset(0, 8),
@@ -144,14 +144,14 @@ class _FieldBottomNavState extends State<FieldBottomNav> {
                                 decoration: BoxDecoration(
                                   color: ios
                                       ? FieldrushAuthTheme.forest.withValues(
-                                          alpha: .12,
+                                          alpha: .06,
                                         )
                                       : FieldrushAuthTheme.forest,
                                   borderRadius: BorderRadius.circular(24),
                                   border: ios
                                       ? Border.all(
                                           color: Colors.white.withValues(
-                                            alpha: .75,
+                                            alpha: .45,
                                           ),
                                         )
                                       : null,
@@ -160,9 +160,9 @@ class _FieldBottomNavState extends State<FieldBottomNav> {
                                           begin: Alignment.topLeft,
                                           end: Alignment.bottomRight,
                                           colors: [
-                                            Colors.white.withValues(alpha: .45),
+                                            Colors.white.withValues(alpha: .20),
                                             FieldrushAuthTheme.forest
-                                                .withValues(alpha: .10),
+                                                .withValues(alpha: .04),
                                           ],
                                         )
                                       : null,
@@ -233,13 +233,13 @@ class _FieldBottomNavState extends State<FieldBottomNav> {
 
   Widget _icon(int index, Color color, String? avatarUrl) {
     final fallback = CustomPaint(painter: _NavIcon(index, color));
-    if (index != 0 || avatarUrl == null || avatarUrl.trim().isEmpty) {
+    if (index != 4 || avatarUrl == null || avatarUrl.trim().isEmpty) {
       return fallback;
     }
     return ClipOval(
       child: Image.network(
         avatarUrl.trim(),
-        key: const ValueKey('field-home-nav-avatar'),
+        key: const ValueKey('field-you-nav-avatar'),
         width: 32,
         height: 32,
         fit: BoxFit.cover,

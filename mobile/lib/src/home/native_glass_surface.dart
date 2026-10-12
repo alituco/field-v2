@@ -57,14 +57,14 @@ class _NativeGlassSurfaceState extends State<NativeGlassSurface> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(28),
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: DecoratedBox(
           decoration: BoxDecoration(
             color: FieldrushAuthTheme.cream.withValues(
-              alpha: highContrast ? .98 : .62,
+              alpha: highContrast ? .98 : .32,
             ),
             borderRadius: BorderRadius.circular(28),
-            border: Border.all(color: Colors.white.withValues(alpha: .8)),
+            border: Border.all(color: Colors.white.withValues(alpha: .5)),
           ),
         ),
       ),

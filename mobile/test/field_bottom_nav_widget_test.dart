@@ -173,7 +173,7 @@ void main() {
     },
   );
 
-  testWidgets('Home uses the photo but remains the Home navigation action', (
+  testWidgets('You uses the photo while Home keeps its existing icon', (
     tester,
   ) async {
     await _setPhoneSize(tester);
@@ -191,40 +191,53 @@ void main() {
     int? selected;
     await _pumpNav(
       tester,
-      selectedIndex: 4,
-      homeAvatarUrl: avatar,
+      selectedIndex: 0,
+      profileAvatarUrl: avatar,
       onSelected: (index) => selected = index,
     );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('field-home-nav-avatar')), findsOneWidget);
+    expect(find.byKey(const ValueKey('field-you-nav-avatar')), findsOneWidget);
     expect(find.byType(RawImage), findsOneWidget);
     expect(find.byType(ClipOval), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('field-bottom-nav-item-0')));
-    expect(selected, 0);
+    final home = find.byKey(const ValueKey('field-bottom-nav-icon-0'));
+    expect(
+      find.descendant(of: home, matching: find.byType(CustomPaint)),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: home, matching: find.byType(Image)),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const ValueKey('field-you-nav-avatar')));
+    expect(selected, 4);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('missing or broken photo keeps the existing Home icon', (
+  testWidgets('missing or broken photo keeps the existing You icon', (
     tester,
   ) async {
     await _setPhoneSize(tester);
     await _pumpNav(
       tester,
       selectedIndex: 0,
-      homeAvatarUrl: '  ',
+      profileAvatarUrl: '  ',
       onSelected: (_) {},
     );
-    expect(find.byKey(const ValueKey('field-home-nav-avatar')), findsNothing);
+    expect(find.byKey(const ValueKey('field-you-nav-avatar')), findsNothing);
+    final you = find.byKey(const ValueKey('field-bottom-nav-icon-4'));
+    expect(
+      find.descendant(of: you, matching: find.byType(CustomPaint)),
+      findsOneWidget,
+    );
     await _pumpNav(
       tester,
       selectedIndex: 0,
-      homeAvatarUrl: 'https://example.test/missing.png',
+      profileAvatarUrl: 'https://example.test/missing.png',
       onSelected: (_) {},
     );
     await tester.pumpAndSettle();
-    final home = find.byKey(const ValueKey('field-bottom-nav-icon-0'));
     expect(
-      find.descendant(of: home, matching: find.byType(CustomPaint)),
+      find.descendant(of: you, matching: find.byType(CustomPaint)),
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
@@ -246,7 +259,7 @@ Future<void> _pumpNav(
   required int? selectedIndex,
   required ValueChanged<int> onSelected,
   TargetPlatform platform = TargetPlatform.android,
-  String? homeAvatarUrl,
+  String? profileAvatarUrl,
 }) {
   return tester.pumpWidget(
     MaterialApp(
@@ -264,7 +277,7 @@ Future<void> _pumpNav(
         bottomNavigationBar: FieldBottomNav(
           selectedIndex: selectedIndex,
           onSelected: onSelected,
-          homeAvatarUrl: homeAvatarUrl,
+          profileAvatarUrl: profileAvatarUrl,
         ),
       ),
     ),

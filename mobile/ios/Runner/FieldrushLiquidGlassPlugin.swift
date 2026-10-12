@@ -102,11 +102,11 @@ private final class FieldrushLiquidGlassSurface: UIView {
     } else {
       effectView.backgroundColor = .clear
       if #available(iOS 26.0, *) {
-        let glass = UIGlassEffect(style: .regular)
+        let glass = UIGlassEffect(style: .clear)
         glass.isInteractive = false
         effectView.effect = glass
       } else {
-        effectView.effect = UIBlurEffect(style: .systemThinMaterial)
+        effectView.effect = UIBlurEffect(style: .systemUltraThinMaterial)
       }
     }
   }
