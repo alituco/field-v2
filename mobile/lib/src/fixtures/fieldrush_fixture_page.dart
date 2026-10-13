@@ -5,6 +5,8 @@ import '../ui/field_loading.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../home/fieldrush_home_widgets.dart';
+import '../markets/fieldrush_city.dart';
+import '../markets/fieldrush_city_repository.dart';
 import '../open_queue/fieldrush_booking_flow.dart';
 import '../open_queue/fieldrush_checkout_sheet.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
@@ -43,6 +45,7 @@ class FieldrushFixturePage extends StatefulWidget {
     super.key,
     required this.repository,
     this.fixtureRepository,
+    this.cityRepository,
     this.onPlay,
     this.onOpenGame,
     this.onNavigateTab,
@@ -52,6 +55,7 @@ class FieldrushFixturePage extends StatefulWidget {
 
   final OpenQueueRepository repository;
   final FixtureRepository? fixtureRepository;
+  final FieldrushCityRepository? cityRepository;
   final Future<void> Function(OpenQueueGame? game)? onPlay;
   final Future<void> Function(OpenQueueGame game)? onOpenGame;
   final ValueChanged<int>? onNavigateTab;
@@ -71,9 +75,18 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   bool _opening = false;
   String? _error;
   int _loadVersion = 0;
+  FieldrushCity _city = FieldrushCity.phoenix;
+  List<FieldrushCity> _cities = const [FieldrushCity.phoenix];
+  String? _browsingCityId;
+
+  FieldrushCityRepository? get _cityRepository =>
+      widget.cityRepository ??
+      (widget.repository is SupabaseOpenQueueRepository
+          ? SupabaseFieldrushCityRepository()
+          : null);
 
   DateTime get _now => widget.now ?? DateTime.now();
-  DateTime get _today => _date(gameLocalDateTime(_now, 'America/Phoenix'));
+  DateTime get _today => _date(gameLocalDateTime(_now, _city.timezone));
   List<DateTime> get _dates =>
       {for (final game in _games) _date(game.localStartsAt)}.toList()..sort();
   List<OpenQueueGame> get _selectedGames => _games
@@ -83,7 +96,20 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   @override
   void initState() {
     super.initState();
+    fieldrushCityRevision.addListener(_preferredCityChanged);
     _load();
+  }
+
+  void _preferredCityChanged() {
+    _browsingCityId = null;
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _loadVersion++;
+    fieldrushCityRevision.removeListener(_preferredCityChanged);
+    super.dispose();
   }
 
   @override
@@ -103,11 +129,29 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
     });
     try {
       final repository = widget.repository;
+      var city = _city;
+      var cities = _cities;
+      final cityRepository = _cityRepository;
+      if (cityRepository != null) {
+        final cityData = await Future.wait<dynamic>([
+          cityRepository.loadPreferredCity(),
+          cityRepository.listCities(),
+        ]);
+        if (!mounted || version != _loadVersion) return;
+        cities = (cityData[1] as List<FieldrushCity>)
+            .where((value) => value.active)
+            .toList();
+        city =
+            cities.where((value) => value.id == _browsingCityId).firstOrNull ??
+            cityData[0] as FieldrushCity;
+      }
       final results = await Future.wait<dynamic>([
         repository.listFixtureGames(),
-        repository is OpenQueueMarketRepository
+        repository is OpenQueueCityRepository
+            ? (repository as OpenQueueCityRepository).listCityGames(city.id)
+            : repository is OpenQueueMarketRepository
             ? (repository as OpenQueueMarketRepository).listMarketGames(
-                'America/Phoenix',
+                city.timezone,
               )
             : repository.listGames(),
         repository.getMyUpcomingBookings(),
@@ -127,7 +171,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
           byId.values
               .where(
                 (game) =>
-                    game.timezone == 'America/Phoenix' &&
+                    game.belongsToCity(city.id, city.timezone) &&
                     game.currency == 'USD',
               )
               .toList()
@@ -137,6 +181,8 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
             });
       setState(() {
         _hasLoaded = true;
+        _city = city;
+        _cities = cities;
         _games = games;
         _bookedIds = {for (final booking in bookings) booking.gameId};
         final dates = _dates;
@@ -299,38 +345,49 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                                 side: const BorderSide(color: _border),
                               ),
                               itemBuilder: (_) => [
-                                PopupMenuItem(
-                                  value: 'Phoenix',
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              'Phoenix, AZ',
-                                              style: _jakarta(13, color: _ink),
-                                            ),
-                                            const SizedBox(height: 5),
-                                            Text(
-                                              'Available matchdays below',
-                                              style: _jakarta(10.5).copyWith(
-                                                fontWeight: FontWeight.w600,
+                                for (final city in _cities)
+                                  PopupMenuItem(
+                                    value: city.id,
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                city.label,
+                                                style: _jakarta(
+                                                  13,
+                                                  color: _ink,
+                                                ),
                                               ),
-                                            ),
-                                          ],
+                                              const SizedBox(height: 5),
+                                              Text(
+                                                'Available matchdays below',
+                                                style: _jakarta(10.5).copyWith(
+                                                  fontWeight: FontWeight.w600,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
-                                      ),
-                                      const Icon(
-                                        Icons.check_rounded,
-                                        color: _green,
-                                        size: 18,
-                                      ),
-                                    ],
+                                        if (city.id == _city.id)
+                                          const Icon(
+                                            Icons.check_rounded,
+                                            color: _green,
+                                            size: 18,
+                                          ),
+                                      ],
+                                    ),
                                   ),
-                                ),
                               ],
+                              onSelected: (id) {
+                                if (id == _city.id) return;
+                                _browsingCityId = id;
+                                _selectedDate = null;
+                                _load();
+                              },
                               child: SizedBox(
                                 height: 36,
                                 child: Row(
@@ -344,7 +401,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                                     const SizedBox(width: 4),
                                     Flexible(
                                       child: Text(
-                                        'Phoenix, AZ',
+                                        _city.label,
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: _jakarta(
@@ -428,10 +485,10 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                     onRetry: _load,
                   )
                 else if (_games.isEmpty)
-                  const _FixtureState(
+                  _FixtureState(
                     title: 'No games yet',
                     message:
-                        'Phoenix fixtures will appear here as soon as games are scheduled.',
+                        '${_city.displayName} fixtures will appear here as soon as games are scheduled.',
                   )
                 else ...[
                   const SizedBox(height: 12),

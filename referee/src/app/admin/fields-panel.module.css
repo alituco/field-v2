@@ -5,7 +5,7 @@
 .intro button { flex-shrink: 0; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 20px; color: var(--muted); font-size: 12px; font-weight: 650; }
 .search { flex: 1; min-width: 220px; }
-.search input, .formFields input { box-sizing: border-box; width: 100%; min-height: 48px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
+.search input, .formFields input, .formFields select { box-sizing: border-box; width: 100%; min-height: 48px; padding: 12px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; }
 .toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; }
 .toggle input { width: 18px; height: 18px; accent-color: var(--green); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 20px; }
@@ -33,12 +33,14 @@
 .step h3 { margin: 0 0 4px; color: var(--ink); font-size: 18px; letter-spacing: -.025em; }
 .step p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
 .formFields label { display: grid; align-content: start; gap: 9px; min-width: 0; }
+.formFields label.toggle { display: flex; align-items: center; }
+.formFields .toggle input { width: 18px; min-height: 18px; flex-shrink: 0; padding: 0; }
 .formFields label > span { color: var(--ink); font-size: 12px; font-weight: 750; }
 .formFields em { margin-left: 6px; color: var(--muted); font-size: 10px; font-weight: 500; font-style: normal; }
 .formFields small, .pinHint { color: var(--muted); font-size: 11px; line-height: 1.6; }
 .formFields .coordinateError { color: var(--red); }
 .formFields input[aria-invalid="true"] { border-color: var(--red); }
-.formFields input:focus-visible, .search input:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.formFields input:focus-visible, .formFields select:focus-visible, .search input:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .row { display: flex; gap: 18px; }
 .row > label { flex: 1; }
 .help { padding: 15px 18px; background: var(--background); border: 1px solid var(--line); border-radius: 12px; color: var(--muted); font-size: 12px; line-height: 1.8; }
@@ -51,7 +53,7 @@
 .editorFooter p { max-width: 380px; color: var(--muted); font-size: 12px; line-height: 1.7; }
 .editorFooter button { flex-shrink: 0; }
 @media (max-width: 700px) {
-  .formFields input, .search input { font-size: 16px; }
+  .formFields input, .formFields select, .search input { font-size: 16px; }
   .intro { flex-direction: column; align-items: stretch; padding: 24px; }
   .row, .editorFooter { flex-direction: column; align-items: stretch; }
   .formFields section { padding: 22px 18px; }

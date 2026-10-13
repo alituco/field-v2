@@ -4,6 +4,10 @@ import {
   loadManifestConfig,
   logStep,
 } from "./_shared.ts";
+import {
+  bookedRoleRatingBaselines,
+  ratingTrackForRole,
+} from "./rating_tracks.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -174,7 +178,9 @@ async function verifyPreparedGames(): Promise<void> {
 
   const { data: bookings, error: bookingError } = await admin
     .from("open_queue_bookings")
-    .select("game_id,profile_id,status,role")
+    .select(
+      "game_id,profile_id,status,role,rating_track,player_rating_at_booking",
+    )
     .in("game_id", [manifest.games.match.id, manifest.games.cancellation.id])
     .eq("status", "CONFIRMED");
   if (bookingError) {
@@ -207,6 +213,14 @@ async function verifyPreparedGames(): Promise<void> {
       DEF: 5,
       ATT: 6,
     });
+    assert(
+      matchBookings.every((booking) =>
+        booking.rating_track === ratingTrackForRole(booking.role) &&
+        Number(booking.player_rating_at_booking) ===
+          manifest.ratingsBefore[booking.profile_id]
+      ),
+      "Prepared bookings must snapshot their booked role's manifest rating.",
+    );
   }
 
   const { data: assignment, error: assignmentError } = await admin
@@ -257,7 +271,7 @@ async function verifyCompletedMatch(): Promise<void> {
   const { data: bookings, error: bookingsError } = await admin
     .from("open_queue_bookings")
     .select(
-      "profile_id,status,team,played,rating_at_match_start,rating_change",
+      "profile_id,status,role,rating_track,team,played,rating_at_match_start,rating_change",
     )
     .eq("game_id", manifest.games.match.id)
     .eq("status", "CONFIRMED");
@@ -271,6 +285,7 @@ async function verifyCompletedMatch(): Promise<void> {
   assert(
     (bookings ?? []).every((row) =>
       row.played === true &&
+      row.rating_track === ratingTrackForRole(row.role) &&
       (row.team === "WHITE" || row.team === "BLACK") &&
       Number.isFinite(Number(row.rating_at_match_start)) &&
       Number.isFinite(Number(row.rating_change))
@@ -286,7 +301,7 @@ async function verifyCompletedMatch(): Promise<void> {
   const { data: ratingEvents, error: ratingError } = await admin
     .from("player_rating_events")
     .select(
-      "profile_id,source_type,source_id,side,result,rating_before,rating_after,rating_change",
+      "profile_id,rating_track,source_type,source_id,side,result,rating_before,rating_after,rating_change",
     )
     .eq("source_type", "OPEN_QUEUE")
     .eq("source_id", manifest.games.match.id);
@@ -303,6 +318,9 @@ async function verifyCompletedMatch(): Promise<void> {
       playerIds.every((profileId) =>
         (ratingEvents ?? []).some((event) =>
           event.profile_id === profileId &&
+          event.rating_track === (bookings ?? []).find((booking) =>
+              booking.profile_id === profileId
+            )?.rating_track &&
           Number(event.rating_before) === manifest.ratingsBefore[profileId]
         )
       ),
@@ -335,20 +353,29 @@ async function verifyCompletedMatch(): Promise<void> {
   );
 
   const { data: currentRatings, error: currentRatingsError } = await admin
-    .from("player_ratings")
-    .select("profile_id,skill_rating")
+    .from("fieldrush_player_rating_tracks")
+    .select("profile_id,rating_track,skill_rating")
     .in("profile_id", playerIds);
   if (currentRatingsError) {
     throw new Error(
       `verify current E2E Player SR: ${currentRatingsError.message}`,
     );
   }
+  const rolesByProfile = Object.fromEntries(
+    (bookings ?? []).map((booking) => [booking.profile_id, booking.role]),
+  );
+  const currentBookedRatings = bookedRoleRatingBaselines(
+    currentRatings ?? [],
+    rolesByProfile,
+  );
   assert(
-    (currentRatings ?? []).length === playerIds.length &&
-      (currentRatings ?? []).every((rating) =>
+    Object.keys(currentBookedRatings).length === playerIds.length &&
+      Object.entries(currentBookedRatings).every(([profileId, skillRating]) =>
         (ratingEvents ?? []).some((event) =>
-          event.profile_id === rating.profile_id &&
-          Number(event.rating_after) === Number(rating.skill_rating)
+          event.profile_id === profileId &&
+          event.rating_track ===
+            ratingTrackForRole(rolesByProfile[profileId]) &&
+          Number(event.rating_after) === skillRating
         )
       ),
     "Current Player SR must exactly match the immutable final ledger.",

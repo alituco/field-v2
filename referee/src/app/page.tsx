@@ -6,7 +6,7 @@ import { LoadingSkeleton } from "@/components/loading-skeleton";
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
 import { normalizePhoneNumber } from "@/lib/phone";
-import { formatPlayerSr } from "@/lib/open-queue-ratings";
+import { formatPlayerSr, ratingTrackLabel } from "@/lib/open-queue-ratings";
 import { plannedMatchDurationSeconds } from "@/lib/match-duration";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
@@ -823,9 +823,10 @@ function AttendancePanel({
   }
 
   const busy = submitting !== null;
-  const deadline = formatAttendanceTime(context.checkInDeadlineAt);
-  const kickoff = formatAttendanceTime(context.kickoffAt);
-  const cutoff = formatAttendanceTime(context.noShowCutoffAt);
+  const timezone = fixture.timezone ?? (fixture.matchKind === "SOLO" ? "America/Phoenix" : "Asia/Bahrain");
+  const deadline = formatAttendanceTime(context.checkInDeadlineAt, timezone);
+  const kickoff = formatAttendanceTime(context.kickoffAt, timezone);
+  const cutoff = formatAttendanceTime(context.noShowCutoffAt, timezone);
   const statusLabel = readOnly
     ? "Admin review"
     : context.attendanceFinalized
@@ -1287,14 +1288,14 @@ function checkInTimingLabel(
   }
 }
 
-function formatAttendanceTime(value: string | null) {
+function formatAttendanceTime(value: string | null, timezone: string) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en", {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: "Asia/Bahrain",
+    timeZone: timezone,
   }).format(date);
 }
 
@@ -2061,10 +2062,10 @@ function LineupPanel({
           <div className="lineup-hint">
             {editable
               ? fixture.matchKind === "SOLO"
-                ? "Selected solo players receive Player SR from this match."
+                ? "Selected players earn SR only for their booked position: Keeper or Outfield."
                 : "Only selected clan players receive Player SR from this match."
               : fixture.matchKind === "SOLO"
-                ? `${participantIds.length} solo players confirmed for Player SR`
+                ? `${participantIds.length} solo players confirmed for their booked-position SR`
                 : `${participantIds.length} clan players confirmed for Player SR`}
           </div>
         </div>
@@ -2147,7 +2148,7 @@ function LineupPanel({
                           <small>
                             {player.role}
                             {fixture.matchKind === "SOLO"
-                              ? ` · ${formatPlayerSr(player.ratingAtTeamAssignment)} SR at assignment`
+                              ? ` · ${formatPlayerSr(player.ratingAtTeamAssignment)} ${ratingTrackLabel(player.role)} SR at assignment`
                               : ""}
                             {!isEligible ? " · Not checked in" : ""}
                           </small>

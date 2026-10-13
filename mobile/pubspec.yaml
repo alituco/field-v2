@@ -46,6 +46,7 @@ dependencies:
   phone_numbers_parser: ^9.0.28
   country_picker: ^2.0.28
   url_launcher: ^6.3.3
+  timezone: ^0.11.2
 
 dev_dependencies:
   flutter_test:

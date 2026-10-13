@@ -11,6 +11,8 @@ import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../leaderboard/leaderboard.dart';
 import '../leaderboard/leaderboard_repository.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_seasons.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability.dart';
@@ -49,6 +51,7 @@ class FieldrushYouScreen extends StatefulWidget {
     this.profileSwitcherEnabled = false,
     this.onSwitchUser,
     this.isSigningOut = false,
+    this.ratingTrackController,
   });
 
   final ProfileRepository profileRepository;
@@ -67,6 +70,7 @@ class FieldrushYouScreen extends StatefulWidget {
   final bool profileSwitcherEnabled;
   final Future<void> Function(String)? onSwitchUser;
   final bool isSigningOut;
+  final ValueNotifier<RatingTrack>? ratingTrackController;
 
   @override
   State<FieldrushYouScreen> createState() => _FieldrushYouScreenState();
@@ -76,6 +80,8 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   PlayerProfile? _profile;
   FieldrushAccount? _account;
   PlayerRatingLeaderboardEntry? _rating;
+  FieldrushPlayerRatings? _ratings;
+  RatingTrack _ratingTrack = RatingTrack.outfield;
   ReliabilityStatus? _reliability;
   YouNotificationPreferences? _notifications;
   YouWallet? _wallet;
@@ -88,13 +94,46 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   @override
   void initState() {
     super.initState();
+    _ratingTrack = widget.ratingTrackController?.value ?? RatingTrack.outfield;
+    widget.ratingTrackController?.addListener(_syncRatingTrack);
     _load();
   }
 
   @override
   void didUpdateWidget(covariant FieldrushYouScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.ratingTrackController != widget.ratingTrackController) {
+      oldWidget.ratingTrackController?.removeListener(_syncRatingTrack);
+      widget.ratingTrackController?.addListener(_syncRatingTrack);
+      _syncRatingTrack();
+    }
     if (oldWidget.activationTick != widget.activationTick) _load();
+  }
+
+  @override
+  void dispose() {
+    widget.ratingTrackController?.removeListener(_syncRatingTrack);
+    super.dispose();
+  }
+
+  void _syncRatingTrack() {
+    if (!mounted) return;
+    setState(() {
+      _ratingTrack =
+          widget.ratingTrackController?.value ?? RatingTrack.outfield;
+      if (_ratings != null) _rating = _ratings!.forTrack(_ratingTrack);
+    });
+  }
+
+  void _chooseRatingTrack(RatingTrack track) {
+    if (widget.ratingTrackController != null) {
+      widget.ratingTrackController!.value = track;
+    } else {
+      setState(() {
+        _ratingTrack = track;
+        _rating = _ratings?.forTrack(track);
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -114,11 +153,19 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       }
     }
 
-    final season = activeLeaderboardSeason;
     try {
+      final season = await loadActiveLeaderboardSeason(
+        widget.leaderboardRepository,
+      );
+      if (!mounted || version != _loadVersion) return;
       final data = await Future.wait<Object?>([
         widget.profileRepository.getCurrentProfile(),
-        optional(widget.leaderboardRepository.loadCurrentPlayerRating(season)),
+        optional(
+          widget.leaderboardRepository is TrackLeaderboardRepository
+              ? (widget.leaderboardRepository as TrackLeaderboardRepository)
+                    .loadPlayerRatings(season: season)
+              : widget.leaderboardRepository.loadCurrentPlayerRating(season),
+        ),
         widget.accountRepository == null
             ? Future<FieldrushAccount?>.value()
             : optional(widget.accountRepository!.loadAccount()),
@@ -132,7 +179,14 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       navigationProfile?.complete(data[0] as PlayerProfile);
       setState(() {
         _profile = data[0] as PlayerProfile;
-        _rating = data[1] as PlayerRatingLeaderboardEntry?;
+        _ratings = data[1] is FieldrushPlayerRatings
+            ? data[1] as FieldrushPlayerRatings
+            : null;
+        _rating =
+            _ratings?.forTrack(_ratingTrack) ??
+            (data[1] is PlayerRatingLeaderboardEntry
+                ? data[1] as PlayerRatingLeaderboardEntry
+                : null);
         _account = data[2] as FieldrushAccount?;
         _reliability = data[3] as ReliabilityStatus?;
         _notifications = data[4] as YouNotificationPreferences?;
@@ -221,6 +275,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       MaterialPageRoute(
         builder: (historyContext) => FieldrushMatchHistoryScreen(
           profile: profile,
+          ratingEvents: _ratings?.mergeHistory(
+            profile.playerRating?.events ?? const [],
+          ),
           onOpenGame: (game) => _openGame(game, historyContext),
         ),
       ),
@@ -245,8 +302,11 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
           ModalRoute.of(historyContext)?.isCurrent != true) {
         return;
       }
-      final event = _profile?.playerRating?.events
-          .where((e) => e.sourceId == game.id && e.isSolo == game.isSolo)
+      final events =
+          _ratings?.mergeHistory(_profile?.playerRating?.events ?? const []) ??
+          _profile?.playerRating?.events;
+      final event = events
+          ?.where((e) => e.sourceId == game.id && e.isSolo == game.isSolo)
           .firstOrNull;
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
@@ -466,13 +526,18 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                       FieldrushYouContent(
                         profile: profile,
                         rating: _rating,
+                        ratings: _ratings,
+                        track: _ratingTrack,
+                        onTrack: _ratings == null ? null : _chooseRatingTrack,
                         ratingLoading: _loading,
                         ratingUnavailable: !_loading && _rating == null,
-                        recentResults: fieldrushSeasonResults(
-                          profile,
-                          _season,
-                          region: _rating?.region,
-                        ),
+                        recentResults:
+                            _ratings?.eventsFor(_ratingTrack) ??
+                            fieldrushSeasonResults(
+                              profile,
+                              _season,
+                              region: _rating?.region,
+                            ),
                         cityLabel: _cityLabel,
                         emailUnverified:
                             _account != null && !_account!.emailVerified,

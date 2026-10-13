@@ -5,6 +5,8 @@ import {
   formatPlayerSr,
   nullableSr,
   persistedOpenQueueTeam,
+  ratingTrackForBookedRole,
+  ratingTrackLabel,
 } from "../src/lib/open-queue-ratings.ts";
 
 test("only persisted White and Black assignments become referee teams", () => {
@@ -13,6 +15,15 @@ test("only persisted White and Black assignments become referee teams", () => {
   assert.equal(persistedOpenQueueTeam(null), null);
   assert.equal(persistedOpenQueueTeam(""), null);
   assert.equal(persistedOpenQueueTeam("HOME"), null);
+});
+
+test("referee rating labels follow the booked position rather than profile preference", () => {
+  assert.equal(ratingTrackForBookedRole("GK"), "GOALKEEPER");
+  assert.equal(ratingTrackLabel("gk"), "Keeper");
+  for (const role of ["DEF", "ATT", "MID"]) {
+    assert.equal(ratingTrackForBookedRole(role), "OUTFIELD");
+    assert.equal(ratingTrackLabel(role), "Outfield");
+  }
 });
 
 test("solo SR values preserve valid snapshots and render missing data clearly", () => {

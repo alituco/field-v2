@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { adminFieldsErrorMessage, parseAdminFieldInput, parseFieldId, serializeAdminField } from "@/lib/admin-fields";
+import { adminFieldsErrorMessage, FIELD_SELECT, parseAdminFieldInput, parseFieldId, serializeAdminField } from "@/lib/admin-fields";
 import { adminOnly, isRefereeContext, requireReferee } from "@/lib/referee-session";
 
 const HEADERS = { "Cache-Control": "private, no-store" };
@@ -16,7 +16,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       actor_admin_id: context.referee.profileId, field_id_to_update: fieldId, values_to_use: values,
     });
     if (error) return NextResponse.json({ error: adminFieldsErrorMessage(error) }, { status: 400, headers: HEADERS });
-    return NextResponse.json({ field: serializeAdminField(data) }, { headers: HEADERS });
+    const saved = await context.db.from("fields").select(FIELD_SELECT).eq("id", data.id).single();
+    if (saved.error) return NextResponse.json({ error: adminFieldsErrorMessage(saved.error) }, { status: 500, headers: HEADERS });
+    return NextResponse.json({ field: serializeAdminField(saved.data) }, { headers: HEADERS });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid field details." }, { status: 400, headers: HEADERS });
   }

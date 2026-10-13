@@ -5,7 +5,7 @@ import type { AdminGameSchedule } from "../src/lib/admin-game-schedules";
 
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
 const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
-const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
+const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
 const sampleSchedule: AdminGameSchedule = { id: "c1000000-0000-4000-8000-000000000001", name: "Saturday football", fieldId: sampleField.id, fieldName: sampleField.name, weekdays: [6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2026-10-10", endsOn: null, bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 1, lowestDivision: 5, isActive: true, timezone: "America/Phoenix", createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z", occurrences: [], skips: [] };
 
 async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; schedules?: AdminGameSchedule[]; loadError?: boolean; saveError?: boolean; skipError?: boolean } = {}) {
@@ -43,6 +43,7 @@ async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; s
       status = options.loadError ? 503 : 200;
       data = options.loadError ? { error: "The game-schedules database update is not installed yet." } : { schedules, fields };
     } else if (path === "/api/referee/admin/fields") data = { fields };
+    else if (path === "/api/referee/admin/cities") data = { cities: [{ id: "phoenix", displayName: "Phoenix", state: "AZ", countryCode: "US", timezone: "America/Phoenix", active: true }] };
     else if (path === "/api/referee/fixtures") data = { me: { profileId: "00000000-0000-4000-8000-000000000001", displayName: "Preview Admin", role: "admin" }, fixtures: [] };
     else if (path === "/api/referee/assignments") data = { referees: [], fixtures: [] };
     else if (path === "/api/referee/admin/overview") data = { metrics: {}, attention: [], audit: [] };
@@ -73,7 +74,8 @@ test("Saturday schedule defaults are clear and additional days are sent explicit
   await expect(page.getByLabel("Price per player (USD)", { exact: true })).toHaveValue("13.00");
   await expect(page.getByLabel("Highest division", { exact: true })).toHaveValue("1");
   await expect(page.getByLabel("Lowest division", { exact: true })).toHaveValue("5");
-  await expect(page.getByText("Placement players (fewer than 2 matches) can only book unrestricted Division 1–5 games.", { exact: true })).toBeVisible();
+  await expect(page.getByText("The booked position determines the rating used. Placement players (fewer than 2 games in that track) can only book unrestricted Division 1–5 games.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Phoenix · America/Phoenix", { exact: true })).toBeVisible();
   await page.getByLabel("Tuesday", { exact: true }).check();
   await page.getByLabel("Highest division", { exact: true }).selectOption("2");
   await page.getByLabel("Lowest division", { exact: true }).selectOption("4");

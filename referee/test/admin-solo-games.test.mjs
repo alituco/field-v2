@@ -4,9 +4,28 @@ import test from "node:test";
 import {
   parseAdminSoloGameCreateInput,
   parseAdminSoloGameRemoveInput,
+  cityKickoffToUtc,
+  cityToday,
 } from "../src/lib/admin-solo-games.ts";
 
 const fieldId = "82fb1e65-dc06-4990-930b-c090a15d577e";
+
+test("kickoff follows the trusted competition-city timezone, not a client offset", () => {
+  assert.equal(cityKickoffToUtc("2027-07-01", "20:30", "America/Phoenix"), "2027-07-02T03:30:00.000Z");
+  assert.equal(cityKickoffToUtc("2027-07-01", "20:30", "America/New_York"), "2027-07-02T00:30:00.000Z");
+  assert.equal(cityKickoffToUtc("2027-01-01", "20:30", "America/New_York"), "2027-01-02T01:30:00.000Z");
+  assert.equal(cityKickoffToUtc("2027-07-01", "00:00", "Asia/Kolkata"), "2027-06-30T18:30:00.000Z");
+  const input = parseAdminSoloGameCreateInput({ fieldId, matchDate: "2099-07-21", kickoffTime: "20:30", ageLabel: "18+", timezone: "America/Phoenix" }, "America/New_York");
+  assert.equal(input.startsAt, "2099-07-22T00:30:00.000Z");
+});
+
+test("DST gaps and repeated wall times are explicit errors instead of silently moving games", () => {
+  assert.throws(() => cityKickoffToUtc("2027-03-14", "02:30", "America/New_York"), /does not exist/);
+  assert.throws(() => cityKickoffToUtc("2027-11-07", "01:30", "America/New_York"), /happens twice/);
+  assert.throws(() => cityKickoffToUtc("2027-01-01", "20:30", "Invalid/City"), /invalid timezone/);
+  assert.equal(cityToday("America/Phoenix", new Date("2027-07-02T04:00:00Z")), "2027-07-01");
+  assert.equal(cityToday("America/New_York", new Date("2027-07-02T04:00:00Z")), "2027-07-02");
+});
 
 test("admin can prepare a Tuesday solo game in the Phoenix slot", () => {
   const input = parseAdminSoloGameCreateInput({

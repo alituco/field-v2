@@ -139,7 +139,7 @@ class SupabaseClanRepository
 
   @override
   Future<List<Clan>> listClans() async {
-    final response = await _client.rpc('list_clans');
+    final response = await _client.rpc('list_fieldrush_clans');
     final rows = response as List<dynamic>;
 
     return [
@@ -182,17 +182,10 @@ class SupabaseClanRepository
 
   @override
   Future<List<ClanMember>> listClanMembers(String clanId) async {
-    final response = await _client
-        .from('clan_members')
-        .select('''
-          profile_id,
-          role,
-          created_at,
-          profiles!clan_members_profile_id_fkey(display_name)
-        ''')
-        .eq('clan_id', clanId)
-        .isFilter('left_at', null)
-        .order('created_at');
+    final response = await _client.rpc(
+      'list_fieldrush_clan_members',
+      params: {'clan_id_to_use': clanId},
+    );
     final rows = response as List<dynamic>;
 
     return [

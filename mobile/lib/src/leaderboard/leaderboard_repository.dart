@@ -1,6 +1,10 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'leaderboard.dart';
+import 'fieldrush_rating_tracks.dart';
+import 'fieldrush_placement.dart';
+import 'fieldrush_season_rewards.dart';
+import 'fieldrush_seasons.dart';
 
 abstract class LeaderboardRepository {
   Future<LeaderboardPlayerStats> loadPlayerStats(LeaderboardSeason season);
@@ -25,7 +29,13 @@ abstract interface class PagedLeaderboardRepository {
 }
 
 class SupabaseLeaderboardRepository
-    implements LeaderboardRepository, PagedLeaderboardRepository {
+    implements
+        LeaderboardRepository,
+        PagedLeaderboardRepository,
+        TrackLeaderboardRepository,
+        PlacementLeaderboardRepository,
+        SeasonLeaderboardRepository,
+        SeasonRewardsRepository {
   SupabaseLeaderboardRepository({SupabaseClient? client})
     : _injectedClient = client;
 
@@ -33,16 +43,93 @@ class SupabaseLeaderboardRepository
   SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
 
   @override
-  Future<PlayerRatingLeaderboardPage> loadPlayerRatingPage({
+  Future<FieldrushSeasonCatalog> loadSeasons() async {
+    final response = await _client.rpc('list_fieldrush_seasons');
+    return FieldrushSeasonCatalog.fromJson(
+      Map<String, dynamic>.from(response as Map),
+    );
+  }
+
+  @override
+  Future<FieldrushSeasonRewards?> loadSeasonRewards({
     required LeaderboardSeason season,
-    String region = 'phoenix',
+    required RatingTrack track,
+    required String cityId,
+  }) async {
+    final response = await _client.rpc(
+      'get_fieldrush_season_rewards',
+      params: {
+        'season_id_to_use': season.id,
+        'city_id_to_use': cityId,
+        'rating_track_to_use': track.value,
+      },
+    );
+    return response == null
+        ? null
+        : FieldrushSeasonRewards.fromJson(
+            Map<String, dynamic>.from(response as Map),
+          );
+  }
+
+  @override
+  Future<FieldrushPlacementPage> loadPlacementPage({
+    required LeaderboardSeason season,
+    required RatingTrack track,
+    String? cityId,
+    int offset = 0,
+    int pageSize = 4,
+  }) async {
+    final response = await _client.rpc(
+      'list_fieldrush_placement_page',
+      params: {
+        'scope_to_use': cityId == null ? 'GLOBAL' : 'CITY',
+        'city_id_to_use': cityId,
+        'rating_track_to_use': track.value,
+        'season_starts_on': season.startsOn,
+        'season_ends_on': season.endsOn,
+        'offset_to_use': offset,
+        'page_size_to_use': pageSize,
+      },
+    );
+    return FieldrushPlacementPage.fromJson(
+      Map<String, dynamic>.from(response as Map),
+    );
+  }
+
+  @override
+  Future<FieldrushPlayerRatings> loadPlayerRatings({
+    required LeaderboardSeason season,
+    String? profileId,
+  }) async {
+    final id = profileId ?? _client.auth.currentUser?.id;
+    if (id == null) throw const AuthException('Sign in to view your rating.');
+    final response = await _client.rpc(
+      'get_fieldrush_player_ratings',
+      params: {
+        'profile_id_to_use': id,
+        'season_starts_on': season.startsOn,
+        'season_ends_on': season.endsOn,
+      },
+    );
+    return FieldrushPlayerRatings.fromJson(
+      Map<String, dynamic>.from(response as Map),
+    );
+  }
+
+  @override
+  Future<PlayerRatingLeaderboardPage> loadRatingPage({
+    required LeaderboardSeason season,
+    required RatingTrack track,
+    String? cityId,
     int offset = 0,
     int pageSize = 23,
   }) async {
     final response = await _client.rpc(
-      'list_fieldrush_player_rating_page',
+      'list_fieldrush_rating_page',
       params: {
-        'region_to_use': region,
+        'scope_to_use': cityId == null ? 'GLOBAL' : 'CITY',
+        'city_id_to_use': cityId,
+        'rating_track_to_use': track.value,
         'season_starts_on': season.startsOn,
         'season_ends_on': season.endsOn,
         'offset_to_use': offset,
@@ -55,40 +142,26 @@ class SupabaseLeaderboardRepository
   }
 
   @override
+  Future<PlayerRatingLeaderboardPage> loadPlayerRatingPage({
+    required LeaderboardSeason season,
+    String region = 'phoenix',
+    int offset = 0,
+    int pageSize = 23,
+  }) async {
+    return loadRatingPage(
+      season: season,
+      track: RatingTrack.outfield,
+      cityId: region == 'global' ? null : region,
+      offset: offset,
+      pageSize: pageSize,
+    );
+  }
+
+  @override
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
     LeaderboardSeason season,
   ) async {
-    // The account's server-owned market preserves legacy Bahrain players while
-    // new Fieldrush accounts use Phoenix. Never move rating history in the UI.
-    final account = await _client.rpc('get_my_fieldrush_account');
-    var region = account is Map ? account['ranking_region'] as String? : null;
-    // Older account RPCs do not return a market. Read the actual rating row
-    // instead of guessing Phoenix and hiding an existing player's placement.
-    if (region == null || region.trim().isEmpty) {
-      final userId = _client.auth.currentUser?.id;
-      if (userId == null) {
-        throw const AuthException('Sign in to view your rating.');
-      }
-      final rating = await _client
-          .from('player_ratings')
-          .select('region')
-          .eq('profile_id', userId)
-          .single();
-      region = rating['region'] as String;
-    }
-    final response = await _client.rpc(
-      'get_my_season_player_rating',
-      params: {
-        'region_to_use': region,
-        'season_starts_on': season.startsOn,
-        'season_ends_on': season.endsOn,
-      },
-    );
-    final rows = response as List<dynamic>;
-    if (rows.isEmpty) throw StateError('Your Player Rating is unavailable.');
-    return PlayerRatingLeaderboardEntry.fromJson(
-      Map<String, dynamic>.from(rows.first as Map),
-    );
+    return (await loadPlayerRatings(season: season)).outfield;
   }
 
   @override
@@ -96,20 +169,7 @@ class SupabaseLeaderboardRepository
     required LeaderboardSeason season,
     String region = 'phoenix',
   }) async {
-    final response = await _client.rpc(
-      'list_season_player_rating_leaderboard',
-      params: {
-        'region_to_use': region,
-        'season_starts_on': season.startsOn,
-        'season_ends_on': season.endsOn,
-      },
-    );
-    return [
-      for (final row in response as List<dynamic>)
-        PlayerRatingLeaderboardEntry.fromJson(
-          Map<String, dynamic>.from(row as Map),
-        ),
-    ];
+    return (await loadPlayerRatingPage(season: season, region: region)).players;
   }
 
   @override

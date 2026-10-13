@@ -7,6 +7,8 @@ import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/fixtures/fixtures_screen.dart';
 import 'package:field/src/home/fieldrush_home_widgets.dart';
+import 'package:field/src/markets/fieldrush_city.dart';
+import 'package:field/src/markets/fieldrush_city_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +19,56 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2026, 10, 10, 17);
 
 void main() {
+  testWidgets(
+    'preferred city scopes discovery and browsing never changes preference',
+    (tester) async {
+      final repository = _CityGamesRepository(
+        upcoming: [
+          _game('phoenix-game', marketCityId: 'phoenix'),
+          _game(
+            'new-york-game',
+            marketCityId: 'new-york',
+            timezone: 'America/New_York',
+          ),
+          _game(
+            'same-zone-wrong-city',
+            marketCityId: 'boston',
+            timezone: 'America/New_York',
+          ),
+        ],
+      );
+      final cities = _CitiesRepository();
+      await _pump(tester, repository, cityRepository: cities);
+      expect(repository.requestedCity, 'new-york');
+      expect(
+        find.byKey(const ValueKey('solo-fixture-new-york-game')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('solo-fixture-same-zone-wrong-city')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('solo-fixture-phoenix-game')),
+        findsNothing,
+      );
+      await tester.tap(find.byKey(const ValueKey('fixtures-city-picker')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Phoenix, AZ'));
+      await tester.pumpAndSettle();
+      expect(repository.requestedCity, 'phoenix');
+      expect(
+        find.byKey(const ValueKey('solo-fixture-phoenix-game')),
+        findsOneWidget,
+      );
+      expect(cities.savedCities, isEmpty);
+      fieldrushCityRevision.value++;
+      await tester.pumpAndSettle();
+      expect(repository.requestedCity, 'new-york');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('overflowing date strip centers the selected matchday', (
     tester,
   ) async {
@@ -521,6 +573,7 @@ Future<void> _pump(
   double width = 390,
   double scale = 1,
   GlobalKey? boundaryKey,
+  FieldrushCityRepository? cityRepository,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = Size(width, 900);
@@ -539,6 +592,7 @@ Future<void> _pump(
         child: Scaffold(
           body: FieldrushFixturePage(
             repository: repository,
+            cityRepository: cityRepository,
             onOpenGame: onOpen,
             onPlay: onPlay,
             now: _now,
@@ -557,6 +611,7 @@ OpenQueueGame _game(
   String status = 'OPEN',
   String timezone = 'America/Phoenix',
   String currency = 'USD',
+  String? marketCityId,
   int? white,
   int? black,
   int? average,
@@ -572,6 +627,7 @@ OpenQueueGame _game(
     startsAt: at,
     endsAt: at.add(const Duration(hours: 1)),
     timezone: timezone,
+    marketCityId: marketCityId,
     priceFils: 13000,
     currency: currency,
     ageLabel: '18+',
@@ -659,5 +715,40 @@ class _UnusedFixtureRepository implements FixtureRepository {
   dynamic noSuchMethod(Invocation invocation) {
     calls++;
     throw StateError('Launch fixtures must not query legacy clan data');
+  }
+}
+
+class _CityGamesRepository extends _Repository
+    implements OpenQueueCityRepository {
+  _CityGamesRepository({super.upcoming});
+  String? requestedCity;
+  @override
+  Future<List<OpenQueueGame>> listCityGames(String cityId) async {
+    requestedCity = cityId;
+    // Return mixed rows deliberately to verify the defensive client filter too.
+    return upcoming;
+  }
+}
+
+class _CitiesRepository implements FieldrushCityRepository {
+  final savedCities = <String>[];
+  static const newYork = FieldrushCity(
+    id: 'new-york',
+    displayName: 'New York',
+    state: 'NY',
+    countryCode: 'US',
+    timezone: 'America/New_York',
+  );
+  @override
+  Future<List<FieldrushCity>> listCities() async => [
+    FieldrushCity.phoenix,
+    newYork,
+  ];
+  @override
+  Future<FieldrushCity> loadPreferredCity() async => newYork;
+  @override
+  Future<FieldrushCity> setPreferredCity(String id) async {
+    savedCities.add(id);
+    return id == 'new-york' ? newYork : FieldrushCity.phoenix;
   }
 }

@@ -25,7 +25,9 @@ export async function POST(request: NextRequest) {
       actor_admin_id: context.referee.profileId, field_id_to_update: null, values_to_use: values,
     });
     if (error) return NextResponse.json({ error: adminFieldsErrorMessage(error) }, { status: 400, headers: HEADERS });
-    return NextResponse.json({ field: serializeAdminField(data) }, { status: 201, headers: HEADERS });
+    const saved = await context.db.from("fields").select(FIELD_SELECT).eq("id", data.id).single();
+    if (saved.error) return NextResponse.json({ error: adminFieldsErrorMessage(saved.error) }, { status: 500, headers: HEADERS });
+    return NextResponse.json({ field: serializeAdminField(saved.data) }, { status: 201, headers: HEADERS });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid field details." }, { status: 400, headers: HEADERS });
   }

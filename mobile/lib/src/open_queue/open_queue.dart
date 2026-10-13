@@ -1,3 +1,6 @@
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
+
 import '../fixtures/fixture.dart';
 import '../ranking/rating_division.dart';
 
@@ -10,12 +13,27 @@ const fieldrushOpenQueueRoles = [
   OpenQueueRole.attacker,
 ];
 
-DateTime gameLocalDateTime(DateTime instant, String timezone) =>
-    instant.toUtc().add(switch (timezone) {
-      'America/Phoenix' => const Duration(hours: -7),
-      'Asia/Bahrain' => const Duration(hours: 3),
-      _ => Duration.zero,
-    });
+bool _timezonesInitialized = false;
+
+/// Returns wall-clock components in the game's IANA zone. The UTC-shaped
+/// value is for display/calendar grouping, not for comparing actual instants.
+DateTime gameLocalDateTime(DateTime instant, String timezone) {
+  if (!_timezonesInitialized) {
+    tz_data.initializeTimeZones();
+    _timezonesInitialized = true;
+  }
+  final local = tz.TZDateTime.from(instant, tz.getLocation(timezone));
+  return DateTime.utc(
+    local.year,
+    local.month,
+    local.day,
+    local.hour,
+    local.minute,
+    local.second,
+    local.millisecond,
+    local.microsecond,
+  );
+}
 
 class OpenQueueBookingCostPreview {
   const OpenQueueBookingCostPreview({
@@ -149,6 +167,7 @@ class OpenQueueGame {
     this.highestDivision = 1,
     this.lowestDivision = 5,
     this.fieldId,
+    this.marketCityId,
     this.locationAddress,
     this.locationCity,
     this.locationState,
@@ -213,6 +232,11 @@ class OpenQueueGame {
   }
 
   final String? fieldId;
+  final String? marketCityId;
+
+  bool belongsToCity(String cityId, String cityTimezone) => marketCityId != null
+      ? marketCityId == cityId
+      : cityId == 'phoenix' && timezone == cityTimezone;
   final String? locationAddress;
   final String? locationCity;
   final String? locationState;
@@ -390,8 +414,7 @@ class OpenQueueGame {
       capacityFor(role) > 0 &&
       spotsFor(role) > 0;
 
-  /// Wall-clock values for the two supported launch markets. Both zones have
-  /// fixed offsets; expanding markets needs an IANA timezone implementation.
+  /// Wall-clock values use the game's immutable IANA timezone snapshot.
   DateTime localDateTime(DateTime instant) =>
       gameLocalDateTime(instant, timezone);
 
@@ -463,6 +486,7 @@ class OpenQueueGame {
       highestDivision: _asInt(json['highest_division'], fallback: 1),
       lowestDivision: _asInt(json['lowest_division'], fallback: 5),
       fieldId: _nonEmptyString(json['field_id']),
+      marketCityId: _nonEmptyString(json['market_city_id']),
       locationAddress: _nonEmptyString(json['location_address']),
       locationCity: _nonEmptyString(json['location_city']),
       locationState: _nonEmptyString(json['location_state']),
@@ -522,6 +546,7 @@ class OpenQueueGame {
       highestDivision: _asInt(json['highest_division'], fallback: 1),
       lowestDivision: _asInt(json['lowest_division'], fallback: 5),
       fieldId: _nonEmptyString(json['field_id']),
+      marketCityId: _nonEmptyString(json['market_city_id']),
       locationAddress: _nonEmptyString(json['location_address']),
       locationCity: _nonEmptyString(json['location_city']),
       locationState: _nonEmptyString(json['location_state']),

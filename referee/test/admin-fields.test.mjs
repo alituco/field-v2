@@ -3,17 +3,31 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { adminFieldsErrorMessage, parseAdminFieldInput, parseFieldId, serializeAdminField } from "../src/lib/admin-fields.ts";
 
-const base = { name: " Test pitch ", address: " 123 Test Avenue ", latitude: "33.4484", longitude: "-112.0740" };
+const base = { name: " Test pitch ", address: " 123 Test Avenue ", marketCityId: "phoenix", latitude: "33.4484", longitude: "-112.0740" };
 
 test("saved fields require an address and valid map coordinates, with Phoenix defaults", () => {
   assert.deepEqual(parseAdminFieldInput(base), {
     name: "Test pitch", address: "123 Test Avenue", city: "Phoenix", state: "AZ", country_code: "US",
+    market_city_id: "phoenix",
     latitude: 33.4484, longitude: -112.074,
   });
-  for (const key of ["name", "address", "latitude", "longitude"]) {
+  for (const key of ["name", "address", "marketCityId", "latitude", "longitude"]) {
     const invalid = { ...base }; delete invalid[key];
     assert.throws(() => parseAdminFieldInput(invalid), /required/);
   }
+});
+
+test("competition city is independent of postal city and rejects forged market data", () => {
+  const input = parseAdminFieldInput({ ...base, city: "Tempe", marketCityId: "phoenix" });
+  assert.equal(input.city, "Tempe");
+  assert.equal(input.market_city_id, "phoenix");
+  for (const marketCityId of ["", "Phoenix", "new york", "../phoenix", null, 12]) assert.throws(() => parseAdminFieldInput({ ...base, marketCityId }), /Competition city/);
+  assert.throws(() => parseAdminFieldInput({ ...base, timezone: "America/New_York" }), /Unknown field/);
+  const field = serializeAdminField({ ...input, id: "test", market: { display_name: "Phoenix", timezone: "America/Phoenix", active: true } });
+  assert.equal(field.marketCityName, "Phoenix");
+  assert.equal(field.marketTimezone, "America/Phoenix");
+  assert.equal(field.marketActive, true);
+  assert.equal(field.city, "Tempe");
 });
 
 test("coordinate validation does not coerce blank, null, booleans or non-finite values to a location", () => {

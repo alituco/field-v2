@@ -1,5 +1,6 @@
 import '../clans/clan.dart';
 import '../open_queue/open_queue.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 class PlayerProfile {
   const PlayerProfile({
@@ -217,6 +218,7 @@ class ProfileRatingEvent {
     this.baseRatingChange,
     this.marginBonusApplied,
     this.appliedSequence,
+    this.ratingTrack,
   });
 
   final String id;
@@ -239,6 +241,7 @@ class ProfileRatingEvent {
   final int? baseRatingChange;
   final int? marginBonusApplied;
   final int? appliedSequence;
+  final String? ratingTrack;
 
   bool get isSolo => sourceType == 'OPEN_QUEUE';
 
@@ -271,6 +274,7 @@ class ProfileRatingEvent {
       baseRatingChange: _asNullableInt(json['base_rating_change']),
       marginBonusApplied: _asNullableInt(json['margin_bonus_applied']),
       appliedSequence: _asNullableInt(json['applied_sequence']),
+      ratingTrack: json['rating_track'] as String?,
     );
   }
 }
@@ -808,8 +812,12 @@ class ProfilePreviousGame {
   /// have always used Bahrain; solo games require their own stored timezone.
   DateTime? get localPlayedAt {
     final zone = timezone ?? (isSolo ? null : 'Asia/Bahrain');
-    if (!['America/Phoenix', 'Asia/Bahrain', 'UTC'].contains(zone)) return null;
-    return gameLocalDateTime(playedAt, zone!);
+    if (zone == null || zone.trim().isEmpty) return null;
+    try {
+      return gameLocalDateTime(playedAt, zone);
+    } on tz.LocationNotFoundException {
+      return null;
+    }
   }
 
   ProfileGameOutcome? get outcome {

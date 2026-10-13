@@ -29,7 +29,8 @@ function cleanText(value: unknown, label: string, min: number, max: number) {
   return cleaned;
 }
 
-function parsePhoenixMatchDate(value: unknown, kickoffTime: unknown) {
+/** Interpret a wall-clock kickoff using the saved field's trusted IANA timezone. */
+export function cityKickoffToUtc(value: unknown, kickoffTime: unknown, timezone: string): string {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
     throw new Error("Choose a valid match date.");
   }
@@ -47,13 +48,39 @@ function parsePhoenixMatchDate(value: unknown, kickoffTime: unknown) {
   if (typeof kickoffTime !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(kickoffTime)) {
     throw new Error("Choose a valid kickoff time (HH:MM).");
   }
-  const startsAt = new Date(`${value}T${kickoffTime}:00-07:00`);
-  if (Number.isNaN(startsAt.getTime())) throw new Error("Choose a valid match date.");
-  if (startsAt.getTime() <= Date.now()) {
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+  } catch { throw new Error("The field’s competition city has an invalid timezone. Update it in Cities."); }
+  const [hour, minute] = kickoffTime.split(":").map(Number);
+  const wall = Date.UTC(year, month - 1, day, hour, minute);
+  const localTimestamp = (instant: number) => {
+    const parts = formatter.formatToParts(instant);
+    const part = (type: string) => Number(parts.find((item) => item.type === type)?.value);
+    return Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"), part("second"));
+  };
+  // Sample either side of possible daylight-saving changes, then round-trip candidates.
+  const offsets = new Set([-36, -12, 0, 12, 36].map((hours) => {
+    const instant = wall + hours * 3_600_000;
+    return localTimestamp(instant) - instant;
+  }));
+  const candidates = [...offsets].map((offset) => wall - offset).filter((instant) => localTimestamp(instant) === wall);
+  if (candidates.length === 0) throw new Error("That local kickoff time does not exist because the clocks change. Choose another time.");
+  if (candidates.length > 1) throw new Error("That local kickoff time happens twice because the clocks change. Choose an unambiguous time.");
+  return new Date(candidates[0]).toISOString();
+}
+
+export function cityToday(timezone: string, now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  return ["year", "month", "day"].map((type) => parts.find((part) => part.type === type)?.value).join("-");
+}
+
+function parseMatchDate(value: unknown, kickoffTime: unknown, timezone: string) {
+  const startsAt = cityKickoffToUtc(value, kickoffTime, timezone);
+  if (new Date(startsAt).getTime() <= Date.now()) {
     throw new Error("The solo game must be scheduled in the future.");
   }
-
-  return { matchDate: value, startsAt: startsAt.toISOString() };
+  return { matchDate: value as string, startsAt };
 }
 
 function parsePriceFils(value: unknown) {
@@ -85,12 +112,13 @@ function parseDivision(value: unknown, fallback: number, label: string) {
 
 export function parseAdminSoloGameCreateInput(
   value: unknown,
+  timezone = "America/Phoenix",
 ): AdminSoloGameCreateInput {
   const body = inputRecord(value);
   if ("priceBhd" in body) {
     throw new Error("This form now creates USD games. Refresh the page and enter a USD price.");
   }
-  const schedule = parsePhoenixMatchDate(body.matchDate, body.kickoffTime ?? "20:30");
+  const schedule = parseMatchDate(body.matchDate, body.kickoffTime ?? "20:30", timezone);
   const durationMinutes = body.durationMinutes ?? 60;
   if (typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes) || durationMinutes < 30 || durationMinutes > 180) {
     throw new Error("Duration must be a whole number from 30 to 180 minutes.");

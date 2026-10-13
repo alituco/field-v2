@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { FIELD_SELECT, serializeAdminField } from "@/lib/admin-fields";
 import { parseAdminGameScheduleInput, SCHEDULE_SELECT, scheduleErrorMessage, serializeGameSchedule } from "@/lib/admin-game-schedules";
 import { adminOnly, isRefereeContext, requireReferee } from "@/lib/referee-session";
+import { cityToday } from "@/lib/admin-solo-games";
 
 const headers = { "Cache-Control": "private, no-store" };
 
@@ -10,12 +11,13 @@ export async function GET(request: NextRequest) {
   if (!isRefereeContext(context)) return context;
   const denied = adminOnly(context.referee);
   if (denied) return denied;
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Phoenix", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  // A two-day lookback covers all city-local dates; filter each row in its own timezone below.
+  const earliest = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
   const [schedules, fields, occurrences, skips] = await Promise.all([
     context.db.from("game_schedules").select(SCHEDULE_SELECT).order("created_at", { ascending: false }),
     context.db.from("fields").select(FIELD_SELECT).order("name"),
-    context.db.from("game_schedule_occurrences").select("schedule_id,match_date,game_id,status,error_message").gte("match_date", today).order("match_date"),
-    context.db.from("game_schedule_skips").select("schedule_id,match_date,reason").gte("match_date", today).order("match_date"),
+    context.db.from("game_schedule_occurrences").select("schedule_id,match_date,game_id,status,error_message").gte("match_date", earliest).order("match_date"),
+    context.db.from("game_schedule_skips").select("schedule_id,match_date,reason").gte("match_date", earliest).order("match_date"),
   ]);
   const error = [schedules, fields, occurrences, skips].find((result) => result.error)?.error;
   if (error) return NextResponse.json({ error: scheduleErrorMessage(error) }, { status: 500, headers });
@@ -24,8 +26,8 @@ export async function GET(request: NextRequest) {
     fields: fieldList,
     schedules: (schedules.data ?? []).map((row) => serializeGameSchedule(row,
       fieldList.find((field) => field.id === row.field_id)?.name ?? "Unavailable field",
-      (occurrences.data ?? []).filter((item) => item.schedule_id === row.id),
-      (skips.data ?? []).filter((item) => item.schedule_id === row.id))),
+      (occurrences.data ?? []).filter((item) => item.schedule_id === row.id && item.match_date >= cityToday(row.timezone)),
+      (skips.data ?? []).filter((item) => item.schedule_id === row.id && item.match_date >= cityToday(row.timezone)))),
   }, { headers });
 }
 

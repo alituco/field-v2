@@ -49,6 +49,11 @@ abstract interface class OpenQueueMarketRepository {
   Future<List<OpenQueueGame>> listMarketGames(String timezone);
 }
 
+/// Canonical competition-city discovery; cities can share a timezone.
+abstract interface class OpenQueueCityRepository {
+  Future<List<OpenQueueGame>> listCityGames(String cityId);
+}
+
 abstract interface class OpenQueueReliabilityLookupRepository {
   Future<MatchReliabilityContext?> getMatchReliabilityContext(String gameId);
 }
@@ -65,6 +70,7 @@ class SupabaseOpenQueueRepository
     implements
         OpenQueueRepository,
         OpenQueueMarketRepository,
+        OpenQueueCityRepository,
         OpenQueueBookingLookupRepository,
         OpenQueueEmbeddedCheckoutRepository,
         OpenQueuePaymentStatusRepository,
@@ -83,6 +89,7 @@ class SupabaseOpenQueueRepository
     highest_division,
     lowest_division,
     field_id,
+    market_city_id,
     location_address,
     location_city,
     location_state,
@@ -142,6 +149,16 @@ class SupabaseOpenQueueRepository
     final response = await _client.rpc(
       'list_open_queue_games_for_market',
       params: {'timezone_to_use': timezone},
+    );
+    final rows = await _withGameMetadata(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
+  }
+
+  @override
+  Future<List<OpenQueueGame>> listCityGames(String cityId) async {
+    final response = await _client.rpc(
+      'list_open_queue_games_for_city',
+      params: {'city_id_to_use': cityId},
     );
     final rows = await _withGameMetadata(response as List<dynamic>);
     return [for (final row in rows) OpenQueueGame.fromJson(row)];

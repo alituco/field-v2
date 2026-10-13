@@ -57,9 +57,9 @@ void main() {
     expect(rating.currentPeriodEvents.single.id, 'new');
   });
 
-  for (final accountRegion in [null, 'phoenix']) {
+  for (final accountRegion in ['', 'phoenix']) {
     test(
-      'rating lookup uses ${accountRegion ?? 'stored legacy region'}',
+      'dual rating lookup preserves ${accountRegion.isEmpty ? 'unearned city' : 'earned city'} without legacy data',
       () async {
         final requests = <http.Request>[];
         final client = SupabaseClient(
@@ -70,27 +70,27 @@ void main() {
             requests.add(request);
             final Object data;
             switch (request.url.path) {
-              case '/rest/v1/rpc/get_my_fieldrush_account':
+              case '/rest/v1/rpc/get_fieldrush_player_ratings':
+                expect(jsonDecode(request.body), {
+                  'profile_id_to_use': 'user-a',
+                  'season_starts_on': '2026-10-01',
+                  'season_ends_on': '2026-12-31',
+                });
                 data = {
-                  if (accountRegion != null) 'ranking_region': accountRegion,
-                };
-              case '/rest/v1/player_ratings':
-                expect(request.url.queryParameters['profile_id'], 'eq.user-a');
-                data = {'region': 'bahrain'};
-              case '/rest/v1/rpc/get_my_season_player_rating':
-                expect(
-                  jsonDecode(request.body)['region_to_use'],
-                  accountRegion ?? 'bahrain',
-                );
-                data = [
-                  {
-                    'profile_id': 'user-a',
-                    'matches_played': 0,
-                    'rank': 0,
-                    'skill_rating': 1200,
-                    'region': accountRegion ?? 'bahrain',
+                  'primary_city_id': accountRegion.isEmpty
+                      ? null
+                      : accountRegion,
+                  'ratings': {
+                    for (final track in ['OUTFIELD', 'GOALKEEPER'])
+                      track: {
+                        'profile_id': 'user-a',
+                        'matches_played': 0,
+                        'rank': 0,
+                        'skill_rating': 1200,
+                        'region': accountRegion,
+                      },
                   },
-                ];
+                };
               default:
                 throw StateError(
                   'Unexpected mock request: ${request.url.path}',
@@ -140,8 +140,10 @@ void main() {
           requests
               .where((request) => request.url.path == '/rest/v1/player_ratings')
               .length,
-          accountRegion == null ? 1 : 0,
+          0,
         );
+        expect(requests.length, 1);
+        expect(rating.region, accountRegion);
       },
     );
   }

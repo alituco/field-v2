@@ -78,6 +78,7 @@ export type AdminSubjectDetail = {
   }>;
   ratingEvents: Array<{
     id: string;
+    ratingTrack: "OUTFIELD" | "GOALKEEPER" | null;
     sourceType: string;
     sourceId: string;
     result: string;
@@ -129,11 +130,11 @@ async function loadPlayerDetail(db: SupabaseClient, profileId: string) {
     auditResult,
   ] = await Promise.all([
     db.from("profiles").select("id,phone,display_name,username,avatar_url,bio,date_of_birth,created_at").eq("id", profileId).maybeSingle(),
-    db.from("player_ratings").select("skill_rating,matches_played,wins,losses,draws,last_change,region").eq("profile_id", profileId).maybeSingle(),
+    db.from("fieldrush_player_rating_tracks").select("rating_track,skill_rating,matches_played,wins,losses,draws,last_change").eq("profile_id", profileId),
     db.from("clan_members").select("clan_id,role,created_at,left_at").eq("profile_id", profileId).order("created_at", { ascending: false }),
     db.from("fixture_player_appearances").select("fixture_id,clan_id,side,played,rating_at_start,rating_change,created_at").eq("profile_id", profileId).order("created_at", { ascending: false }),
     db.from("open_queue_bookings").select("game_id,role,status,team,played,rating_change,booked_at").eq("profile_id", profileId).order("booked_at", { ascending: false }),
-    db.from("player_rating_events").select("id,source_type,source_id,result,rating_before,rating_change,rating_after,created_at").eq("profile_id", profileId).order("created_at", { ascending: false }),
+    db.from("player_rating_events").select("id,rating_track,source_type,source_id,result,rating_before,rating_change,rating_after,created_at").eq("profile_id", profileId).order("created_at", { ascending: false }),
     db.from("moderation_reports").select("id,category,priority,status,details,source,reporter_profile_id,reporter_referee_id,assigned_admin_id,resolved_by,fixture_id,open_queue_game_id,created_at,resolved_at,resolution_note").eq("subject_profile_id", profileId).order("created_at", { ascending: false }),
     db.from("moderation_actions").select("id,action_type,restriction_scope,reason_code,user_message,private_note,starts_at,ends_at,revoked_at,revocation_reason").eq("subject_profile_id", profileId).order("created_at", { ascending: false }),
     db.from("reliability_incidents").select("id,outcome,strike_delta,active_count_before,active_count_after,occurred_at,expires_at,fixture_id,detail,reversal_of").eq("profile_id", profileId).order("occurred_at", { ascending: false }),
@@ -175,7 +176,7 @@ async function loadPlayerDetail(db: SupabaseClient, profileId: string) {
     ...rows(opponentClansResult.data),
   ]);
   const profile = profileResult.data as Row;
-  const rating = (ratingResult.data ?? {}) as Row;
+  const ratings = rows(ratingResult.data);
 
   return {
     subjectType: "PLAYER" as const,
@@ -188,10 +189,15 @@ async function loadPlayerDetail(db: SupabaseClient, profileId: string) {
     facts: [
       { label: "Phone", value: text(profile.phone, "Not provided") },
       { label: "Date of birth", value: text(profile.date_of_birth, "Not provided") },
-      { label: "Player SR", value: text(rating.skill_rating, "1200") },
-      { label: "Record", value: `${integer(rating.wins)}W · ${integer(rating.draws)}D · ${integer(rating.losses)}L` },
-      { label: "Matches played", value: text(rating.matches_played, "0") },
-      { label: "Last SR change", value: signed(integer(rating.last_change)) },
+      ...["OUTFIELD", "GOALKEEPER"].flatMap((track) => {
+        const rating = ratings.find((row) => row.rating_track === track) ?? {};
+        const label = track === "GOALKEEPER" ? "Keeper" : "Outfield";
+        return [
+          { label: `${label} SR`, value: text(rating.skill_rating, "1200") },
+          { label: `${label} record`, value: `${integer(rating.wins)}W · ${integer(rating.draws)}D · ${integer(rating.losses)}L` },
+          { label: `${label} last SR change`, value: signed(integer(rating.last_change)) },
+        ];
+      }),
     ],
     reports: await hydrateReports(db, reportResult.data),
     actions: mapActions(actionResult.data),
@@ -214,6 +220,7 @@ async function loadPlayerDetail(db: SupabaseClient, profileId: string) {
     }),
     ratingEvents: rows(ratingEventResult.data).map((row) => ({
       id: text(row.id),
+      ratingTrack: row.rating_track === "GOALKEEPER" ? "GOALKEEPER" as const : row.rating_track === "OUTFIELD" ? "OUTFIELD" as const : null,
       sourceType: text(row.source_type),
       sourceId: text(row.source_id),
       result: text(row.result),

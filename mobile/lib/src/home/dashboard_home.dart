@@ -14,6 +14,10 @@ import '../fixtures/fixture_reliability_roster.dart';
 import '../fixtures/fixture_repository.dart';
 import '../leaderboard/leaderboard.dart';
 import '../leaderboard/leaderboard_repository.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_seasons.dart';
+import '../markets/fieldrush_city.dart';
+import '../markets/fieldrush_city_repository.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/fieldrush_booking_flow.dart';
 import '../open_queue/fieldrush_checkout_sheet.dart';
@@ -43,6 +47,8 @@ class DashboardHome extends StatefulWidget {
     required this.onOpenProfile,
     required this.onNavigateTab,
     this.discoveryRepository,
+    this.cityRepository,
+    this.ratingTrackController,
   });
   final int activationTick;
   final ProfileRepository profileRepository;
@@ -51,6 +57,8 @@ class DashboardHome extends StatefulWidget {
   final LeaderboardRepository leaderboardRepository;
   final OpenQueueRepository openQueueRepository;
   final HomeDiscoveryRepository? discoveryRepository;
+  final FieldrushCityRepository? cityRepository;
+  final ValueNotifier<RatingTrack>? ratingTrackController;
   final VoidCallback onOpenClans;
   final VoidCallback onOpenFixtures;
   final VoidCallback onOpenRanks;
@@ -64,6 +72,8 @@ class DashboardHome extends StatefulWidget {
 class _DashboardHomeState extends State<DashboardHome> {
   PlayerProfile? _profile;
   PlayerRatingLeaderboardEntry? _rating;
+  FieldrushPlayerRatings? _ratings;
+  RatingTrack _ratingTrack = RatingTrack.outfield;
   LeaderboardSeason? _season;
   List<OpenQueueBooking> _bookings = [];
   List<OpenQueueGame> _games = [];
@@ -78,10 +88,14 @@ class _DashboardHomeState extends State<DashboardHome> {
   String? _error;
   int _loadVersion = 0;
   StreamSubscription<void>? _partySubscription;
+  FieldrushCity _city = FieldrushCity.phoenix;
 
   @override
   void initState() {
     super.initState();
+    _ratingTrack = widget.ratingTrackController?.value ?? RatingTrack.outfield;
+    widget.ratingTrackController?.addListener(_syncRatingTrack);
+    fieldrushCityRevision.addListener(_load);
     _load();
     final repo = widget.openQueueRepository;
     if (repo is OpenQueuePartyNotificationRepository) {
@@ -96,13 +110,40 @@ class _DashboardHomeState extends State<DashboardHome> {
   @override
   void didUpdateWidget(covariant DashboardHome oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.ratingTrackController != widget.ratingTrackController) {
+      oldWidget.ratingTrackController?.removeListener(_syncRatingTrack);
+      widget.ratingTrackController?.addListener(_syncRatingTrack);
+      _syncRatingTrack();
+    }
     if (oldWidget.activationTick != widget.activationTick) _load();
   }
 
   @override
   void dispose() {
+    widget.ratingTrackController?.removeListener(_syncRatingTrack);
     _partySubscription?.cancel();
+    fieldrushCityRevision.removeListener(_load);
     super.dispose();
+  }
+
+  void _syncRatingTrack() {
+    if (!mounted) return;
+    setState(() {
+      _ratingTrack =
+          widget.ratingTrackController?.value ?? RatingTrack.outfield;
+      if (_ratings != null) _rating = _ratings!.forTrack(_ratingTrack);
+    });
+  }
+
+  void _chooseRatingTrack(RatingTrack track) {
+    if (widget.ratingTrackController != null) {
+      widget.ratingTrackController!.value = track;
+    } else {
+      setState(() {
+        _ratingTrack = track;
+        _rating = _ratings?.forTrack(track);
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -114,8 +155,20 @@ class _DashboardHomeState extends State<DashboardHome> {
       _error = null;
     });
     try {
-      final season = activeLeaderboardSeason;
+      final season = await loadActiveLeaderboardSeason(
+        widget.leaderboardRepository,
+      );
+      if (!mounted || version != _loadVersion) return;
       final openQueue = widget.openQueueRepository;
+      final cityRepository =
+          widget.cityRepository ??
+          (openQueue is SupabaseOpenQueueRepository
+              ? SupabaseFieldrushCityRepository()
+              : null);
+      final city = cityRepository == null
+          ? FieldrushCity.phoenix
+          : await cityRepository.loadPreferredCity();
+      if (!mounted || version != _loadVersion) return;
       final failures = <String>[];
       Future<T?> optional<T>(String label, Future<T> future) async {
         try {
@@ -130,7 +183,10 @@ class _DashboardHomeState extends State<DashboardHome> {
         widget.profileRepository.getCurrentProfile(),
         optional(
           'rating',
-          widget.leaderboardRepository.loadCurrentPlayerRating(season),
+          widget.leaderboardRepository is TrackLeaderboardRepository
+              ? (widget.leaderboardRepository as TrackLeaderboardRepository)
+                    .loadPlayerRatings(season: season)
+              : widget.leaderboardRepository.loadCurrentPlayerRating(season),
         ),
         optional(
           'bookings',
@@ -138,9 +194,11 @@ class _DashboardHomeState extends State<DashboardHome> {
         ),
         optional(
           'available games',
-          openQueue is OpenQueueMarketRepository
+          openQueue is OpenQueueCityRepository
+              ? (openQueue as OpenQueueCityRepository).listCityGames(city.id)
+              : openQueue is OpenQueueMarketRepository
               ? (openQueue as OpenQueueMarketRepository).listMarketGames(
-                  'America/Phoenix',
+                  city.timezone,
                 )
               : openQueue.listGames(),
         ),
@@ -208,7 +266,15 @@ class _DashboardHomeState extends State<DashboardHome> {
       navigationProfile?.complete(profile);
       setState(() {
         _profile = profile;
-        _rating = data[1] as PlayerRatingLeaderboardEntry?;
+        _city = city;
+        _ratings = data[1] is FieldrushPlayerRatings
+            ? data[1] as FieldrushPlayerRatings
+            : null;
+        _rating =
+            _ratings?.forTrack(_ratingTrack) ??
+            (data[1] is PlayerRatingLeaderboardEntry
+                ? data[1] as PlayerRatingLeaderboardEntry
+                : null);
         _season = season;
         _bookings = bookings;
         _games = data[3] as List<OpenQueueGame>? ?? [];
@@ -529,7 +595,7 @@ class _DashboardHomeState extends State<DashboardHome> {
           (g) =>
               !bookedIds.contains(g.id) &&
               g.myBookingId == null &&
-              g.timezone == 'America/Phoenix' &&
+              g.belongsToCity(_city.id, _city.timezone) &&
               !g.hasPendingOperationalResolution &&
               g.supportedRoles.any(g.canBook),
         )
@@ -618,6 +684,9 @@ class _DashboardHomeState extends State<DashboardHome> {
                     FieldrushHomeRating(
                       profile: profile,
                       rating: _rating,
+                      ratings: _ratings,
+                      track: _ratingTrack,
+                      onTrack: _ratings == null ? null : _chooseRatingTrack,
                       season: _season,
                       onTap: widget.onOpenRanks,
                     ),

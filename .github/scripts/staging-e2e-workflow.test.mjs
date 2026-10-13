@@ -77,7 +77,10 @@ test("all six baseline checks are independently plan-gated after preflight", () 
 
 test("the shared admin inbox navigation is verified before hosted deployments", () => {
   const source = job("referee");
-  const browser = stepContaining(source, "npm run test:ui -- admin-inbox-navigation.spec.ts --project=chromium");
+  const browser = stepContaining(source, "npm run test:ui -- admin-inbox-navigation.spec.ts");
+  assert.match(browser, /admin-cities\.spec\.ts/);
+  assert.match(browser, /admin-seasons\.spec\.ts/);
+  assert.match(browser, /--project=chromium/);
   assert.match(source, /npx playwright install --with-deps chromium/);
   assert.ok(source.indexOf("Check admin inbox navigation") < source.indexOf("Build referee app"));
   assert.doesNotMatch(browser, /continue-on-error:|\|\|\s*true|secrets\./);
@@ -130,7 +133,28 @@ test("checkout preflight regression tests run with the mandatory Deno suite", ()
   const source = job("database");
   const check = stepContaining(source, "name: Check Edge Functions and database verifier");
   assert.match(check, /deno test[\s\S]*supabase\/scripts\/e2e\/checkouts_test\.ts/);
+  assert.match(check, /deno test[\s\S]*supabase\/scripts\/e2e\/rating_tracks_test\.ts/);
   assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true/);
+});
+
+test("city and keeper behavior is verified against the fully replayed schema", () => {
+  const source = job("database");
+  const script = "supabase/scripts/verify_fieldrush_city_keeper_rankings.sql";
+  const check = stepContaining(source, script);
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+});
+
+test("season rewards are verified against the fully replayed schema", () => {
+  const source = job("database");
+  const script = "supabase/scripts/verify_fieldrush_season_rewards.sql";
+  const check = stepContaining(source, script);
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
 });
 
 test("checkout preflight runs before creating fixtures and after cleanup cancels tagged games", () => {

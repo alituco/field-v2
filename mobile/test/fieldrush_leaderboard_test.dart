@@ -11,6 +11,9 @@ import 'package:field/src/home/home_discovery_screen.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/leaderboard/leaderboard_screen.dart';
+import 'package:field/src/leaderboard/fieldrush_placement.dart';
+import 'package:field/src/leaderboard/fieldrush_rating_tracks.dart';
+import 'package:field/src/leaderboard/fieldrush_season_rewards.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
@@ -23,6 +26,160 @@ import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  test('published rewards RPC uses exact city, role and season', () async {
+    final client = SupabaseClient(
+      'https://fieldrush-test.invalid',
+      'test-key',
+      authOptions: const AuthClientOptions(autoRefreshToken: false),
+      httpClient: MockClient((request) async {
+        expect(request.url.path, '/rest/v1/rpc/get_fieldrush_season_rewards');
+        expect(jsonDecode(request.body), {
+          'season_id_to_use': 's1',
+          'city_id_to_use': 'phoenix',
+          'rating_track_to_use': 'GOALKEEPER',
+        });
+        return http.Response(
+          jsonEncode({
+            'currency': 'USD',
+            'minimum_rated_games': 4,
+            'first_prize_cents': 15000,
+            'second_prize_cents': 10000,
+            'third_prize_cents': 5050,
+            'prize_players': [],
+            'current_player': null,
+            'next_player': null,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+          request: request,
+        );
+      }),
+    );
+    addTearDown(client.dispose);
+    final reward = await SupabaseLeaderboardRepository(client: client)
+        .loadSeasonRewards(
+          season: leaderboardSeasons[1],
+          track: RatingTrack.goalkeeper,
+          cityId: 'phoenix',
+        );
+    expect(reward!.amountLabel(1), '\$150');
+    expect(reward.amountLabel(3), '\$50.50');
+    expect(reward.minimumRatedGames, 4);
+  });
+
+  testWidgets('published empty rewards show all three open prize places', (
+    tester,
+  ) async {
+    await _pump(tester, rankings: _RewardRankings(total: 0));
+    expect(find.text('PRIZE PLACES'), findsOneWidget);
+    expect(find.text('Open'), findsNWidgets(3));
+    expect(find.text('No one here yet'), findsNWidgets(3));
+    for (final amount in ['\$150', '\$100', '\$50']) {
+      expect(find.text(amount), findsOneWidget);
+    }
+    expect(find.text('IN PLACEMENT'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ranks-empty-ranked')), findsNothing);
+    expect(find.textContaining('Paid'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'two qualifiers keep third prize open with full configured amounts',
+    (tester) async {
+      await _pump(tester, rankings: _RewardRankings(total: 2));
+      expect(find.byKey(const ValueKey('ranks-prize-p1')), findsOneWidget);
+      expect(find.byKey(const ValueKey('ranks-prize-p2')), findsOneWidget);
+      expect(find.byKey(const ValueKey('ranks-prize-open-3')), findsOneWidget);
+      expect(find.text('Open'), findsOneWidget);
+      expect(find.text('\$150'), findsOneWidget);
+      expect(find.text('\$100'), findsOneWidget);
+      expect(find.text('\$50'), findsOneWidget);
+      expect(find.byKey(const ValueKey('ranks-podium-p1')), findsNothing);
+    },
+  );
+
+  testWidgets('higher prize minimum never hides ranked nonqualifiers', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      rankings: _RewardRankings(total: 2, qualified: 0, minimum: 12),
+    );
+    expect(find.text('Open'), findsNWidgets(3));
+    expect(find.byKey(const ValueKey('ranks-player-p1')), findsOneWidget);
+    expect(find.byKey(const ValueKey('ranks-player-p2')), findsOneWidget);
+    expect(
+      find.text(
+        'Play 12 rated outfield games this season to qualify for cash prizes.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('2 games to reveal your division'), findsOneWidget);
+  });
+
+  testWidgets('global ladder never requests or advertises city rewards', (
+    tester,
+  ) async {
+    final rankings = _RewardRankings(total: 2);
+    await _pump(tester, rankings: rankings);
+    expect(rankings.rewardCities, ['phoenix']);
+    await tester.tap(find.byKey(const ValueKey('ranks-city')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Global').last);
+    await tester.pumpAndSettle();
+    expect(rankings.rewardCities, ['phoenix']);
+    expect(find.text('PRIZE PLACES'), findsNothing);
+    expect(find.text('\$150'), findsNothing);
+  });
+
+  testWidgets('reward failures preserve ranks and show a recoverable message', (
+    tester,
+  ) async {
+    await _pump(tester, rankings: _RewardRankings(total: 2, rewardsFail: true));
+    expect(find.text('PRIZE PLACES'), findsNothing);
+    expect(find.byKey(const ValueKey('ranks-player-p1')), findsOneWidget);
+    expect(
+      find.text('Could not load season rewards. Pull down to try again.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('prize rows fit narrow large-text screens', (tester) async {
+    await _pump(
+      tester,
+      rankings: _RewardRankings(total: 2),
+      width: 320,
+      textScale: 1.6,
+      height: 2600,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('full prize ladder retains neighbors and shows the real SR gap', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      rankings: _RewardRankings(total: 30, matches: 8, ownRank: 15),
+    );
+    expect(find.text('PRIZE PLACES'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ranks-prize-p3')), findsOneWidget);
+    expect(
+      find.text('You’re 563 SR behind 3rd place.', findRichText: true),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('ranks-player-me')), findsOneWidget);
+    expect(find.text('AROUND YOU'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ranks-podium-p1')), findsNothing);
+  });
+
+  testWidgets('no published rewards keeps the ordinary ladder', (tester) async {
+    await _pump(tester, rankings: _RewardRankings(total: 2, unpublished: true));
+    expect(find.text('PRIZE PLACES'), findsNothing);
+    expect(find.byKey(const ValueKey('ranks-player-p1')), findsOneWidget);
+    expect(find.text('\$150'), findsNothing);
+  });
+
   test(
     'bounded page RPC carries exact season, offset, region, and count',
     () async {
@@ -31,12 +188,11 @@ void main() {
         'test-key',
         authOptions: const AuthClientOptions(autoRefreshToken: false),
         httpClient: MockClient((request) async {
-          expect(
-            request.url.path,
-            '/rest/v1/rpc/list_fieldrush_player_rating_page',
-          );
+          expect(request.url.path, '/rest/v1/rpc/list_fieldrush_rating_page');
           expect(jsonDecode(request.body), {
-            'region_to_use': 'phoenix',
+            'scope_to_use': 'CITY',
+            'city_id_to_use': 'phoenix',
+            'rating_track_to_use': 'OUTFIELD',
             'season_starts_on': '2026-10-01',
             'season_ends_on': '2026-12-31',
             'offset_to_use': 103,
@@ -148,7 +304,8 @@ void main() {
     expect(find.byKey(const ValueKey('ranks-standing')), findsNothing);
     await tester.tap(find.byKey(const ValueKey('ranks-city')));
     await tester.pumpAndSettle();
-    expect(find.text('Solo ladder is live'), findsOneWidget);
+    expect(find.text('City leaderboard'), findsOneWidget);
+    expect(find.text('Global'), findsOneWidget);
     expect(find.text('Los Angeles'), findsNothing);
     expect(find.text('Bahrain'), findsNothing);
     expect(tester.takeException(), isNull);
@@ -181,8 +338,8 @@ void main() {
       rankings.ratingFail = true;
       await tester.tap(find.text('Try again'));
       await tester.pumpAndSettle();
-      expect(find.text('The ladder starts here'), findsOneWidget);
-      expect(find.text('0 ranked players'), findsOneWidget);
+      expect(find.text("No one's ranked yet"), findsOneWidget);
+      expect(find.text('0 players'), findsOneWidget);
       expect(find.text('Your standing is unavailable'), findsOneWidget);
       expect(find.text('#?'), findsNothing);
       expect(find.text('????'), findsNothing);
@@ -223,6 +380,138 @@ void main() {
       expect(find.text('AROUND YOU'), findsOneWidget);
       expect(find.byKey(const ValueKey('ranks-player-me')), findsOneWidget);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('zero, one and two ranked use the exact sparse hierarchy', (
+    tester,
+  ) async {
+    for (final count in [0, 1, 2]) {
+      var findGame = false;
+      final rankings = _PlacementRankings(total: count);
+      await _pump(
+        tester,
+        rankings: rankings,
+        onFindGame: () => findGame = true,
+      );
+      expect(find.text('RANKED'), findsOneWidget);
+      expect(find.text('IN PLACEMENT'), findsOneWidget);
+      expect(
+        find.text('$count ${count == 1 ? 'player' : 'players'}'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('ranks-podium-p1')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('ranks-empty-ranked')),
+        count == 0 ? findsOneWidget : findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('ranks-sparse-ranked')),
+        count > 0 ? findsOneWidget : findsNothing,
+      );
+      expect(find.text('1 of 2 games'), findsNWidgets(4));
+      expect(find.text('0 of 2 games'), findsOneWidget);
+      expect(find.text('See all 10 ›'), findsOneWidget);
+      expect(find.text('1234'), findsNothing);
+      final filled = tester.widget<Container>(
+        find.byKey(const ValueKey('placement-pip-placement-0-0')),
+      );
+      expect(
+        (filled.decoration as BoxDecoration).color,
+        FieldrushAuthTheme.ink,
+      );
+      await tester.tap(find.text('Find a game'));
+      expect(findGame, isTrue);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('sparse placement expands real bounded pages and collapses', (
+    tester,
+  ) async {
+    final rankings = _PlacementRankings(total: 2);
+    await _pump(tester, rankings: rankings, height: 2400);
+    await tester.tap(find.text('See all 10 ›'));
+    await tester.pumpAndSettle();
+    expect(rankings.placementRequests, [(0, 4), (4, 20)]);
+    expect(find.text('1 of 2 games'), findsNWidgets(9));
+    expect(find.text('Show less'), findsOneWidget);
+    await tester.tap(find.text('Show less'));
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 2 games'), findsNWidgets(4));
+    await tester.tap(find.text('See all 10 ›'));
+    await tester.pumpAndSettle();
+    expect(rankings.placementRequests, [(0, 4), (4, 20)]);
+    expect(find.text('1 of 2 games'), findsNWidgets(9));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('sparse ladder fits a narrow phone with large text', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      rankings: _PlacementRankings(total: 2),
+      width: 320,
+      height: 1800,
+      textScale: 1.4,
+      onFindGame: () {},
+    );
+    expect(find.text('IN PLACEMENT'), findsOneWidget);
+    expect(find.text('0 of 2 games'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  test(
+    'placement RPC is bounded, role scoped and contains no provisional SR',
+    () async {
+      final client = SupabaseClient(
+        'https://fieldrush-test.invalid',
+        'test-key',
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((request) async {
+          expect(
+            request.url.path,
+            '/rest/v1/rpc/list_fieldrush_placement_page',
+          );
+          expect(jsonDecode(request.body), {
+            'scope_to_use': 'GLOBAL',
+            'city_id_to_use': null,
+            'rating_track_to_use': 'GOALKEEPER',
+            'season_starts_on': '2026-10-01',
+            'season_ends_on': '2026-12-31',
+            'offset_to_use': 4,
+            'page_size_to_use': 20,
+          });
+          return http.Response(
+            jsonEncode({
+              'players': [
+                {
+                  'profile_id': 'keeper',
+                  'display_name': 'Keeper K.',
+                  'username': 'keeper',
+                  'matches_played': 1,
+                },
+              ],
+              'total_count': 5,
+              'next_offset': null,
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+            request: request,
+          );
+        }),
+      );
+      addTearDown(client.dispose);
+      final page = await SupabaseLeaderboardRepository(client: client)
+          .loadPlacementPage(
+            season: leaderboardSeasons[1],
+            track: RatingTrack.goalkeeper,
+            offset: 4,
+            pageSize: 20,
+          );
+      expect(page.players.single.matchesPlayed, 1);
+      expect(page.players.single.profileId, 'keeper');
     },
   );
 
@@ -278,7 +567,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350));
     await tester.pumpAndSettle();
     expect(discovery.queries, ['alex']);
-    expect(find.text('Alex Real'), findsOneWidget);
+    expect(find.textContaining('Alex Real · Placement'), findsOneWidget);
     await tester.tap(find.byTooltip('Back'));
     await tester.pumpAndSettle();
     expect(find.text('Ranks'), findsOneWidget);
@@ -329,11 +618,23 @@ void main() {
         'MaterialIcons',
       )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
     });
-    for (final (name, count) in [('ranked', 8), ('placement', 1)]) {
+    for (final (name, count, total) in [
+      ('ranked', 8, 150),
+      ('placement', 1, 150),
+      ('empty', 0, 0),
+      ('two-ranked', 0, 2),
+      ('prizes-empty', 0, 0),
+      ('prizes-two', 0, 2),
+    ]) {
       final key = GlobalKey();
       await _pump(
         tester,
-        rankings: _Rankings(matches: count, total: 150, ownRank: 138),
+        rankings: name.startsWith('prizes')
+            ? _RewardRankings(total: total)
+            : total < 3
+            ? _PlacementRankings(total: total)
+            : _Rankings(matches: count, total: total, ownRank: 138),
+        onFindGame: () {},
         height: 1350,
         boundary: key,
       );
@@ -358,6 +659,7 @@ Future<void> _pump(
   _Profiles? profiles,
   _Discovery? discovery,
   VoidCallback? onYou,
+  VoidCallback? onFindGame,
   int tick = 0,
   double width = 390,
   double height = 1600,
@@ -386,6 +688,7 @@ Future<void> _pump(
               profileRepository: profiles ?? _Profiles(),
               discoveryRepository: discovery ?? _Discovery(),
               onOpenYou: onYou,
+              onFindGame: onFindGame,
               activationTick: tick,
             ),
           ),
@@ -418,6 +721,81 @@ PlayerRatingLeaderboardEntry _player(
   lastChange: 7,
   region: region,
 );
+
+class _PlacementRankings extends _Rankings
+    implements PlacementLeaderboardRepository {
+  _PlacementRankings({required super.total, super.matches = 0, super.ownRank});
+  final placementRequests = <(int, int)>[];
+  @override
+  Future<FieldrushPlacementPage> loadPlacementPage({
+    required LeaderboardSeason season,
+    required RatingTrack track,
+    String? cityId,
+    int offset = 0,
+    int pageSize = 4,
+  }) async {
+    placementRequests.add((offset, pageSize));
+    return FieldrushPlacementPage(
+      players: [
+        for (var i = offset; i < 9 && i < offset + pageSize; i++)
+          FieldrushPlacementPlayer(
+            profileId: 'placement-$i',
+            displayName: 'Player $i',
+            username: 'placement_$i',
+            matchesPlayed: 1,
+          ),
+      ],
+      totalCount: 9,
+      nextOffset: offset + pageSize < 9 ? offset + pageSize : null,
+    );
+  }
+}
+
+class _RewardRankings extends _PlacementRankings
+    implements SeasonRewardsRepository {
+  _RewardRankings({
+    required super.total,
+    super.matches,
+    super.ownRank,
+    this.qualified,
+    this.minimum = 2,
+    this.rewardsFail = false,
+    this.unpublished = false,
+  });
+  final int? qualified;
+  final int minimum;
+  final bool rewardsFail, unpublished;
+  final rewardCities = <String>[];
+  @override
+  Future<FieldrushSeasonRewards?> loadSeasonRewards({
+    required LeaderboardSeason season,
+    required RatingTrack track,
+    required String cityId,
+  }) async {
+    rewardCities.add(cityId);
+    if (unpublished) return null;
+    if (rewardsFail) {
+      throw const PostgrestException(
+        message: 'private database error',
+        code: 'PGRST202',
+      );
+    }
+    return FieldrushSeasonRewards(
+      minimumRatedGames: minimum,
+      prizesInCents: const [15000, 10000, 5000],
+      players: [
+        for (var rank = 1; rank <= (qualified ?? total) && rank <= 3; rank++)
+          _player(rank, ownRank: ownRank),
+      ],
+      currentPlayer: this.matches >= minimum
+          ? _player(ownRank, ownRank: ownRank)
+          : null,
+      nextPlayer: this.matches >= minimum && ownRank < total
+          ? _player(ownRank + 1, ownRank: ownRank)
+          : null,
+    );
+  }
+}
 
 class _Rankings extends Fake
     implements LeaderboardRepository, PagedLeaderboardRepository {

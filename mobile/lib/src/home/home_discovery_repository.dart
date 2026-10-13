@@ -6,11 +6,19 @@ class HomePlayerResult {
     required this.name,
     required this.username,
     this.avatarUrl,
+    this.skillRating,
+    this.matchesPlayed = 0,
+    this.cityName,
+    this.isSelf = false,
   });
   final String id;
   final String name;
   final String username;
   final String? avatarUrl;
+  final int? skillRating;
+  final int matchesPlayed;
+  final String? cityName;
+  final bool isSelf;
 }
 
 class HomeNotification {
@@ -87,19 +95,14 @@ class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
   Future<List<HomePlayerResult>> searchPlayers(String query) async {
     final input = query.trim().replaceFirst(RegExp(r'^@'), '');
     if (input.length < 2) return [];
-    // Search only public profile fields. Never expose the development account
-    // directory, phone numbers or private Fieldrush identity data.
-    final needle = input
-        .replaceAll(RegExp(r'[^a-zA-Z0-9 ._-]'), '')
-        .replaceAll('%', '')
-        .replaceAll('_', r'\_');
-    if (needle.length < 2) return [];
-    final rows = await _client
-        .from('profiles')
-        .select('id, display_name, username, avatar_url')
-        .or('display_name.ilike.%$needle%,username.ilike.%$needle%')
-        .order('display_name')
-        .limit(30);
+    // One bounded public RPC supplies current-season placement and earned city
+    // without fetching individual accounts or issuing one rating call per row.
+    final rows =
+        await _client.rpc(
+              'search_fieldrush_players',
+              params: {'query_to_use': input},
+            )
+            as List;
     return [
       for (final row in rows)
         HomePlayerResult(
@@ -107,6 +110,10 @@ class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
           name: row['display_name'] as String? ?? 'Player',
           username: row['username'] as String? ?? '',
           avatarUrl: _nonEmptyString(row['avatar_url']),
+          skillRating: (row['skill_rating'] as num?)?.toInt(),
+          matchesPlayed: (row['matches_played'] as num?)?.toInt() ?? 0,
+          cityName: _nonEmptyString(row['city_name']),
+          isSelf: row['is_self'] == true,
         ),
     ];
   }

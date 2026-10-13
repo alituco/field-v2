@@ -39,6 +39,10 @@ class ClanMember {
     required this.role,
     this.phone,
     this.joinedAt,
+    this.username,
+    this.avatarUrl,
+    this.skillRating,
+    this.matchesPlayed = 0,
   });
 
   final String profileId;
@@ -46,6 +50,10 @@ class ClanMember {
   final String role;
   final String? phone;
   final DateTime? joinedAt;
+  final String? username;
+  final String? avatarUrl;
+  final int? skillRating;
+  final int matchesPlayed;
 
   bool get isOwner => role == 'owner';
 
@@ -79,6 +87,12 @@ class ClanMember {
       role: json['role'] as String? ?? 'member',
       phone: profile['phone'] as String?,
       joinedAt: _asDateTime(json['created_at']),
+      username: profile['username'] as String?,
+      avatarUrl: (profile['avatar_url'] as String?)?.trim().isNotEmpty == true
+          ? (profile['avatar_url'] as String).trim()
+          : null,
+      skillRating: (json['skill_rating'] as num?)?.toInt(),
+      matchesPlayed: _asInt(json['matches_played']),
     );
   }
 }
@@ -178,7 +192,9 @@ class Clan {
     required this.losses,
     required this.memberCount,
     required this.createdBy,
-    this.region = 'bahrain',
+    this.region = 'phoenix',
+    this.marketCityId,
+    this.cityName,
     this.createdAt,
     this.updatedAt,
   });
@@ -196,6 +212,8 @@ class Clan {
   final int memberCount;
   final String createdBy;
   final String region;
+  final String? marketCityId;
+  final String? cityName;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
@@ -213,7 +231,14 @@ class Clan {
       losses: _asInt(json['losses']),
       memberCount: _asInt(json['member_count'], fallback: 1),
       createdBy: json['created_by'] as String? ?? '',
-      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
+      region:
+          (json['market_city_id'] as String? ??
+                  json['region'] as String? ??
+                  'phoenix')
+              .trim()
+              .toLowerCase(),
+      marketCityId: json['market_city_id'] as String?,
+      cityName: json['city_name'] as String?,
       createdAt: _asDateTime(json['created_at']),
       updatedAt: _asDateTime(json['updated_at']),
     );

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../home/fieldrush_home_widgets.dart';
 import '../leaderboard/leaderboard.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../ranking/rating_division.dart';
 import '../ui/field_loading.dart';
 import 'profile.dart';
@@ -55,6 +57,10 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     this.showUpRate,
     this.recentResults = const [],
     this.trailingChildren = const [],
+    this.ratings,
+    this.track = RatingTrack.outfield,
+    this.onTrack,
+    this.ratingUnavailable = false,
   });
 
   final PlayerProfile profile;
@@ -70,6 +76,12 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
   final double? showUpRate;
   final List<ProfileGameOutcome?> recentResults;
   final List<Widget> trailingChildren;
+  final FieldrushPlayerRatings? ratings;
+  final RatingTrack track;
+  final ValueChanged<RatingTrack>? onTrack;
+  final bool ratingUnavailable;
+
+  PlayerRatingLeaderboardEntry? get _trackRating => ratings?.forTrack(track);
 
   @override
   Widget build(BuildContext context) => Column(
@@ -80,6 +92,18 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         child: _PlayerRatingCard(
           profile: profile,
+          ratingOverride: _trackRating,
+          unavailable: ratingUnavailable,
+          roleTabs: onTrack == null
+              ? null
+              : FieldrushRatingRoleTabs(
+                  selected: track,
+                  ratings: ratings,
+                  onChanged: onTrack!,
+                  dark:
+                      (_trackRating?.matchesPlayed ?? 0) < 2 ||
+                      ![3, 4].contains(_trackRating?.division.number),
+                ),
           positionLabel: positionLabel,
           isFollowing: isFollowing,
           followBusy: followBusy,
@@ -101,14 +125,29 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
                 for (final stat in [
                   (
                     label: 'PLAYED',
-                    value: played != null && played! >= 0 ? '$played' : '—',
-                    definition: 'Verified played solo and clan games.',
+                    value: _trackRating != null
+                        ? '${_trackRating!.matchesPlayed}'
+                        : played != null && played! >= 0
+                        ? '$played'
+                        : '—',
+                    definition: ratings != null
+                        ? 'Played ${track.label.toLowerCase()} games this season.'
+                        : 'Verified played solo and clan games.',
                   ),
                   (
                     label: 'WIN RATE',
-                    value: _percentage(winRate),
-                    definition:
-                        'Wins divided by verified played solo and clan games. Draws count as games played. Unavailable when a recorded result is unknown.',
+                    value: _percentage(
+                      _trackRating != null
+                          ? (_trackRating!.matchesPlayed == 0
+                                ? null
+                                : 100 *
+                                      _trackRating!.wins /
+                                      _trackRating!.matchesPlayed)
+                          : winRate,
+                    ),
+                    definition: ratings != null
+                        ? 'Wins divided by played ${track == RatingTrack.goalkeeper ? 'games in goal' : 'outfield games'} this season. Draws count as games played.'
+                        : 'Wins divided by verified played solo and clan games. Draws count as games played. Unavailable when a recorded result is unknown.',
                   ),
                   (
                     label: 'SHOW-UP',
@@ -133,7 +172,22 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
       ),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: _LastFive(results: recentResults),
+        child: _LastFive(
+          results: ratings == null
+              ? recentResults
+              : ratings!
+                    .eventsFor(track)
+                    .take(5)
+                    .map(
+                      (event) => switch (event.result) {
+                        'WIN' => ProfileGameOutcome.win,
+                        'LOSS' => ProfileGameOutcome.loss,
+                        'DRAW' => ProfileGameOutcome.draw,
+                        _ => null,
+                      },
+                    )
+                    .toList(),
+        ),
       ),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -246,16 +300,36 @@ class _PlayerRatingCard extends StatelessWidget {
     required this.isFollowing,
     required this.followBusy,
     required this.onFollow,
+    this.ratingOverride,
+    this.roleTabs,
+    this.unavailable = false,
   });
   final PlayerProfile profile;
   final String positionLabel;
   final bool isFollowing;
   final bool followBusy;
   final VoidCallback? onFollow;
+  final PlayerRatingLeaderboardEntry? ratingOverride;
+  final Widget? roleTabs;
+  final bool unavailable;
 
   @override
   Widget build(BuildContext context) {
-    final rating = profile.playerRating;
+    final override = ratingOverride;
+    final rating = unavailable
+        ? null
+        : override == null
+        ? profile.playerRating
+        : ProfilePlayerRating(
+            skillRating: override.skillRating,
+            matchesPlayed: override.matchesPlayed,
+            wins: override.wins,
+            losses: override.losses,
+            draws: override.draws,
+            lastChange: override.lastChange,
+            region: override.region,
+            events: const [],
+          );
     final placement =
         rating != null &&
         rating.matchesPlayed < minimumPlayerLeaderboardMatches;
@@ -306,6 +380,10 @@ class _PlayerRatingCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (roleTabs != null) ...[
+                    Align(alignment: Alignment.centerLeft, child: roleTabs!),
+                    const SizedBox(height: 14),
+                  ],
                   Row(
                     children: [
                       Stack(

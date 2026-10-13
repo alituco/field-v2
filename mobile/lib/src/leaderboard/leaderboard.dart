@@ -118,6 +118,7 @@ class LeaderboardSeason {
     required this.rangeLabel,
     required this.startsOn,
     required this.endsOn,
+    this.minimumRatedGames = minimumPlayerLeaderboardMatches,
   });
 
   final String id;
@@ -125,40 +126,118 @@ class LeaderboardSeason {
   final String rangeLabel;
   final String startsOn;
   final String endsOn;
+
+  /// Prize qualification is season-specific; placement remains two games.
+  final int minimumRatedGames;
+
+  String get fullLabel =>
+      RegExp(r'^S\d+$', caseSensitive: false).hasMatch(label)
+      ? 'Season ${label.substring(1)}'
+      : label;
+
+  factory LeaderboardSeason.fromJson(Map<String, dynamic> json) {
+    final startsOn = json['starts_on'] as String;
+    final endsOn = json['ends_on'] as String;
+    final start = DateTime.parse(startsOn);
+    final end = DateTime.parse(endsOn);
+    if (end.isBefore(start)) {
+      throw const FormatException('Season end must follow its start.');
+    }
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final rangeLabel = start.year == end.year
+        ? '${months[start.month - 1]} - ${months[end.month - 1]} ${start.year}'
+        : '${months[start.month - 1]} ${start.year} - ${months[end.month - 1]} ${end.year}';
+    final minimumRatedGames = _leaderboardInt(
+      json['minimum_rated_games'],
+      fallback: minimumPlayerLeaderboardMatches,
+    );
+    if (minimumRatedGames < minimumPlayerLeaderboardMatches) {
+      throw const FormatException(
+        'Prize qualification must be at least two games.',
+      );
+    }
+    return LeaderboardSeason(
+      id: json['id'] as String,
+      label: json['label'] as String,
+      rangeLabel: rangeLabel,
+      startsOn: startsOn,
+      endsOn: endsOn,
+      minimumRatedGames: minimumRatedGames,
+    );
+  }
 }
 
-const leaderboardSeasons = [
-  LeaderboardSeason(
-    id: 's0',
-    label: 'S0',
-    rangeLabel: 'Jun - Sep 2026',
-    startsOn: '2026-06-01',
-    endsOn: '2026-09-30',
-  ),
-  LeaderboardSeason(
-    id: 's1',
-    label: 'S1',
-    rangeLabel: 'Oct - Dec 2026',
-    startsOn: '2026-10-01',
-    endsOn: '2026-12-31',
-  ),
-];
+const _initialLeaderboardSeason = LeaderboardSeason(
+  id: 's0',
+  label: 'S0',
+  rangeLabel: 'Jun - Sep 2026',
+  startsOn: '2026-06-01',
+  endsOn: '2026-09-30',
+);
+
+/// Offline/legacy fallback only. Live repositories use the server catalog so
+/// admin edits to future seasons apply consistently throughout the app.
+List<LeaderboardSeason> get leaderboardSeasons =>
+    leaderboardSeasonsThrough(_phoenixToday());
+
+List<LeaderboardSeason> leaderboardSeasonsThrough(DateTime date) {
+  final last = _quarterSeasonNumber(date).clamp(1, 400);
+  return [
+    _initialLeaderboardSeason,
+    for (var number = 1; number <= last; number++) _quarterSeason(number),
+  ];
+}
+
+int _quarterSeasonNumber(DateTime date) =>
+    (date.year - 2026) * 4 + (date.month - 1) ~/ 3 - 2;
+
+LeaderboardSeason _quarterSeason(int number) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final start = DateTime.utc(2026, 10 + (number - 1) * 3);
+  final end = DateTime.utc(start.year, start.month + 3, 0);
+  String day(DateTime value) => value.toIso8601String().substring(0, 10);
+  return LeaderboardSeason(
+    id: 's$number',
+    label: 'S$number',
+    rangeLabel:
+        '${months[start.month - 1]} - ${months[end.month - 1]} ${start.year}',
+    startsOn: day(start),
+    endsOn: day(end),
+  );
+}
 
 LeaderboardSeason get activeLeaderboardSeason =>
     leaderboardSeasonForDate(_phoenixToday());
 
 LeaderboardSeason leaderboardSeasonForDate(DateTime date) {
-  final day = DateTime.utc(date.year, date.month, date.day);
-  for (final season in leaderboardSeasons) {
-    final startsOn = DateTime.parse('${season.startsOn}T00:00:00Z');
-    final endsOn = DateTime.parse('${season.endsOn}T00:00:00Z');
-    if (!day.isBefore(startsOn) && !day.isAfter(endsOn)) return season;
-  }
-
-  final first = leaderboardSeasons.first;
-  final firstStart = DateTime.parse('${first.startsOn}T00:00:00Z');
-  if (day.isBefore(firstStart)) return first;
-  return leaderboardSeasons.last;
+  final number = _quarterSeasonNumber(date);
+  return number < 1 ? _initialLeaderboardSeason : _quarterSeason(number);
 }
 
 bool isActiveLeaderboardSeason(LeaderboardSeason season, {DateTime? now}) {
