@@ -74,6 +74,23 @@ begin
   end if;
 
   if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'match_attendance_records'
+      and column_name = 'is_current' and is_nullable = 'NO'
+  ) or to_regclass('public.current_match_attendance_records') is null
+    or to_regclass('public.match_attendance_solo_booking_idx') is null
+    or to_regclass('public.match_attendance_solo_current_profile_idx') is null
+  then
+    raise exception 'Hosted attendance is missing safe same-game rebooking support.';
+  end if;
+  if has_table_privilege('anon', 'public.current_match_attendance_records', 'SELECT')
+    or has_table_privilege('authenticated', 'public.current_match_attendance_records', 'SELECT')
+    or not has_table_privilege('service_role', 'public.current_match_attendance_records', 'SELECT')
+  then
+    raise exception 'Hosted current attendance must remain server-only.';
+  end if;
+
+  if not exists (
     select 1
     from public.reliability_policy_versions
     where state = 'PUBLISHED'

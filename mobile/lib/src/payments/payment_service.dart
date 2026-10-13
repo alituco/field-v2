@@ -56,6 +56,25 @@ class PaymentService {
     });
   }
 
+  /// Rechecks one already-paid attempt. Never prepares or collects a payment.
+  Future<PaymentRefundState> checkRefundStatus(String intentId) async {
+    final id = _requiredString(intentId);
+    final response = await _invoke({'action': 'confirm', 'intent_id': id});
+    if (response['intent_id'] != null && response['intent_id'] != id) {
+      throw const PaymentPendingException();
+    }
+    final status = _status(response);
+    if (status != 'REQUIRES_REFUND' && status != 'REFUNDED') {
+      // A stale/unknown response never makes this paid attempt chargeable again.
+      throw const PaymentPendingException();
+    }
+    return PaymentRefundState(
+      intentId: id,
+      status: status,
+      refundStatus: response['refund_status']?.toString().toUpperCase(),
+    );
+  }
+
   Future<PaymentResult> _pay({
     required PaymentPurpose purpose,
     required Map<String, dynamic> payload,
@@ -134,7 +153,7 @@ class PaymentService {
         throw const PaymentPendingException();
       }
     }
-    _throwCancellationTerminal(cancellation, reason);
+    _throwCancellationTerminal(cancellation, reason, intentId: intentId);
     return _confirm(intentId, cancellationReason: reason);
   }
 
@@ -161,9 +180,13 @@ class PaymentService {
           throw const PaymentPendingException();
         }
         if (cancellationReason != null) {
-          _throwCancellationTerminal(response, cancellationReason);
+          _throwCancellationTerminal(
+            response,
+            cancellationReason,
+            intentId: intentId,
+          );
         } else {
-          _throwTerminal(response);
+          _throwTerminal(response, intentId: intentId);
         }
       } on PaymentPendingException {
         // Temporary transport errors can follow a successful native payment.
@@ -296,18 +319,21 @@ class PaymentService {
     );
   }
 
-  static void _throwTerminal(Map<String, dynamic> response) {
+  static void _throwTerminal(
+    Map<String, dynamic> response, {
+    String? intentId,
+  }) {
     switch (_status(response)) {
       case 'CANCELLED':
         throw const PaymentCancelledException();
       case 'REFUNDED':
-        throw const PaymentException(
-          'The booking could not be completed. Your payment has been refunded.',
-        );
       case 'REQUIRES_REFUND':
-        throw const PaymentException(
-          'Your payment was received, but the booking could not be completed. '
-          'Support has been alerted and your refund is being resolved. Do not pay again.',
+        throw PaymentRefundException(
+          PaymentRefundState(
+            intentId: _requiredString(intentId ?? response['intent_id']),
+            status: _status(response),
+            refundStatus: response['refund_status']?.toString().toUpperCase(),
+          ),
         );
       case 'FAILED':
       case 'EXPIRED':
@@ -319,8 +345,9 @@ class PaymentService {
 
   static void _throwCancellationTerminal(
     Map<String, dynamic> response,
-    PaymentException reason,
-  ) {
+    PaymentException reason, {
+    String? intentId,
+  }) {
     switch (_status(response)) {
       case 'CANCELLED':
         throw reason;
@@ -330,7 +357,7 @@ class PaymentService {
         // Stripe. Do not turn an ambiguous cancellation into a new charge.
         throw const PaymentPendingException();
       default:
-        _throwTerminal(response);
+        _throwTerminal(response, intentId: intentId);
     }
   }
 
@@ -443,6 +470,32 @@ class PaymentException implements Exception {
 
 class PaymentCancelledException extends PaymentException {
   const PaymentCancelledException() : super('Payment was cancelled.');
+}
+
+class PaymentRefundState {
+  const PaymentRefundState({
+    required this.intentId,
+    required this.status,
+    this.refundStatus,
+  }) : assert(status == 'REQUIRES_REFUND' || status == 'REFUNDED');
+
+  final String intentId;
+  final String status;
+  final String? refundStatus;
+  bool get isRefunded => status == 'REFUNDED';
+  bool get needsReview => !isRefunded && refundStatus == 'FAILED';
+  String get message => isRefunded
+      ? 'Your spot could not be booked. Your payment has been refunded to your original payment method. Your bank may take time to show it.'
+      : needsReview
+      ? 'Your spot could not be booked and the refund needs support review. Keep the payment reference below when contacting support. Do not pay again.'
+      : 'Your payment was received, but your spot could not be booked. A refund to your original payment method is being processed. Do not pay again.';
+}
+
+class PaymentRefundException extends PaymentException {
+  PaymentRefundException(this.refund) : super(refund.message);
+  final PaymentRefundState refund;
+  String get intentId => refund.intentId;
+  String get status => refund.status;
 }
 
 class PaymentQuoteChangedException extends PaymentException {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
@@ -5,6 +7,9 @@ import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
 import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
+import '../support/contact_support_sheet.dart';
+import '../support/support.dart';
+import '../support/support_repository.dart';
 import 'fieldrush_booking_widgets.dart';
 import 'open_queue.dart';
 import 'fieldrush_game_loading.dart';
@@ -63,6 +68,11 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   bool _allowPop = false;
   bool _closing = false;
   int _loadGeneration = 0;
+  PaymentRefundState? _refund;
+  Timer? _refundTimer;
+  int _refundPollsRemaining = 0;
+  bool _checkingRefund = false;
+  String? _refundCheckError;
 
   bool get _selectingPosition =>
       widget.allowPositionSelection || widget.role == null;
@@ -71,7 +81,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       _processing ||
       _closing ||
       _paymentSubmitted ||
-      _resumePayment;
+      _resumePayment ||
+      _refund != null;
 
   bool get _embedded =>
       widget.repository is OpenQueueEmbeddedCheckoutRepository &&
@@ -81,6 +92,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       !_loading &&
       !_processing &&
       !_closing &&
+      _refund == null &&
       _role != null &&
       _preview != null &&
       (!_embedded ||
@@ -142,6 +154,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   @override
   void dispose() {
     _loadGeneration++;
+    _refundTimer?.cancel();
     _paymentSession?.removeListener(_paymentChanged);
     _paymentSession?.dispose();
     super.dispose();
@@ -190,7 +203,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         _closing ||
         _loading ||
         _resumePayment ||
-        _paymentSubmitted) {
+        _paymentSubmitted ||
+        _refund != null) {
       return;
     }
     final generation = ++_loadGeneration;
@@ -212,6 +226,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     if (_closing || (_processing && booking == null)) return;
     _closing = true;
     _loadGeneration++;
+    _refundTimer?.cancel();
     await _paymentSession?.close();
     if (!mounted) return;
     setState(() => _allowPop = true);
@@ -241,6 +256,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   }
 
   Future<void> _load() async {
+    if (_refund != null || _closing) return;
     final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
@@ -390,9 +406,14 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         }
         if (!_paymentSubmitted &&
             error is PaymentException &&
-            error is! PaymentPendingException) {
+            error is! PaymentPendingException &&
+            error is! PaymentRefundException) {
           _resumePayment = false;
         }
+      }
+      if (error is PaymentRefundException) {
+        await _showRefund(error.refund);
+        return;
       }
       if (error is PaymentQuoteChangedException) {
         // The service only returns this after the superseded attempt is safely
@@ -411,6 +432,139 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       if (mounted) setState(() => _processing = false);
     }
   }
+
+  Future<void> _showRefund(PaymentRefundState refund) async {
+    if (!mounted || _closing) return;
+    _refundTimer?.cancel();
+    setState(() {
+      _refund = refund;
+      _resumePayment = false;
+      _error = null;
+      _refundCheckError = null;
+      _refundPollsRemaining = 3;
+    });
+    final session = _paymentSession;
+    if (session != null) {
+      session.removeListener(_paymentChanged);
+      await session.close();
+      if (!mounted || _closing) return;
+      setState(() => _paymentSession = null);
+      await WidgetsBinding.instance.endOfFrame;
+      session.dispose();
+    }
+    _scheduleRefundRefresh();
+  }
+
+  void _scheduleRefundRefresh() {
+    _refundTimer?.cancel();
+    if (!mounted ||
+        _closing ||
+        _refund == null ||
+        _refund!.isRefunded ||
+        _refundPollsRemaining <= 0 ||
+        widget.repository is! OpenQueuePaymentStatusRepository) {
+      return;
+    }
+    _refundTimer = Timer(const Duration(seconds: 5), () {
+      _refundPollsRemaining--;
+      _refreshRefund();
+    });
+  }
+
+  Future<void> _refreshRefund() async {
+    final refund = _refund;
+    final repository = widget.repository;
+    if (!mounted ||
+        _closing ||
+        _checkingRefund ||
+        refund == null ||
+        refund.isRefunded ||
+        repository is! OpenQueuePaymentStatusRepository) {
+      return;
+    }
+    _refundTimer?.cancel();
+    final generation = _loadGeneration;
+    setState(() {
+      _checkingRefund = true;
+      _refundCheckError = null;
+    });
+    try {
+      final latest = await (repository as OpenQueuePaymentStatusRepository)
+          .checkRefundStatus(refund.intentId);
+      if (!mounted || _closing || generation != _loadGeneration) return;
+      if (latest.intentId != refund.intentId) {
+        throw const PaymentPendingException();
+      }
+      setState(() => _refund = latest);
+    } catch (_) {
+      if (mounted && !_closing && generation == _loadGeneration) {
+        setState(
+          () => _refundCheckError =
+              'Could not refresh the refund status. Your payment is still protected from another charge. Try checking again.',
+        );
+      }
+    } finally {
+      if (mounted && !_closing && generation == _loadGeneration) {
+        setState(() => _checkingRefund = false);
+        _scheduleRefundRefresh();
+      }
+    }
+  }
+
+  Widget _refundStatusPanel(PaymentRefundState refund) => BookingPanel(
+    padding: 16,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Semantics(
+          liveRegion: true,
+          child: Text(
+            refund.isRefunded
+                ? 'Refunded'
+                : refund.needsReview
+                ? 'Refund needs review'
+                : 'Refund processing',
+            style: bookingHeading(18),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(refund.message, style: bookingText(12)),
+        const SizedBox(height: 12),
+        Text('Payment reference', style: bookingText(10, bold: true)),
+        const SizedBox(height: 4),
+        SelectableText(refund.intentId, style: bookingText(11)),
+        if (_refundCheckError != null) ...[
+          const SizedBox(height: 10),
+          Text(_refundCheckError!, style: bookingText(11)),
+        ],
+        if (!refund.isRefunded &&
+            widget.repository is OpenQueuePaymentStatusRepository)
+          TextButton(
+            key: const ValueKey('check-refund-status'),
+            onPressed: _checkingRefund ? null : _refreshRefund,
+            child: Text(
+              _checkingRefund
+                  ? 'Checking refund status…'
+                  : 'Check refund status',
+            ),
+          ),
+        TextButton(
+          key: const ValueKey('refund-contact-support'),
+          onPressed: () => showContactSupportSheet(
+            context: context,
+            repository: SupabaseSupportRepository(),
+            initialCategory: SupportRequestCategory.bookingOrPayment,
+            requestContext: {
+              'source': 'checkout_refund',
+              'payment_intent_id': refund.intentId,
+              'game_id': widget.game.id,
+            },
+          ),
+          child: const Text('Contact support'),
+        ),
+      ],
+    ),
+  );
 
   Widget _embeddedPaymentOptions() {
     final session = _paymentSession;
@@ -663,7 +817,9 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Pay for your spot',
+                          _refund == null
+                              ? 'Pay for your spot'
+                              : 'Payment status',
                           style: bookingHeading(19),
                         ),
                       ),
@@ -700,7 +856,16 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       ),
                     ),
                   const SizedBox(height: 18),
-                  if (!_embedded || preview?.totalFils != 0) ...[
+                  if (_refund != null) ...[
+                    _refundStatusPanel(_refund!),
+                    // Keep native callbacks attached until close() completes.
+                    if (_paymentSession != null)
+                      Offstage(
+                        child: AbsorbPointer(
+                          child: _paymentSession!.buildView(),
+                        ),
+                      ),
+                  ] else if (!_embedded || preview?.totalFils != 0) ...[
                     Text('PAY WITH', style: bookingText(10, bold: true)),
                     const SizedBox(height: 9),
                     if (_embedded)
@@ -775,10 +940,11 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       style: bookingText(12),
                     ),
                   const SizedBox(height: 9),
-                  Text(
-                    'Cancellation refunds follow the game’s policy and return to your original payment method. Review the exact refund before cancelling.',
-                    style: bookingText(11),
-                  ),
+                  if (_refund == null)
+                    Text(
+                      'Cancellation refunds follow the game’s policy and return to your original payment method. Review the exact refund before cancelling.',
+                      style: bookingText(11),
+                    ),
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Semantics(
@@ -798,21 +964,28 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       ),
                   ],
                   const SizedBox(height: 16),
-                  FilledButton(
-                    key: const ValueKey('open-queue-confirm-payment'),
-                    onPressed: _canPay ? _pay : null,
-                    child: _processing
-                        ? const Text('Processing…')
-                        : Text(
-                            _role == null
-                                ? 'Pick a position'
-                                : _embedded
-                                ? preview?.totalFils == 0
-                                      ? 'Confirm booking'
-                                      : '${_resumePayment ? 'Resume payment' : 'Pay'}${preview == null ? '' : ' · ${preview.totalLabel}'}'
-                                : 'Continue to Pay${preview == null ? '' : ' · ${preview.totalLabel}'}',
-                          ),
-                  ),
+                  if (_refund == null)
+                    FilledButton(
+                      key: const ValueKey('open-queue-confirm-payment'),
+                      onPressed: _canPay ? _pay : null,
+                      child: _processing
+                          ? const Text('Processing…')
+                          : Text(
+                              _role == null
+                                  ? 'Pick a position'
+                                  : _embedded
+                                  ? preview?.totalFils == 0
+                                        ? 'Confirm booking'
+                                        : '${_resumePayment ? 'Resume payment' : 'Pay'}${preview == null ? '' : ' · ${preview.totalLabel}'}'
+                                  : 'Continue to Pay${preview == null ? '' : ' · ${preview.totalLabel}'}',
+                            ),
+                    ),
+                  if (_refund != null)
+                    FilledButton(
+                      key: const ValueKey('refund-done'),
+                      onPressed: _processing || _closing ? null : _close,
+                      child: const Text('Done'),
+                    ),
                   const SizedBox(height: 10),
                   Text(
                     'Secure payments by Stripe',

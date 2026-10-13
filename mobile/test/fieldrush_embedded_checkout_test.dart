@@ -8,6 +8,8 @@ import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/payments/fieldrush_embedded_payment.dart';
 import 'package:field/src/payments/payment_service.dart';
+import 'package:field/src/support/contact_support_sheet.dart';
+import 'package:field/src/support/support.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -223,6 +225,248 @@ void main() {
       expect(_payButton(tester).onPressed, isNull);
     },
   );
+
+  for (final status in ['REQUIRES_REFUND', 'REFUNDED']) {
+    for (final submitted in [false, true]) {
+      testWidgets(
+        '$status locks checkout even when native submission is $submitted',
+        (tester) async {
+          final refundError = PaymentRefundException(
+            PaymentRefundState(intentId: 'refund-attempt', status: status),
+          );
+          final repository = _Repository();
+          if (submitted) {
+            repository.afterCollectionError = refundError;
+          } else {
+            repository.beforeCollectionError = refundError;
+          }
+          final sessions = _Sessions();
+          final result = await _openCheckout(
+            tester,
+            repository,
+            sessions,
+            choosePosition: true,
+          );
+          await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+          await tester.pumpAndSettle();
+          sessions.current.select();
+          await tester.pump();
+          await _tapPay(tester);
+          expect(
+            find.text(status == 'REFUNDED' ? 'Refunded' : 'Refund processing'),
+            findsOneWidget,
+          );
+          expect(find.text('refund-attempt'), findsOneWidget);
+          expect(find.byKey(_payKey), findsNothing);
+          expect(find.textContaining('Resume payment'), findsNothing);
+          expect(find.text('Fake embedded payment element'), findsNothing);
+          expect(sessions.current.closed, isTrue);
+          for (final code in ['GK', 'DEF', 'ATT']) {
+            expect(
+              tester
+                  .widget<OutlinedButton>(
+                    find.byKey(ValueKey('checkout-position-$code')),
+                  )
+                  .onPressed,
+              isNull,
+            );
+          }
+          expect(repository.embeddedBookCalls, 1);
+          expect(sessions.current.collectCalls, submitted ? 1 : 0);
+          await tester.ensureVisible(find.byTooltip('Close checkout'));
+          await tester.tap(find.byTooltip('Close checkout'));
+          await tester.pumpAndSettle();
+          expect(result.completed, isTrue);
+          await tester.pump(const Duration(seconds: 30));
+          expect(repository.refundChecks, isEmpty);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'refund status refresh updates to refunded using only the original attempt',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = PaymentRefundException(_refund())
+        ..refundResponse = _refund(status: 'REFUNDED');
+      final sessions = _Sessions();
+      final result = await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      final quotes = repository.quoteCalls;
+      final sessionCount = sessions.created.length;
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('check-refund-status')),
+      );
+      await tester.tap(find.byKey(const ValueKey('check-refund-status')));
+      await tester.pumpAndSettle();
+      expect(find.text('Refunded'), findsOneWidget);
+      expect(find.byKey(const ValueKey('check-refund-status')), findsNothing);
+      expect(find.byKey(_payKey), findsNothing);
+      expect(repository.refundChecks, ['refund-attempt']);
+      expect(repository.embeddedBookCalls, 1);
+      expect(repository.quoteCalls, quotes);
+      expect(sessions.created, hasLength(sessionCount));
+      expect(result.completed, isFalse);
+      await tester.pump(const Duration(seconds: 30));
+      expect(repository.refundChecks, hasLength(1));
+    },
+  );
+
+  testWidgets(
+    'refund polling is bounded and never prepares or recollects a payment',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = PaymentRefundException(_refund());
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(seconds: 5));
+        await tester.pumpAndSettle();
+      }
+      expect(repository.refundChecks, List.filled(3, 'refund-attempt'));
+      expect(repository.embeddedBookCalls, 1);
+      expect(sessions.current.collectCalls, 1);
+      expect(find.text('Refund processing'), findsOneWidget);
+      expect(find.byKey(_payKey), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
+
+  testWidgets('automatic refund refresh stops after completion', (
+    tester,
+  ) async {
+    final repository = _Repository()
+      ..afterCollectionError = PaymentRefundException(_refund())
+      ..refundResponse = _refund(status: 'REFUNDED');
+    final sessions = _Sessions();
+    await _openCheckout(tester, repository, sessions);
+    sessions.current.select();
+    await tester.pump();
+    await _tapPay(tester);
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(find.text('Refunded'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 30));
+    expect(repository.refundChecks, ['refund-attempt']);
+    expect(repository.embeddedBookCalls, 1);
+    expect(sessions.current.collectCalls, 1);
+  });
+
+  testWidgets(
+    'a confirmed booking is recovered before showing a terminal refund report',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = PaymentRefundException(_refund());
+      repository.beforeCollect = () =>
+          repository.recoveredBooking = _booking(repository.game);
+      final sessions = _Sessions();
+      final result = await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      expect(result.booking?.status, 'CONFIRMED');
+      expect(result.completed, isTrue);
+      expect(find.text('Refund processing'), findsNothing);
+      expect(repository.refundChecks, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'refund support includes the original payment and game reference',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = PaymentRefundException(
+          _refund(status: 'REFUNDED'),
+        );
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('refund-contact-support')),
+      );
+      await tester.tap(find.byKey(const ValueKey('refund-contact-support')));
+      await tester.pumpAndSettle();
+      final support = tester.widget<ContactSupportSheet>(
+        find.byType(ContactSupportSheet),
+      );
+      expect(support.initialCategory, SupportRequestCategory.bookingOrPayment);
+      expect(support.requestContext, {
+        'source': 'checkout_refund',
+        'payment_intent_id': 'refund-attempt',
+        'game_id': repository.game.id,
+      });
+      expect(repository.embeddedBookCalls, 1);
+    },
+  );
+
+  testWidgets(
+    'refund refresh failure retains the terminal lock and review information',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = PaymentRefundException(
+          _refund(refundStatus: 'FAILED'),
+        )
+        ..refundCheckError = StateError('network unavailable');
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('check-refund-status')),
+      );
+      await tester.tap(find.byKey(const ValueKey('check-refund-status')));
+      await tester.pumpAndSettle();
+      expect(find.text('Refund needs review'), findsOneWidget);
+      expect(
+        find.textContaining('Could not refresh the refund status'),
+        findsOneWidget,
+      );
+      expect(find.byKey(_payKey), findsNothing);
+      expect(repository.embeddedBookCalls, 1);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 30));
+      expect(repository.refundChecks, hasLength(1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('closing during refund refresh ignores its later response', (
+    tester,
+  ) async {
+    final repository = _Repository()
+      ..afterCollectionError = PaymentRefundException(_refund())
+      ..refundBarrier = Completer<PaymentRefundState>();
+    final sessions = _Sessions();
+    final result = await _openCheckout(tester, repository, sessions);
+    sessions.current.select();
+    await tester.pump();
+    await _tapPay(tester);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('check-refund-status')),
+    );
+    await tester.tap(find.byKey(const ValueKey('check-refund-status')));
+    await tester.pumpAndSettle();
+    expect(find.text('Checking refund status…'), findsOneWidget);
+    await tester.ensureVisible(find.byTooltip('Close checkout'));
+    await tester.tap(find.byTooltip('Close checkout'));
+    await tester.pumpAndSettle();
+    repository.refundBarrier!.complete(_refund(status: 'REFUNDED'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 30));
+    expect(result.completed, isTrue);
+    expect(result.booking, isNull);
+    expect(repository.refundChecks, hasLength(1));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('preview and selecting a method never begin a booking', (
     tester,
@@ -973,6 +1217,7 @@ class _Repository
         OpenQueueRepository,
         OpenQueueBookingCostPreviewRepository,
         OpenQueueBookingLookupRepository,
+        OpenQueuePaymentStatusRepository,
         OpenQueueEmbeddedCheckoutRepository {
   OpenQueueGame game = _game();
   int detailCalls = 0;
@@ -990,6 +1235,11 @@ class _Repository
   String policyVersionId = 'policy-1';
   VoidCallback? beforeCollect;
   Object? afterCollectionError;
+  Object? beforeCollectionError;
+  final refundChecks = <String>[];
+  PaymentRefundState refundResponse = _refund();
+  Object? refundCheckError;
+  Completer<PaymentRefundState>? refundBarrier;
   OpenQueueBooking? recoveredBooking;
   Completer<OpenQueueBooking>? verification;
 
@@ -1023,6 +1273,7 @@ class _Repository
   }) async {
     embeddedBookCalls++;
     bookedRoles.add(role);
+    if (beforeCollectionError != null) throw beforeCollectionError!;
     beforeCollect?.call();
     final amountFils = preparedAmountFils ?? price;
     if (collectOnBook && amountFils > 0) {
@@ -1052,6 +1303,14 @@ class _Repository
   @override
   Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async =>
       recoveredBooking;
+
+  @override
+  Future<PaymentRefundState> checkRefundStatus(String intentId) async {
+    refundChecks.add(intentId);
+    if (refundCheckError != null) throw refundCheckError!;
+    if (refundBarrier != null) return refundBarrier!.future;
+    return refundResponse;
+  }
 
   @override
   Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => [
@@ -1105,3 +1364,12 @@ OpenQueueBooking _booking(OpenQueueGame game, {String status = 'CONFIRMED'}) =>
       bookedAt: _now,
       game: game,
     );
+
+PaymentRefundState _refund({
+  String status = 'REQUIRES_REFUND',
+  String? refundStatus,
+}) => PaymentRefundState(
+  intentId: 'refund-attempt',
+  status: status,
+  refundStatus: refundStatus,
+);
