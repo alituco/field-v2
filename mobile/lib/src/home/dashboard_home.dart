@@ -16,6 +16,7 @@ import '../leaderboard/leaderboard.dart';
 import '../leaderboard/leaderboard_repository.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/fieldrush_booking_flow.dart';
+import '../open_queue/fieldrush_checkout_sheet.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_party_repository.dart';
 import '../open_queue/open_queue_repository.dart';
@@ -317,14 +318,10 @@ class _DashboardHomeState extends State<DashboardHome> {
           profileRepository: widget.profileRepository,
           onNavigateTab: widget.onNavigateTab,
           onJoin: (game) async {
-            await Navigator.of(context).push<OpenQueueBooking>(
-              MaterialPageRoute(
-                builder: (_) => FieldrushBookingFlow(
-                  repository: widget.openQueueRepository,
-                  initialGame: game,
-                  onNavigateTab: widget.onNavigateTab,
-                ),
-              ),
+            await showFieldrushCheckout(
+              context: context,
+              repository: widget.openQueueRepository,
+              game: game,
             );
           },
         ),
@@ -367,14 +364,10 @@ class _DashboardHomeState extends State<DashboardHome> {
             profileRepository: widget.profileRepository,
             onNavigateTab: widget.onNavigateTab,
             onJoin: (game) async {
-              await Navigator.of(context).push<OpenQueueBooking>(
-                MaterialPageRoute(
-                  builder: (_) => FieldrushBookingFlow(
-                    repository: widget.openQueueRepository,
-                    initialGame: game,
-                    onNavigateTab: widget.onNavigateTab,
-                  ),
-                ),
+              await showFieldrushCheckout(
+                context: context,
+                repository: widget.openQueueRepository,
+                game: game,
               );
             },
           ),

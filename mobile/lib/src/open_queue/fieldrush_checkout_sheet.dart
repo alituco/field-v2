@@ -2,12 +2,31 @@ import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
+import '../fixtures/fixture.dart';
 import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
 import 'fieldrush_booking_widgets.dart';
 import 'open_queue.dart';
 import 'fieldrush_game_loading.dart';
 import 'open_queue_repository.dart';
+
+Future<OpenQueueBooking?> showFieldrushCheckout({
+  required BuildContext context,
+  required OpenQueueRepository repository,
+  required OpenQueueGame game,
+  OpenQueueRole? role,
+}) => showModalBottomSheet<OpenQueueBooking>(
+  context: context,
+  isScrollControlled: true,
+  isDismissible: false,
+  enableDrag: false,
+  backgroundColor: FieldrushAuthTheme.cream,
+  shape: const RoundedRectangleBorder(
+    borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+  ),
+  builder: (_) =>
+      FieldrushCheckoutSheet(repository: repository, game: game, role: role),
+);
 
 /// Fieldrush review sheet with native, embedded payment-method selection.
 /// Never show a simulated card/wallet or confirm based on a client-only event.
@@ -16,12 +35,14 @@ class FieldrushCheckoutSheet extends StatefulWidget {
     super.key,
     required this.repository,
     required this.game,
-    required this.role,
+    this.role,
+    this.allowPositionSelection = false,
     this.embeddedPaymentSessionFactory,
   });
   final OpenQueueRepository repository;
   final OpenQueueGame game;
-  final OpenQueueRole role;
+  final OpenQueueRole? role;
+  final bool allowPositionSelection;
   final FieldrushEmbeddedPaymentSessionFactory? embeddedPaymentSessionFactory;
 
   @override
@@ -29,6 +50,9 @@ class FieldrushCheckoutSheet extends StatefulWidget {
 }
 
 class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
+  late OpenQueueGame _game = widget.game;
+  late OpenQueueRole? _role = widget.role;
+  bool _availabilityReady = false;
   OpenQueueBookingCostPreview? _preview;
   bool _loading = true;
   bool _processing = false;
@@ -40,6 +64,15 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   bool _closing = false;
   int _loadGeneration = 0;
 
+  bool get _selectingPosition =>
+      widget.allowPositionSelection || widget.role == null;
+  bool get _positionLocked =>
+      _loading ||
+      _processing ||
+      _closing ||
+      _paymentSubmitted ||
+      _resumePayment;
+
   bool get _embedded =>
       widget.repository is OpenQueueEmbeddedCheckoutRepository &&
       !PaymentService.stagingE2EBypass;
@@ -48,12 +81,41 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       !_loading &&
       !_processing &&
       !_closing &&
+      _role != null &&
       _preview != null &&
       (!_embedded ||
           _preview!.totalFils == 0 ||
           _resumePayment ||
           (_paymentSession?.isReady == true &&
               _paymentSession?.hasSelection == true));
+
+  String get _longDateLabel {
+    final date = _game.localStartsAt;
+    const weekdays = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday',
+    ];
+    const months = [
+      'January',
+      'February',
+      'March',
+      'April',
+      'May',
+      'June',
+      'July',
+      'August',
+      'September',
+      'October',
+      'November',
+      'December',
+    ];
+    return '${weekdays[date.weekday - 1]}, ${months[date.month - 1]} ${date.day}';
+  }
 
   Future<OpenQueueBooking?> _confirmedBooking() async {
     final repository = widget.repository;
@@ -107,7 +169,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       await WidgetsBinding.instance.endOfFrame;
       old.dispose();
     }
-    if (!mounted || generation != _loadGeneration) return;
+    if (!mounted || _closing || generation != _loadGeneration) return;
     if (!_embedded || preview.totalFils == 0) return;
     final factory =
         widget.embeddedPaymentSessionFactory ??
@@ -123,7 +185,14 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
 
   Future<void> _retryPaymentSelection() async {
     final preview = _preview;
-    if (preview == null || _processing || _closing || _loading) return;
+    if (preview == null ||
+        _processing ||
+        _closing ||
+        _loading ||
+        _resumePayment ||
+        _paymentSubmitted) {
+      return;
+    }
     final generation = ++_loadGeneration;
     setState(() => _loading = true);
     try {
@@ -142,6 +211,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   Future<void> _close([OpenQueueBooking? booking]) async {
     if (_closing || (_processing && booking == null)) return;
     _closing = true;
+    _loadGeneration++;
     await _paymentSession?.close();
     if (!mounted) return;
     setState(() => _allowPop = true);
@@ -149,7 +219,11 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     if (mounted) Navigator.of(context).pop(booking);
   }
 
-  Future<OpenQueueBookingCostPreview> _quote() async {
+  Future<OpenQueueBookingCostPreview> _quote({
+    OpenQueueRole? previewRole,
+  }) async {
+    final role = previewRole ?? _role;
+    if (role == null) throw StateError('Choose your position first.');
     final repository = widget.repository;
     if (repository is! OpenQueueBookingCostPreviewRepository) {
       throw StateError(
@@ -157,7 +231,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       );
     }
     final result = await (repository as OpenQueueBookingCostPreviewRepository)
-        .previewBookingCost(gameId: widget.game.id, role: widget.role);
+        .previewBookingCost(gameId: widget.game.id, role: role);
     if (result.currency != 'USD' ||
         result.totalFils < 0 ||
         result.totalFils % 10 != 0) {
@@ -174,7 +248,44 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       _preview = null;
     });
     try {
-      final preview = await _quote();
+      var previewRole = _role;
+      if (_selectingPosition) {
+        _availabilityReady = false;
+        final results = await Future.wait([
+          widget.repository.getMatchDetail(widget.game.id),
+          widget.repository.getMyUpcomingBookings(),
+        ]);
+        if (!mounted || generation != _loadGeneration) return;
+        final game = (results[0] as OpenQueueMatchDetail).game;
+        final bookings = results[1] as List<OpenQueueBooking>;
+        final now = DateTime.now();
+        if (bookings.any(
+          (booking) =>
+              booking.status == 'CONFIRMED' &&
+              !['CANCELLED', 'FINAL'].contains(booking.game.status) &&
+              (booking.game.status == 'LIVE' ||
+                  (booking.game.operationalState !=
+                          MatchOperationalState.noData &&
+                      booking.game.endsAt.isAfter(now))),
+        )) {
+          throw StateError(
+            'You can only join one upcoming or active game. Manage your current game before taking another spot.',
+          );
+        }
+        setState(() {
+          _game = game;
+          _availabilityReady = true;
+          if (_role != null && !game.canBook(_role!)) _role = null;
+        });
+        if (!game.supportedRoles.any(game.canBook)) {
+          throw StateError('This game no longer has an available spot.');
+        }
+        // Preview an actually available spot without choosing it for the player.
+        // This exposes the server's price and eligibility before selection;
+        // native initialization does not reserve a spot or create an intent.
+        previewRole = _role ?? game.supportedRoles.firstWhere(game.canBook);
+      }
+      final preview = await _quote(previewRole: previewRole);
       if (!mounted || generation != _loadGeneration) return;
       setState(() => _preview = preview);
       await _replacePaymentSession(preview, generation);
@@ -196,7 +307,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
 
   Future<void> _pay() async {
     final shown = _preview;
-    if (!_canPay || shown == null) return;
+    final role = _role;
+    if (!_canPay || shown == null || role == null) return;
     setState(() {
       _processing = true;
       _error = null;
@@ -230,8 +342,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       final booking = _embedded
           ? await (repository as OpenQueueEmbeddedCheckoutRepository)
                 .bookGameWithCollector(
-                  game: widget.game,
-                  role: widget.role,
+                  game: _game,
+                  role: role,
                   collectPayment: (request) async {
                     // Check again against the authoritative prepared intent.
                     // A price race must never confirm an unseen amount.
@@ -250,8 +362,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                   },
                 )
           : await repository.bookGame(
-              game: widget.game,
-              role: widget.role,
+              game: _game,
+              role: role,
               paymentMethod: 'STRIPE',
             );
       if (!mounted) return;
@@ -314,7 +426,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
             Text(error, style: bookingText(12)),
             TextButton(
               key: const ValueKey('retry-payment-options'),
-              onPressed: _processing || _loading
+              onPressed:
+                  _processing || _loading || _resumePayment || _paymentSubmitted
                   ? null
                   : _retryPaymentSelection,
               child: const Text('Retry payment options'),
@@ -323,21 +436,196 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         ),
       );
     }
-    if (session == null) return const _PaymentOptionsSkeleton();
+    if (session == null) {
+      return _loading
+          ? const _PaymentOptionsSkeleton()
+          : Text(
+              'Choose a position to see secure payment options.',
+              style: bookingText(12),
+            );
+    }
     return AbsorbPointer(
-      absorbing: _processing || _closing || _paymentSubmitted,
+      absorbing:
+          _loading ||
+          _preview == null ||
+          _processing ||
+          _closing ||
+          _paymentSubmitted,
       child: Stack(
         children: [
           Opacity(
-            opacity: session.isReady || _paymentSubmitted ? 1 : 0,
+            opacity:
+                !_loading &&
+                    _preview != null &&
+                    (session.isReady || _paymentSubmitted)
+                ? 1
+                : 0,
             child: session.buildView(),
           ),
-          if (!session.isReady && !_paymentSubmitted)
+          if ((_loading || !session.isReady) && !_paymentSubmitted)
             const _PaymentOptionsSkeleton(),
         ],
       ),
     );
   }
+
+  Widget _positionOptions() => Row(
+    children: [
+      for (final role in fieldrushOpenQueueRoles) ...[
+        if (role != fieldrushOpenQueueRoles.first) const SizedBox(width: 7),
+        Expanded(
+          child: Builder(
+            builder: (context) {
+              final available = _game.canBook(role);
+              final selected = _role == role;
+              final enabled =
+                  _availabilityReady && available && !_positionLocked;
+              return Semantics(
+                button: true,
+                selected: selected,
+                enabled: enabled,
+                child: OutlinedButton(
+                  key: ValueKey('checkout-position-${role.code}'),
+                  onPressed: !enabled
+                      ? null
+                      : () {
+                          if (_positionLocked || _role == role) return;
+                          setState(() => _role = role);
+                          _load();
+                        },
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size(0, 58),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 10,
+                    ),
+                    backgroundColor: selected
+                        ? FieldrushAuthTheme.forest
+                        : available
+                        ? Colors.white
+                        : const Color(0xFFF6F3EA),
+                    side: BorderSide(
+                      color: selected
+                          ? FieldrushAuthTheme.forest
+                          : FieldrushAuthTheme.border,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Column(
+                    children: [
+                      Text(
+                        role.label,
+                        style: bookingHeading(
+                          13,
+                          color: selected
+                              ? Colors.white
+                              : available
+                              ? FieldrushAuthTheme.ink
+                              : const Color(0xFFA9A490),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        available ? '${_game.spotsFor(role)} open' : 'Full',
+                        style: bookingText(
+                          10,
+                          bold: true,
+                          color: selected
+                              ? const Color(0xFFC7DD9B)
+                              : available
+                              ? FieldrushAuthTheme.muted
+                              : const Color(0xFFA9A490),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    ],
+  );
+
+  Widget _gameSummary() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: FieldrushAuthTheme.border),
+      borderRadius: BorderRadius.circular(18),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 54,
+          constraints: const BoxConstraints(minHeight: 58),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: FieldrushAuthTheme.forest,
+            borderRadius: BorderRadius.circular(15),
+          ),
+          child: Column(
+            children: [
+              Text(
+                const [
+                  'MON',
+                  'TUE',
+                  'WED',
+                  'THU',
+                  'FRI',
+                  'SAT',
+                  'SUN',
+                ][_game.localStartsAt.weekday - 1],
+                style: bookingText(
+                  9.5,
+                  bold: true,
+                  color: const Color(0xFFC7DD9B),
+                ).copyWith(letterSpacing: 1.14, height: 1),
+              ),
+              const SizedBox(height: 5),
+              Text(
+                '${_game.localStartsAt.day}',
+                style: bookingHeading(25, color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(_game.startTimeLabel, style: bookingHeading(26)),
+              const SizedBox(height: 7),
+              Text(
+                _longDateLabel,
+                style: bookingText(12, color: const Color(0xFF3C4A38)),
+              ),
+              const SizedBox(height: 3),
+              Text(_game.venue, style: bookingText(11)),
+              if (_game.locationLabel case final String address) ...[
+                const SizedBox(height: 3),
+                Text(address, style: bookingText(11)),
+              ],
+              const SizedBox(height: 5),
+              Text(
+                _game.divisionRangeLabel,
+                key: const ValueKey('checkout-division-range'),
+                style: bookingText(
+                  10,
+                  bold: true,
+                  color: FieldrushAuthTheme.forest,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -375,8 +663,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                     children: [
                       Expanded(
                         child: Text(
-                          'Confirm and pay',
-                          style: bookingHeading(24),
+                          'Pay for your spot',
+                          style: bookingHeading(19),
                         ),
                       ),
                       IconButton(
@@ -387,51 +675,30 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  BookingPanel(
-                    padding: 14,
-                    child: Row(
-                      children: [
-                        BookingDateBadge(game: widget.game),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                widget.game.calendarDateLabel,
-                                style: bookingHeading(18),
-                              ),
-                              const SizedBox(height: 5),
-                              Text(
-                                '${widget.game.startTimeLabel} · ${widget.game.venue}',
-                                style: bookingText(11),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  _gameSummary(),
                   const SizedBox(height: 18),
                   Text('YOUR POSITION', style: bookingText(10, bold: true)),
                   const SizedBox(height: 9),
-                  BookingPanel(
-                    padding: 16,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          bookingRoleName(widget.role),
-                          style: bookingHeading(16),
-                        ),
-                        const SizedBox(height: 5),
-                        Text(
-                          '${widget.game.spotsFor(widget.role)} spots open · availability checked at payment',
-                          style: bookingText(11),
-                        ),
-                      ],
+                  if (_selectingPosition)
+                    _positionOptions()
+                  else
+                    BookingPanel(
+                      padding: 16,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            bookingRoleName(_role!),
+                            style: bookingHeading(16),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            '${_game.spotsFor(_role!)} spots open in this game',
+                            style: bookingText(11),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
                   const SizedBox(height: 18),
                   if (!_embedded || preview?.totalFils != 0) ...[
                     Text('PAY WITH', style: bookingText(10, bold: true)),
@@ -502,7 +769,11 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       preview.totalLabel,
                       emphasized: true,
                     ),
-                  ],
+                  ] else
+                    Text(
+                      'Select a position to see your exact total.',
+                      style: bookingText(12),
+                    ),
                   const SizedBox(height: 9),
                   Text(
                     'Cancellation refunds follow the game’s policy and return to your original payment method. Review the exact refund before cancelling.',
@@ -533,7 +804,9 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                     child: _processing
                         ? const Text('Processing…')
                         : Text(
-                            _embedded
+                            _role == null
+                                ? 'Pick a position'
+                                : _embedded
                                 ? preview?.totalFils == 0
                                       ? 'Confirm booking'
                                       : '${_resumePayment ? 'Resume payment' : 'Pay'}${preview == null ? '' : ' · ${preview.totalLabel}'}'

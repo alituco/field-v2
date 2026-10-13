@@ -217,7 +217,15 @@ type SoloGameDialog =
   | { kind: "remove"; fixture: RefereeFixture }
   | null;
 
-type SoloGameDraft = { matchDate: string; kickoffTime: string; durationMinutes: number; priceUsd: string; ageLabel: string };
+type SoloGameDraft = {
+  matchDate: string;
+  kickoffTime: string;
+  durationMinutes: number;
+  priceUsd: string;
+  ageLabel: string;
+  highestDivision: number;
+  lowestDivision: number;
+};
 
 type ReportDialog =
   | { report: AdminReport; action: "RESOLVE" | "DISMISS" }
@@ -560,6 +568,8 @@ export default function AdminPage() {
     durationMinutes: number;
     priceUsd: string;
     ageLabel: string;
+    highestDivision: number;
+    lowestDivision: number;
   }) {
     setSubmitting("create-solo-game");
     setError(null);
@@ -3493,6 +3503,8 @@ function SoloGameManagementDialog({
     durationMinutes: number;
     priceUsd: string;
     ageLabel: string;
+    highestDivision: number;
+    lowestDivision: number;
   }) => void;
   onRemove: (fixture: RefereeFixture, reason: string) => void;
 }) {
@@ -3503,6 +3515,8 @@ function SoloGameManagementDialog({
   const [durationMinutes, setDurationMinutes] = useState(draft?.durationMinutes ?? 60);
   const [priceUsd, setPriceUsd] = useState(draft?.priceUsd ?? "13.00");
   const [ageLabel, setAgeLabel] = useState(draft?.ageLabel ?? "18+");
+  const [highestDivision, setHighestDivision] = useState(draft?.highestDivision ?? 1);
+  const [lowestDivision, setLowestDivision] = useState(draft?.lowestDivision ?? 5);
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const creating = dialog.kind === "create";
@@ -3515,7 +3529,10 @@ function SoloGameManagementDialog({
     /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(kickoffTime) &&
     Number.isInteger(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 180 &&
     validPrice &&
-    ageLabel.trim().length >= 2;
+    ageLabel.trim().length >= 2 &&
+    Number.isInteger(highestDivision) && highestDivision >= 1 && highestDivision <= 5 &&
+    Number.isInteger(lowestDivision) && lowestDivision >= 1 && lowestDivision <= 5 &&
+    highestDivision <= lowestDivision;
   const removeReady =
     reason.trim().length >= 8 &&
     confirmation.trim().toUpperCase() === "REMOVE";
@@ -3548,7 +3565,7 @@ function SoloGameManagementDialog({
             </select>
             <small>{selectedField ? `${selectedField.address}, ${selectedField.city}, ${selectedField.state}` : "Players will see this field’s address and map pin in the app."}</small>
           </label>
-          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, priceUsd, ageLabel })}>+ Add a new field</button>
+          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, priceUsd, ageLabel, highestDivision, lowestDivision })}>+ Add a new field</button>
           <div className="admin-solo-game-fields">
             <label className="admin-modal-field">
               <span>Match date</span>
@@ -3583,6 +3600,24 @@ function SoloGameManagementDialog({
                 value={priceUsd}
               />
               <small>Defaults to $13.00. Use $0 for free, or $0.50–$100 with up to 2 decimals.</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Highest division</span>
+              <select value={highestDivision} onChange={(event) => setHighestDivision(Number(event.target.value))}>
+                {[1, 2, 3, 4, 5].map((division) => (
+                  <option key={division} value={division}>Division {division}</option>
+                ))}
+              </select>
+              <small>Division 1 is the highest competitive division.</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Lowest division</span>
+              <select value={lowestDivision} onChange={(event) => setLowestDivision(Number(event.target.value))}>
+                {[1, 2, 3, 4, 5].map((division) => (
+                  <option key={division} value={division}>Division {division}</option>
+                ))}
+              </select>
+              <small>Placement players (fewer than 2 matches) can only book unrestricted Division 1–5 games.</small>
             </label>
           </div>
           <label className="admin-modal-field">
@@ -3647,6 +3682,8 @@ function SoloGameManagementDialog({
                 durationMinutes,
                 priceUsd: priceUsd.trim(),
                 ageLabel: ageLabel.trim(),
+                highestDivision,
+                lowestDivision,
               });
             } else {
               onRemove(dialog.fixture, reason.trim());

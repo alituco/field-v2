@@ -16,6 +16,7 @@ import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/fieldrush_booking_flow.dart';
+import '../open_queue/fieldrush_checkout_sheet.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../profile/profile_repository.dart';
 import '../profile/fieldrush_you_screen.dart';
@@ -191,7 +192,13 @@ class _HomeScreenState extends State<HomeScreen> {
           initialGame: game,
           profileRepository: _profileRepository,
           onNavigateTab: _selectTab,
-          onJoin: _openSoloBooking,
+          onJoin: (game) async {
+            await showFieldrushCheckout(
+              context: context,
+              repository: _openQueueRepository,
+              game: game,
+            );
+          },
         ),
       ),
     );

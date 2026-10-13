@@ -9,6 +9,8 @@ import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
+import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
+import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
 import 'package:field/src/open_queue/open_queue_party.dart';
 import 'package:field/src/open_queue/open_queue_party_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
@@ -20,6 +22,34 @@ import 'package:flutter_test/flutter_test.dart';
 import '../integration_test/helpers/staging_test_helpers.dart';
 
 void main() {
+  testWidgets(
+    'Home Take a spot opens the game and Join goes straight to position checkout',
+    (tester) async {
+      final queue = _Queue(games: [_game('night')]);
+      await _pump(tester, queue);
+      final night = find.byKey(const ValueKey('home-open-night-night'));
+      await tester.ensureVisible(night);
+      await tester.tap(night);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('game-main-action')),
+      );
+      await tester.tap(find.byKey(const ValueKey('game-main-action')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushCheckoutSheet), findsOneWidget);
+      expect(find.byType(FieldrushBookingFlow), findsNothing);
+      expect(find.text('Pay for your spot'), findsOneWidget);
+      expect(find.text('Pick a position'), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushCheckoutSheet>(find.byType(FieldrushCheckoutSheet))
+            .role,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets(
     'empty Home shows the reference position picker and placement card',
     (tester) async {
@@ -423,7 +453,11 @@ class _Queue extends Fake implements OpenQueueRepository {
   @override
   Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async =>
       OpenQueueMatchDetail(
-        game: bookings.firstWhere((booking) => booking.gameId == gameId).game,
+        game: [
+          ...games,
+          ...fixtures,
+          ...bookings.map((booking) => booking.game),
+        ].firstWhere((game) => game.id == gameId),
         scorers: const [],
         timeline: const [],
       );

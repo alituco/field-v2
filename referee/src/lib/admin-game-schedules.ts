@@ -9,14 +9,15 @@ export type AdminGameSchedule = {
   id: string; name: string; fieldId: string; fieldName: string;
   weekdays: number[]; kickoffTime: string; durationMinutes: number;
   startsOn: string; endsOn: string | null; bookingWindowDays: number;
-  priceUsd: string; ageLabel: string; isActive: boolean; timezone: string;
+  priceUsd: string; ageLabel: string; highestDivision: number; lowestDivision: number;
+  isActive: boolean; timezone: string;
   createdAt: string; updatedAt: string;
   occurrences: ScheduleOccurrence[];
   skips: Array<{ matchDate: string; reason: string }>;
 };
 
-export const SCHEDULE_SELECT = "id,name,field_id,weekdays,kickoff_time,duration_minutes,starts_on,ends_on,booking_window_days,price_fils,age_label,is_active,timezone,created_at,updated_at";
-const KEYS = ["name", "fieldId", "weekdays", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "isActive"];
+export const SCHEDULE_SELECT = "id,name,field_id,weekdays,kickoff_time,duration_minutes,starts_on,ends_on,booking_window_days,price_fils,age_label,highest_division,lowest_division,is_active,timezone,created_at,updated_at";
+const KEYS = ["name", "fieldId", "weekdays", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "highestDivision", "lowestDivision", "isActive"];
 
 export function parseScheduleId(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error("Choose a valid schedule.");
@@ -82,6 +83,9 @@ export function parseAdminGameScheduleInput(value: unknown, partial = false): Re
   if (!partial || "bookingWindowDays" in body) result.booking_window_days = integer(body.bookingWindowDays ?? (!partial ? 28 : null), "Booking window in days", 7, 84);
   if (!partial || "priceUsd" in body) result.price_fils = parseSchedulePrice(body.priceUsd ?? (!partial ? "13.00" : null));
   if (!partial || "ageLabel" in body) result.age_label = text(body.ageLabel ?? (!partial ? "18+" : null), "Age label", 2, 40);
+  if (!partial || "highestDivision" in body) result.highest_division = integer("highestDivision" in body ? body.highestDivision : 1, "Highest division", 1, 5);
+  if (!partial || "lowestDivision" in body) result.lowest_division = integer("lowestDivision" in body ? body.lowestDivision : 5, "Lowest division", 1, 5);
+  if (typeof result.highest_division === "number" && typeof result.lowest_division === "number" && result.highest_division > result.lowest_division) throw new Error("Highest division must be less than or equal to lowest division.");
   if (!partial || "isActive" in body) {
     const active = body.isActive ?? (!partial ? true : null);
     if (typeof active !== "boolean") throw new Error("Active status must be true or false.");
@@ -102,7 +106,8 @@ export function serializeGameSchedule(row: Record<string, unknown>, fieldName: s
     id: String(row.id), name: String(row.name), fieldId: String(row.field_id), fieldName,
     weekdays: row.weekdays as number[], kickoffTime: String(row.kickoff_time).slice(0, 5), durationMinutes: Number(row.duration_minutes),
     startsOn: String(row.starts_on), endsOn: row.ends_on ? String(row.ends_on) : null, bookingWindowDays: Number(row.booking_window_days),
-    priceUsd: (Number(row.price_fils) / 1000).toFixed(2), ageLabel: String(row.age_label), isActive: row.is_active === true,
+    priceUsd: (Number(row.price_fils) / 1000).toFixed(2), ageLabel: String(row.age_label),
+    highestDivision: Number(row.highest_division), lowestDivision: Number(row.lowest_division), isActive: row.is_active === true,
     timezone: String(row.timezone), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     occurrences: occurrences.map((item) => ({ matchDate: String(item.match_date), status: item.status as ScheduleOccurrence["status"], gameId: item.game_id ? String(item.game_id) : null, errorMessage: item.error_message ? String(item.error_message) : null })),
     skips: skips.map((item) => ({ matchDate: String(item.match_date), reason: String(item.reason) })),

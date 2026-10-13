@@ -217,20 +217,11 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
         !game.canBookAt(role, _now)) {
       return;
     }
-    final result = await showModalBottomSheet<OpenQueueBooking>(
+    final result = await showFieldrushCheckout(
       context: context,
-      isScrollControlled: true,
-      isDismissible: false,
-      enableDrag: false,
-      backgroundColor: FieldrushAuthTheme.cream,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      builder: (_) => FieldrushCheckoutSheet(
-        repository: widget.repository,
-        game: game,
-        role: role,
-      ),
+      repository: widget.repository,
+      game: game,
+      role: role,
     );
     if (!mounted) return;
     if (result != null) {
@@ -949,14 +940,10 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
                 initialGame: booking.game,
                 onNavigateTab: widget.onNavigateTab,
                 onJoin: (game) async {
-                  await Navigator.of(context).push<OpenQueueBooking>(
-                    MaterialPageRoute(
-                      builder: (_) => FieldrushBookingFlow(
-                        repository: widget.repository,
-                        initialGame: game,
-                        onNavigateTab: widget.onNavigateTab,
-                      ),
-                    ),
+                  await showFieldrushCheckout(
+                    context: context,
+                    repository: widget.repository,
+                    game: game,
                   );
                 },
               ),

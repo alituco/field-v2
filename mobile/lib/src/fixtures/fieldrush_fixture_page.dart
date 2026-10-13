@@ -6,6 +6,7 @@ import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../home/fieldrush_home_widgets.dart';
 import '../open_queue/fieldrush_booking_flow.dart';
+import '../open_queue/fieldrush_checkout_sheet.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue.dart';
 import '../open_queue/open_queue_repository.dart';
@@ -205,20 +206,11 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
               initialGame: game,
               fixtureRepository: widget.fixtureRepository,
               onJoin: (game) async {
-                if (widget.onPlay != null) {
-                  await widget.onPlay!(game);
-                } else {
-                  await Navigator.of(context).push<OpenQueueBooking>(
-                    MaterialPageRoute(
-                      builder: (_) => FieldrushBookingFlow(
-                        repository: widget.repository,
-                        initialGame: game,
-                        onNavigateTab: widget.onNavigateTab,
-                        now: widget.now,
-                      ),
-                    ),
-                  );
-                }
+                await showFieldrushCheckout(
+                  context: context,
+                  repository: widget.repository,
+                  game: game,
+                );
               },
               onNavigateTab: widget.onNavigateTab,
             ),

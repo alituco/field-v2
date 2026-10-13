@@ -36,6 +36,62 @@ void main() {
   final now = DateTime.utc(2099, 6, 1);
 
   testWidgets(
+    'open nights show every configured division even before teams exist',
+    (tester) async {
+      await _pump(
+        tester,
+        FieldrushOpenNights(
+          games: [_game(highestDivision: 2, lowestDivision: 4)],
+          now: now,
+          onGame: (_) {},
+        ),
+      );
+      expect(find.text('DIV 2–4'), findsOneWidget);
+      expect(
+        tester
+            .widgetList<FieldrushDivisionShield>(
+              find.byType(FieldrushDivisionShield),
+            )
+            .map((shield) => shield.division),
+        [2, 3, 4],
+      );
+      expect(find.textContaining('Avg'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('placement footer stays on one line with progress on the right', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      FieldrushHomeRating(
+        profile: _profile(matches: 0),
+        season: null,
+        onTap: () {},
+      ),
+    );
+    final caption = find.text('2 games to reveal your division');
+    final text = tester.widget<Text>(caption);
+    expect(text.maxLines, 1);
+    expect(text.softWrap, isFalse);
+    expect(
+      find.ancestor(of: caption, matching: find.byType(FittedBox)),
+      findsOneWidget,
+    );
+    final count = find.text('0 / 2');
+    expect(
+      tester.getCenter(caption).dy,
+      closeTo(tester.getCenter(count).dy, 2),
+    );
+    expect(
+      tester.getTopRight(caption).dx,
+      lessThan(tester.getTopLeft(count).dx),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
     'quick picker uses three positions and the soonest real available game',
     (tester) async {
       final later = _game(
@@ -487,6 +543,14 @@ void main() {
     });
     for (final (name, child) in [
       (
+        'placement-card',
+        FieldrushHomeRating(
+          profile: _profile(matches: 0),
+          season: null,
+          onTap: () {},
+        ),
+      ),
+      (
         'empty-home',
         Column(
           children: [
@@ -688,6 +752,8 @@ OpenQueueGame _game({
   int defenderSpots = 6,
   String? myBookingId,
   bool assigned = false,
+  int highestDivision = 1,
+  int lowestDivision = 5,
 }) => OpenQueueGame(
   id: id,
   status: status,
@@ -699,6 +765,8 @@ OpenQueueGame _game({
   timezone: 'America/Phoenix',
   priceFils: 13000,
   currency: 'USD',
+  highestDivision: highestDivision,
+  lowestDivision: lowestDivision,
   ageLabel: '18+',
   capacity: 14,
   confirmedCount: confirmed,

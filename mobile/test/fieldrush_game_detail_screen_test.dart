@@ -98,6 +98,20 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('game facts show the configured division eligibility range', (
+    tester,
+  ) async {
+    await show(
+      tester,
+      _Repository(_detail(highestDivision: 2, lowestDivision: 4)),
+    );
+    await tester.ensureVisible(find.text('Divisions'));
+    await tester.pumpAndSettle();
+    expect(find.text('Divisions'), findsOneWidget);
+    expect(find.text('DIV 2–4'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('saved field address is shown without changing legacy layouts', (
     tester,
   ) async {
@@ -424,6 +438,8 @@ OpenQueueMatchDetail _detail({
   bool withLocation = false,
   DateTime? start,
   int durationMinutes = 60,
+  int highestDivision = 1,
+  int lowestDivision = 5,
   int? white,
   int? black,
   List<OpenQueuePlayer> players = const [],
@@ -446,6 +462,8 @@ OpenQueueMatchDetail _detail({
     timezone: 'America/Phoenix',
     priceFils: 10000,
     currency: 'USD',
+    highestDivision: highestDivision,
+    lowestDivision: lowestDivision,
     ageLabel: '18+',
     capacity: 14,
     confirmedCount: count,

@@ -1001,6 +1001,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                     ? 'Timing to be confirmed'
                     : 'Drawn ${_localClock(game.localDateTime(game.teamAssignmentAt!))}',
               ),
+              _Fact('Divisions', game.divisionRangeLabel),
               _Fact(
                 'Cancellation',
                 _isBooked
