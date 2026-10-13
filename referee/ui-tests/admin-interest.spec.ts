@@ -22,8 +22,8 @@ const applicants = [
     source: "FIELDRUSH_GG",
     created_at: "2026-10-12T20:00:00Z",
     launch_updates_consented_at: "2026-10-12T20:00:00Z",
-    launch_updates_consent_version: "2026-10-12",
-    signup_placement: "HERO_DESKTOP",
+    launch_updates_consent_version: "launch-updates-v1",
+    signup_placement: "desktop-hero",
   }),
   normalizeAdminWaitlistApplicant({
     id: "10000000-0000-4000-8000-000000000002",
@@ -36,8 +36,8 @@ const applicants = [
     preferred_position: "DEFENDER",
     created_at: "2026-07-17T20:00:00Z",
     launch_updates_consented_at: "2026-10-12T21:00:00Z",
-    launch_updates_consent_version: "2026-10-12",
-    signup_placement: "LAUNCH_MOBILE",
+    launch_updates_consent_version: "launch-updates-v1",
+    signup_placement: "mobile-footer",
   }),
   normalizeAdminWaitlistApplicant({
     id: "10000000-0000-4000-8000-000000000003",
@@ -111,7 +111,7 @@ test("Interest shows one list and filters all launch subscribers without changin
   await expect(table.locator("tbody tr")).toHaveCount(3);
   const emailSignup = table.getByRole("row").filter({ hasText: "launch@example.com" });
   await expect(emailSignup).toContainText("fieldrush.gg");
-  await expect(emailSignup).toContainText("Hero Desktop");
+  await expect(emailSignup).toContainText("Desktop hero");
   await expect(emailSignup).toContainText("Not requested for email signup");
   await expect(emailSignup).toContainText("Subscribed");
   await expect(emailSignup).not.toContainText("Unnamed");
@@ -121,6 +121,7 @@ test("Interest shows one list and filters all launch subscribers without changin
   await expect(existing).toContainText("Clan leader");
   await expect(existing).toContainText("Age 23");
   await expect(existing).toContainText("Subscribed");
+  await expect(existing).toContainText("Mobile footer");
   await expect(table.getByRole("row").filter({ hasText: "player@example.com" })).toContainText("No signup recorded");
   await page.screenshot({ path: test.info().outputPath("interest.png"), fullPage: true });
 

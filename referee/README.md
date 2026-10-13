@@ -132,6 +132,22 @@ New one-off games and new or edited schedule prices accept free entry or
 $0.50–$100 in whole cents, matching Stripe's minimum charge. Historical games
 and payments retain their recorded prices and remain operable.
 
+## Interest signups
+
+Apply `20261012000600_capture_fieldrush_launch_interest.sql` to the target database
+**before** deploying this admin version. Open **Admin → Interest** to view email
+signups and existing player applications in the private `season_zero_waitlist`
+table. Only active admins can read the list.
+
+The public Fieldrush site and production admin use the same canonical production
+database, `zjsjuuhborxrlmdcpvlj`. Staging uses synthetic test entries in its own
+database and must not be connected to production.
+
+The list shows signup source, placement and consent date. The **Launch updates**
+filter includes earlier player applicants who subsequently subscribe without
+changing their original interest or status. An earlier application alone does
+not grant launch-update consent. Saving these signups does not send emails.
+
 ## Current Flow
 
 - Referee signs in with phone OTP.

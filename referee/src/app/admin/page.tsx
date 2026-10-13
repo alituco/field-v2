@@ -2949,7 +2949,7 @@ function WaitlistSection({
                         <strong>{applicant.fullName ?? applicant.email}</strong>
                         <small>{waitlistSourceLabel(applicant.source)}</small>
                         {applicant.signupPlacement ? (
-                          <small>{humanize(applicant.signupPlacement)}</small>
+                          <small>{waitlistPlacementLabel(applicant.signupPlacement)}</small>
                         ) : null}
                       </div>
                     </div>
@@ -4919,6 +4919,16 @@ function waitlistSourceLabel(value: string) {
   if (value === "FIELDRUSH_GG") return "fieldrush.gg";
   if (value === "FIELD_BH") return "field.bh";
   return humanize(value);
+}
+
+function waitlistPlacementLabel(value: string) {
+  const labels: Record<string, string> = {
+    "desktop-hero": "Desktop hero",
+    "desktop-footer": "Desktop footer",
+    "mobile-hero": "Mobile hero",
+    "mobile-footer": "Mobile footer",
+  };
+  return labels[value] ?? humanize(value);
 }
 
 function initials(value: string) {

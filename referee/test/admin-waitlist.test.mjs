@@ -96,8 +96,8 @@ test("email-only launch signup retains consent without inventing player details"
     status: "WAITING",
     source: "FIELDRUSH_GG",
     launch_updates_consented_at: "2026-10-12T20:00:00Z",
-    launch_updates_consent_version: "2026-10-12",
-    signup_placement: "HERO_DESKTOP",
+    launch_updates_consent_version: "launch-updates-v1",
+    signup_placement: "desktop-hero",
   });
 
   assert.equal(signup.fullName, null);
@@ -106,8 +106,8 @@ test("email-only launch signup retains consent without inventing player details"
   assert.equal(signup.preferredPosition, null);
   assert.equal(signup.interest, "LAUNCH_UPDATES");
   assert.equal(signup.source, "FIELDRUSH_GG");
-  assert.equal(signup.signupPlacement, "HERO_DESKTOP");
-  assert.equal(signup.launchUpdatesConsentVersion, "2026-10-12");
+  assert.equal(signup.signupPlacement, "desktop-hero");
+  assert.equal(signup.launchUpdatesConsentVersion, "launch-updates-v1");
   assert.equal(isLaunchUpdatesSubscriber(signup), true);
   assert.deepEqual(filterAdminWaitlist([signup], { query: "launch@example.com" }), [signup]);
 });
@@ -116,8 +116,8 @@ test("launch updates filter includes opted-in existing applicants without changi
   const subscribedApplicant = {
     ...applicants[1],
     launchUpdatesConsentedAt: "2026-10-12T21:00:00Z",
-    launchUpdatesConsentVersion: "2026-10-12",
-    signupPlacement: "LAUNCH_MOBILE",
+    launchUpdatesConsentVersion: "launch-updates-v1",
+    signupPlacement: "mobile-footer",
   };
   const entries = [applicants[0], subscribedApplicant];
 
