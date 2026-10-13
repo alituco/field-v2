@@ -780,9 +780,10 @@ class FieldrushFixtureCard extends StatelessWidget {
               ] else if (upcoming) ...[
                 const SizedBox(height: 15),
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Expanded(
+                    Flexible(
                       child: Text.rich(
                         TextSpan(
                           text: '${game.confirmedCount}',
@@ -796,17 +797,14 @@ class FieldrushFixtureCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (average != null) ...[
-                      FieldrushDivisionShield(
-                        division: divisionFromRating(average).number,
-                        size: 20,
+                    const SizedBox(width: 12),
+                    Flexible(
+                      flex: 2,
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: FieldrushGameDivisionRange(game: game),
                       ),
-                      const SizedBox(width: 7),
-                      Text(
-                        'Div ${divisionFromRating(average).number}',
-                        style: _outfit(11.5),
-                      ),
-                    ],
+                    ),
                   ],
                 ),
                 const SizedBox(height: 13),
