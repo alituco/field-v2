@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: production-interest-${{ github.event_name == 'workflow_dispatch' && 'release' || github.event.pull_request.number }}
+  group: ${{ github.event_name == 'workflow_dispatch' && 'supabase-production' || format('production-interest-pr-{0}', github.event.pull_request.number) }}
   cancel-in-progress: false
 
 jobs:
