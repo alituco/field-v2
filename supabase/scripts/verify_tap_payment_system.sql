@@ -56,12 +56,16 @@ begin
   ) available
   where game.status = 'OPEN'
     and game.starts_at > clock_timestamp()
+    -- A future kickoff can already be past the policy's registration cutoff.
+    -- Choose a fixture with enough booking time left for the entire verifier.
+    and (public.ensure_match_reliability_terms('SOLO', game.id)).check_in_deadline_at
+      > clock_timestamp() + interval '5 minutes'
   order by game.starts_at, game.id
   limit 1;
 
   if game_id_to_test is null then
     raise exception
-      'Tap verification needs one future Open Queue game with an available position.';
+      'Tap verification needs one future Open Queue game with an available position and an open registration window.';
   end if;
 
   select profile.id into profile_id_to_test
