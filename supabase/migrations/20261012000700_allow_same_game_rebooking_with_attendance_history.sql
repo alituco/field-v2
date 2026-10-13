@@ -1,4 +1,4 @@
--- A cancellation closes one booking, not the player's right to buy another
+-- Solo cancellation closes one booking, not the player's right to buy another
 -- available place. Each new booking gets its own attendance identity; cancelled
 -- attendance, events, strikes, appeals and payment/refund links remain history.
 alter table public.match_attendance_records

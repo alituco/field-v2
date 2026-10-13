@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { PGlite } = require(process.env.PGLITE_MODULE || '@electric-sql/pglite');
 const db = new PGlite();
-const migration = '20261012000600_allow_same_game_rebooking_with_attendance_history.sql';
+const migration = '20261012000700_allow_same_game_rebooking_with_attendance_history.sql';
 const source = file => readFile(new URL(`../migrations/${file}`, import.meta.url), 'utf8');
 const q = value => value == null ? 'null' : `'${String(value).replaceAll("'", "''")}'`;
 const json = value => `${q(JSON.stringify(value))}::jsonb`;
