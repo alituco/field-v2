@@ -11,6 +11,7 @@ import type {
 } from "@/lib/admin-game-participants";
 import {
   filterAdminWaitlist,
+  isLaunchUpdatesSubscriber,
   WAITLIST_INTERESTS,
   WAITLIST_POSITIONS,
   WAITLIST_STATUSES,
@@ -378,7 +379,7 @@ export default function AdminPage() {
         setWaitlistLoaded(true);
       } catch (loadError) {
         setError(
-          errorMessage(loadError, "Could not load the Season Zero waitlist."),
+          errorMessage(loadError, "Could not load interest signups."),
         );
       } finally {
         setWaitlistLoading(false);
@@ -1244,7 +1245,7 @@ const adminNavItems: Array<{
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
-  { id: "waitlist", label: "Season Zero waitlist", shortLabel: "Waitlist", icon: "waitlist" },
+  { id: "waitlist", label: "Interest", shortLabel: "Interest", icon: "waitlist" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
   { id: "staff", label: "Admins & referees", shortLabel: "Staff", icon: "referee" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
@@ -2812,25 +2813,30 @@ function WaitlistSection({
   const onboardedCount = applicants.filter(
     (applicant) => applicant.status === "ONBOARDED",
   ).length;
+  const subscriberCount = applicants.filter(isLaunchUpdatesSubscriber).length;
 
   return (
     <section className="admin-card admin-waitlist-card">
       <div className="admin-waitlist-head">
         <div>
-          <span className="admin-eyebrow">Season Zero pipeline</span>
-          <h2>Waitlist applications</h2>
+          <span className="admin-eyebrow">Fieldrush signups</span>
+          <h2>Interest</h2>
           <p>
-            Review private applications collected through field.bh. Contact
+            Launch updates and player applications share one list. Contact
             details stay inside the admin workspace.
           </p>
         </div>
         <span className="admin-waitlist-total">
           <strong>{applicants.length}</strong>
-          <small>Applications loaded</small>
+          <small>Signups loaded</small>
         </span>
       </div>
 
-      <div className="admin-waitlist-summary" aria-label="Waitlist summary">
+      <div className="admin-waitlist-summary" aria-label="Interest summary">
+        <div>
+          <span>Launch updates</span>
+          <strong>{subscriberCount}</strong>
+        </div>
         <div>
           <span>Waiting</span>
           <strong>{waitingCount}</strong>
@@ -2842,18 +2848,6 @@ function WaitlistSection({
         <div>
           <span>Onboarded</span>
           <strong>{onboardedCount}</strong>
-        </div>
-        <div>
-          <span>Other</span>
-          <strong>
-            {Math.max(
-              0,
-              applicants.length -
-                waitingCount -
-                selectedCount -
-                onboardedCount,
-            )}
-          </strong>
         </div>
       </div>
 
@@ -2868,7 +2862,7 @@ function WaitlistSection({
           />
         </label>
         <select
-          aria-label="Filter waitlist by status"
+          aria-label="Filter interest by status"
           onChange={(event) =>
             setStatus(event.target.value as WaitlistStatus | "ALL")
           }
@@ -2882,7 +2876,7 @@ function WaitlistSection({
           ))}
         </select>
         <select
-          aria-label="Filter waitlist by interest"
+          aria-label="Filter by interest"
           onChange={(event) =>
             setInterest(event.target.value as WaitlistInterest | "ALL")
           }
@@ -2896,7 +2890,7 @@ function WaitlistSection({
           ))}
         </select>
         <select
-          aria-label="Filter waitlist by position"
+          aria-label="Filter interest by position"
           onChange={(event) =>
             setPosition(event.target.value as WaitlistPosition | "ALL")
           }
@@ -2912,21 +2906,21 @@ function WaitlistSection({
       </div>
 
       <div className="admin-table-count">
-        {filtered.length} of {applicants.length} loaded applications
+        {filtered.length} of {applicants.length} loaded signups
       </div>
 
       {filtered.length === 0 ? (
         <AdminEmpty
           detail={
             applicants.length === 0
-              ? "New Season Zero applications will appear here."
+              ? "Launch updates and player applications will appear here."
               : "Try changing the search or filters."
           }
           icon="waitlist"
           title={
             applicants.length === 0
-              ? "No applications yet"
-              : "No matching applications"
+              ? "No signups yet"
+              : "No matching signups"
           }
         />
       ) : (
@@ -2934,12 +2928,13 @@ function WaitlistSection({
           <table className="admin-data-table admin-waitlist-table">
             <thead>
               <tr>
-                <th>Applicant</th>
+                <th>Person</th>
                 <th>Contact</th>
                 <th>Player details</th>
                 <th>Interested in</th>
+                <th>Launch updates</th>
                 <th>Status</th>
-                <th>Applied</th>
+                <th>Signed up</th>
               </tr>
             </thead>
             <tbody>
@@ -2948,11 +2943,14 @@ function WaitlistSection({
                   <td>
                     <div className="admin-person-cell">
                       <div className="admin-subject-avatar small">
-                        {initials(applicant.fullName)}
+                        {initials(applicant.fullName ?? applicant.email)}
                       </div>
                       <div>
-                        <strong>{applicant.fullName}</strong>
-                        <small>{humanize(applicant.source)}</small>
+                        <strong>{applicant.fullName ?? applicant.email}</strong>
+                        <small>{waitlistSourceLabel(applicant.source)}</small>
+                        {applicant.signupPlacement ? (
+                          <small>{humanize(applicant.signupPlacement)}</small>
+                        ) : null}
                       </div>
                     </div>
                   </td>
@@ -2962,23 +2960,42 @@ function WaitlistSection({
                     </a>
                     {applicant.phone ? (
                       <a href={`tel:${applicant.phone}`}>{applicant.phone}</a>
-                    ) : (
+                    ) : applicant.interest !== "LAUNCH_UPDATES" ? (
                       <small>Phone not provided</small>
-                    )}
+                    ) : null}
                   </td>
                   <td>
-                    <strong>
-                      {applicant.age !== null
-                        ? `Age ${applicant.age}`
-                        : "Age not recorded"}
-                    </strong>
-                    <small>
-                      {applicant.preferredPosition
-                        ? humanize(applicant.preferredPosition)
-                        : "No preferred position"}
-                    </small>
+                    {applicant.interest === "LAUNCH_UPDATES" ? (
+                      <small>Not requested for email signup</small>
+                    ) : (
+                      <>
+                        <strong>
+                          {applicant.age !== null
+                            ? `Age ${applicant.age}`
+                            : "Age not recorded"}
+                        </strong>
+                        <small>
+                          {applicant.preferredPosition
+                            ? humanize(applicant.preferredPosition)
+                            : "No preferred position"}
+                        </small>
+                      </>
+                    )}
                   </td>
                   <td>{waitlistInterestLabel(applicant.interest)}</td>
+                  <td>
+                    {isLaunchUpdatesSubscriber(applicant) ? (
+                      <>
+                        <strong>Subscribed</strong>
+                        <small>{formatDateTime(applicant.launchUpdatesConsentedAt)}</small>
+                        {applicant.launchUpdatesConsentVersion ? (
+                          <small>Consent {applicant.launchUpdatesConsentVersion}</small>
+                        ) : null}
+                      </>
+                    ) : (
+                      <small>No signup recorded</small>
+                    )}
+                  </td>
                   <td>
                     <StatusBadge status={applicant.status} />
                   </td>
@@ -2995,8 +3012,8 @@ function WaitlistSection({
 
       <p className="admin-waitlist-privacy">
         <AdminIcon name="lock" />
-        This table contains private application data. Use it only for Season
-        Zero selection and player contact.
+        This table contains private contact details. Send launch updates only
+        to people with a recorded subscription.
       </p>
     </section>
   );
@@ -4697,7 +4714,7 @@ function sectionTitle(section: AdminSection) {
     reliability: "Reliability policy",
     support: "Player support",
     reports: "Reports inbox",
-    waitlist: "Season Zero waitlist",
+    waitlist: "Interest",
     people: "Players & clans",
     staff: "Admins & referees",
     audit: "Audit log",
@@ -4713,7 +4730,7 @@ function sectionSubtitle(section: AdminSection) {
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",
-    waitlist: "Review the players and clan leaders asking to join the private pilot.",
+    waitlist: "Review launch update signups and player applications in one place.",
     people: "Understand patterns before taking proportionate action.",
     staff: "Register trusted phone numbers and control who can operate Field.",
     audit: "A permanent trail of sensitive admin decisions.",
@@ -4888,12 +4905,20 @@ function humanize(value: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function waitlistInterestLabel(value: WaitlistInterest) {
+function waitlistInterestLabel(value: WaitlistInterest | null) {
+  if (value === null) return "Not recorded";
   return {
+    LAUNCH_UPDATES: "Launch updates",
     SOLO_PLAYER: "Solo player",
     CLAN_PLAYER: "Clan player",
     CLAN_LEADER: "Clan leader",
   }[value];
+}
+
+function waitlistSourceLabel(value: string) {
+  if (value === "FIELDRUSH_GG") return "fieldrush.gg";
+  if (value === "FIELD_BH") return "field.bh";
+  return humanize(value);
 }
 
 function initials(value: string) {

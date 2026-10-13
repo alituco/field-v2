@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   filterAdminWaitlist,
+  isLaunchUpdatesSubscriber,
   normalizeAdminWaitlistApplicant,
 } from "../src/lib/admin-waitlist.ts";
 
@@ -48,6 +49,9 @@ test("waitlist applicants normalize private form data into the admin shape", () 
     source: "FIELD_BH",
     createdAt: "2026-07-17T23:58:00.000Z",
     updatedAt: "2026-07-17T23:58:00.000Z",
+    launchUpdatesConsentedAt: null,
+    launchUpdatesConsentVersion: null,
+    signupPlacement: null,
   });
 });
 
@@ -69,12 +73,73 @@ test("waitlist normalization safely handles legacy and invalid optional values",
       phone: null,
       age: null,
       preferredPosition: null,
-      interest: "SOLO_PLAYER",
+      interest: null,
       status: "WAITING",
       source: "FIELD_BH",
       createdAt: null,
       updatedAt: null,
+      launchUpdatesConsentedAt: null,
+      launchUpdatesConsentVersion: null,
+      signupPlacement: null,
     },
+  );
+});
+
+test("email-only launch signup retains consent without inventing player details", () => {
+  const signup = normalizeAdminWaitlistApplicant({
+    id: "44444444-4444-4444-8444-444444444444",
+    email: "launch@example.com",
+    full_name: null,
+    age: null,
+    preferred_position: null,
+    interest: "LAUNCH_UPDATES",
+    status: "WAITING",
+    source: "FIELDRUSH_GG",
+    launch_updates_consented_at: "2026-10-12T20:00:00Z",
+    launch_updates_consent_version: "2026-10-12",
+    signup_placement: "HERO_DESKTOP",
+  });
+
+  assert.equal(signup.fullName, null);
+  assert.equal(signup.age, null);
+  assert.equal(signup.phone, null);
+  assert.equal(signup.preferredPosition, null);
+  assert.equal(signup.interest, "LAUNCH_UPDATES");
+  assert.equal(signup.source, "FIELDRUSH_GG");
+  assert.equal(signup.signupPlacement, "HERO_DESKTOP");
+  assert.equal(signup.launchUpdatesConsentVersion, "2026-10-12");
+  assert.equal(isLaunchUpdatesSubscriber(signup), true);
+  assert.deepEqual(filterAdminWaitlist([signup], { query: "launch@example.com" }), [signup]);
+});
+
+test("launch updates filter includes opted-in existing applicants without changing their interests", () => {
+  const subscribedApplicant = {
+    ...applicants[1],
+    launchUpdatesConsentedAt: "2026-10-12T21:00:00Z",
+    launchUpdatesConsentVersion: "2026-10-12",
+    signupPlacement: "LAUNCH_MOBILE",
+  };
+  const entries = [applicants[0], subscribedApplicant];
+
+  assert.equal(isLaunchUpdatesSubscriber(applicants[0]), false);
+  assert.equal(subscribedApplicant.interest, "CLAN_LEADER");
+  assert.equal(subscribedApplicant.source, "FIELD_BH");
+  assert.equal(subscribedApplicant.status, "SELECTED");
+  assert.deepEqual(
+    filterAdminWaitlist(entries, { interest: "LAUNCH_UPDATES" }),
+    [subscribedApplicant],
+  );
+  assert.deepEqual(
+    filterAdminWaitlist(entries, { interest: "LAUNCH_UPDATES", query: "launch", status: "SELECTED" }),
+    [subscribedApplicant],
+  );
+  assert.deepEqual(
+    filterAdminWaitlist(entries, { interest: "LAUNCH_UPDATES", query: "hero" }),
+    [],
+  );
+  assert.deepEqual(
+    filterAdminWaitlist(entries, { interest: "CLAN_LEADER", position: "DEFENDER" }),
+    [subscribedApplicant],
   );
 });
 
