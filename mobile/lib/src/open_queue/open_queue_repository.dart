@@ -39,6 +39,10 @@ abstract interface class OpenQueueEmbeddedCheckoutRepository {
   });
 }
 
+abstract interface class OpenQueuePaymentStatusRepository {
+  Future<PaymentRefundState> checkRefundStatus(String intentId);
+}
+
 /// Market discovery applies the market predicate before the server feed limit.
 /// The historical, all-market [OpenQueueRepository.listGames] stays available.
 abstract interface class OpenQueueMarketRepository {
@@ -63,6 +67,7 @@ class SupabaseOpenQueueRepository
         OpenQueueMarketRepository,
         OpenQueueBookingLookupRepository,
         OpenQueueEmbeddedCheckoutRepository,
+        OpenQueuePaymentStatusRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
   SupabaseOpenQueueRepository({SupabaseClient? client}) : _supabase = client;
@@ -314,6 +319,10 @@ class SupabaseOpenQueueRepository
     required OpenQueueRole role,
     required PaymentCollector collectPayment,
   }) => _bookGame(game: game, role: role, collectPayment: collectPayment);
+
+  @override
+  Future<PaymentRefundState> checkRefundStatus(String intentId) =>
+      PaymentService(client: _client).checkRefundStatus(intentId);
 
   Future<OpenQueueBooking> _bookGame({
     required OpenQueueGame game,

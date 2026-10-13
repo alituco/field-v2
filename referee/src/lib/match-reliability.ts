@@ -54,7 +54,8 @@ export async function loadMatchReliabilityContext(
     db
       .from("match_attendance_records")
       .select("profile_id,check_in_timing")
-      .eq(matchColumn, matchId),
+      .eq(matchColumn, matchId)
+      .eq("is_current", true),
   ]);
 
   if (injuriesResult.error) {

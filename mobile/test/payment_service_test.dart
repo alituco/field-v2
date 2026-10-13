@@ -554,11 +554,15 @@ void main() {
         await expectLater(
           service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
           throwsA(
-            isA<PaymentException>().having(
-              (error) => error is PaymentPendingException,
-              'is pending',
-              isFalse,
-            ),
+            (status == 'REFUNDED' || status == 'REQUIRES_REFUND')
+                ? isA<PaymentRefundException>()
+                      .having((error) => error.intentId, 'intent', 'attempt-1')
+                      .having((error) => error.status, 'status', status)
+                : isA<PaymentException>().having(
+                    (error) => error is PaymentPendingException,
+                    'is pending',
+                    isFalse,
+                  ),
           ),
         );
         expect(confirms, 1);
@@ -632,13 +636,87 @@ void main() {
         await expectLater(
           service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
           throwsA(
-            isA<PaymentException>().having(
-              (error) => error.message,
-              'message',
-              contains('refund'),
-            ),
+            isA<PaymentRefundException>()
+                .having((error) => error.intentId, 'intent', 'attempt-1')
+                .having((error) => error.status, 'status', status)
+                .having(
+                  (error) => error.message,
+                  'message',
+                  contains('refund'),
+                ),
           ),
         );
+      },
+    );
+  }
+
+  test(
+    'refund refresh confirms the same attempt without preparing or collecting',
+    () async {
+      final calls = <Map<String, dynamic>>[];
+      var status = 'REQUIRES_REFUND';
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          calls.add(body);
+          return {'intent_id': 'attempt-1', 'status': status};
+        },
+        paymentCollector: (_) async =>
+            fail('Refund refresh must never collect'),
+        sheetPresenter: (_) async =>
+            fail('Refund refresh must never present payment'),
+      );
+      final pending = await service.checkRefundStatus('attempt-1');
+      expect(pending.isRefunded, isFalse);
+      status = 'REFUNDED';
+      final completed = await service.checkRefundStatus('attempt-1');
+      expect(completed.isRefunded, isTrue);
+      expect(completed.intentId, 'attempt-1');
+      expect(calls, [
+        {'action': 'confirm', 'intent_id': 'attempt-1'},
+        {'action': 'confirm', 'intent_id': 'attempt-1'},
+      ]);
+    },
+  );
+
+  test(
+    'failed refund exposes support review instead of claiming it is processing',
+    () async {
+      final service = PaymentService(
+        functionInvoker: (_) async => {
+          'intent_id': 'attempt-1',
+          'status': 'REQUIRES_REFUND',
+          'refund_status': 'FAILED',
+        },
+      );
+      final refund = await service.checkRefundStatus('attempt-1');
+      expect(refund.needsReview, isTrue);
+      expect(refund.message, contains('support review'));
+      expect(refund.message, contains('Do not pay again'));
+    },
+  );
+
+  for (final response in [
+    {'intent_id': 'another-attempt', 'status': 'REFUNDED'},
+    {'intent_id': 'attempt-1', 'status': 'PENDING'},
+    {'status': 'FINALIZED'},
+    <String, dynamic>{},
+  ]) {
+    test(
+      'refund refresh rejects mismatched or non-refund response $response',
+      () async {
+        var calls = 0;
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            expect(body, {'action': 'confirm', 'intent_id': 'attempt-1'});
+            calls++;
+            return response;
+          },
+        );
+        await expectLater(
+          service.checkRefundStatus('attempt-1'),
+          throwsA(isA<PaymentPendingException>()),
+        );
+        expect(calls, 1);
       },
     );
   }

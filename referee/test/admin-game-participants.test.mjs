@@ -114,6 +114,62 @@ test("solo cancelled roster is reconstructed from attendance after booking sides
   assert.deepEqual(result.withdrawnPlayers.map((player) => player.profileId), [C]);
 });
 
+test("a rebooked solo player uses fresh attendance without a duplicate withdrawal", () => {
+  const result = buildSoloGameParticipants({
+    matchId: "game",
+    status: "OPEN",
+    capacity: 14,
+    bookingRows: [
+      {
+        id: "old-booking-a",
+        profile_id: A,
+        role: "GK",
+        status: "CANCELLED",
+        booked_at: "2026-10-12T08:00:00Z",
+        cancelled_at: "2026-10-12T09:00:00Z",
+        profile: profile(A, "Ali"),
+      },
+      {
+        id: "new-booking-a",
+        profile_id: A,
+        role: "DEF",
+        status: "CONFIRMED",
+        booked_at: "2026-10-12T10:00:00Z",
+        profile: profile(A, "Ali"),
+      },
+    ],
+    attendanceRows: [
+      {
+        id: "old-attendance-a",
+        booking_id: "old-booking-a",
+        profile_id: A,
+        is_current: false,
+        role: "GK",
+        side: "WHITE",
+        checked_in_at: "2026-10-12T08:30:00Z",
+        outcome: "CANCELLED_LATE",
+        profile: profile(A, "Ali"),
+      },
+      {
+        id: "new-attendance-a",
+        booking_id: "new-booking-a",
+        profile_id: A,
+        is_current: true,
+        expected_for_match: true,
+        role: "DEF",
+        checked_in_at: null,
+        outcome: null,
+        profile: profile(A, "Ali"),
+      },
+    ],
+  });
+
+  assert.deepEqual(result.counts, { registered: 1, actual: 0, withdrawn: 0 });
+  assert.equal(result.registeredPlayers[0].bookingId, "new-booking-a");
+  assert.equal(result.registeredPlayers[0].role, "DEF");
+  assert.deepEqual(result.actualPlayers, []);
+});
+
 test("clan response keeps planned, actual, and removed rosters distinct", () => {
   const result = buildClanGameParticipants({
     matchId: "fixture",

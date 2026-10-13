@@ -382,6 +382,8 @@ jobs:
             node supabase/scripts/test_e2e_checkout_cleanup.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_game_division_ranges.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_solo_rebooking.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
         run: >-

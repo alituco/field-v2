@@ -143,6 +143,7 @@ async function loadSoloGameParticipants(
       .select(`
         id,
         booking_id,
+        is_current,
         profile_id,
         side,
         role,
@@ -291,6 +292,7 @@ export function buildSoloGameParticipants(input: {
     ),
   );
   const attendance = input.attendanceRows
+    .filter((row) => row.is_current !== false)
     .map((row) => normalizeAttendanceParticipant(row, bookingById))
     .filter((player): player is AdminGameParticipant => player !== null);
   const confirmed = bookings.filter(
@@ -324,6 +326,9 @@ export function buildSoloGameParticipants(input: {
       player.bookingId ? [player.bookingId] : []
     ),
   );
+  const registeredProfileIds = new Set(
+    registeredPlayers.map((player) => player.profileId),
+  );
   const playedBookings = confirmed.filter((player) => player.played);
   const checkedInAttendance = attendance.filter(
     (player) => player.checkedInAt !== null,
@@ -336,6 +341,7 @@ export function buildSoloGameParticipants(input: {
     bookings.filter(
       (player) =>
         player.bookingStatus === "CANCELLED" &&
+        !registeredProfileIds.has(player.profileId) &&
         (!player.bookingId || !registeredBookingIds.has(player.bookingId)),
     ),
   ));

@@ -512,7 +512,24 @@ begin
       and trigger_info.tgname = 'prevent_same_solo_game_rebooking'
       and not trigger_info.tgisinternal
   ) then
-    raise exception 'Cancelled solo bookings can still poison a same-game rebooking attendance row.';
+    raise exception 'The serialized solo rebooking attendance guard is missing.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'match_attendance_records'
+      and column_name = 'is_current' and is_nullable = 'NO'
+  ) or to_regclass('public.current_match_attendance_records') is null
+    or to_regclass('public.match_attendance_solo_booking_idx') is null
+    or to_regclass('public.match_attendance_solo_current_profile_idx') is null
+  then
+    raise exception 'Booking-scoped attendance history and current-record constraints are missing.';
+  end if;
+  if has_table_privilege('anon', 'public.current_match_attendance_records', 'SELECT')
+    or has_table_privilege('authenticated', 'public.current_match_attendance_records', 'SELECT')
+    or not has_table_privilege('service_role', 'public.current_match_attendance_records', 'SELECT')
+  then
+    raise exception 'The current-attendance view must remain server-only.';
   end if;
 
   if not exists (

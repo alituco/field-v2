@@ -1,7 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeMatchReliabilityContext } from "../src/lib/match-reliability.ts";
+import {
+  loadMatchReliabilityContext,
+  normalizeMatchReliabilityContext,
+} from "../src/lib/match-reliability.ts";
+
+test("referee timing uses current attendance instead of a cancelled booking's classification", async () => {
+  const playerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const timingFilters = [];
+  const db = {
+    rpc: async () => ({
+      data: { players: [{ profile_id: playerId, check_in_timing: "LATE" }] },
+      error: null,
+    }),
+    from(table) {
+      const filters = [];
+      return {
+        select() { return this; },
+        eq(column, value) {
+          filters.push([column, value]);
+          if (table === "match_attendance_records") timingFilters.push([column, value]);
+          return this;
+        },
+        is() { return this; },
+        order() { return this; },
+        then(resolve) {
+          const data = table !== "match_attendance_records" ? []
+            : filters.some(([column, value]) => column === "is_current" && value === true)
+              ? [{ profile_id: playerId, check_in_timing: "LATE" }]
+              : [
+                  { profile_id: playerId, check_in_timing: "LATE" },
+                  { profile_id: playerId, check_in_timing: "EARLY" },
+                ];
+          return Promise.resolve({ data, error: null }).then(resolve);
+        },
+      };
+    },
+  };
+
+  const context = await loadMatchReliabilityContext(db, "SOLO", "game");
+  assert.equal(context.players[0].checkInTiming, "LATE");
+  assert.ok(timingFilters.some(([column, value]) => column === "is_current" && value === true));
+});
 
 test("match reliability context preserves server timing and attendance states", () => {
   assert.deepEqual(
