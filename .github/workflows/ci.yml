@@ -276,7 +276,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Check admin inbox navigation before hosted journeys
-        run: npm run test:ui -- admin-inbox-navigation.spec.ts --project=chromium
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts --project=chromium
 
       - name: Build referee app
         run: npm run build
@@ -356,6 +356,7 @@ jobs:
             supabase/functions/dev-switch-user/fixture_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts \
+            supabase/scripts/e2e/rating_tracks_test.ts \
             supabase/scripts/e2e/checkouts_test.ts
 
       - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
@@ -414,6 +415,25 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             <supabase/scripts/verify_launch_interest.sql
 
+      - name: Verify independent rating tracks and city rankings
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_city_keeper_rankings.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_clans.sql
+
+      - name: Verify season settings and published city rewards
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_season_rewards.sql
+
       - name: Verify reliability schema contracts
         shell: bash
         run: |
@@ -470,6 +490,7 @@ jobs:
             supabase/scripts/verify_clan_attendance_flexibility.sql \
             supabase/scripts/verify_clan_forfeit_workflow.sql \
             supabase/scripts/verify_match_resolution_control_plane.sql \
+            supabase/scripts/verify_match_resolution_rating_era.sql \
             supabase/scripts/verify_moderation_system.sql \
             supabase/scripts/verify_support_ticket_system.sql \
             supabase/scripts/verify_stripe_payment_system.sql

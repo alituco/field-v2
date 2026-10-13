@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { parseAdminSoloGameCreateInput } from "@/lib/admin-solo-games";
-import { adminFieldsErrorMessage } from "@/lib/admin-fields";
+import { adminFieldsErrorMessage, FIELD_SELECT, parseFieldId, serializeAdminField } from "@/lib/admin-fields";
 import {
   adminOnly,
   isRefereeContext,
@@ -15,7 +15,14 @@ export async function POST(request: NextRequest) {
   if (denied) return denied;
 
   try {
-    const input = parseAdminSoloGameCreateInput(await request.json());
+    const body = await request.json();
+    const fieldId = parseFieldId(body?.fieldId);
+    const { data: fieldRow, error: fieldError } = await context.db.from("fields").select(FIELD_SELECT).eq("id", fieldId).single();
+    if (fieldError) throw new Error(adminFieldsErrorMessage(fieldError));
+    const field = serializeAdminField(fieldRow);
+    if (!field.isActive || !field.marketActive) throw new Error("Choose an active field in an available competition city.");
+    // Neither a client-supplied timezone nor postal city can move this game's market.
+    const input = parseAdminSoloGameCreateInput(body, field.marketTimezone);
     const { data, error } = await context.db.rpc(
       "admin_create_open_queue_game",
       {

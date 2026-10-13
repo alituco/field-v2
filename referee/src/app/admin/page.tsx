@@ -33,6 +33,8 @@ import { GamePaymentSettingsPanel } from "./game-payment-settings";
 import { refundRetryNotice } from "@/lib/payment-refunds";
 import { FieldsPanel } from "./fields-panel";
 import { SchedulesPanel } from "./schedules-panel";
+import { CitiesPanel } from "./cities-panel";
+import { SeasonsPanel } from "./seasons-panel";
 import type { AdminField } from "@/lib/admin-fields";
 
 type AdminSection =
@@ -40,6 +42,8 @@ type AdminSection =
   | "games"
   | "schedules"
   | "fields"
+  | "cities"
+  | "seasons"
   | "reliability"
   | "support"
   | "reports"
@@ -292,6 +296,8 @@ export default function AdminPage() {
   const [schedulesRefreshKey, setSchedulesRefreshKey] = useState(0);
   const [scheduleAddedFieldId, setScheduleAddedFieldId] = useState<string | null>(null);
   const [fieldsRefreshKey, setFieldsRefreshKey] = useState(0);
+  const [citiesRefreshKey, setCitiesRefreshKey] = useState(0);
+  const [seasonsRefreshKey, setSeasonsRefreshKey] = useState(0);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
   const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
@@ -482,6 +488,14 @@ export default function AdminPage() {
       setSection("schedules");
       return;
     }
+    if (window.location.pathname.startsWith("/admin/cities")) {
+      setSection("cities");
+      return;
+    }
+    if (window.location.pathname.startsWith("/admin/seasons")) {
+      setSection("seasons");
+      return;
+    }
     if (adminNavItems.some((item) => item.id === requested)) {
       setSection(requested as AdminSection);
     }
@@ -595,7 +609,7 @@ export default function AdminPage() {
     setAddingField(false);
     setReturnToSolo(false);
     setReturnToSchedules(false);
-    window.history.replaceState(null, "", ["fields", "schedules"].includes(next) ? `/admin/${next}` : `/admin?section=${next}`);
+    window.history.replaceState(null, "", ["fields", "schedules", "cities", "seasons"].includes(next) ? `/admin/${next}` : `/admin?section=${next}`);
   }
 
   function addFieldForGame(draft?: SoloGameDraft) {
@@ -616,7 +630,7 @@ export default function AdminPage() {
       const payload = await fetchJson<{ fields: AdminField[] }>("/api/referee/admin/fields", {
         headers: authHeaders(), cache: "no-store",
       });
-      const available = payload.fields.filter((field) => field.isActive);
+      const available = payload.fields.filter((field) => field.isActive && field.marketActive);
       setFields(available);
       if (!available.length) addFieldForGame();
       else setSoloGameDialog({ kind: "create" });
@@ -956,6 +970,10 @@ export default function AdminPage() {
                   setFieldsRefreshKey((value) => value + 1);
                 } else if (section === "schedules") {
                   setSchedulesRefreshKey((value) => value + 1);
+                } else if (section === "cities") {
+                  setCitiesRefreshKey((value) => value + 1);
+                } else if (section === "seasons") {
+                  setSeasonsRefreshKey((value) => value + 1);
                 } else if (section === "reliability") {
                   setReliabilityRefreshKey((value) => value + 1);
                 } else if (section === "waitlist") {
@@ -1032,6 +1050,10 @@ export default function AdminPage() {
                 setSoloGameDialog({ kind: "remove", fixture })
               }
             />
+          ) : section === "cities" ? (
+            <CitiesPanel accessToken={accessToken} refreshKey={citiesRefreshKey} />
+          ) : section === "seasons" ? (
+            <SeasonsPanel accessToken={accessToken} refreshKey={seasonsRefreshKey} />
           ) : section === "schedules" ? (
             <SchedulesPanel accessToken={accessToken} refreshKey={schedulesRefreshKey} newlyAddedFieldId={scheduleAddedFieldId ?? undefined} onAddField={() => {
               setSection("fields"); setAddingField(true); setReturnToSolo(false); setReturnToSchedules(true);
@@ -1242,6 +1264,8 @@ const adminNavItems: Array<{
   { id: "games", label: "Games", shortLabel: "Games", icon: "games" },
   { id: "schedules", label: "Schedules", shortLabel: "Schedules", icon: "games" },
   { id: "fields", label: "Fields", shortLabel: "Fields", icon: "location" },
+  { id: "cities", label: "Cities", shortLabel: "Cities", icon: "location" },
+  { id: "seasons", label: "Seasons & rewards", shortLabel: "Seasons", icon: "policy" },
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
@@ -3526,7 +3550,7 @@ function SoloGameManagementDialog({
   onRemove: (fixture: RefereeFixture, reason: string) => void;
 }) {
   const [fieldId, setFieldId] = useState(dialog.kind === "create" ? dialog.fieldId ?? "" : "");
-  const selectedField = fields.find((field) => field.id === fieldId && field.isActive);
+  const selectedField = fields.find((field) => field.id === fieldId && field.isActive && field.marketActive);
   const [matchDate, setMatchDate] = useState(draft?.matchDate ?? nextSoloMatchDate());
   const [kickoffTime, setKickoffTime] = useState(draft?.kickoffTime ?? "20:30");
   const [durationMinutes, setDurationMinutes] = useState(draft?.durationMinutes ?? 60);
@@ -3570,14 +3594,14 @@ function SoloGameManagementDialog({
             The game opens for player bookings as soon as it is created.
           </p>
           <div className="admin-modal-warning">
-            7-a-side · Any day · Phoenix time. Games at the same pitch cannot overlap. Prices are in USD.
+            7-a-side · Any day · The saved field determines the city and local time. Games at the same pitch cannot overlap. Prices are in USD.
           </div>
           <label className="admin-modal-field">
             <span>Field / pitch <span aria-hidden="true">*</span></span>
             <select required value={fieldId} onChange={(event) => setFieldId(event.target.value)}>
               <option value="">Select a saved field</option>
-              {fields.filter((field) => field.isActive).map((field) => (
-                <option key={field.id} value={field.id}>{field.name} · {field.city}</option>
+              {fields.filter((field) => field.isActive && field.marketActive).map((field) => (
+                <option key={field.id} value={field.id}>{field.name} · {field.marketCityName}</option>
               ))}
             </select>
             <small>{selectedField ? `${selectedField.address}, ${selectedField.city}, ${selectedField.state}` : "Players will see this field’s address and map pin in the app."}</small>
@@ -3596,7 +3620,7 @@ function SoloGameManagementDialog({
             <label className="admin-modal-field">
               <span>Kickoff time</span>
               <input type="time" value={kickoffTime} onChange={(event) => setKickoffTime(event.target.value)} />
-              <small>America/Phoenix (Arizona time)</small>
+              <small>{selectedField ? `${selectedField.marketCityName} · ${selectedField.marketTimezone}` : "Choose a field to set the local timezone."}</small>
             </label>
             <label className="admin-modal-field">
               <span>Duration (minutes)</span>
@@ -4711,6 +4735,8 @@ function sectionTitle(section: AdminSection) {
     games: "Games",
     schedules: "Game schedules",
     fields: "Fields & pitches",
+    cities: "Competition cities",
+    seasons: "Seasons & rewards",
     reliability: "Reliability policy",
     support: "Player support",
     reports: "Reports inbox",
@@ -4727,6 +4753,8 @@ function sectionSubtitle(section: AdminSection) {
     games: "Review, correct, cancel and watch every match.",
     schedules: "Choose when and where you play. Publish upcoming games automatically.",
     fields: "Save real locations once. Assign them to games. Help players find the pitch.",
+    cities: "Choose where Fieldrush is available. Keep game discovery, timezones and rankings connected.",
+    seasons: "Plan each season and publish city-by-city cash rewards for Outfield and Keeper ladders.",
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",

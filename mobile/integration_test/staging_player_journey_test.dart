@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:field/main.dart' as app;
 import 'package:field/src/fixtures/fieldrush_fixture_page.dart';
 import 'package:field/src/leaderboard/fieldrush_leaderboard_widgets.dart';
+import 'package:field/src/leaderboard/fieldrush_rating_tracks.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/moderation/moderation_repository.dart';
@@ -496,27 +497,104 @@ Future<void> _verifyFixtureDetailLink(
 
 Future<void> _verifyLeaderboards(WidgetTester tester) async {
   final repository = SupabaseLeaderboardRepository();
-  final season = activeLeaderboardSeason;
+  final catalog = await _boundedRemoteStep(
+    'read authoritative season calendar',
+    repository.loadSeasons(),
+  );
+  final season = catalog.currentSeason;
   await tapWhenVisible(
     tester,
     find.byKey(const ValueKey('field-bottom-nav-item-3')),
   );
-  var content = await _loadedRanks(tester, season);
+  final ratings = await _boundedRemoteStep(
+    'read authoritative independent player ratings',
+    repository.loadPlayerRatings(season: season),
+  );
+  final cityId = ratings.primaryCityId ?? ratings.preferredCityId ?? 'phoenix';
+  var content = await _loadedRanks(tester, season, cityId: cityId);
+  expect(
+    content.cityId,
+    cityId,
+    reason: 'Ranks must start in the player’s city.',
+  );
+  final city = content.cities.singleWhere((city) => city.id == cityId);
   final expected = await _boundedRemoteStep(
-    'read authoritative Phoenix ranks',
-    repository.loadPlayerRatingPage(season: season),
+    'read authoritative city outfield ranks',
+    repository.loadRatingPage(
+      season: season,
+      track: RatingTrack.outfield,
+      cityId: cityId,
+    ),
   );
-  final rating = await _boundedRemoteStep(
-    'read authoritative current-season placement',
-    repository.loadCurrentPlayerRating(season),
+  _assertRanksMatchServer(
+    content,
+    expected,
+    ratings.forScope(RatingTrack.outfield, cityId),
   );
-  _assertRanksMatchServer(content, expected, rating);
   expect(find.byKey(const ValueKey('ranks-city')), findsOneWidget);
+
+  // The city switcher is a live global/city menu; both scopes must display the
+  // server's standings rather than reuse whichever city happened to load first.
   await tapWhenVisible(tester, find.byKey(const ValueKey('ranks-city')));
-  await pumpUntilFound(tester, find.text('Solo ladder is live'));
-  await tapWhenVisible(tester, find.text('Solo ladder is live'));
+  await tapWhenVisible(tester, _rankCityOption('global'));
+  content = await _loadedRanks(tester, season, cityId: null);
+  final global = await _boundedRemoteStep(
+    'read authoritative global outfield ranks',
+    repository.loadRatingPage(season: season, track: RatingTrack.outfield),
+  );
+  _assertRanksMatchServer(
+    content,
+    global,
+    ratings.forScope(RatingTrack.outfield, null),
+  );
+  expect(
+    content.rewards,
+    isNull,
+    reason: 'Global must not advertise city prizes.',
+  );
+  await tapWhenVisible(tester, find.byKey(const ValueKey('ranks-city')));
+  await tapWhenVisible(tester, _rankCityOption(cityId));
+  content = await _loadedRanks(tester, season, cityId: cityId);
+  expect(
+    content.cities.singleWhere((value) => value.id == cityId).label,
+    city.label,
+  );
 
   final rankPage = find.byType(FieldrushLeaderboardContent);
+  await tapAfterScroll(
+    tester,
+    find.descendant(of: rankPage, matching: find.text('Keepers')),
+  );
+  content = await _loadedRanks(
+    tester,
+    season,
+    track: RatingTrack.goalkeeper,
+    cityId: cityId,
+  );
+  final keepers = await _boundedRemoteStep(
+    'read authoritative city keeper ranks',
+    repository.loadRatingPage(
+      season: season,
+      track: RatingTrack.goalkeeper,
+      cityId: cityId,
+    ),
+  );
+  _assertRanksMatchServer(
+    content,
+    keepers,
+    ratings.forScope(RatingTrack.goalkeeper, cityId),
+  );
+  await tapAfterScroll(
+    tester,
+    find.descendant(of: rankPage, matching: find.text('Outfield')),
+  );
+  content = await _loadedRanks(tester, season, cityId: cityId);
+  _assertRanksMatchServer(
+    content,
+    expected,
+    ratings.forScope(RatingTrack.outfield, cityId),
+  );
+
   await tapAfterScroll(
     tester,
     find.descendant(of: rankPage, matching: find.text('Clans')),
@@ -524,21 +602,53 @@ Future<void> _verifyLeaderboards(WidgetTester tester) async {
   await pumpUntilFound(tester, find.text('Clan ladders are coming'));
   expect(tester.widget<FieldrushLeaderboardContent>(rankPage).clans, isTrue);
   await tapAfterScroll(tester, find.text('See solo ladder'));
-  content = await _loadedRanks(tester, season);
+  content = await _loadedRanks(tester, season, cityId: cityId);
   expect(content.clans, isFalse);
 
   if (expected.players.isEmpty) {
-    await scrollUntilFound(tester, find.text('The ladder starts here'));
+    if (content.rewards == null) {
+      await scrollUntilFound(
+        tester,
+        find.byKey(const ValueKey('ranks-empty-ranked')),
+      );
+    } else {
+      for (var place = 1; place <= 3; place++) {
+        await scrollUntilFound(
+          tester,
+          find.byKey(ValueKey('ranks-prize-open-$place')),
+        );
+      }
+      expect(content.rewards!.players, isEmpty);
+    }
+    await scrollUntilFound(tester, find.text('IN PLACEMENT'));
+    expect(content.placementError, isNull);
     expect(content.totalCount, 0);
   } else {
     final top = expected.players.first;
-    final podium = find.byKey(ValueKey('ranks-podium-${top.profileId}'));
-    await scrollUntilFound(tester, podium);
+    final topRow = _rankPlayerRow(top.profileId);
+    await scrollUntilFound(tester, topRow);
     expect(
-      find.descendant(of: podium, matching: find.text('${top.skillRating}')),
+      find.descendant(
+        of: topRow,
+        matching: find.byWidgetPredicate((widget) {
+          if (widget is! Text) return false;
+          final text = widget.data?.replaceAll(',', '');
+          return text == '${top.skillRating}' ||
+              text == '${top.divisionLabel} · ${top.skillRating} skill rating';
+        }),
+      ),
       findsOneWidget,
     );
-    await tapAfterScroll(tester, podium);
+    expect(
+      find.descendant(
+        of: topRow,
+        matching: find.text(
+          top.profileId == _currentUserId() ? 'You' : top.displayName,
+        ),
+      ),
+      findsOneWidget,
+    );
+    await tapAfterScroll(tester, topRow);
     if (top.profileId == _currentUserId()) {
       await pumpUntilFound(tester, find.byType(FieldrushYouScreen));
       await pumpUntilFound(tester, find.byKey(const ValueKey('you-content')));
@@ -557,7 +667,7 @@ Future<void> _verifyLeaderboards(WidgetTester tester) async {
         expectedProfileId: top.profileId,
       );
     }
-    content = await _loadedRanks(tester, season);
+    content = await _loadedRanks(tester, season, cityId: cityId);
     if (expected.totalCount > 3) {
       await tapAfterScroll(tester, find.byKey(const ValueKey('ranks-more')));
       await pumpUntilFound(
@@ -568,11 +678,16 @@ Future<void> _verifyLeaderboards(WidgetTester tester) async {
               !widget.loadingMore &&
               widget.visibleCount >= 20,
         ),
-        reason: 'Expanding the Phoenix ladder did not expose its ranked rows.',
+        reason: 'Expanding the city ladder did not expose its ranked rows.',
       );
       content = tester.widget<FieldrushLeaderboardContent>(rankPage);
       expect(content.pageError, isNull);
-      final rows = expected.players.skip(3).take(20).toList();
+      final featured = (content.rewards?.players ?? expected.players.take(3))
+          .map((player) => player.profileId)
+          .toSet();
+      final rows = expected.players
+          .where((player) => !featured.contains(player.profileId))
+          .take(20);
       for (final player in rows) {
         await scrollUntilFound(
           tester,
@@ -585,24 +700,31 @@ Future<void> _verifyLeaderboards(WidgetTester tester) async {
     }
   }
 
-  final seasonIndex = leaderboardSeasons.indexWhere(
-    (value) => value.id == season.id,
-  );
+  final seasons = catalog.visibleSeasons;
+  final seasonIndex = seasons.indexWhere((value) => value.id == season.id);
   if (seasonIndex > 0) {
-    final previous = leaderboardSeasons[seasonIndex - 1];
+    final previous = seasons[seasonIndex - 1];
     await tapAfterScroll(tester, find.byTooltip('Previous season'));
-    content = await _loadedRanks(tester, previous);
+    content = await _loadedRanks(tester, previous, cityId: cityId);
     final oldPage = await _boundedRemoteStep(
       'read authoritative previous-season ranks',
-      repository.loadPlayerRatingPage(season: previous),
+      repository.loadRatingPage(
+        season: previous,
+        track: RatingTrack.outfield,
+        cityId: cityId,
+      ),
     );
     final oldRating = await _boundedRemoteStep(
       'read authoritative previous-season placement',
-      repository.loadCurrentPlayerRating(previous),
+      repository.loadPlayerRatings(season: previous),
     );
-    _assertRanksMatchServer(content, oldPage, oldRating);
+    _assertRanksMatchServer(
+      content,
+      oldPage,
+      oldRating.forScope(RatingTrack.outfield, cityId),
+    );
     await tapAfterScroll(tester, find.byTooltip('Next season'));
-    await _loadedRanks(tester, season);
+    await _loadedRanks(tester, season, cityId: cityId);
   }
 
   await tapWhenVisible(
@@ -612,14 +734,31 @@ Future<void> _verifyLeaderboards(WidgetTester tester) async {
   await pumpUntilFound(tester, find.byKey(const ValueKey('home-screen')));
 }
 
+Finder _rankCityOption(String value) => find.byWidgetPredicate(
+  (widget) => widget is PopupMenuItem<String> && widget.value == value,
+);
+
+Finder _rankPlayerRow(String profileId) {
+  final keys = {
+    ValueKey('ranks-podium-$profileId'),
+    ValueKey('ranks-player-$profileId'),
+    ValueKey('ranks-prize-$profileId'),
+  };
+  return find.byWidgetPredicate((widget) => keys.contains(widget.key));
+}
+
 Future<FieldrushLeaderboardContent> _loadedRanks(
   WidgetTester tester,
-  LeaderboardSeason season,
-) async {
+  LeaderboardSeason season, {
+  RatingTrack track = RatingTrack.outfield,
+  String? cityId = 'phoenix',
+}) async {
   final content = find.byWidgetPredicate(
     (widget) =>
         widget is FieldrushLeaderboardContent &&
         widget.season.id == season.id &&
+        widget.track == track &&
+        widget.cityId == cityId &&
         !widget.loading,
   );
   await pumpUntilFound(
@@ -634,6 +773,11 @@ Future<FieldrushLeaderboardContent> _loadedRanks(
     isNull,
     reason:
         'Ranks returned a loading failure rather than authoritative season data.',
+  );
+  expect(
+    widget.rewardsError,
+    isNull,
+    reason: 'The selected city and role must load its season reward settings.',
   );
   return widget;
 }
@@ -653,8 +797,18 @@ void _assertRanksMatchServer(
     page.players.map((player) => player.skillRating),
   );
   expect(
+    content.players.map((player) => player.rank),
+    page.players.map((player) => player.rank),
+  );
+  expect(
+    content.players.map((player) => player.matchesPlayed),
+    page.players.map((player) => player.matchesPlayed),
+  );
+  expect(
     content.players.every(
-      (player) => player.isRanked && player.region == 'phoenix',
+      (player) =>
+          player.isRanked &&
+          (content.cityId == null || player.region == content.cityId),
     ),
     isTrue,
   );
@@ -667,6 +821,9 @@ void _assertRanksMatchServer(
   expect(content.currentRating!.profileId, _currentUserId());
   expect(content.currentRating!.matchesPlayed, rating.matchesPlayed);
   expect(content.currentRating!.skillRating, rating.skillRating);
+  expect(content.currentRating!.wins, rating.wins);
+  expect(content.currentRating!.draws, rating.draws);
+  expect(content.currentRating!.losses, rating.losses);
   expect(content.currentRating!.rank, rating.rank);
   expect(content.currentRating!.region, rating.region);
 }

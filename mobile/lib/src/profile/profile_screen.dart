@@ -11,6 +11,9 @@ import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../leaderboard/leaderboard.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_seasons.dart';
+import '../leaderboard/leaderboard_repository.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
@@ -45,6 +48,7 @@ class ProfileScreen extends StatefulWidget {
     this.isSigningOut = false,
     this.onSignOut,
     this.onOpenAccount,
+    this.ratingRepository,
   });
 
   final ProfileRepository profileRepository;
@@ -60,6 +64,7 @@ class ProfileScreen extends StatefulWidget {
   final bool isSigningOut;
   final VoidCallback? onSignOut;
   final Future<void> Function()? onOpenAccount;
+  final TrackLeaderboardRepository? ratingRepository;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -76,6 +81,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _openingGameId;
   bool _isOpeningClan = false;
   bool _isUpdatingFollow = false;
+  FieldrushPlayerRatings? _ratings;
+  RatingTrack _ratingTrack = RatingTrack.outfield;
   int _profileLoadVersion = 0;
 
   bool get _isCurrentProfile => widget.profileId == null;
@@ -113,6 +120,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final profile = _isCurrentProfile
         ? await widget.profileRepository.getCurrentProfile()
         : await widget.profileRepository.getProfile(widget.profileId!);
+    FieldrushPlayerRatings? ratings;
+    if (widget.ratingRepository != null ||
+        widget.profileRepository is SupabaseProfileRepository) {
+      try {
+        final repository =
+            widget.ratingRepository ?? SupabaseLeaderboardRepository();
+        final season = await loadActiveLeaderboardSeason(repository);
+        if (!mounted || version != _profileLoadVersion) return profile;
+        ratings = await repository.loadPlayerRatings(
+          season: season,
+          profileId: profile.id,
+        );
+      } catch (_) {
+        // Never relabel the old mixed rating as a Keeper rating on RPC failure.
+      }
+    }
+    if (mounted && version == _profileLoadVersion) {
+      _ratings = ratings;
+      if (_latestProfile?.id != profile.id) {
+        _ratingTrack =
+            ['GK', 'GOALKEEPER'].contains(profile.position?.toUpperCase())
+            ? RatingTrack.goalkeeper
+            : RatingTrack.outfield;
+      }
+    }
     if (mounted && version == _profileLoadVersion) _latestProfile = profile;
     return profile;
   }
@@ -280,7 +312,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ProfilePreviousGame game,
     OpenQueueMatchDetail detail,
   ) {
-    final ratingEvents = _latestProfile?.playerRating?.events ?? const [];
+    final ratingEvents =
+        _ratings?.mergeHistory(
+          _latestProfile?.playerRating?.events ?? const [],
+        ) ??
+        _latestProfile?.playerRating?.events ??
+        const [];
     for (final event in ratingEvents) {
       if (event.sourceId.trim() != game.id.trim() ||
           event.isSolo != game.isSolo) {
@@ -716,6 +753,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   children: [
                     FieldrushPlayerProfileContent(
                       profile: profile,
+                      ratings: _ratings,
+                      ratingUnavailable:
+                          _ratings == null &&
+                          (widget.ratingRepository != null ||
+                              widget.profileRepository
+                                  is SupabaseProfileRepository),
+                      track: _ratingTrack,
+                      onTrack: _ratings == null
+                          ? null
+                          : (track) => setState(() => _ratingTrack = track),
                       isFollowing: profile.isFollowedByMe,
                       followBusy: _isUpdatingFollow,
                       onFollow: _canReportProfile ? _toggleViewedFollow : null,

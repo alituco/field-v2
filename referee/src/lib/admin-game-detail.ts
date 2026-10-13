@@ -404,7 +404,7 @@ async function loadSoloRatingSummary(
 ): Promise<Extract<AdminGameDetail["ratingSummary"], { kind: "SOLO" }>> {
   const { data: bookings, error: bookingError } = await db
     .from("open_queue_bookings")
-    .select("profile_id,team,rating_at_team_assignment")
+    .select("profile_id,role,rating_track,team,rating_at_team_assignment")
     .eq("game_id", gameId)
     .eq("status", "CONFIRMED");
   if (bookingError) throw new Error(`Could not load solo ratings: ${bookingError.message}`);
@@ -416,19 +416,19 @@ async function loadSoloRatingSummary(
     .filter(Boolean);
   const currentRatings = new Map<string, number>();
   if (missingRatingIds.length) {
-    const { data, error } = await db.from("player_ratings")
-      .select("profile_id,skill_rating")
+    const { data, error } = await db.from("fieldrush_player_rating_tracks")
+      .select("profile_id,rating_track,skill_rating")
       .in("profile_id", [...new Set(missingRatingIds)]);
     if (error) throw new Error(`Could not load current player ratings: ${error.message}`);
     for (const row of rows(data)) {
-      currentRatings.set(text(row.profile_id), integer(row.skill_rating, 1200));
+      currentRatings.set(`${text(row.profile_id)}:${text(row.rating_track)}`, integer(row.skill_rating, 1200));
     }
   }
 
   const rated = bookingRows.map((row) => ({
     team: text(row.team).toUpperCase(),
     rating: nullableInteger(row.rating_at_team_assignment) ??
-      currentRatings.get(text(row.profile_id)) ?? 1200,
+      currentRatings.get(`${text(row.profile_id)}:${text(row.rating_track, text(row.role).toUpperCase() === "GK" ? "GOALKEEPER" : "OUTFIELD")}`) ?? 1200,
   }));
   const whiteAverageSr = average(rated.filter((row) => row.team === "WHITE").map((row) => row.rating));
   const blackAverageSr = average(rated.filter((row) => row.team === "BLACK").map((row) => row.rating));

@@ -11,6 +11,7 @@ import '../fixtures/fixture_repository.dart';
 import '../fixtures/fixtures_screen.dart';
 import '../leaderboard/leaderboard_repository.dart';
 import '../leaderboard/leaderboard_screen.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../moderation/account_restriction_screen.dart';
 import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
@@ -68,6 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
   int _playerRanksActivationTick = 0;
   int _youActivationTick = 0;
   final _tabRefresh = TabRefreshPolicy();
+  final _ratingTrack = ValueNotifier(RatingTrack.outfield);
   bool _isSigningOut = false;
   String? _shownModerationNoticeSignature;
 
@@ -77,6 +79,12 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _showModerationNotice();
     });
+  }
+
+  @override
+  void dispose() {
+    _ratingTrack.dispose();
+    super.dispose();
   }
 
   @override
@@ -216,6 +224,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final pages = [
       DashboardHome(
+        ratingTrackController: _ratingTrack,
         activationTick: _homeActivationTick,
         profileRepository: _profileRepository,
         clanRepository: _clanRepository,
@@ -244,6 +253,8 @@ class _HomeScreenState extends State<HomeScreen> {
         activationTick: _clansActivationTick,
       ),
       LeaderboardScreen(
+        onFindGame: () => _openSoloBooking(null),
+        ratingTrackController: _ratingTrack,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         leaderboardRepository: _leaderboardRepository,
@@ -252,6 +263,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onOpenYou: () => _selectTab(4),
       ),
       FieldrushYouScreen(
+        ratingTrackController: _ratingTrack,
         activationTick: _youActivationTick,
         profileRepository: _profileRepository,
         leaderboardRepository: _leaderboardRepository,

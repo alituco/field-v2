@@ -97,7 +97,10 @@ void main() {
     expect(find.text('????'), findsOneWidget);
     expect(find.text('2 games to reveal your division'), findsOneWidget);
     expect(find.text('0 / 2'), findsOneWidget);
-    expect(find.text('WON'), findsNothing);
+    expect(find.text('WON'), findsOneWidget);
+    expect(find.text('DRAWN'), findsOneWidget);
+    expect(find.text('LOST'), findsOneWidget);
+    expect(find.text('0 played · 0% won'), findsOneWidget);
     expect(find.text('LAST FIVE'), findsNothing);
     expect(
       find.text('Open the replay of a finished match and tap Clip.'),

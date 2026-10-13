@@ -198,7 +198,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(ClanDetailScreen), findsOneWidget);
-    expect(find.text('HOME'), findsWidgets);
+    expect(tester.widget<ClanDetailScreen>(find.byType(ClanDetailScreen)).clan.id, 'home');
+    expect(find.text('Home'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 

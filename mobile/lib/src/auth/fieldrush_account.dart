@@ -64,6 +64,8 @@ class FieldrushAccount {
     this.homeCity,
     this.rankingRegion,
     this.homeCityLocked = true,
+    this.preferredCityId,
+    this.marketTimezone,
   });
 
   final AccountDraft draft;
@@ -79,6 +81,8 @@ class FieldrushAccount {
   final String? homeCity;
   final String? rankingRegion;
   final bool homeCityLocked;
+  final String? preferredCityId;
+  final String? marketTimezone;
 
   bool get deletionPending =>
       status == 'deletion_pending' || status == 'deleted';
@@ -96,6 +100,8 @@ class FieldrushAccount {
         homeCity: json['home_city'] as String?,
         rankingRegion: json['ranking_region'] as String?,
         homeCityLocked: json['home_city_locked'] != false,
+        preferredCityId: json['preferred_city_id'] as String?,
+        marketTimezone: json['market_timezone'] as String?,
       );
 }
 

@@ -148,7 +148,7 @@ void main() {
     await _pumpClan(tester, role: 'owner');
     await _openClanMenu(tester);
     expect(find.text('Edit clan'), findsOneWidget);
-    expect(find.text('Delete clan'), findsOneWidget);
+    expect(find.text('Archive clan'), findsOneWidget);
     expect(find.text('Report clan'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -157,7 +157,7 @@ void main() {
     await _pumpClan(tester, role: 'leader');
     await _openClanMenu(tester);
     expect(find.text('Edit clan'), findsOneWidget);
-    expect(find.text('Delete clan'), findsNothing);
+    expect(find.text('Archive clan'), findsNothing);
     expect(find.text('Report clan'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -168,7 +168,7 @@ void main() {
     await _pumpClan(tester);
     await _openClanMenu(tester);
     expect(find.text('Edit clan'), findsNothing);
-    expect(find.text('Delete clan'), findsNothing);
+    expect(find.text('Archive clan'), findsNothing);
     expect(find.text('Report clan'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import vm from "node:vm";
 import * as schedules from "../src/lib/admin-game-schedules.ts";
 import * as fields from "../src/lib/admin-fields.ts";
+import * as soloGames from "../src/lib/admin-solo-games.ts";
 
 const { parseAdminGameScheduleInput: parse, parseScheduleSkipInput, serializeGameSchedule } = schedules;
 const id = "10000000-0000-4000-8000-000000000001";
@@ -96,6 +97,7 @@ function route(file, actor = { profileId: id, role: "admin" }) {
     "next/server": { NextResponse: { json: (body, init = {}) => ({ body, status: init.status ?? 200 }) } },
     "@/lib/admin-game-schedules": schedules,
     "@/lib/admin-fields": fields,
+    "@/lib/admin-solo-games": soloGames,
     "@/lib/referee-session": {
       requireReferee: async () => actor ? { referee: actor, db } : { body: { error: "Sign in required" }, status: 401 },
       isRefereeContext: (context) => "referee" in context,

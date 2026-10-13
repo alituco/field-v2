@@ -6,6 +6,8 @@ import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
 import '../home/field_bottom_nav.dart';
+import '../markets/fieldrush_city.dart';
+import '../markets/fieldrush_city_repository.dart';
 import 'fieldrush_booking_widgets.dart';
 import 'fieldrush_checkout_sheet.dart';
 import 'fieldrush_game_detail_screen.dart';
@@ -23,6 +25,7 @@ class FieldrushBookingFlow extends StatefulWidget {
     this.startAtGames = false,
     this.onNavigateTab,
     this.now,
+    this.cityRepository,
   });
 
   final OpenQueueRepository repository;
@@ -31,6 +34,7 @@ class FieldrushBookingFlow extends StatefulWidget {
   final bool startAtGames;
   final ValueChanged<int>? onNavigateTab;
   final DateTime? now;
+  final FieldrushCityRepository? cityRepository;
 
   @override
   State<FieldrushBookingFlow> createState() => _FieldrushBookingFlowState();
@@ -116,10 +120,23 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
     });
     try {
       final repository = widget.repository;
+      final cityRepository =
+          widget.cityRepository ??
+          (repository is SupabaseOpenQueueRepository
+              ? SupabaseFieldrushCityRepository()
+              : null);
+      final preferredCity = cityRepository == null
+          ? FieldrushCity.phoenix
+          : await cityRepository.loadPreferredCity();
+      if (!mounted || generation != _generation) return;
+      final cityId = widget.initialGame?.marketCityId ?? preferredCity.id;
+      final timezone = widget.initialGame?.timezone ?? preferredCity.timezone;
       final result = await Future.wait([
-        repository is OpenQueueMarketRepository
+        repository is OpenQueueCityRepository
+            ? (repository as OpenQueueCityRepository).listCityGames(cityId)
+            : repository is OpenQueueMarketRepository
             ? (repository as OpenQueueMarketRepository).listMarketGames(
-                'America/Phoenix',
+                timezone,
               )
             : repository.listGames(),
         repository.getMyUpcomingBookings(),
@@ -139,7 +156,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
           (result[0] as List<OpenQueueGame>)
               .where(
                 (g) =>
-                    g.timezone == 'America/Phoenix' &&
+                    g.belongsToCity(cityId, timezone) &&
                     g.currency == 'USD' &&
                     !bookedIds.contains(g.id) &&
                     fieldrushSuggestedRole(g, {}, _now) != null,

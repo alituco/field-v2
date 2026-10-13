@@ -107,8 +107,8 @@ export default function AdminSubjectDetailPage() {
           )}
 
           {detail.subjectType === "PLAYER" ? (
-            <Section title="Player SR ledger" count={detail.ratingEvents.length} description="Every applied rating update, in reverse chronological order.">
-              {detail.ratingEvents.length ? <div className={styles.ledger}>{detail.ratingEvents.map((event) => <article key={event.id}><div><strong>{humanize(event.sourceType)} · {humanize(event.result)}</strong><small>{dateText(event.createdAt)} · {event.sourceId.slice(0, 8)}</small></div><span>{event.before} → {event.after}</span><b className={event.change >= 0 ? styles.positive : styles.negative}>{signed(event.change)}</b></article>)}</div> : <Empty text="No rating changes recorded." />}
+            <Section title="Player SR ledger" count={detail.ratingEvents.length} description="Independent Keeper and Outfield updates. Historical pre-reset entries stay labelled Legacy.">
+              {detail.ratingEvents.length ? <div className={styles.ledger}>{detail.ratingEvents.map((event) => <article key={event.id}><div><strong>{event.ratingTrack === "GOALKEEPER" ? "Keeper" : event.ratingTrack === "OUTFIELD" ? "Outfield" : "Legacy"} · {humanize(event.sourceType)} · {humanize(event.result)}</strong><small>{dateText(event.createdAt)} · {event.sourceId.slice(0, 8)}</small></div><span>{event.before} → {event.after}</span><b className={event.change >= 0 ? styles.positive : styles.negative}>{signed(event.change)}</b></article>)}</div> : <Empty text="No rating changes recorded." />}
             </Section>
           ) : null}
         </div>

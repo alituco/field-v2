@@ -1576,7 +1576,7 @@ function AddReserveDialog({ accessToken, detail, onClose, onSaved }: {
               type="button"
             >
               <Avatar name={candidate.displayName} url={candidate.avatarUrl} />
-              <span><strong>{candidate.displayName}</strong><small>{candidate.username ? `@${candidate.username.replace(/^@/, "")} · ` : ""}{candidate.skillRating} SR</small></span>
+              <span><strong>{candidate.displayName}</strong><small>{candidate.username ? `@${candidate.username.replace(/^@/, "")} · ` : ""}Outfield {candidate.outfieldRating} SR · Keeper {candidate.keeperRating} SR</small></span>
               <em>{candidate.unavailableReason ?? (selected?.profileId === candidate.profileId ? "Selected" : "Choose")}</em>
             </button>
           ))}

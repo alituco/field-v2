@@ -13,6 +13,9 @@ import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../home/navigation_profile_scope.dart';
 import '../ui/field_loading.dart';
+import '../markets/fieldrush_city.dart';
+import '../markets/fieldrush_city_repository.dart';
+import '../profile/fieldrush_city_picker.dart';
 
 class _AccountLoadingView extends StatelessWidget {
   const _AccountLoadingView();
@@ -57,6 +60,7 @@ class FieldrushAccountScreen extends StatefulWidget {
     required this.accountRepository,
     this.profileRepository,
     this.imagePicker,
+    this.cityRepository,
     this.bottomNavigationBar,
     this.bottomNavigationBuilder,
   }) : assert(bottomNavigationBar == null || bottomNavigationBuilder == null);
@@ -65,6 +69,7 @@ class FieldrushAccountScreen extends StatefulWidget {
   final FieldrushAccountRepository accountRepository;
   final ProfileRepository? profileRepository;
   final ImagePicker? imagePicker;
+  final FieldrushCityRepository? cityRepository;
   final Widget? bottomNavigationBar;
   final Widget Function(Future<bool> Function() confirmLeave)?
   bottomNavigationBuilder;
@@ -1149,6 +1154,22 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
     );
   }
 
+  Future<void> _changeCity() async {
+    final city = await showModalBottomSheet<FieldrushCity>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: FieldrushAuthTheme.cream,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => FieldrushCityPicker(
+        repository: widget.cityRepository ?? SupabaseFieldrushCityRepository(),
+        currentCityId: _account?.preferredCityId,
+      ),
+    );
+    if (city != null && mounted) await _loadAccount(preserveDraft: true);
+  }
+
   Widget _homeCityCard(FieldrushAccount account) => _card(
     padding: const EdgeInsets.fromLTRB(18, 15, 18, 16),
     child: Row(
@@ -1168,21 +1189,18 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
               Text(
                 account.homeCity == null
                     ? 'Your home city will appear when the account service is updated.'
-                    : 'Your skill rating counts on this ladder. City changes will be available later.',
+                    : 'Find games in this city. Your ranking city is based on where you play most this season, across both positions.',
                 style: _text(11, color: FieldrushAuthTheme.muted, height: 1.45),
               ),
             ],
           ),
         ),
         const SizedBox(width: 12),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: const Color(0xFFF2EFE3),
-            borderRadius: BorderRadius.circular(99),
-          ),
+        TextButton(
+          key: const ValueKey('account-change-city'),
+          onPressed: _busy || _locked ? null : _changeCity,
           child: Text(
-            account.homeCity == null ? 'PENDING' : 'LOCKED',
+            'CHANGE',
             style: _text(
               9,
               color: const Color(0xFF3C4A38),
@@ -1230,31 +1248,54 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
             style: _text(12, color: FieldrushAuthTheme.muted),
           ),
           if (!account.googleLinked)
-            OutlinedButton.icon(
-              key: const Key('fieldrush-link-google'),
-              onPressed: _busy || _locked ? null : _linkGoogle,
-              icon: const Icon(Icons.link, size: 18),
-              label: const Text('Link Google'),
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: OutlinedButton.icon(
+                key: const Key('fieldrush-link-google'),
+                onPressed: _busy || _locked ? null : _linkGoogle,
+                style: _securityButtonStyle,
+                icon: const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: FieldrushGoogleMark(),
+                ),
+                label: const Text('Link Google'),
+              ),
             ),
           if (_waitingForGoogle)
             TextButton(
               onPressed: () => _loadAccount(preserveDraft: true),
               child: const Text('Refresh linked accounts'),
             ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 18),
           Text(
             'Lost access to your phone? Sign in with a previously linked '
             'Google account. Do not create another account to recover this one.',
-            style: _text(11, color: FieldrushAuthTheme.muted),
+            style: _text(11.5, color: FieldrushAuthTheme.muted, height: 1.5),
           ),
           const SizedBox(height: 8),
           OutlinedButton(
             onPressed: _busy ? null : _signOut,
+            style: _securityButtonStyle.copyWith(
+              foregroundColor: const WidgetStatePropertyAll(
+                FieldrushAuthTheme.danger,
+              ),
+            ),
             child: const Text('Sign out'),
           ),
         ],
       ],
     ),
+  );
+
+  ButtonStyle get _securityButtonStyle => OutlinedButton.styleFrom(
+    backgroundColor: Colors.white,
+    foregroundColor: FieldrushAuthTheme.ink,
+    minimumSize: const Size(double.infinity, 46),
+    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+    side: const BorderSide(color: FieldrushAuthTheme.border),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    textStyle: _text(12.5, weight: FontWeight.w800, height: 1),
   );
 
   Widget _message(String message, {bool error = false}) => Padding(

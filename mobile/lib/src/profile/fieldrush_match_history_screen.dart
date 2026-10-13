@@ -9,10 +9,12 @@ class FieldrushMatchHistoryScreen extends StatefulWidget {
     super.key,
     required this.profile,
     required this.onOpenGame,
+    this.ratingEvents,
   });
 
   final PlayerProfile profile;
   final Future<void> Function(ProfilePreviousGame) onOpenGame;
+  final List<ProfileRatingEvent>? ratingEvents;
 
   @override
   State<FieldrushMatchHistoryScreen> createState() =>
@@ -147,8 +149,8 @@ class _FieldrushMatchHistoryScreenState
   }
 
   Widget _gameRow(ProfilePreviousGame game) {
-    final event = widget.profile.playerRating?.events
-        .where((e) => e.sourceId == game.id && e.isSolo == game.isSolo)
+    final event = (widget.ratingEvents ?? widget.profile.playerRating?.events)
+        ?.where((e) => e.sourceId == game.id && e.isSolo == game.isSolo)
         .firstOrNull;
     final (result, background, foreground) = switch (game.outcome) {
       ProfileGameOutcome.win => (

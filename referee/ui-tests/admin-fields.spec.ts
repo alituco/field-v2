@@ -4,7 +4,7 @@ import { parseEnv } from "node:util";
 
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
 const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
-const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
+const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
 
 async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; fieldsError?: boolean; saveError?: boolean; createError?: boolean } = {}) {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
@@ -33,6 +33,8 @@ async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; f
     } else if (path === "/api/referee/admin/fields") {
       status = options.fieldsError ? 503 : 200;
       data = options.fieldsError ? { error: "The saved-fields database update is not installed yet." } : { fields };
+    } else if (path === "/api/referee/admin/cities") {
+      data = { cities: [{ id: "phoenix", displayName: "Phoenix", state: "AZ", countryCode: "US", timezone: "America/Phoenix", active: true }] };
     } else if (path === "/api/referee/fixtures") {
       data = { me: { profileId: "00000000-0000-4000-8000-000000000001", displayName: "Preview Admin", role: "admin" }, fixtures: [] };
     } else if (path === "/api/referee/assignments") data = { referees: [], fixtures: [] };
@@ -195,7 +197,7 @@ for (const longitude of ["-111.975201", "−111.975201", " −111,975201 "]) {
       path: "/api/referee/admin/fields",
       body: {
         name: sampleField.name, address: sampleField.address, city: "Phoenix", state: "AZ", countryCode: "US",
-        latitude: 33.477, longitude: -111.975201,
+        marketCityId: "phoenix", latitude: 33.477, longitude: -111.975201,
       },
     });
   });

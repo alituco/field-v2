@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../home/fieldrush_home_widgets.dart';
 import '../leaderboard/leaderboard.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../ranking/rating_division.dart';
 import '../reliability/reliability.dart';
 import 'profile.dart';
@@ -147,6 +149,9 @@ class FieldrushYouContent extends StatefulWidget {
     super.key,
     required this.profile,
     this.rating,
+    this.ratings,
+    this.track = RatingTrack.outfield,
+    this.onTrack,
     this.ratingLoading = false,
     this.ratingUnavailable = false,
     this.recentResults = const [],
@@ -177,6 +182,9 @@ class FieldrushYouContent extends StatefulWidget {
 
   final PlayerProfile profile;
   final PlayerRatingLeaderboardEntry? rating;
+  final FieldrushPlayerRatings? ratings;
+  final RatingTrack track;
+  final ValueChanged<RatingTrack>? onTrack;
   final bool ratingLoading;
   final bool ratingUnavailable;
   final List<ProfileRatingEvent> recentResults;
@@ -214,10 +222,10 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
   @override
   Widget build(BuildContext context) {
     final rating = widget.rating;
+    final recordAvailable =
+        !widget.ratingLoading && !widget.ratingUnavailable && rating != null;
     final ranked =
-        !widget.ratingLoading &&
-        !widget.ratingUnavailable &&
-        rating != null &&
+        recordAvailable &&
         rating.matchesPlayed >= minimumPlayerLeaderboardMatches;
     final recent = [...widget.recentResults]
       ..sort((a, b) => b.playedAt.compareTo(a.playedAt));
@@ -313,17 +321,21 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
           child: _RatingCard(
             rating: rating,
+            ratings: widget.ratings,
+            track: widget.track,
+            onTrack: widget.onTrack,
             loading: widget.ratingLoading,
             unavailable: widget.ratingUnavailable || rating == null,
             cityLabel: widget.cityLabel,
             onTap: widget.onRanks,
           ),
         ),
-        if (ranked) ...[
+        if (recordAvailable)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
             child: _RecordCard(rating: rating, onTap: widget.onMatchHistory),
           ),
+        if (ranked) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
             child: Column(
@@ -682,8 +694,14 @@ class _RatingCard extends StatelessWidget {
     required this.unavailable,
     required this.cityLabel,
     required this.onTap,
+    this.ratings,
+    this.track = RatingTrack.outfield,
+    this.onTrack,
   });
   final PlayerRatingLeaderboardEntry? rating;
+  final FieldrushPlayerRatings? ratings;
+  final RatingTrack track;
+  final ValueChanged<RatingTrack>? onTrack;
   final bool loading;
   final bool unavailable;
   final String cityLabel;
@@ -735,11 +753,20 @@ class _RatingCard extends StatelessWidget {
     if (placement) {
       return FieldrushPlacementRatingCard(
         matchesPlayed: current.matchesPlayed,
-        cityLabel: current.region.trim().isNotEmpty
-            ? current.region
-            : cityLabel,
+        cityLabel:
+            ratings?.primaryCityName ??
+            (current.region.trim().isNotEmpty ? current.region : ''),
         onTap: onTap,
         actionKey: const ValueKey('you-rating-placement'),
+        keeper: track == RatingTrack.goalkeeper,
+        roleTabs: onTrack == null
+            ? null
+            : FieldrushRatingRoleTabs(
+                selected: track,
+                ratings: ratings,
+                onChanged: onTrack!,
+                dark: true,
+              ),
       );
     }
     final division = divisionFromRating(current.skillRating);
@@ -748,9 +775,11 @@ class _RatingCard extends StatelessWidget {
     final filled = (division.progressFor(current.skillRating) * 10).round();
     final next = division.nextDivisionRating;
     final words = {1: 'ONE', 2: 'TWO', 3: 'THREE', 4: 'FOUR', 5: 'FIVE'};
-    final city = current.region.trim().isNotEmpty
-        ? current.region.toUpperCase()
-        : cityLabel.split(',').first.toUpperCase();
+    final city =
+        ratings?.primaryCityName?.toUpperCase() ??
+        (current.region.trim().isNotEmpty
+            ? current.region.toUpperCase()
+            : cityLabel.split(',').first.toUpperCase());
     final rank = current.rank > 0 ? '#${current.rank}' : '—';
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -786,6 +815,32 @@ class _RatingCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
+                      if (onTrack != null) ...[
+                        Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 10,
+                          runSpacing: 8,
+                          children: [
+                            FieldrushRatingRoleTabs(
+                              selected: track,
+                              ratings: ratings,
+                              onChanged: onTrack!,
+                              dark:
+                                  division.number != 3 && division.number != 4,
+                            ),
+                            Text(
+                              '$rank IN $city',
+                              style: _jakarta(
+                                9,
+                                color: palette.chipInk,
+                                tracking: .6,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -807,24 +862,31 @@ class _RatingCard extends StatelessWidget {
                                       tracking: 1.71,
                                     ).copyWith(fontWeight: FontWeight.w800),
                                   ),
-                                  trailing: Container(
-                                    decoration: BoxDecoration(
-                                      color: palette.chip,
-                                      borderRadius: BorderRadius.circular(99),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 6,
-                                    ),
-                                    child: Text(
-                                      '$rank IN $city',
-                                      style: _jakarta(
-                                        9,
-                                        color: palette.chipInk,
-                                        tracking: .6,
-                                      ).copyWith(fontWeight: FontWeight.w800),
-                                    ),
-                                  ),
+                                  trailing: onTrack != null
+                                      ? const SizedBox.shrink()
+                                      : Container(
+                                          decoration: BoxDecoration(
+                                            color: palette.chip,
+                                            borderRadius: BorderRadius.circular(
+                                              99,
+                                            ),
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          child: Text(
+                                            '$rank IN $city',
+                                            style:
+                                                _jakarta(
+                                                  9,
+                                                  color: palette.chipInk,
+                                                  tracking: .6,
+                                                ).copyWith(
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                          ),
+                                        ),
                                 ),
                                 const SizedBox(height: 10),
                                 Wrap(

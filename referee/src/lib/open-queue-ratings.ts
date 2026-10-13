@@ -1,4 +1,13 @@
 export type OpenQueueTeam = "WHITE" | "BLACK";
+export type PlayerRatingTrack = "OUTFIELD" | "GOALKEEPER";
+
+export function ratingTrackForBookedRole(role: unknown): PlayerRatingTrack {
+  return String(role ?? "").toUpperCase() === "GK" ? "GOALKEEPER" : "OUTFIELD";
+}
+
+export function ratingTrackLabel(role: unknown): string {
+  return ratingTrackForBookedRole(role) === "GOALKEEPER" ? "Keeper" : "Outfield";
+}
 
 export function persistedOpenQueueTeam(value: unknown): OpenQueueTeam | null {
   const team = typeof value === "string" ? value.toUpperCase() : "";

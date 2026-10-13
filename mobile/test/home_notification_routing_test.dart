@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -205,10 +206,8 @@ void main() {
         client: client,
       ).searchPlayers('da');
       expect(players.map((player) => player.avatarUrl), [null, null]);
-      expect(
-        requests.single.url.queryParameters['select'],
-        'id,display_name,username,avatar_url',
-      );
+      expect(requests.single.url.path, '/rest/v1/rpc/search_fieldrush_players');
+      expect(jsonDecode(requests.single.body), {'query_to_use': 'da'});
     },
   );
 
@@ -246,8 +245,10 @@ void main() {
         find.byKey(const Key('home-player-search')),
       );
       expect(search.style?.fontFamily, 'PlusJakartaSans');
-      expect(search.decoration?.enabledBorder, isA<OutlineInputBorder>());
-      expect(search.decoration?.focusedBorder, isA<OutlineInputBorder>());
+      expect(search.style?.fontWeight, FontWeight.w700);
+      expect(search.decoration?.enabledBorder, InputBorder.none);
+      expect(search.decoration?.focusedBorder, InputBorder.none);
+      expect(find.text('@dana', findRichText: true), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.tap(tile);
       await tester.pumpAndSettle();
@@ -284,12 +285,12 @@ void main() {
       expect(opens, 0);
       expect(repository.readIds, isEmpty);
       expect(tile, findsNothing);
-      expect(find.text('You’re all caught up'), findsOneWidget);
+      expect(find.text("You're all caught up."), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpWidget(screen());
       await tester.pumpAndSettle();
       expect(tile, findsNothing);
-      expect(find.text('You’re all caught up'), findsOneWidget);
+      expect(find.text("You're all caught up."), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -332,8 +333,99 @@ void main() {
     await tester.tap(resolve);
     await tester.pumpAndSettle();
     expect(repository.dismissedIds, ['notification']);
-    expect(find.text('You’re all caught up'), findsOneWidget);
+    expect(find.text("You're all caught up."), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('activity dismisses immediately while its receipt is saving', (
+    tester,
+  ) async {
+    final receipt = Completer<void>();
+    final repository = _ActivityDiscovery(dismissReceipt: receipt);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async => fail('Dismiss must not open the item'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('home-notification-resolve-first')),
+    );
+    await tester.pump();
+    expect(find.byKey(const ValueKey('home-notification-first')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('home-notification-second')),
+      findsOneWidget,
+    );
+    receipt.complete();
+    await tester.pumpAndSettle();
+    expect(repository.dismissed, ['first']);
+  });
+
+  testWidgets('mark all read preserves rows and retries only failed receipts', (
+    tester,
+  ) async {
+    final repository = _ActivityDiscovery()..failedReads.add('second');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('activity-unread-dot')), findsNWidgets(2));
+    await tester.tap(find.text('Mark all read'));
+    await tester.pumpAndSettle();
+    expect(repository.read, ['first', 'second']);
+    expect(find.byKey(const ValueKey('activity-unread-dot')), findsOneWidget);
+    expect(
+      find.text('Could not mark all activity as read. Try again.'),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('home-notification-first')),
+      findsOneWidget,
+    );
+    repository.failedReads.clear();
+    await tester.tap(find.text('Mark all read'));
+    await tester.pumpAndSettle();
+    expect(repository.read, ['first', 'second', 'second']);
+    expect(find.text('Mark all read'), findsNothing);
+    expect(find.byKey(const ValueKey('activity-unread-dot')), findsNothing);
+    expect(repository.dismissed, isEmpty);
+  });
+
+  testWidgets('opening activity does not wait for the read receipt', (
+    tester,
+  ) async {
+    final receipt = Completer<void>();
+    final repository = _ActivityDiscovery(readReceipt: receipt);
+    var opened = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async {
+            opened = true;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('home-notification-first')));
+    await tester.pump();
+    expect(opened, isTrue);
+    expect(find.byKey(const ValueKey('activity-unread-dot')), findsOneWidget);
+    receipt.complete();
+    await tester.pumpAndSettle();
   });
 
   testWidgets('game activity opens a known booking instead of checkout', (
@@ -876,6 +968,37 @@ class _Fixtures extends Fake implements FixtureRepository {
   }
 }
 
+class _ActivityDiscovery extends Fake implements HomeDiscoveryRepository {
+  _ActivityDiscovery({this.dismissReceipt, this.readReceipt});
+  final Completer<void>? dismissReceipt;
+  final Completer<void>? readReceipt;
+  final failedReads = <String>{};
+  final read = <String>[];
+  final dismissed = <String>[];
+  @override
+  Future<List<HomeNotification>> notifications() async => [
+    for (final id in ['first', 'second'])
+      HomeNotification(
+        id: id,
+        title: 'Marcus K.',
+        body: 'started following you.',
+        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+      ),
+  ];
+  @override
+  Future<void> markRead(String id) async {
+    read.add(id);
+    if (readReceipt != null) await readReceipt!.future;
+    if (failedReads.contains(id)) throw Exception('Read failed');
+  }
+
+  @override
+  Future<void> dismiss(String id) async {
+    if (dismissReceipt != null) await dismissReceipt!.future;
+    dismissed.add(id);
+  }
+}
+
 class _Discovery implements HomeDiscoveryRepository {
   _Discovery(this.item, {required this.readFails, this.dismissFails = false});
   final HomeNotification item;
@@ -943,7 +1066,14 @@ class _PreviewDiscovery extends Fake implements HomeDiscoveryRepository {
 
   @override
   Future<List<HomePlayerResult>> searchPlayers(String query) async => const [
-    HomePlayerResult(id: 'alex', name: 'Alex Morgan', username: 'alexm'),
+    HomePlayerResult(
+      id: 'alex',
+      name: 'Alex Morgan',
+      username: 'alexm',
+      skillRating: 1438,
+      matchesPlayed: 6,
+      cityName: 'Phoenix',
+    ),
     HomePlayerResult(
       id: 'alexandra',
       name: 'Alexandra Reyes',

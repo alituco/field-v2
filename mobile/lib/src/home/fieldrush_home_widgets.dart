@@ -7,6 +7,8 @@ import 'package:flutter/material.dart';
 import '../clans/clan.dart';
 import '../fixtures/fixture.dart';
 import '../leaderboard/leaderboard.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../open_queue/open_queue.dart';
 import '../profile/profile.dart';
 
@@ -1231,11 +1233,17 @@ class FieldrushHomeRating extends StatelessWidget {
     required this.profile,
     this.rating,
     this.season,
+    this.ratings,
+    this.track = RatingTrack.outfield,
+    this.onTrack,
     required this.onTap,
   });
   final PlayerProfile profile;
   final PlayerRatingLeaderboardEntry? rating;
   final LeaderboardSeason? season;
+  final FieldrushPlayerRatings? ratings;
+  final RatingTrack track;
+  final ValueChanged<RatingTrack>? onTrack;
   final VoidCallback onTap;
 
   @override
@@ -1249,12 +1257,19 @@ class FieldrushHomeRating extends StatelessWidget {
     final n = division.number;
     final next = division.nextDivisionRating;
     final filled = (division.progressFor(value) * 10).round();
-    final allEvents = [...?profile.playerRating?.currentPeriodEvents]
-      ..sort((a, b) => a.playedAt.compareTo(b.playedAt));
+    final allEvents = [
+      if (ratings != null)
+        ...ratings!.eventsFor(track)
+      else
+        ...?profile.playerRating?.currentPeriodEvents,
+    ]..sort((a, b) => a.playedAt.compareTo(b.playedAt));
     final events = allEvents.skip(math.max(0, allEvents.length - 5)).toList();
     final delta = events.fold<int>(0, (sum, event) => sum + event.ratingChange);
     final region =
-        rating?.region.trim() ?? profile.playerRating?.region.trim() ?? '';
+        ratings?.primaryCityName ??
+        rating?.region.trim() ??
+        profile.playerRating?.region.trim() ??
+        '';
     final rank = rating?.rank ?? 0;
     final rankLine = rank > 0
         ? '#$rank${region.isEmpty ? '' : ' in ${_titleCase(region)}'} ›'
@@ -1276,16 +1291,43 @@ class FieldrushHomeRating extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _SpreadLabels(
-                  left: Text(
-                    _seasonLabel(season),
-                    style: _jakarta(11, tracking: 1.54),
+                if (onTrack != null)
+                  Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: [
+                      Text(
+                        _seasonLabel(season),
+                        style: _jakarta(11, tracking: 1.54),
+                      ),
+                      FieldrushRatingRoleTabs(
+                        selected: track,
+                        ratings: ratings,
+                        onChanged: onTrack!,
+                      ),
+                    ],
+                  )
+                else
+                  _SpreadLabels(
+                    left: Text(
+                      _seasonLabel(season),
+                      style: _jakarta(11, tracking: 1.54),
+                    ),
+                    right: onTrack != null
+                        ? FieldrushRatingRoleTabs(
+                            selected: track,
+                            ratings: ratings,
+                            onChanged: onTrack!,
+                          )
+                        : Text(
+                            rankLine,
+                            style: _jakarta(
+                              11,
+                            ).copyWith(fontWeight: FontWeight.w700),
+                          ),
                   ),
-                  right: Text(
-                    rankLine,
-                    style: _jakarta(11).copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ),
                 const SizedBox(height: 13),
                 Wrap(
                   spacing: 12,
@@ -1413,9 +1455,23 @@ class FieldrushHomeRating extends StatelessWidget {
     padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
     child: FieldrushPlacementRatingCard(
       matchesPlayed: matches,
-      cityLabel: rating?.region ?? profile.playerRating?.region ?? '',
+      cityLabel:
+          ratings?.primaryCityName ??
+          rating?.region ??
+          profile.playerRating?.region ??
+          '',
       onTap: onTap,
       actionKey: const ValueKey('home-rating-placement'),
+      roleTabs: onTrack == null
+          ? null
+          : FieldrushRatingRoleTabs(
+              selected: track,
+              ratings: ratings,
+              onChanged: onTrack!,
+              dark: true,
+            ),
+      keeper: track == RatingTrack.goalkeeper,
+      compact: onTrack != null,
     ),
   );
 
@@ -1433,12 +1489,18 @@ class FieldrushPlacementRatingCard extends StatelessWidget {
     required this.cityLabel,
     required this.onTap,
     this.actionKey,
+    this.roleTabs,
+    this.keeper = false,
+    this.compact = false,
   });
 
   final int matchesPlayed;
   final String cityLabel;
   final VoidCallback onTap;
   final Key? actionKey;
+  final Widget? roleTabs;
+  final bool keeper;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -1473,125 +1535,171 @@ class FieldrushPlacementRatingCard extends StatelessWidget {
               onTap: onTap,
               borderRadius: BorderRadius.circular(24),
               child: Padding(
-                padding: const EdgeInsets.all(18),
+                padding: compact
+                    ? const EdgeInsets.symmetric(horizontal: 16, vertical: 15)
+                    : const EdgeInsets.all(18),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const FieldrushDivisionShield(
-                          size: 62,
-                          placement: true,
-                        ),
-                        const SizedBox(width: 15),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _SpreadLabels(
-                                left: Text(
+                    if (roleTabs != null) ...[
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 10,
+                        runSpacing: 8,
+                        children: [
+                          compact
+                              ? Text(
                                   'PLACEMENT',
                                   style: _jakarta(
                                     9.5,
                                     color: const Color(0xFFC9C2AE),
                                     tracking: 1.71,
                                   ),
-                                ),
-                                right: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0x1FF3EBD6),
-                                    borderRadius: BorderRadius.circular(99),
-                                  ),
-                                  child: Text(
-                                    city.isEmpty
-                                        ? '#? ON THE LADDER'
-                                        : '#? IN $city',
-                                    style: _jakarta(
-                                      9,
-                                      color: const Color(0xFFF3EBD6),
-                                      tracking: .6,
-                                    ),
+                                )
+                              : roleTabs!,
+                          compact
+                              ? roleTabs!
+                              : Text(
+                                  city.isEmpty
+                                      ? 'NOT RANKED YET'
+                                      : '#? IN $city',
+                                  style: _jakarta(
+                                    9,
+                                    color: const Color(0xFFF3EBD6),
+                                    tracking: .6,
                                   ),
                                 ),
-                              ),
-                              const SizedBox(height: 10),
-                              Wrap(
-                                spacing: 8,
-                                runSpacing: 5,
-                                crossAxisAlignment: WrapCrossAlignment.end,
-                                children: [
-                                  Semantics(
-                                    label:
-                                        'Your skill rating is waiting to be revealed',
-                                    excludeSemantics: true,
-                                    child: ShaderMask(
-                                      blendMode: BlendMode.srcIn,
-                                      shaderCallback: (bounds) =>
-                                          const LinearGradient(
-                                            colors: [
-                                              Color(0xFFFFEDB3),
-                                              Color(0xFFC7DD9B),
-                                              Color(0xFFE9C97D),
-                                            ],
-                                          ).createShader(bounds),
-                                      child: Text(
-                                        '????',
-                                        key: const ValueKey(
-                                          'placement-mystery-rating',
-                                        ),
-                                        style: _outfit(
-                                          48,
-                                          color: Colors.white,
-                                          tracking: 3,
-                                        ).copyWith(height: .95),
-                                      ),
-                                    ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 3),
-                                    child: Text(
-                                      'SKILL RATING',
-                                      style: _jakarta(
-                                        10,
-                                        color: const Color(0xFFC9C2AE),
-                                        tracking: 1.2,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ],
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    if (!compact)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const FieldrushDivisionShield(
+                            size: 62,
+                            placement: true,
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
+                          const SizedBox(width: 15),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _SpreadLabels(
+                                  left: Text(
+                                    'PLACEMENT',
+                                    style: _jakarta(
+                                      9.5,
+                                      color: const Color(0xFFC9C2AE),
+                                      tracking: 1.71,
+                                    ),
+                                  ),
+                                  right: roleTabs != null
+                                      ? const SizedBox.shrink()
+                                      : Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 10,
+                                            vertical: 6,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: const Color(0x1FF3EBD6),
+                                            borderRadius: BorderRadius.circular(
+                                              99,
+                                            ),
+                                          ),
+                                          child: Text(
+                                            city.isEmpty
+                                                ? '#? ON THE LADDER'
+                                                : '#? IN $city',
+                                            style: _jakarta(
+                                              9,
+                                              color: const Color(0xFFF3EBD6),
+                                              tracking: .6,
+                                            ),
+                                          ),
+                                        ),
+                                ),
+                                const SizedBox(height: 10),
+                                Wrap(
+                                  spacing: 8,
+                                  runSpacing: 5,
+                                  crossAxisAlignment: WrapCrossAlignment.end,
+                                  children: [
+                                    Semantics(
+                                      label:
+                                          'Your skill rating is waiting to be revealed',
+                                      excludeSemantics: true,
+                                      child: ShaderMask(
+                                        blendMode: BlendMode.srcIn,
+                                        shaderCallback: (bounds) =>
+                                            const LinearGradient(
+                                              colors: [
+                                                Color(0xFFFFEDB3),
+                                                Color(0xFFC7DD9B),
+                                                Color(0xFFE9C97D),
+                                              ],
+                                            ).createShader(bounds),
+                                        child: Text(
+                                          '????',
+                                          key: const ValueKey(
+                                            'placement-mystery-rating',
+                                          ),
+                                          style: _outfit(
+                                            48,
+                                            color: Colors.white,
+                                            tracking: 3,
+                                          ).copyWith(height: .95),
+                                        ),
+                                      ),
+                                    ),
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 3),
+                                      child: Text(
+                                        'SKILL RATING',
+                                        style: _jakarta(
+                                          10,
+                                          color: const Color(0xFFC9C2AE),
+                                          tracking: 1.2,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    if (!compact) const SizedBox(height: 18),
                     Row(
                       children: [
                         for (final n in [5, 4, 3, 2, 1])
                           Expanded(
-                            child: Center(
-                              child: FieldrushDivisionShield(
-                                division: n,
-                                size: 24,
+                            child: SizedBox(
+                              height: compact ? 44 : null,
+                              child: Align(
+                                alignment: compact
+                                    ? Alignment.bottomCenter
+                                    : Alignment.center,
+                                child: FieldrushDivisionShield(
+                                  division: n,
+                                  size: 24,
+                                ),
                               ),
                             ),
                           ),
                       ],
                     ),
-                    const SizedBox(height: 18),
+                    SizedBox(height: compact ? 12 : 18),
                     _Segments(
                       count: minimumPlayerLeaderboardMatches,
                       filled: played,
                       on: const Color(0xFFF3EBD6),
                       off: const Color(0x29F3EBD6),
                     ),
-                    const SizedBox(height: 10),
+                    SizedBox(height: compact ? 9 : 10),
                     Row(
                       children: [
                         Expanded(
@@ -1599,7 +1707,7 @@ class FieldrushPlacementRatingCard extends StatelessWidget {
                             fit: BoxFit.scaleDown,
                             alignment: Alignment.centerLeft,
                             child: Text(
-                              '$left ${left == 1 ? 'game' : 'games'} to reveal your division',
+                              '$left ${left == 1 ? 'game' : 'games'}${keeper ? ' in goal' : ''} to reveal your division',
                               maxLines: 1,
                               softWrap: false,
                               style: _jakarta(

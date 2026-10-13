@@ -1,6 +1,7 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
 import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
+import { bookedRoleRatingBaselines } from "./rating_tracks.ts";
 
 import {
   type AdminClient,
@@ -240,7 +241,11 @@ try {
   }
 
   const policyVersionId = await ensurePolicyTerms(admin, match.id);
-  const ratingsBefore = await loadRatings(admin, players);
+  const rolesByProfile = Object.fromEntries([
+    [main.profileId, match.mainRole],
+    ...fillers.map((player, index) => [player.profileId, FILLER_ROLES[index]]),
+  ]);
+  const ratingsBefore = await loadRatings(admin, rolesByProfile);
 
   logStep("Seeding 13 of 14 match bookings; the UI creates the final booking.");
   const bookingRows = fillers.map((player, index) => ({
@@ -915,22 +920,13 @@ async function ensurePolicyTerms(
 
 async function loadRatings(
   client: AdminClient,
-  playersToUse: E2EAccount[],
+  rolesByProfile: Record<string, string>,
 ): Promise<Record<string, number>> {
-  const playerIds = playersToUse.map((player) => player.profileId);
+  const playerIds = Object.keys(rolesByProfile);
   const { data, error } = await client
-    .from("player_ratings")
-    .select("profile_id,skill_rating")
+    .from("fieldrush_player_rating_tracks")
+    .select("profile_id,rating_track,skill_rating")
     .in("profile_id", playerIds);
   if (error) throw new Error(`load E2E player ratings: ${error.message}`);
-  const ratings: Record<string, number> = {};
-  for (const row of data ?? []) {
-    ratings[String(row.profile_id)] = Number(row.skill_rating);
-  }
-  for (const player of playersToUse) {
-    if (!Number.isFinite(ratings[player.profileId])) {
-      throw new Error(`Missing Player SR for ${player.displayName}.`);
-    }
-  }
-  return ratings;
+  return bookedRoleRatingBaselines(data ?? [], rolesByProfile);
 }

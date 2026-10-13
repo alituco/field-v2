@@ -284,14 +284,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 310));
     await tester.pumpAndSettle();
     expect(discovery.query, 'Dana');
-    expect(find.text('No players found'), findsOneWidget);
+    expect(find.text('No player @Dana'), findsOneWidget);
     await tester.pageBack();
     await tester.pumpAndSettle();
     tester
         .widget<FieldrushHomeHeader>(find.byType(FieldrushHomeHeader))
         .onActivity();
     await tester.pumpAndSettle();
-    expect(find.text('You’re all caught up'), findsOneWidget);
+    expect(find.text("You're all caught up."), findsOneWidget);
   });
 }
 
