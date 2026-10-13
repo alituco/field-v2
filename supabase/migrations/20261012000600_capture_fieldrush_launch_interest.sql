@@ -154,3 +154,75 @@ grant execute on function public.save_launch_update(text, text, text, text)
   to service_role;
 comment on function public.save_launch_update(text, text, text, text) is
   'Server-only normalized, idempotent launch signup with atomic durable rate limiting.';
+
+-- An email-only subscriber may later submit the full player-interest form.
+-- The same unique row is upgraded atomically, retaining its signup history.
+create function public.save_waitlist_application(
+  p_full_name text,
+  p_email text,
+  p_phone text,
+  p_age integer,
+  p_preferred_position text,
+  p_interest text
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $$
+declare
+  normalized_name text := btrim(regexp_replace(p_full_name, '[[:space:]]+', ' ', 'g'));
+  normalized_email text := lower(btrim(p_email));
+  normalized_phone text := nullif(btrim(p_phone), '');
+  normalized_position text := nullif(upper(btrim(p_preferred_position)), '');
+  normalized_interest text := upper(btrim(p_interest));
+  saved_id uuid;
+begin
+  if normalized_name is null
+    or char_length(normalized_name) not between 2 and 100
+    or normalized_email is null
+    or char_length(normalized_email) not between 5 and 254
+    or normalized_email !~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
+    or p_age is null
+    or p_age not between 12 and 100
+    or (
+      normalized_phone is not null
+      and normalized_phone !~ '^[+()[:digit:][:space:]-]{7,30}$'
+    )
+    or (
+      normalized_position is not null
+      and normalized_position not in ('GOALKEEPER', 'DEFENDER', 'MIDFIELDER', 'ATTACKER')
+    )
+    or normalized_interest is null
+    or normalized_interest not in ('SOLO_PLAYER', 'CLAN_PLAYER', 'CLAN_LEADER')
+  then
+    raise exception 'Invalid waitlist application.' using errcode = '22023';
+  end if;
+
+  insert into public.season_zero_waitlist as interest_list (
+    full_name, email, phone, age, preferred_position, interest, source
+  ) values (
+    normalized_name, normalized_email, normalized_phone, p_age,
+    normalized_position, normalized_interest, 'FIELD_BH'
+  )
+  on conflict (lower(email)) do update set
+    full_name = excluded.full_name,
+    phone = excluded.phone,
+    age = excluded.age,
+    preferred_position = excluded.preferred_position,
+    interest = excluded.interest
+  where interest_list.interest = 'LAUNCH_UPDATES'
+  returning id into saved_id;
+
+  return jsonb_build_object(
+    'status', case when saved_id is null then 'already_joined' else 'saved' end
+  );
+end;
+$$;
+
+revoke all on function public.save_waitlist_application(text, text, text, integer, text, text)
+  from public, anon, authenticated;
+grant execute on function public.save_waitlist_application(text, text, text, integer, text, text)
+  to service_role;
+comment on function public.save_waitlist_application(text, text, text, integer, text, text) is
+  'Server-only application save that atomically upgrades email-only interest without another list entry.';

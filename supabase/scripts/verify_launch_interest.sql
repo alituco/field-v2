@@ -32,6 +32,12 @@ select pg_temp.launch_assert(
   'only the trusted server may invoke the signup RPC'
 );
 select pg_temp.launch_assert(
+  not has_function_privilege('anon', 'public.save_waitlist_application(text,text,text,integer,text,text)', 'execute')
+  and not has_function_privilege('authenticated', 'public.save_waitlist_application(text,text,text,integer,text,text)', 'execute')
+  and has_function_privilege('service_role', 'public.save_waitlist_application(text,text,text,integer,text,text)', 'execute'),
+  'only the trusted server may invoke the application RPC'
+);
+select pg_temp.launch_assert(
   not has_table_privilege('anon', 'public.season_zero_waitlist', 'select')
   and not has_table_privilege('authenticated', 'public.season_zero_waitlist', 'select'),
   'public clients cannot read contact data'
@@ -96,6 +102,80 @@ select pg_temp.launch_assert(not exists (
     or before_signup.updated_at <> after_signup.updated_at
 ), 'duplicates preserve the first consent, placement, and update timestamp');
 
+-- Signup first, full application second: upgrade the same row, including when
+-- staff have already changed its status. Source and consent history stay intact.
+update public.season_zero_waitlist set status = 'SELECTED'
+where email = 'launch-new@example.test';
+create temporary table launch_before_application as
+select id, email, source, status, created_at, signup_placement,
+  launch_updates_consented_at, launch_updates_consent_version
+from public.season_zero_waitlist where email = 'launch-new@example.test';
+set local role service_role;
+select pg_temp.launch_assert(public.save_waitlist_application(
+  '  Launch   Applicant ', ' LAUNCH-NEW@EXAMPLE.TEST ', '+15550002222', 27,
+  'ATTACKER', 'SOLO_PLAYER'
+)->>'status' = 'saved', 'a launch subscriber can submit full player details');
+reset role;
+select pg_temp.launch_assert((select count(*) = 1 from public.season_zero_waitlist
+  where email = 'launch-new@example.test'), 'upgrading retains one list entry');
+select pg_temp.launch_assert((select
+  full_name = 'Launch Applicant' and phone = '+15550002222' and age = 27
+  and preferred_position = 'ATTACKER' and interest = 'SOLO_PLAYER'
+  from public.season_zero_waitlist where email = 'launch-new@example.test'),
+  'all full application details are saved');
+select pg_temp.launch_assert(not exists (
+  select 1 from launch_before_application before_application
+  join public.season_zero_waitlist after_application using (email)
+  where before_application.id <> after_application.id
+    or before_application.source <> after_application.source
+    or before_application.status <> after_application.status
+    or before_application.created_at <> after_application.created_at
+    or before_application.signup_placement <> after_application.signup_placement
+    or before_application.launch_updates_consented_at <> after_application.launch_updates_consented_at
+    or before_application.launch_updates_consent_version <> after_application.launch_updates_consent_version
+), 'upgrading preserves the original identity, status, source, and consent');
+
+-- Application first, signup second: add explicit consent without replacing the
+-- already reviewed player application or creating another list entry.
+set local role service_role;
+select pg_temp.launch_assert(public.save_waitlist_application(
+  'First Applicant', 'APPLICATION-FIRST@EXAMPLE.TEST', null, 19, null, 'CLAN_LEADER'
+)->>'status' = 'saved', 'a full application can be the first interest record');
+reset role;
+create temporary table application_before_launch as
+select id, email, full_name, phone, age, preferred_position, interest,
+  source, status, created_at
+from public.season_zero_waitlist where email = 'application-first@example.test';
+set local role service_role;
+select pg_temp.launch_assert(public.save_launch_update(
+  'application-first@example.test', 'mobile-hero', 'launch-updates-v1', repeat('7',64)
+)->>'status' = 'saved', 'a full applicant can later opt into launch updates');
+select pg_temp.launch_assert(public.save_waitlist_application(
+  'Replacement Name', 'application-first@example.test', '+15550003333', 31,
+  'DEFENDER', 'SOLO_PLAYER'
+)->>'status' = 'already_joined', 'repeat full applications report already joined');
+reset role;
+select pg_temp.launch_assert((select count(*) = 1 from public.season_zero_waitlist
+  where email = 'application-first@example.test'), 'application then signup remains one entry');
+select pg_temp.launch_assert(not exists (
+  select 1 from application_before_launch before_launch
+  join public.season_zero_waitlist after_launch using (email)
+  where before_launch.id <> after_launch.id
+    or before_launch.full_name <> after_launch.full_name
+    or before_launch.phone is distinct from after_launch.phone
+    or before_launch.age <> after_launch.age
+    or before_launch.preferred_position is distinct from after_launch.preferred_position
+    or before_launch.interest <> after_launch.interest
+    or before_launch.source <> after_launch.source
+    or before_launch.status <> after_launch.status
+    or before_launch.created_at <> after_launch.created_at
+), 'signup and repeated applications preserve existing player details');
+select pg_temp.launch_assert((select signup_placement = 'mobile-hero'
+  and launch_updates_consented_at is not null
+  and launch_updates_consent_version = 'launch-updates-v1'
+  from public.season_zero_waitlist where email = 'application-first@example.test'),
+  'existing applications receive explicit launch consent');
+
 select pg_temp.launch_expect_error($q$
   insert into public.season_zero_waitlist(email, interest)
   values ('nameless-applicant@example.test','SOLO_PLAYER')
@@ -117,6 +197,21 @@ select pg_temp.launch_expect_error($q$
 $q$, '22023');
 select pg_temp.launch_expect_error($q$
   select public.save_launch_update('raw-ip@example.test','desktop-hero','launch-updates-v1','192.0.2.1')
+$q$, '22023');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application(null,'missing-name@example.test',null,20,null,'SOLO_PLAYER')
+$q$, '22023');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application('Too young','young@example.test',null,11,null,'SOLO_PLAYER')
+$q$, '22023');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application('Wrong interest','wrong-interest@example.test',null,20,null,'LAUNCH_UPDATES')
+$q$, '22023');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application('Wrong position','wrong-position@example.test',null,20,'UNKNOWN','SOLO_PLAYER')
+$q$, '22023');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application('Wrong phone','wrong-phone@example.test','not a number',20,null,'SOLO_PLAYER')
 $q$, '22023');
 
 do $$
@@ -162,12 +257,18 @@ select pg_temp.launch_expect_error($q$
   select public.save_launch_update('anon@example.test','desktop-hero','launch-updates-v1',repeat('6',64))
 $q$, '42501');
 select pg_temp.launch_expect_error('select * from public.season_zero_waitlist', '42501');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application('Anon User','anon-application@example.test',null,20,null,'SOLO_PLAYER')
+$q$, '42501');
 reset role;
 set local role authenticated;
 select pg_temp.launch_expect_error($q$
   select public.save_launch_update('user@example.test','desktop-hero','launch-updates-v1',repeat('6',64))
 $q$, '42501');
 select pg_temp.launch_expect_error('select * from public.season_zero_waitlist', '42501');
+select pg_temp.launch_expect_error($q$
+  select public.save_waitlist_application('Auth User','auth-application@example.test',null,20,null,'SOLO_PLAYER')
+$q$, '42501');
 reset role;
 
 select 'Launch interest verification passed.' as result;
