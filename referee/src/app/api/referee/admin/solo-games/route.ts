@@ -25,6 +25,8 @@ export async function POST(request: NextRequest) {
         price_fils_to_use: input.priceFils,
         age_label_to_use: input.ageLabel,
         duration_minutes_to_use: input.durationMinutes,
+        highest_division_to_use: input.highestDivision,
+        lowest_division_to_use: input.lowestDivision,
       },
     );
     if (error) {

@@ -4,6 +4,66 @@ import 'package:field/src/ranking/rating_division.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'game division ranges describe server admission and preserve old all-division games',
+    () {
+      OpenQueueGame game(int highest, int lowest) => OpenQueueGame(
+        id: 'game',
+        status: 'OPEN',
+        venue: 'Phoenix',
+        startsAt: DateTime.utc(2099),
+        endsAt: DateTime.utc(2099, 1, 1, 1),
+        timezone: 'America/Phoenix',
+        priceFils: 13000,
+        ageLabel: '18+',
+        capacity: 14,
+        confirmedCount: 0,
+        spots: const {},
+        highestDivision: highest,
+        lowestDivision: lowest,
+      );
+      final restricted = game(2, 4);
+      expect(restricted.divisionRangeLabel, 'DIV 2–4');
+      expect(restricted.allowedDivisions, [2, 3, 4]);
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1200, matchesPlayed: 1),
+        isFalse,
+      );
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1200, matchesPlayed: 2),
+        isTrue,
+      );
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1099, matchesPlayed: 2),
+        isFalse,
+      );
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1650, matchesPlayed: 2),
+        isFalse,
+      );
+      expect(
+        game(1, 5).allowsPlayerDivision(skillRating: 1200, matchesPlayed: 0),
+        isTrue,
+      );
+      expect(game(3, 3).divisionRangeLabel, 'DIV 3');
+      final json = <String, dynamic>{
+        'id': 'game',
+        'starts_at': '2099-01-01T00:00:00Z',
+        'ends_at': '2099-01-01T01:00:00Z',
+        'highest_division': 2,
+        'lowest_division': 4,
+      };
+      for (final parsed in [
+        OpenQueueGame.fromJson(json),
+        OpenQueueGame.fromBookingJson(json),
+      ]) {
+        expect(parsed.allowedDivisions, [2, 3, 4]);
+      }
+      json.remove('highest_division');
+      json.remove('lowest_division');
+      expect(OpenQueueGame.fromJson(json).acceptsPlacementPlayers, isTrue);
+    },
+  );
   test('Player Rating uses the shared five-division thresholds', () {
     expect(ratingDivisionLabel(0), 'Division 5');
     expect(ratingDivisionLabel(1099), 'Division 5');

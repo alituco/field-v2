@@ -68,7 +68,7 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('booking-continue-payment')));
       await tester.pumpAndSettle();
-      expect(find.text('Confirm and pay'), findsOneWidget);
+      expect(find.text('Pay for your spot'), findsOneWidget);
       expect(repository.bookCalls, 0);
       await tester.ensureVisible(
         find.byKey(const ValueKey('open-queue-confirm-payment')),

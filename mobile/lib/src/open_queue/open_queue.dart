@@ -1,4 +1,5 @@
 import '../fixtures/fixture.dart';
+import '../ranking/rating_division.dart';
 
 enum OpenQueueRole { goalkeeper, defender, midfielder, attacker }
 
@@ -145,6 +146,8 @@ class OpenQueueGame {
     required this.confirmedCount,
     required this.spots,
     this.currency = 'BHD',
+    this.highestDivision = 1,
+    this.lowestDivision = 5,
     this.fieldId,
     this.locationAddress,
     this.locationCity,
@@ -185,6 +188,30 @@ class OpenQueueGame {
   final int confirmedCount;
   final Map<OpenQueueRole, int> spots;
   final String currency;
+  final int highestDivision;
+  final int lowestDivision;
+
+  bool get acceptsPlacementPlayers =>
+      highestDivision == 1 && lowestDivision == 5;
+
+  String get divisionRangeLabel => highestDivision == lowestDivision
+      ? 'DIV $highestDivision'
+      : 'DIV $highestDivision–$lowestDivision';
+
+  List<int> get allowedDivisions => [
+    for (var division = highestDivision; division <= lowestDivision; division++)
+      division,
+  ];
+
+  bool allowsPlayerDivision({
+    required int skillRating,
+    required int matchesPlayed,
+  }) {
+    if (matchesPlayed < 2) return acceptsPlacementPlayers;
+    final division = divisionFromRating(skillRating).number;
+    return division >= highestDivision && division <= lowestDivision;
+  }
+
   final String? fieldId;
   final String? locationAddress;
   final String? locationCity;
@@ -433,6 +460,8 @@ class OpenQueueGame {
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       currency: json['currency'] as String? ?? 'BHD',
+      highestDivision: _asInt(json['highest_division'], fallback: 1),
+      lowestDivision: _asInt(json['lowest_division'], fallback: 5),
       fieldId: _nonEmptyString(json['field_id']),
       locationAddress: _nonEmptyString(json['location_address']),
       locationCity: _nonEmptyString(json['location_city']),
@@ -490,6 +519,8 @@ class OpenQueueGame {
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       currency: json['currency'] as String? ?? 'BHD',
+      highestDivision: _asInt(json['highest_division'], fallback: 1),
+      lowestDivision: _asInt(json['lowest_division'], fallback: 5),
       fieldId: _nonEmptyString(json['field_id']),
       locationAddress: _nonEmptyString(json['location_address']),
       locationCity: _nonEmptyString(json['location_city']),

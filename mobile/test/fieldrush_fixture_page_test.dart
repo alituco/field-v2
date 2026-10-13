@@ -38,35 +38,124 @@ void main() {
     );
     expect(selected.center.dx, closeTo(strip.center.dx, .1));
   });
-  testWidgets('short matchday row is centered and lobby crest retains stars', (
-    tester,
-  ) async {
-    await _pump(
-      tester,
-      _Repository(
+  testWidgets(
+    'short matchday row is centered and division artwork retains stars',
+    (tester) async {
+      await _pump(
+        tester,
+        _Repository(
+          upcoming: [
+            _game('one', average: 1700),
+            _game('two', start: DateTime.utc(2026, 10, 14, 3)),
+          ],
+        ),
+      );
+      final first = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-10')),
+      );
+      final last = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-13')),
+      );
+      final strip = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-strip')),
+      );
+      expect((first.left + last.right) / 2, closeTo(strip.center.dx, .01));
+      final crest = tester.widget<FieldrushDivisionShield>(
+        find.byType(FieldrushDivisionShield).first,
+      );
+      expect(crest.division, 1);
+      expect(crest.mini, isFalse);
+      expect(crest.size, 20);
+    },
+  );
+
+  testWidgets(
+    'fixture admission range shows all five divisions without ratings',
+    (tester) async {
+      final repository = _Repository(upcoming: [_game('all-divisions')]);
+      await _pump(tester, repository);
+      final card = find.byKey(const ValueKey('solo-fixture-all-divisions'));
+      final range = find.descendant(
+        of: card,
+        matching: find.byType(FieldrushGameDivisionRange),
+      );
+      expect(range, findsOneWidget);
+      expect(
+        find.descendant(of: range, matching: find.text('DIV 1–5')),
+        findsOneWidget,
+      );
+      final shields = tester.widgetList<FieldrushDivisionShield>(
+        find.descendant(
+          of: range,
+          matching: find.byType(FieldrushDivisionShield),
+        ),
+      );
+      expect(shields.map((shield) => shield.division), [1, 2, 3, 4, 5]);
+      expect(
+        shields.every((shield) => !shield.mini && shield.size == 20),
+        isTrue,
+      );
+      expect(
+        tester.getRect(range).right,
+        closeTo(tester.getRect(card).right - 18, .1),
+      );
+      expect(repository.bookCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'each fixture keeps its configured band separate from lobby rating',
+    (tester) async {
+      final repository = _Repository(
         upcoming: [
-          _game('one', average: 1700),
-          _game('two', start: DateTime.utc(2026, 10, 14, 3)),
+          _game(
+            'middle-band',
+            highestDivision: 2,
+            lowestDivision: 4,
+            average: 1700,
+          ),
+          _game(
+            'single-division',
+            highestDivision: 3,
+            lowestDivision: 3,
+            average: 1700,
+          ),
         ],
-      ),
-    );
-    final first = tester.getRect(
-      find.byKey(const ValueKey('fixtures-date-2026-10-10')),
-    );
-    final last = tester.getRect(
-      find.byKey(const ValueKey('fixtures-date-2026-10-13')),
-    );
-    final strip = tester.getRect(
-      find.byKey(const ValueKey('fixtures-date-strip')),
-    );
-    expect((first.left + last.right) / 2, closeTo(strip.center.dx, .01));
-    final crest = tester.widget<FieldrushDivisionShield>(
-      find.byType(FieldrushDivisionShield).first,
-    );
-    expect(crest.division, 1);
-    expect(crest.mini, isFalse);
-    expect(crest.size, 20);
-  });
+      );
+      await _pump(tester, repository);
+      for (final (id, label, divisions) in [
+        ('middle-band', 'DIV 2–4', [2, 3, 4]),
+        ('single-division', 'DIV 3', [3]),
+      ]) {
+        final card = find.byKey(ValueKey('solo-fixture-$id'));
+        await tester.ensureVisible(card);
+        await tester.pumpAndSettle();
+        final range = find.descendant(
+          of: card,
+          matching: find.byType(FieldrushGameDivisionRange),
+        );
+        expect(range, findsOneWidget);
+        expect(
+          find.descendant(of: range, matching: find.text(label)),
+          findsOneWidget,
+        );
+        expect(
+          tester
+              .widgetList<FieldrushDivisionShield>(
+                find.descendant(
+                  of: range,
+                  matching: find.byType(FieldrushDivisionShield),
+                ),
+              )
+              .map((shield) => shield.division),
+          divisions,
+        );
+      }
+      expect(repository.bookCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets(
     'production FixturesScreen exposes Fieldrush, not legacy clan scheduling',
     (tester) async {
@@ -368,6 +457,8 @@ void main() {
       width: 320,
       scale: 1.3,
     );
+    expect(find.text('DIV 1–5'), findsOneWidget);
+    expect(find.byType(FieldrushGameDivisionRange), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.tap(find.byKey(const ValueKey('fixtures-play-action')));
     await tester.pumpAndSettle();
@@ -469,6 +560,8 @@ OpenQueueGame _game(
   int? white,
   int? black,
   int? average,
+  int highestDivision = 1,
+  int lowestDivision = 5,
   MatchOperationalState operational = MatchOperationalState.normal,
 }) {
   final at = start ?? DateTime.utc(2026, 10, 11, 3);
@@ -492,6 +585,8 @@ OpenQueueGame _game(
     whiteScore: white,
     blackScore: black,
     matchAverageSr: average,
+    highestDivision: highestDivision,
+    lowestDivision: lowestDivision,
     operationalState: operational,
   );
 }

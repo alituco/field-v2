@@ -1,17 +1,229 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
 
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/payments/fieldrush_embedded_payment.dart';
 import 'package:field/src/payments/payment_service.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _now = DateTime.utc(2099, 6, 1);
 const _payKey = ValueKey('open-queue-confirm-payment');
 
 void main() {
+  testWidgets(
+    'Join previews actual available pricing without selecting or booking a spot',
+    (tester) async {
+      final repository = _Repository()..game = _game(keeperSpots: 0);
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions, choosePosition: true);
+
+      expect(find.text('Pay for your spot'), findsOneWidget);
+      expect(find.text('Tuesday, June 2'), findsOneWidget);
+      expect(find.text('Goalkeeper'), findsOneWidget);
+      expect(find.text('Pick a position'), findsOneWidget);
+      expect(repository.detailCalls, 1);
+      expect(repository.quotedRoles, [OpenQueueRole.defender]);
+      expect(sessions.created, hasLength(1));
+      expect(find.text(r'$13.00'), findsWidgets);
+      expect(_payButton(tester).onPressed, isNull);
+      expect(
+        tester
+            .widget<OutlinedButton>(
+              find.byKey(const ValueKey('checkout-position-GK')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(find.text('Full'), findsOneWidget);
+      expect(repository.embeddedBookCalls, 0);
+      expect(find.textContaining('wallet'), findsNothing);
+      expect(find.textContaining('Visa •'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('checkout-division-range')),
+        findsOneWidget,
+      );
+      sessions.current.select();
+      await tester.pump();
+      expect(_payButton(tester).onPressed, isNull);
+      expect(sessions.current.collectCalls, 0);
+
+      await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+      await tester.pumpAndSettle();
+      expect(repository.quotedRoles, [
+        OpenQueueRole.defender,
+        OpenQueueRole.defender,
+      ]);
+      expect(sessions.created, hasLength(2));
+      expect(_payButton(tester).onPressed, isNull);
+      expect(repository.embeddedBookCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'changing position requotes and replaces the old native selection',
+    (tester) async {
+      final repository = _Repository();
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions, choosePosition: true);
+      await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+      await tester.pumpAndSettle();
+      final previous = sessions.current;
+      previous.select();
+      await tester.pump();
+      repository.price = 15000;
+      await tester.tap(find.byKey(const ValueKey('checkout-position-ATT')));
+      await tester.pumpAndSettle();
+      expect(repository.quotedRoles, [
+        OpenQueueRole.goalkeeper,
+        OpenQueueRole.defender,
+        OpenQueueRole.attacker,
+      ]);
+      expect(previous.closed, isTrue);
+      expect(sessions.created, hasLength(3));
+      expect(sessions.current.amountFils, 15000);
+      expect(sessions.current.hasSelection, isFalse);
+      expect(_payButton(tester).onPressed, isNull);
+      expect(repository.embeddedBookCalls, 0);
+    },
+  );
+
+  testWidgets('freshly filled position is not selected or silently replaced', (
+    tester,
+  ) async {
+    final repository = _Repository();
+    final sessions = _Sessions();
+    await _openCheckout(tester, repository, sessions, choosePosition: true);
+    repository.game = _game(defenderSpots: 0);
+    await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+    await tester.pumpAndSettle();
+    expect(repository.quotedRoles, [
+      OpenQueueRole.goalkeeper,
+      OpenQueueRole.goalkeeper,
+    ]);
+    expect(sessions.created, hasLength(2));
+    expect(find.text('Pick a position'), findsOneWidget);
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const ValueKey('checkout-position-DEF')),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(_payButton(tester).onPressed, isNull);
+  });
+
+  testWidgets(
+    'closing during fresh availability load never mounts a payment session',
+    (tester) async {
+      final repository = _Repository()
+        ..detailBarrier = Completer<OpenQueueMatchDetail>();
+      final sessions = _Sessions();
+      final result = await _openCheckout(
+        tester,
+        repository,
+        sessions,
+        choosePosition: true,
+      );
+      await tester.tap(find.byTooltip('Close checkout'));
+      await tester.pumpAndSettle();
+      repository.detailBarrier!.complete(
+        OpenQueueMatchDetail(
+          game: repository.game,
+          scorers: const [],
+          timeline: const [],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(result.completed, isTrue);
+      expect(result.booking, isNull);
+      expect(repository.quoteCalls, 0);
+      expect(sessions.created, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('position checkout fits narrow screens with enlarged text', (
+    tester,
+  ) async {
+    final repository = _Repository();
+    final sessions = _Sessions();
+    await _openCheckout(
+      tester,
+      repository,
+      sessions,
+      choosePosition: true,
+      size: const Size(320, 740),
+      scale: 1.6,
+    );
+    expect(tester.takeException(), isNull);
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('checkout-position-ATT')),
+    );
+    await tester.tap(find.byKey(const ValueKey('checkout-position-ATT')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(_payKey));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(repository.bookedRoles, isEmpty);
+  });
+
+  testWidgets(
+    'ambiguous payment locks the selected position and resumes the same role',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = const PaymentPendingException();
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions, choosePosition: true);
+      await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+      await tester.pumpAndSettle();
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      final quoteCalls = repository.quoteCalls;
+      for (final code in ['GK', 'DEF', 'ATT']) {
+        expect(
+          tester
+              .widget<OutlinedButton>(
+                find.byKey(ValueKey('checkout-position-$code')),
+              )
+              .onPressed,
+          isNull,
+        );
+      }
+      await _tapPay(tester);
+      expect(repository.bookedRoles, [
+        OpenQueueRole.defender,
+        OpenQueueRole.defender,
+      ]);
+      expect(repository.quoteCalls, quoteCalls);
+      expect(sessions.created, hasLength(2));
+    },
+  );
+
+  testWidgets(
+    'Join checkout does not offer another booking when an active game exists',
+    (tester) async {
+      final repository = _Repository()..recoveredBooking = _booking(_game());
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions, choosePosition: true);
+      expect(
+        find.textContaining('already have an upcoming or active game'),
+        findsOneWidget,
+      );
+      expect(repository.quoteCalls, 0);
+      expect(sessions.created, isEmpty);
+      expect(_payButton(tester).onPressed, isNull);
+    },
+  );
+
   testWidgets('preview and selecting a method never begin a booking', (
     tester,
   ) async {
@@ -477,6 +689,66 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(repository.embeddedBookCalls, 0);
   });
+
+  testWidgets('render Join checkout with bundled fonts for visual review', (
+    tester,
+  ) async {
+    final directory = Platform.environment['FIELDRUSH_CHECKOUT_SCREENSHOT_DIR'];
+    if (directory == null) return;
+    tester.view.physicalSize = const Size(390, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.runAsync(() async {
+      for (final font in ['Outfit', 'PlusJakartaSans']) {
+        await (FontLoader(
+          font,
+        )..addFont(rootBundle.load('assets/fonts/$font.ttf'))).load();
+      }
+      await (FontLoader(
+        'MaterialIcons',
+      )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    });
+    final repository = _Repository()
+      ..game = _game(keeperSpots: 0, defenderSpots: 3);
+    final sessions = _Sessions()..visualPaymentStub = true;
+    final boundaryKey = GlobalKey();
+    await _openCheckout(
+      tester,
+      repository,
+      sessions,
+      choosePosition: true,
+      boundaryKey: boundaryKey,
+      size: const Size(390, 900),
+    );
+    Future<void> capture(String name) async {
+      expect(tester.takeException(), isNull);
+      final boundary =
+          boundaryKey.currentContext!.findRenderObject()!
+              as RenderRepaintBoundary;
+      await tester.runAsync(() async {
+        await Directory(directory).create(recursive: true);
+        final image = await boundary.toImage(pixelRatio: 2);
+        final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+        await File(
+          '$directory/$name.png',
+        ).writeAsBytes(bytes!.buffer.asUint8List());
+        image.dispose();
+      });
+    }
+
+    await capture('checkout-no-position');
+    await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+    await tester.pumpAndSettle();
+    sessions.current.select();
+    await tester.pumpAndSettle();
+    await capture('checkout-defender');
+    expect(repository.embeddedBookCalls, 0);
+    expect(
+      sessions.created.every((session) => session.collectCalls == 0),
+      isTrue,
+    );
+  });
 }
 
 FilledButton _payButton(WidgetTester tester) =>
@@ -494,17 +766,22 @@ Future<_CheckoutResult> _openCheckout(
   _Sessions sessions, {
   Size size = const Size(390, 844),
   double scale = 1,
+  bool choosePosition = false,
+  GlobalKey? boundaryKey,
 }) async {
   final result = _CheckoutResult();
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
   await tester.pumpWidget(
     MaterialApp(
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(
-          context,
-        ).copyWith(textScaler: TextScaler.linear(scale)),
-        child: child!,
+      builder: (context, child) => RepaintBoundary(
+        key: boundaryKey,
+        child: MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(scale)),
+          child: child!,
+        ),
       ),
       home: Scaffold(
         body: Builder(
@@ -513,10 +790,14 @@ Future<_CheckoutResult> _openCheckout(
               result.booking = await showModalBottomSheet<OpenQueueBooking>(
                 context: context,
                 isScrollControlled: true,
+                backgroundColor: FieldrushAuthTheme.cream,
+                shape: const RoundedRectangleBorder(
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                ),
                 builder: (_) => FieldrushCheckoutSheet(
                   repository: repository,
                   game: repository.game,
-                  role: OpenQueueRole.attacker,
+                  role: choosePosition ? null : OpenQueueRole.attacker,
                   embeddedPaymentSessionFactory: sessions.create,
                 ),
               );
@@ -546,6 +827,7 @@ class _Sessions {
   final created = <_FakeSession>[];
   bool readyOnInitialize = true;
   String? initializationError;
+  bool visualPaymentStub = false;
 
   _FakeSession get current => created.last;
 
@@ -558,6 +840,7 @@ class _Sessions {
       currency: currency,
       readyOnInitialize: readyOnInitialize,
       initializationError: initializationError,
+      visualPaymentStub: visualPaymentStub,
     );
     created.add(session);
     return session;
@@ -570,12 +853,14 @@ class _FakeSession extends FieldrushEmbeddedPaymentSession {
     required this.currency,
     required this.readyOnInitialize,
     this.initializationError,
+    this.visualPaymentStub = false,
   });
 
   final int amountFils;
   final String currency;
   final bool readyOnInitialize;
   final String? initializationError;
+  final bool visualPaymentStub;
   int initializeCalls = 0;
   int collectCalls = 0;
   int closeCalls = 0;
@@ -615,10 +900,49 @@ class _FakeSession extends FieldrushEmbeddedPaymentSession {
   }
 
   @override
-  Widget buildView() => const SizedBox(
-    height: 100,
-    child: Center(child: Text('Fake embedded payment element')),
-  );
+  Widget buildView() => visualPaymentStub
+      // Only used by opt-in visual QA. Real builds use Stripe's native element.
+      ? Column(
+          children: [
+            for (final label in ['Card', 'Apple Pay'])
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 15,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: FieldrushAuthTheme.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      label == 'Card' ? Icons.credit_card : Icons.apple,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        label,
+                        style: const TextStyle(
+                          fontFamily: 'PlusJakartaSans',
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.chevron_right, size: 18),
+                  ],
+                ),
+              ),
+          ],
+        )
+      : const SizedBox(
+          height: 100,
+          child: Center(child: Text('Fake embedded payment element')),
+        );
 
   @override
   Future<void> collectPayment(PaymentCollectionRequest request) async {
@@ -650,7 +974,11 @@ class _Repository
         OpenQueueBookingCostPreviewRepository,
         OpenQueueBookingLookupRepository,
         OpenQueueEmbeddedCheckoutRepository {
-  final game = _game();
+  OpenQueueGame game = _game();
+  int detailCalls = 0;
+  Completer<OpenQueueMatchDetail>? detailBarrier;
+  final quotedRoles = <OpenQueueRole>[];
+  final bookedRoles = <OpenQueueRole>[];
   int quoteCalls = 0;
   int embeddedBookCalls = 0;
   int legacyBookCalls = 0;
@@ -671,6 +999,7 @@ class _Repository
     required OpenQueueRole role,
   }) async {
     quoteCalls++;
+    quotedRoles.add(role);
     if (quoteFails) throw StateError('Price unavailable');
     return OpenQueueBookingCostPreview(
       currency: 'USD',
@@ -693,6 +1022,7 @@ class _Repository
     required PaymentCollector collectPayment,
   }) async {
     embeddedBookCalls++;
+    bookedRoles.add(role);
     beforeCollect?.call();
     final amountFils = preparedAmountFils ?? price;
     if (collectOnBook && amountFils > 0) {
@@ -729,28 +1059,40 @@ class _Repository
   ];
 
   @override
+  Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async {
+    detailCalls++;
+    if (detailBarrier != null) return detailBarrier!.future;
+    return OpenQueueMatchDetail(
+      game: game,
+      scorers: const [],
+      timeline: const [],
+    );
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-OpenQueueGame _game() => OpenQueueGame(
-  id: 'embedded-checkout-game',
-  status: 'OPEN',
-  venue: 'Reach 11 Fields',
-  startsAt: _now.add(const Duration(days: 2, hours: 3, minutes: 30)),
-  endsAt: _now.add(const Duration(days: 2, hours: 4, minutes: 30)),
-  timezone: 'America/Phoenix',
-  currency: 'USD',
-  priceFils: 13000,
-  ageLabel: '18+',
-  capacity: 14,
-  confirmedCount: 3,
-  spots: const {
-    OpenQueueRole.goalkeeper: 2,
-    OpenQueueRole.defender: 5,
-    OpenQueueRole.attacker: 4,
-  },
-  teamAssignmentLeadMinutes: 180,
-);
+OpenQueueGame _game({int keeperSpots = 2, int defenderSpots = 5}) =>
+    OpenQueueGame(
+      id: 'embedded-checkout-game',
+      status: 'OPEN',
+      venue: 'Reach 11 Fields',
+      startsAt: _now.add(const Duration(days: 2, hours: 3, minutes: 30)),
+      endsAt: _now.add(const Duration(days: 2, hours: 4, minutes: 30)),
+      timezone: 'America/Phoenix',
+      currency: 'USD',
+      priceFils: 13000,
+      ageLabel: '18+',
+      capacity: 14,
+      confirmedCount: 3,
+      spots: {
+        OpenQueueRole.goalkeeper: keeperSpots,
+        OpenQueueRole.defender: defenderSpots,
+        OpenQueueRole.attacker: 4,
+      },
+      teamAssignmentLeadMinutes: 180,
+    );
 
 OpenQueueBooking _booking(OpenQueueGame game, {String status = 'CONFIRMED'}) =>
     OpenQueueBooking(

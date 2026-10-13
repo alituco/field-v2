@@ -117,7 +117,7 @@ test("price edits preserve captured quotes, paid bookings and refunds before ful
 
 test("single-game registration, activity dismissals, and safe checkout cleanup are checked before full schema replay", () => {
   const source = job("database");
-  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs"]) {
+  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs", "test_game_division_ranges.mjs"]) {
     const check = stepContaining(source, `node supabase/scripts/${script}`);
     assert.match(check, /set -euo pipefail/);
     assert.match(check, /PGLITE_MODULE=/);

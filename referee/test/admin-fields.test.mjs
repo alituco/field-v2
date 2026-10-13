@@ -62,5 +62,7 @@ test("catalog and game endpoints enforce admin identity, never client venue coor
   }
   const create = readFileSync(new URL("../src/app/api/referee/admin/solo-games/route.ts", import.meta.url), "utf8");
   assert.match(create, /field_id_to_use: input\.fieldId/);
+  assert.match(create, /highest_division_to_use: input\.highestDivision/);
+  assert.match(create, /lowest_division_to_use: input\.lowestDivision/);
   assert.doesNotMatch(create, /venue_to_use|latitude|longitude/);
 });

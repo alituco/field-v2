@@ -75,6 +75,8 @@ class SupabaseOpenQueueRepository
 
   static const _gameMetadataSelect = '''
     currency,
+    highest_division,
+    lowest_division,
     field_id,
     location_address,
     location_city,

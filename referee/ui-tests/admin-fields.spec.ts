@@ -71,7 +71,16 @@ test("empty catalogue redirects into field creation then resumes the solo game",
   await page.getByRole("button", { name: "Create and open game" }).click();
   await expect(page.getByText("Solo game created and opened for bookings.")).toBeVisible();
   const create = writes.find((write) => write.path.endsWith("solo-games"));
-  expect(create?.body).toEqual({ fieldId: sampleField.id, matchDate: "2099-07-24", kickoffTime: "20:30", durationMinutes: 60, priceUsd: "13.00", ageLabel: "18+" });
+  expect(create?.body).toEqual({
+    fieldId: sampleField.id,
+    matchDate: "2099-07-24",
+    kickoffTime: "20:30",
+    durationMinutes: 60,
+    priceUsd: "13.00",
+    ageLabel: "18+",
+    highestDivision: 1,
+    lowestDivision: 5,
+  });
 });
 
 test("saved active field is required; archived fields cannot be selected", async ({ page }) => {
@@ -81,6 +90,14 @@ test("saved active field is required; archived fields cannot be selected", async
   await expect(page.getByRole("button", { name: "Create and open game" })).toBeDisabled();
   await expect(page.getByRole("option", { name: /Archived pitch/ })).toHaveCount(0);
   await page.getByLabel("Field / pitch", { exact: false }).selectOption(sampleField.id);
+  await expect(page.getByLabel("Highest division")).toHaveValue("1");
+  await expect(page.getByLabel("Lowest division")).toHaveValue("5");
+  await expect(page.getByText("Placement players (fewer than 2 matches) can only book unrestricted Division 1–5 games.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Create and open game" })).toBeEnabled();
+  await page.getByLabel("Highest division").selectOption("5");
+  await page.getByLabel("Lowest division").selectOption("4");
+  await expect(page.getByRole("button", { name: "Create and open game" })).toBeDisabled();
+  await page.getByLabel("Lowest division").selectOption("5");
   await expect(page.getByRole("button", { name: "Create and open game" })).toBeEnabled();
 });
 
@@ -92,6 +109,8 @@ test("adding a field midway preserves the game draft and validates the map pin",
   await page.getByLabel("Kickoff time").fill("18:15");
   await page.getByLabel("Duration (minutes)").fill("90");
   await page.getByLabel("Price per player (USD)").fill("15.50");
+  await page.getByLabel("Highest division").selectOption("2");
+  await page.getByLabel("Lowest division").selectOption("4");
   await page.getByRole("button", { name: "Add a new field", exact: false }).click();
   await fillField(page);
   await page.getByLabel("Latitude", { exact: false }).fill("91");
@@ -104,6 +123,16 @@ test("adding a field midway preserves the game draft and validates the map pin",
   await expect(page.getByLabel("Kickoff time")).toHaveValue("18:15");
   await expect(page.getByLabel("Duration (minutes)")).toHaveValue("90");
   await expect(page.getByLabel("Price per player (USD)")).toHaveValue("15.50");
+  await expect(page.getByLabel("Highest division")).toHaveValue("2");
+  await expect(page.getByLabel("Lowest division")).toHaveValue("4");
+  await page.getByRole("button", { name: "Create and open game" }).click();
+  const create = writes.find((write) => write.path.endsWith("solo-games"));
+  expect(create?.body).toMatchObject({
+    highestDivision: 2,
+    lowestDivision: 4,
+    durationMinutes: 90,
+    priceUsd: "15.50",
+  });
 });
 
 test("field loading failure is not treated as an empty catalogue", async ({ page }) => {

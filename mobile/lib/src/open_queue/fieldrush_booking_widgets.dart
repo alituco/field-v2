@@ -65,7 +65,7 @@ class BookingValueRow extends StatelessWidget {
       children: [
         Expanded(child: Text(label, style: bookingText(12))),
         const SizedBox(width: 12),
-        Flexible(
+        Expanded(
           child: Text(
             value,
             textAlign: TextAlign.right,

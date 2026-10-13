@@ -5,6 +5,8 @@ export type AdminSoloGameCreateInput = {
   durationMinutes: number;
   priceFils: number;
   ageLabel: string;
+  highestDivision: number;
+  lowestDivision: number;
 };
 
 export type AdminSoloGameRemoveInput = {
@@ -73,6 +75,14 @@ function parseSavedFieldId(value: unknown) {
   return value;
 }
 
+function parseDivision(value: unknown, fallback: number, label: string) {
+  const division = value === undefined ? fallback : value;
+  if (typeof division !== "number" || !Number.isInteger(division) || division < 1 || division > 5) {
+    throw new Error(`${label} must be a whole-number division from 1 to 5.`);
+  }
+  return division;
+}
+
 export function parseAdminSoloGameCreateInput(
   value: unknown,
 ): AdminSoloGameCreateInput {
@@ -85,6 +95,11 @@ export function parseAdminSoloGameCreateInput(
   if (typeof durationMinutes !== "number" || !Number.isInteger(durationMinutes) || durationMinutes < 30 || durationMinutes > 180) {
     throw new Error("Duration must be a whole number from 30 to 180 minutes.");
   }
+  const highestDivision = parseDivision(body.highestDivision, 1, "Highest division");
+  const lowestDivision = parseDivision(body.lowestDivision, 5, "Lowest division");
+  if (highestDivision > lowestDivision) {
+    throw new Error("Highest division must be less than or equal to lowest division.");
+  }
   return {
     fieldId: parseSavedFieldId(body.fieldId),
     ...schedule,
@@ -93,6 +108,8 @@ export function parseAdminSoloGameCreateInput(
     // USD inputs are always whole cents; never reinterpret a BHD request as USD.
     priceFils: parsePriceFils(body.priceUsd ?? "13.00"),
     ageLabel: cleanText(body.ageLabel, "Age label", 2, 40),
+    highestDivision,
+    lowestDivision,
   };
 }
 

@@ -23,6 +23,8 @@ test("admin can prepare a Tuesday solo game in the Phoenix slot", () => {
     fieldId,
     priceFils: 13500,
     ageLabel: "18+",
+    highestDivision: 1,
+    lowestDivision: 5,
   });
 });
 
@@ -51,6 +53,37 @@ test("dates, kickoff and duration remain strictly validated", () => {
   for (const kickoffTime of ["24:00", "9:30", "12:60", "noon", "20:30:00", ""]) assert.throws(() => parseAdminSoloGameCreateInput({ ...base, kickoffTime }), /kickoff/);
   for (const durationMinutes of [29, 181, 60.5, "90", false, NaN]) assert.throws(() => parseAdminSoloGameCreateInput({ ...base, durationMinutes }), /Duration/);
   for (const matchDate of ["2099-02-29", "2099-04-31", "2000-01-01"]) assert.throws(() => parseAdminSoloGameCreateInput({ ...base, matchDate }), /date|future/);
+});
+
+test("division range defaults to unrestricted and strictly validates ordered whole-number divisions", () => {
+  const base = { fieldId, priceUsd: "13.00", ageLabel: "18+", matchDate: "2099-07-25" };
+  assert.deepEqual(
+    {
+      highestDivision: parseAdminSoloGameCreateInput(base).highestDivision,
+      lowestDivision: parseAdminSoloGameCreateInput(base).lowestDivision,
+    },
+    { highestDivision: 1, lowestDivision: 5 },
+  );
+  const restricted = parseAdminSoloGameCreateInput({ ...base, highestDivision: 2, lowestDivision: 4 });
+  assert.equal(restricted.highestDivision, 2);
+  assert.equal(restricted.lowestDivision, 4);
+
+  for (const highestDivision of [null, "2", 0, 6, 2.5, NaN]) {
+    assert.throws(
+      () => parseAdminSoloGameCreateInput({ ...base, highestDivision }),
+      /Highest division/,
+    );
+  }
+  for (const lowestDivision of [null, "4", 0, 6, 4.5, NaN]) {
+    assert.throws(
+      () => parseAdminSoloGameCreateInput({ ...base, lowestDivision }),
+      /Lowest division/,
+    );
+  }
+  assert.throws(
+    () => parseAdminSoloGameCreateInput({ ...base, highestDivision: 4, lowestDivision: 2 }),
+    /Highest division must be less than or equal/,
+  );
 });
 
 test("USD price defaults to $13 and accepts free games or whole cents from $0.50 to $100", () => {

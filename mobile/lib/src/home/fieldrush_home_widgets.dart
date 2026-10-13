@@ -664,26 +664,8 @@ class _OpenNightRow extends StatelessWidget {
                       '${(game.capacity - game.confirmedCount).clamp(0, game.capacity)} of ${game.capacity} spots left',
                       style: _jakarta(11).copyWith(fontWeight: FontWeight.w600),
                     ),
-                    if (game.matchAverageSr != null) ...[
-                      const SizedBox(height: 5),
-                      Row(
-                        children: [
-                          FieldrushDivisionShield(
-                            division: divisionFromRating(
-                              game.matchAverageSr!,
-                            ).number,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 5),
-                          Flexible(
-                            child: Text(
-                              'Avg ${game.matchAverageSr} SR',
-                              style: _outfit(11.5),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
+                    const SizedBox(height: 6),
+                    FieldrushGameDivisionRange(game: game),
                     if (compact) ...[const SizedBox(height: 8), action],
                   ],
                 ),
@@ -695,6 +677,51 @@ class _OpenNightRow extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Configured admission band, not the average of an incomplete lineup.
+class FieldrushGameDivisionRange extends StatelessWidget {
+  const FieldrushGameDivisionRange({super.key, required this.game});
+  final OpenQueueGame game;
+
+  @override
+  Widget build(BuildContext context) {
+    final divisions = game.allowedDivisions;
+    const size = 20.0;
+    const stride = 13.5;
+    return Semantics(
+      label: game.highestDivision == game.lowestDivision
+          ? 'Division ${game.highestDivision} only'
+          : 'Divisions ${game.highestDivision} to ${game.lowestDivision}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ExcludeSemantics(
+            child: SizedBox(
+              width: size + stride * (divisions.length - 1),
+              height: 26,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  for (var i = 0; i < divisions.length; i++)
+                    Positioned(
+                      left: stride * i,
+                      top: 1,
+                      child: FieldrushDivisionShield(
+                        division: divisions[i],
+                        size: size,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(child: Text(game.divisionRangeLabel, style: _outfit(11.5))),
+        ],
+      ),
+    );
+  }
 }
 
 class FieldrushSoloHero extends StatelessWidget {
@@ -1565,22 +1592,33 @@ class FieldrushPlacementRatingCard extends StatelessWidget {
                       off: const Color(0x29F3EBD6),
                     ),
                     const SizedBox(height: 10),
-                    _SpreadLabels(
-                      left: Text(
-                        '$left ${left == 1 ? 'game' : 'games'} to reveal your division',
-                        style: _jakarta(
-                          11.5,
-                          color: const Color(0xFFF3EBD6),
-                        ).copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      right: Text(
-                        '$played / $minimumPlayerLeaderboardMatches',
-                        style: _jakarta(
-                          10,
-                          color: const Color(0xFFC9C2AE),
-                          tracking: .8,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '$left ${left == 1 ? 'game' : 'games'} to reveal your division',
+                              maxLines: 1,
+                              softWrap: false,
+                              style: _jakarta(
+                                11.5,
+                                color: const Color(0xFFF3EBD6),
+                              ).copyWith(fontWeight: FontWeight.w700),
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 12),
+                        Text(
+                          '$played / $minimumPlayerLeaderboardMatches',
+                          style: _jakarta(
+                            10,
+                            color: const Color(0xFFC9C2AE),
+                            tracking: .8,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
