@@ -12,6 +12,7 @@ export const WAITLIST_STATUSES = [
 ] as const;
 
 export const WAITLIST_INTERESTS = [
+  "LAUNCH_UPDATES",
   "SOLO_PLAYER",
   "CLAN_PLAYER",
   "CLAN_LEADER",
@@ -30,16 +31,19 @@ export type WaitlistPosition = typeof WAITLIST_POSITIONS[number];
 
 export type AdminWaitlistApplicant = {
   id: string;
-  fullName: string;
+  fullName: string | null;
   email: string;
   phone: string | null;
   age: number | null;
   preferredPosition: WaitlistPosition | null;
-  interest: WaitlistInterest;
+  interest: WaitlistInterest | null;
   status: WaitlistStatus;
   source: string;
   createdAt: string | null;
   updatedAt: string | null;
+  launchUpdatesConsentedAt: string | null;
+  launchUpdatesConsentVersion: string | null;
+  signupPlacement: string | null;
 };
 
 export type AdminWaitlistFilters = {
@@ -55,13 +59,13 @@ export async function loadAdminWaitlist(
   const { data, error } = await db
     .from("season_zero_waitlist")
     .select(
-      "id,full_name,email,phone,age,preferred_position,interest,status,source,created_at,updated_at",
+      "id,full_name,email,phone,age,preferred_position,interest,status,source,created_at,updated_at,launch_updates_consented_at,launch_updates_consent_version,signup_placement",
     )
     .order("created_at", { ascending: false })
     .limit(1000);
 
   if (error) {
-    throw new Error(`Could not load the Season Zero waitlist: ${error.message}`);
+    throw new Error(`Could not load interest signups: ${error.message}`);
   }
 
   return rows(data).map(normalizeAdminWaitlistApplicant);
@@ -72,7 +76,7 @@ export function normalizeAdminWaitlistApplicant(
 ): AdminWaitlistApplicant {
   return {
     id: stringValue(applicant.id) ?? "",
-    fullName: stringValue(applicant.full_name) ?? "Unnamed applicant",
+    fullName: stringValue(applicant.full_name),
     email: stringValue(applicant.email) ?? "",
     phone: stringValue(applicant.phone),
     age: integerValue(applicant.age),
@@ -80,13 +84,19 @@ export function normalizeAdminWaitlistApplicant(
       applicant.preferred_position,
       WAITLIST_POSITIONS,
     ),
-    interest:
-      enumValue(applicant.interest, WAITLIST_INTERESTS) ?? "SOLO_PLAYER",
+    interest: enumValue(applicant.interest, WAITLIST_INTERESTS),
     status: enumValue(applicant.status, WAITLIST_STATUSES) ?? "WAITING",
     source: stringValue(applicant.source) ?? "FIELD_BH",
     createdAt: stringValue(applicant.created_at),
     updatedAt: stringValue(applicant.updated_at),
+    launchUpdatesConsentedAt: stringValue(applicant.launch_updates_consented_at),
+    launchUpdatesConsentVersion: stringValue(applicant.launch_updates_consent_version),
+    signupPlacement: stringValue(applicant.signup_placement),
   };
+}
+
+export function isLaunchUpdatesSubscriber(applicant: AdminWaitlistApplicant) {
+  return Boolean(applicant.launchUpdatesConsentedAt);
 }
 
 export function filterAdminWaitlist(
@@ -100,19 +110,26 @@ export function filterAdminWaitlist(
 
   return applicants.filter((applicant) => {
     if (status !== "ALL" && applicant.status !== status) return false;
-    if (interest !== "ALL" && applicant.interest !== interest) return false;
+    if (interest === "LAUNCH_UPDATES") {
+      if (!isLaunchUpdatesSubscriber(applicant)) return false;
+    } else if (interest !== "ALL" && applicant.interest !== interest) {
+      return false;
+    }
     if (position !== "ALL" && applicant.preferredPosition !== position) {
       return false;
     }
     if (!needle) return true;
 
     return [
-      applicant.fullName,
+      applicant.fullName ?? "",
       applicant.email,
       applicant.phone ?? "",
       applicant.preferredPosition ?? "",
-      applicant.interest,
+      applicant.interest ?? "",
       applicant.status,
+      applicant.source,
+      applicant.signupPlacement ?? "",
+      isLaunchUpdatesSubscriber(applicant) ? "launch updates" : "",
     ].some((value) => value.toLowerCase().includes(needle));
   });
 }

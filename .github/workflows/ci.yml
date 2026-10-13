@@ -404,6 +404,14 @@ jobs:
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_fieldrush_accounts.sql
 
+      - name: Verify private launch interest capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_launch_interest.sql
+
       - name: Verify reliability schema contracts
         shell: bash
         run: |
