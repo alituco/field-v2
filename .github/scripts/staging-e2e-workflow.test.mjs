@@ -157,6 +157,17 @@ test("season rewards are verified against the fully replayed schema", () => {
   assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
 });
 
+test("match corrections verify both historical protection and current-period rating replay", () => {
+  const source = job("database");
+  const script = "supabase/scripts/verify_match_resolution_rating_era.sql";
+  const check = stepContaining(source, script);
+  assert.match(check, /verify_match_resolution_control_plane\.sql/);
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+});
+
 test("checkout preflight runs before creating fixtures and after cleanup cancels tagged games", () => {
   const setup = readFileSync(new URL("../../supabase/scripts/e2e/setup_staging.ts", import.meta.url), "utf8");
   const cleanup = readFileSync(new URL("../../supabase/scripts/e2e/cleanup_staging.ts", import.meta.url), "utf8");

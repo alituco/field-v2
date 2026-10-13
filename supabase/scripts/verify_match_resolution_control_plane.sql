@@ -58,6 +58,12 @@ declare
   solo_wallet_credit_fils_before integer;
   solo_participant_result jsonb;
   function_definition text;
+  expected_clan_rating_events integer;
+  expected_solo_rating_events integer;
+  clan_track_ratings_before jsonb;
+  clan_legacy_ratings_before jsonb;
+  solo_track_ratings_before jsonb;
+  solo_legacy_ratings_before jsonb;
 begin
   if to_regclass('public.match_resolution_cases') is null
     or to_regclass('public.match_resolution_revisions') is null
@@ -235,6 +241,14 @@ begin
     raise exception
       'Control-plane verification needs one active member from each clan.';
   end if;
+  select case when public.player_rating_effective_at_is_current(
+    public.fixture_start_at(f.match_date,f.time_slot)) then 2 else 0 end
+  into expected_clan_rating_events from public.fixtures f where f.id=fixture_to_test.id;
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+  into clan_track_ratings_before from public.fieldrush_player_rating_tracks r
+  where r.profile_id=any(member_ids);
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+  into clan_legacy_ratings_before from public.player_ratings r where r.profile_id=any(member_ids);
 
   select clan.skill_rating, clan.wins, clan.losses
   into initial_home_rating, initial_home_wins, initial_home_losses
@@ -645,13 +659,20 @@ begin
       from public.player_rating_events event
       where event.source_type = 'CLAN_FIXTURE'
         and event.source_id = fixture_to_test.id
-    ) <> 2
+    ) <> expected_clan_rating_events
     or (
       select count(distinct event.profile_id)
       from public.player_rating_events event
       where event.source_type = 'CLAN_FIXTURE'
         and event.source_id = fixture_to_test.id
-    ) <> 2
+    ) <> expected_clan_rating_events
+    or (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+      from public.fieldrush_player_rating_tracks r where r.profile_id=any(member_ids))
+      is distinct from clan_track_ratings_before
+    or (expected_clan_rating_events=0 and
+      (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+       from public.player_ratings r where r.profile_id=any(member_ids))
+      is distinct from clan_legacy_ratings_before)
   then
     raise exception
       'Same-score clan correction did not restore exactly the explicit Player SR lineup (replayed %, appearances %, rating events %).',
@@ -727,6 +748,11 @@ begin
     raise exception
       'Control-plane verification needs three unrestricted solo players.';
   end if;
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+  into solo_track_ratings_before from public.fieldrush_player_rating_tracks r
+  where r.profile_id=any(solo_player_ids);
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+  into solo_legacy_ratings_before from public.player_ratings r where r.profile_id=any(solo_player_ids);
   select candidate.starts_at into solo_game_starts_at
   from (
     select
@@ -860,6 +886,12 @@ begin
     strike_delta = 0
   where booking_id = solo_cancelled_booking_id;
   execute 'alter table public.match_attendance_records enable trigger user';
+
+  -- This legacy match remains a finance/lineup correction scenario. The new
+  -- rating era must not import a historical 6v6 match into either discipline.
+  select case when g.format_version='FIELDRUSH_7V7'
+    and public.player_rating_effective_at_is_current(g.starts_at) then 2 else 0 end
+  into expected_solo_rating_events from public.open_queue_games g where g.id=solo_game_id;
 
   detected_count := public.detect_due_match_resolution_cases();
   select * into solo_case
@@ -995,10 +1027,17 @@ begin
       from public.player_rating_events event
       where event.source_type = 'OPEN_QUEUE'
         and event.source_id = solo_game_id
-    ) <> 2
+    ) <> expected_solo_rating_events
     or jsonb_array_length(
       solo_correction_result #> '{consequences,restored_booking_ids}'
     ) <> 2
+    or (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+      from public.fieldrush_player_rating_tracks r where r.profile_id=any(solo_player_ids))
+      is distinct from solo_track_ratings_before
+    or (expected_solo_rating_events=0 and
+      (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+       from public.player_ratings r where r.profile_id=any(solo_player_ids))
+      is distinct from solo_legacy_ratings_before)
     or jsonb_array_length(
       solo_correction_result #> '{consequences,player_sr_lineup_profile_ids}'
     ) <> 2
@@ -1007,8 +1046,8 @@ begin
       'Solo correction did not restore exactly the admin-cancelled played lineup.';
   end if;
 
-  -- A repeated correction must preserve the immutable two-event Player SR
-  -- ledger and the already-paid refund.
+  -- A repeated correction must preserve the exact era-appropriate ledger and
+  -- the already-paid refund, including zero SR events for historical games.
   solo_repeat_result := public.admin_resolve_match_case(
     admin_id,
     'SOLO',
@@ -1041,7 +1080,7 @@ begin
       from public.player_rating_events event
       where event.source_type = 'OPEN_QUEUE'
         and event.source_id = solo_game_id
-    ) <> 2
+    ) <> expected_solo_rating_events
     or (
       select coalesce(booking.refund_amount_fils, 0)
       from public.open_queue_bookings booking
