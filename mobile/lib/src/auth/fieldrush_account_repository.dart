@@ -102,7 +102,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
       await _client.auth.updateUser(UserAttributes(phone: phone));
       _pendingPhoneType = OtpType.phoneChange;
     } else {
-      await _client.auth.signInWithOtp(phone: phone);
+      await _client.auth.signInWithOtp(phone: phone, shouldCreateUser: true);
       _pendingPhoneType = OtpType.sms;
     }
   }
