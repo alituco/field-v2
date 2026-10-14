@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:async';
 
 import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/moderation/account_restriction_screen.dart';
@@ -9,6 +10,7 @@ import 'package:field/src/profile/profile_screen.dart';
 import 'package:field/src/support/contact_support_sheet.dart';
 import 'package:field/src/support/support.dart';
 import 'package:field/src/support/support_repository.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -94,18 +96,20 @@ void main() {
       tester.widget<Text>(find.text('How can we help?')).style?.fontFamily,
       'Outfit',
     );
-    final surface = tester.widget<Container>(
+    expect(find.byType(FieldrushModal), findsOneWidget);
+    final surface = tester.widget<Material>(
       find
           .descendant(
             of: find.byKey(contactSupportSheetKey),
-            matching: find.byType(Container),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Material &&
+                  widget.color == FieldrushAuthTheme.cream,
+            ),
           )
           .first,
     );
-    expect(
-      (surface.decoration! as BoxDecoration).color,
-      FieldrushAuthTheme.cream,
-    );
+    expect(surface.color, FieldrushAuthTheme.cream);
     final submit = find.byKey(const ValueKey('support-submit'));
     expect(tester.widget<FilledButton>(submit).onPressed, isNull);
 
@@ -233,6 +237,129 @@ void main() {
     expect(find.text('Request sent · reference FLD-0042'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'support sheet fits a keyboard, keeps safety copy and blocks busy edits',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewInsets);
+      final response = Completer<SupportRequestReceipt>();
+      final repository = _FakeSupportRepository(pending: response);
+      SupportRequestReceipt? received;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: FilledButton(
+                onPressed: () async {
+                  received = await showContactSupportSheet(
+                    context: context,
+                    repository: repository,
+                    initialCategory: SupportRequestCategory.safety,
+                    requestContext: const {'entry_point': 'test'},
+                  );
+                },
+                child: const Text('Open support'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open support'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      expect(
+        find.text(
+          'Support requests are not monitored live. If anyone is in immediate danger, contact venue staff or local emergency services now.',
+        ),
+        findsOneWidget,
+      );
+      tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+      await tester.pumpAndSettle();
+      final details = find.byKey(const ValueKey('support-details'));
+      await tester.ensureVisible(details);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        details,
+        'Please help with a safety issue at this venue.',
+      );
+      final submit = find.byKey(const ValueKey('support-submit'));
+      await tester.ensureVisible(submit);
+      await tester.pumpAndSettle();
+      await tester.tap(submit);
+      await tester.pump();
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('contact-support-close')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(tester.widget<TextField>(details).enabled, isFalse);
+      expect(repository.requests.single.context, {'entry_point': 'test'});
+      response.complete(
+        const SupportRequestReceipt(id: 'ticket', reference: 'FLD-01'),
+      );
+      await tester.pumpAndSettle();
+      expect(received?.id, 'ticket');
+      expect(find.byType(FieldrushModal), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('support retry retains the same idempotency key and draft', (
+    tester,
+  ) async {
+    final repository = _FakeSupportRepository(failuresRemaining: 1);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: FilledButton(
+              onPressed: () => showContactSupportSheet(
+                context: context,
+                repository: repository,
+                initialCategory: SupportRequestCategory.bookingOrPayment,
+              ),
+              child: const Text('Open support'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open support'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('support-details')),
+      'Please check the refund on my cancelled game.',
+    );
+    final submit = find.byKey(const ValueKey('support-submit'));
+    await tester.ensureVisible(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(
+      find.text('We could not send your request. Try again.'),
+      findsOneWidget,
+    );
+    await tester.ensureVisible(submit);
+    await tester.pumpAndSettle();
+    await tester.tap(submit);
+    await tester.pumpAndSettle();
+    expect(repository.requests, hasLength(2));
+    expect(
+      repository.requests.first.clientRequestId,
+      repository.requests.last.clientRequestId,
+    );
+    expect(repository.requests.first.details, repository.requests.last.details);
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 class _FixedRandom implements Random {
@@ -253,6 +380,9 @@ class _FixedRandom implements Random {
 }
 
 class _FakeSupportRepository implements SupportRepository {
+  _FakeSupportRepository({this.pending, this.failuresRemaining = 0});
+  final Completer<SupportRequestReceipt>? pending;
+  int failuresRemaining;
   final List<SupportRequestDraft> requests = [];
 
   @override
@@ -260,6 +390,11 @@ class _FakeSupportRepository implements SupportRepository {
     SupportRequestDraft request,
   ) async {
     requests.add(request);
+    if (failuresRemaining > 0) {
+      failuresRemaining--;
+      throw StateError('Internal server error');
+    }
+    if (pending != null) return pending!.future;
     return const SupportRequestReceipt(
       id: 'f5033f51-2046-4d08-9695-78b317da403c',
       reference: 'FLD-0042',

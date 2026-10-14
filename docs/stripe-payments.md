@@ -2,7 +2,7 @@
 
 Fieldrush embeds Stripe's native payment-method selector in the solo checkout.
 Players select a method alongside the game, position and server-quoted total,
-then use Fieldrush's Pay button. Card entry, Apple Pay authorization and bank
+then use Fieldrush's Pay button. Card entry, Apple Pay / Google Pay authorization and bank
 authentication remain Stripe/system-owned secure UI; the app never handles raw
 card details. Legacy callers retain PaymentSheet compatibility. New solo
 games are priced in USD ($13 by default, configurable by admins). The US Stripe
@@ -70,7 +70,7 @@ branch is under review; it must not deliver events to an undeployed handler.
 - Retrying an interrupted checkout reuses the outstanding payment attempt.
 - A completed payment that cannot secure its booking is queued for a full refund
   to the original payment method. It is not displayed as a confirmed booking.
-- **New Stripe cancellation refunds return to the original card or Apple Pay.**
+- **New Stripe cancellation refunds return to the original payment method.**
   The policy determines the eligible amount, including deposits; it does not
   redirect the money into Field Wallet.
 - Refund requests are durable, capped at the captured amount and idempotent.
@@ -102,6 +102,37 @@ profile after changing capabilities and update
 The TestFlight script validates the profile and includes only the publishable
 key and public merchant identifier in the app. Real-device Apple Pay testing is
 still required; a successful simulator build alone does not prove wallet payment.
+
+## Google Pay on Android
+
+Android checkout uses Stripe's Google Pay integration in both the embedded
+payment selector and the legacy PaymentSheet flow. The shared configuration
+sets the merchant country to `US`, the currency to `USD`, and `testEnv: true`
+unless `APP_ENV=production`. Stripe still decides whether Google Pay is available
+on the device; the app does not show a fake wallet button or store the player's
+card. Cards saved in Google Wallet belong to that wallet; this does not enable
+Fieldrush saved-card accounts. Payment settings describe Google Pay on Android,
+Apple Pay on iOS, and cards elsewhere.
+
+`mobile/android/app/src/main/AndroidManifest.xml` enables
+`com.google.android.gms.wallet.api.enabled`. No additional staging credentials
+or database migration are required. Google Pay uses the existing Stripe
+PaymentIntent, booking verification, cancellation and refund flow. The server
+records Stripe's `google_pay` card-wallet type as `GOOGLE_PAY`.
+
+Verify on a physical Android phone with a Google account and a payment method
+in Google Wallet, in a supported country. Use Stripe test keys and Google's test
+card suite; emulator tests do not verify wallet authorization. Check success,
+cancellation, reopening checkout and original-method refunds against Stripe's
+sandbox records. See [Stripe's Google Pay testing guide](https://docs.stripe.com/google-pay?platform=android#test-google-pay).
+
+Before live payments, submit the Android app through the Google Pay & Wallet
+Console using integration type **Gateway**, provide the required screenshots,
+and obtain approval. Configure proper Android release signing: the current
+`mobile/android/app/build.gradle.kts` release build still uses the debug signing
+configuration, which is unsuitable for Google Pay production. Live rollout
+also requires production wallet mode and live Stripe keys. See
+[Google's production requirements](https://developers.google.com/pay/api/android/guides/test-and-deploy/publish-your-integration).
 
 ## Local testing
 

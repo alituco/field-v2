@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../auth/fieldrush_auth_theme.dart';
+import '../ui/fieldrush_modal.dart';
 import '../ui/field_loading.dart';
 
 import '../clans/clan_widgets.dart';
@@ -1237,11 +1239,8 @@ Future<void> showOpenQueuePartyInviteSheet({
   required OpenQueuePartyContext partyContext,
   required Future<String?> Function(OpenQueuePartyPlayer player) onInvite,
 }) {
-  return showModalBottomSheet<void>(
+  return showFieldrushModal<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
     builder: (_) =>
         _PartyInviteSheet(partyContext: partyContext, onInvite: onInvite),
   );
@@ -1284,234 +1283,161 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
         (widget.partyContext.maxPartySize - party.members.length - _sent.length)
             .clamp(0, widget.partyContext.maxPartySize);
     final players = widget.partyContext.eligiblePlayers;
-    return Container(
-      constraints: BoxConstraints(
-        maxHeight: MediaQuery.sizeOf(context).height * .82,
-      ),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: Column(
+    return FieldrushModal(
+      key: const ValueKey('party-invite-sheet'),
+      title: 'Invite confirmed players',
+      description:
+          '$openSlots party spot${openSlots == 1 ? '' : 's'} available · this game only',
+      content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const SizedBox(height: 10),
-          Container(
-            width: 42,
-            height: 5,
+          if (_error != null) ...[
+            Text(
+              _error!,
+              key: const ValueKey('party-invite-sheet-error'),
+              style: FieldrushModal.bodyStyle.copyWith(
+                color: FieldrushAuthTheme.danger,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          DecoratedBox(
             decoration: BoxDecoration(
-              color: fieldGray200,
-              borderRadius: BorderRadius.circular(999),
+              color: Colors.white,
+              border: Border.all(color: FieldrushAuthTheme.border),
+              borderRadius: BorderRadius.circular(18),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 18, 14, 14),
-            child: Row(
-              children: [
-                Container(
-                  width: 43,
-                  height: 43,
-                  decoration: BoxDecoration(
-                    color: fieldEmerald50,
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                  child: const Icon(
-                    Icons.person_add_alt_1_rounded,
-                    color: fieldEmerald700,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Invite confirmed players',
-                        style: TextStyle(
-                          color: fieldGray900,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '$openSlots party spot${openSlots == 1 ? '' : 's'} available · this game only',
-                        style: const TextStyle(
-                          color: fieldGray500,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  key: const ValueKey('party-invite-sheet-close'),
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded),
-                ),
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: fieldGray100),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-              child: _InlinePartyError(message: _error!),
-            ),
-          Flexible(
             child: players.isEmpty
-                ? const Padding(
-                    padding: EdgeInsets.all(30),
+                ? Padding(
+                    padding: const EdgeInsets.all(20),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
+                        const Icon(
                           Icons.group_off_rounded,
-                          color: fieldGray300,
-                          size: 38,
+                          color: FieldrushAuthTheme.muted,
+                          size: 30,
                         ),
-                        SizedBox(height: 10),
+                        const SizedBox(height: 10),
                         Text(
                           'No one is available to invite',
-                          style: TextStyle(
-                            color: fieldGray900,
-                            fontWeight: FontWeight.w900,
+                          textAlign: TextAlign.center,
+                          style: FieldrushModal.titleStyle.copyWith(
+                            fontSize: 15,
                           ),
                         ),
-                        SizedBox(height: 4),
-                        Text(
+                        const SizedBox(height: 5),
+                        const Text(
                           'No other confirmed player is available to invite for this game.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(
-                            color: fieldGray500,
-                            fontSize: 11,
-                            height: 1.4,
-                          ),
+                          style: FieldrushModal.bodyStyle,
                         ),
                       ],
                     ),
                   )
-                : ListView.separated(
-                    shrinkWrap: true,
-                    padding: const EdgeInsets.fromLTRB(18, 10, 18, 14),
-                    itemCount: players.length,
-                    separatorBuilder: (_, _) =>
-                        const Divider(height: 1, color: fieldGray100),
-                    itemBuilder: (context, index) {
-                      final player = players[index];
-                      final sent = _sent.contains(player.profileId);
-                      final sending = _sending == player.profileId;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        child: Row(
-                          children: [
-                            _PartyAvatar(
-                              displayName: player.displayName,
-                              avatarUrl: player.avatarUrl,
-                              size: 43,
-                            ),
-                            const SizedBox(width: 11),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    player.displayName,
-                                    style: const TextStyle(
-                                      color: fieldGray900,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 3),
-                                  Text(
-                                    player.isInParty
-                                        ? '${player.role.label} · IN A PARTY · ${player.currentPartySize}/4${player.isCurrentPartyOwner ? ' · LEADER' : ''}'
-                                        : '${player.role.label}${player.username == null ? '' : ' · @${player.username!.replaceFirst('@', '')}'}',
-                                    style: TextStyle(
-                                      color: player.isInParty
-                                          ? const Color(0xFFD97706)
-                                          : fieldGray500,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            SizedBox(
-                              width: 78,
-                              child: FilledButton(
-                                key: ValueKey(
-                                  'invite-party-player-${player.profileId}',
-                                ),
-                                onPressed: sent || sending || openSlots <= 0
-                                    ? null
-                                    : () => _invite(player),
-                                style: FilledButton.styleFrom(
-                                  minimumSize: const Size.fromHeight(38),
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 9,
-                                  ),
-                                  backgroundColor: fieldEmerald600,
-                                  disabledBackgroundColor: sent
-                                      ? fieldEmerald50
-                                      : fieldGray100,
-                                  disabledForegroundColor: sent
-                                      ? fieldEmerald700
-                                      : fieldGray400,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                                child: sending
-                                    ? const Text(
-                                        'Sending…',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      )
-                                    : Text(
-                                        sent ? 'Sent' : 'Invite',
-                                        style: const TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var index = 0; index < players.length; index++) ...[
+                        if (index > 0)
+                          const Divider(
+                            height: 1,
+                            color: FieldrushAuthTheme.border,
+                          ),
+                        _playerRow(players[index], openSlots),
+                      ],
+                    ],
                   ),
           ),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 18),
-            decoration: const BoxDecoration(
-              color: fieldBackground,
-              border: Border(top: BorderSide(color: fieldGray100)),
+          const SizedBox(height: 12),
+          const Text(
+            'Players already in a party can still be invited. If they accept, they switch to yours before teams are assigned.',
+            style: FieldrushModal.bodyStyle,
+          ),
+        ],
+      ),
+      actions: [
+        OutlinedButton(
+          key: const ValueKey('party-invite-sheet-close'),
+          onPressed: () => Navigator.of(context).pop(),
+          style: FieldrushModal.secondaryButtonStyle(),
+          child: const Text('Close'),
+        ),
+      ],
+    );
+  }
+
+  Widget _playerRow(OpenQueuePartyPlayer player, int openSlots) {
+    final sent = _sent.contains(player.profileId);
+    final sending = _sending == player.profileId;
+    final initial = player.displayName.trim().isEmpty
+        ? 'F'
+        : player.displayName.trim().substring(0, 1).toUpperCase();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 19,
+            backgroundColor: FieldrushAuthTheme.watermark,
+            foregroundImage: player.avatarUrl == null
+                ? null
+                : NetworkImage(player.avatarUrl!),
+            child: Text(
+              initial,
+              style: FieldrushModal.titleStyle.copyWith(fontSize: 15),
             ),
-            child: const Row(
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.info_outline_rounded, color: fieldGray500, size: 16),
-                SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    'Players already in a party can still be invited. If they accept, they switch to yours before teams are assigned.',
-                    style: TextStyle(
-                      color: fieldGray500,
-                      fontSize: 10,
-                      height: 1.4,
-                      fontWeight: FontWeight.w600,
-                    ),
+                Text(
+                  player.displayName,
+                  style: FieldrushModal.bodyStyle.copyWith(
+                    color: FieldrushAuthTheme.ink,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  player.isInParty
+                      ? '${player.role.label} · IN A PARTY · ${player.currentPartySize}/4${player.isCurrentPartyOwner ? ' · LEADER' : ''}'
+                      : '${player.role.label}${player.username == null ? '' : ' · @${player.username!.replaceFirst('@', '')}'}',
+                  style: FieldrushModal.bodyStyle.copyWith(fontSize: 10),
+                ),
               ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 82,
+            child: FilledButton(
+              key: ValueKey('invite-party-player-${player.profileId}'),
+              onPressed: sent || sending || openSlots <= 0
+                  ? null
+                  : () => _invite(player),
+              style: FieldrushModal.primaryButtonStyle().copyWith(
+                minimumSize: const WidgetStatePropertyAll(Size(0, 38)),
+                padding: const WidgetStatePropertyAll(
+                  EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                ),
+                textStyle: WidgetStatePropertyAll(
+                  FieldrushModal.bodyStyle.copyWith(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              child: Text(
+                sending
+                    ? 'Sending…'
+                    : sent
+                    ? 'Sent'
+                    : 'Invite',
+              ),
             ),
           ),
         ],

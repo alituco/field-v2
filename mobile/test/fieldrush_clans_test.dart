@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/clans/clan.dart';
 import 'package:field/src/clans/clan_detail_screen.dart';
 import 'package:field/src/clans/clan_repository.dart';
@@ -9,6 +10,7 @@ import 'package:field/src/clans/create_clan_screen.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/home/home_discovery_repository.dart';
 import 'package:field/src/home/home_discovery_screen.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -165,6 +167,170 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'owner member actions use the shared modal and keep role changes',
+    (tester) async {
+      final repository = _Clans(owned: true)
+        ..members = [
+          const ClanMember(
+            profileId: 'owner',
+            displayName: 'Alex P.',
+            role: 'owner',
+          ),
+          const ClanMember(
+            profileId: 'member',
+            displayName: 'Dana M.',
+            role: 'member',
+          ),
+          const ClanMember(
+            profileId: 'leader',
+            displayName: 'Sam K.',
+            role: 'leader',
+          ),
+        ];
+      await _pump(
+        tester,
+        ClanDetailScreen(
+          clan: _clan,
+          clanRepository: repository,
+          fixtureRepository: _Fixtures(),
+          currentMembership: repository.membership,
+        ),
+      );
+      expect(find.byTooltip('Manage Alex P.'), findsNothing);
+      await tester.tap(find.byTooltip('Manage Dana M.'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      expect(find.text('Make captain'), findsOneWidget);
+      expect(find.text('Transfer ownership'), findsOneWidget);
+      expect(find.text('Remove from clan'), findsOneWidget);
+      expect(
+        tester.widget<Text>(find.text('Manage Dana M.')).style!.fontFamily,
+        'Outfit',
+      );
+      expect(
+        Theme.of(
+          tester.element(find.text('Manage Dana M.')),
+        ).colorScheme.surface,
+        FieldrushAuthTheme.cream,
+      );
+      await tester.tap(find.byKey(const ValueKey('clan-member-action-role')));
+      await tester.pumpAndSettle();
+      expect(repository.roleChanges, [(profileId: 'member', makeLeader: true)]);
+      await tester.tap(find.byTooltip('Manage Sam K.'));
+      await tester.pumpAndSettle();
+      expect(find.text('Remove captain role'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('clan-member-action-role')));
+      await tester.pumpAndSettle();
+      expect(repository.roleChanges.last, (
+        profileId: 'leader',
+        makeLeader: false,
+      ));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('member removal and transfer still require confirmation', (
+    tester,
+  ) async {
+    final repository = _Clans(owned: true)
+      ..members = [
+        const ClanMember(
+          profileId: 'owner',
+          displayName: 'Alex P.',
+          role: 'owner',
+        ),
+        const ClanMember(
+          profileId: 'member',
+          displayName: 'Dana M.',
+          role: 'member',
+        ),
+      ];
+    await _pump(
+      tester,
+      ClanDetailScreen(
+        clan: _clan,
+        clanRepository: repository,
+        fixtureRepository: _Fixtures(),
+        currentMembership: repository.membership,
+      ),
+    );
+    await tester.tap(find.byTooltip('Manage Dana M.'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('clan-member-action-remove')));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove Dana M.?'), findsOneWidget);
+    expect(repository.removed, isEmpty);
+    await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
+    await tester.pumpAndSettle();
+    expect(repository.removed, isEmpty);
+    await tester.tap(find.byTooltip('Manage Dana M.'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('clan-member-action-transfer')));
+    await tester.pumpAndSettle();
+    expect(find.text('Transfer ownership?'), findsOneWidget);
+    expect(repository.transferred, isEmpty);
+    await tester.tap(find.byKey(const ValueKey('field-confirmation-confirm')));
+    await tester.pumpAndSettle();
+    expect(repository.transferred, ['member']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('captain cannot promote, transfer or remove another captain', (
+    tester,
+  ) async {
+    final repository = _Clans(owned: true)
+      ..membership = const ClanMembership(clanId: 'desert', role: 'leader')
+      ..members = [
+        const ClanMember(
+          profileId: 'owner',
+          displayName: 'Alex P.',
+          role: 'owner',
+        ),
+        const ClanMember(
+          profileId: 'member',
+          displayName: 'Dana M.',
+          role: 'member',
+        ),
+        const ClanMember(
+          profileId: 'leader',
+          displayName: 'Sam K.',
+          role: 'leader',
+        ),
+      ];
+    await _pump(
+      tester,
+      ClanDetailScreen(
+        clan: _clan,
+        clanRepository: repository,
+        fixtureRepository: _Fixtures(),
+        currentMembership: repository.membership,
+      ),
+    );
+    await tester.tap(find.byTooltip('Manage Sam K.'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('clan-member-action-role')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('clan-member-action-transfer')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('clan-member-action-remove')),
+      findsNothing,
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Manage Dana M.'));
+    await tester.pumpAndSettle();
+    expect(find.text('Remove from clan'), findsOneWidget);
+    expect(find.byKey(const ValueKey('clan-member-action-role')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('clan-member-action-transfer')),
+      findsNothing,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _pump(
@@ -238,6 +404,8 @@ class _Clans implements ClanRepository {
   ];
   List<ClanJoinRequest> requests = [];
   final accepted = <String>[], joined = <String>[];
+  final roleChanges = <({String profileId, bool makeLeader})>[];
+  final removed = <String>[], transferred = <String>[];
   int creates = 0;
   String? createdTheme;
   @override
@@ -288,6 +456,31 @@ class _Clans implements ClanRepository {
   @override
   Future<void> requestToJoinClan(String id) async {
     joined.add(id);
+  }
+
+  @override
+  Future<void> setClanMemberLeader({
+    required String clanId,
+    required String profileId,
+    required bool makeLeader,
+  }) async {
+    roleChanges.add((profileId: profileId, makeLeader: makeLeader));
+  }
+
+  @override
+  Future<void> kickClanMember({
+    required String clanId,
+    required String profileId,
+  }) async {
+    removed.add(profileId);
+  }
+
+  @override
+  Future<void> transferClanOwnership({
+    required String clanId,
+    required String newOwnerProfileId,
+  }) async {
+    transferred.add(newOwnerProfileId);
   }
 
   @override

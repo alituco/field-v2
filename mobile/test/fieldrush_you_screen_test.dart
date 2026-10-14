@@ -16,10 +16,44 @@ import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_connections_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/reliability/reliability.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('sign-out sheet is themed, cancellable and confirms only once', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var signOutCalls = 0;
+    await tester.pumpWidget(_app(onSignOut: () async => signOutCalls++));
+    await tester.pumpAndSettle();
+    final signOut = find.byKey(const ValueKey('you-sign-out'));
+    await tester.scrollUntilVisible(
+      signOut,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(signOut);
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(FieldrushModal), findsOneWidget);
+    expect(find.text('Sign out?'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('fieldrush-sign-out-cancel')));
+    await tester.pumpAndSettle();
+    expect(signOutCalls, 0);
+    expect(find.byType(FieldrushModal), findsNothing);
+    await tester.tap(signOut);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('fieldrush-sign-out-confirm')));
+    await tester.pumpAndSettle();
+    expect(signOutCalls, 1);
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'first You load shows a skeleton until profile and rating arrive',
     (tester) async {
@@ -423,6 +457,7 @@ Widget _app({
   FieldrushAccountRepository? accounts,
   _Queue? queue,
   Future<void> Function()? onEdit,
+  Future<void> Function()? onSignOut,
   int activationTick = 0,
 }) => MaterialApp(
   home: Scaffold(
@@ -437,7 +472,7 @@ Widget _app({
       openQueueRepository: queue ?? _Queue(),
       onOpenAccount: onEdit ?? () async {},
       onOpenRanks: () {},
-      onSignOut: () async {},
+      onSignOut: onSignOut ?? () async {},
     ),
   ),
 );

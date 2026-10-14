@@ -1,6 +1,8 @@
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/profile/dev_user_switcher_sheet.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -59,6 +61,101 @@ void main() {
     expect(find.text('Swap profile'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('profile picker keeps search and the disabled current user', (
+    tester,
+  ) async {
+    String? switchedTo;
+    await _open(tester, onSwitchUser: (id) async => switchedTo = id);
+    expect(find.byType(FieldrushModal), findsOneWidget);
+    expect(find.text('Development only'.toUpperCase()), findsOneWidget);
+    expect(
+      tester.widget<Text>(find.text('Swap profile')).style!.fontFamily,
+      'Outfit',
+    );
+    expect(
+      Theme.of(tester.element(find.text('Swap profile'))).colorScheme.surface,
+      FieldrushAuthTheme.cream,
+    );
+    final current = find.byKey(const ValueKey('dev-user-option-current-user'));
+    expect(tester.widget<InkWell>(current).onTap, isNull);
+    expect(find.text('CURRENT'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const ValueKey('dev-user-search')),
+      'aliiii',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Ali Altaraif'), findsOneWidget);
+    expect(find.text('Dana Alawi'), findsNothing);
+    await tester.enterText(
+      find.byKey(const ValueKey('dev-user-search')),
+      'missing',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('No users found'), findsOneWidget);
+    await tester.tap(find.byTooltip('Clear search'));
+    await tester.pumpAndSettle();
+    expect(find.text('Dana Alawi'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('dev-user-switcher-close')));
+    await tester.pumpAndSettle();
+    expect(switchedTo, isNull);
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('profile picker scrolls with a keyboard on a narrow phone', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(320, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await _open(tester, onSwitchUser: (_) async {}, scale: 1.4, keyboard: 240);
+    await tester.enterText(
+      find.byKey(const ValueKey('dev-user-search')),
+      'Ali',
+    );
+    await tester.pumpAndSettle();
+    final close = find.byKey(const ValueKey('dev-user-switcher-close'));
+    await tester.ensureVisible(close);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(close);
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushModal), findsNothing);
+  });
+}
+
+Future<void> _open(
+  WidgetTester tester, {
+  required Future<void> Function(String) onSwitchUser,
+  double scale = 1,
+  double keyboard = 0,
+}) async {
+  await tester.pumpWidget(
+    MaterialApp(
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: TextScaler.linear(scale),
+          viewInsets: EdgeInsets.only(bottom: keyboard),
+        ),
+        child: child!,
+      ),
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => showDevUserSwitcher(
+              context: context,
+              profileRepository: _FakeProfileRepository(),
+              currentUserId: 'current-user',
+              onSwitchUser: onSwitchUser,
+            ),
+            child: const Text('Open profiles'),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.tap(find.text('Open profiles'));
+  await tester.pumpAndSettle();
 }
 
 class _FakeProfileRepository implements ProfileRepository {

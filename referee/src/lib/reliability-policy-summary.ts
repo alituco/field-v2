@@ -175,7 +175,7 @@ export function buildReliabilityPolicySummary(
         rules: [
           {
             title: "Player reliability deposit",
-            explanation: `At ${config.solo.reliabilityDeposit.activeStrikeThreshold} active strikes, a player pays a ${percent(config.solo.reliabilityDeposit.depositBps)} reliability deposit. An on-time return goes to ${config.solo.reliabilityDeposit.onTimeReturnDestination === "FIELD_WALLET" ? "Field Wallet for historical wallet bookings; new card and Apple Pay bookings return to the original payment method" : "the original payment method"}.`,
+            explanation: `At ${config.solo.reliabilityDeposit.activeStrikeThreshold} active strikes, a player pays a ${percent(config.solo.reliabilityDeposit.depositBps)} reliability deposit. An on-time return goes to ${config.solo.reliabilityDeposit.onTimeReturnDestination === "FIELD_WALLET" ? "Field Wallet for historical wallet bookings; new card and digital wallet bookings return to the original payment method" : "the original payment method"}.`,
             facts: [`The deposit is forfeited for: ${humanList(config.solo.reliabilityDeposit.forfeitOutcomes)}.`],
           },
           {
@@ -253,8 +253,8 @@ export function buildReliabilityPolicySummary(
           {
             title: "Refund destination",
             explanation: config.wallet.refundDestination === "FIELD_WALLET"
-              ? "Historical wallet refunds are credited to Field Wallet in the game's currency. New card and Apple Pay bookings are refunded to the original payment method. USD and historical BHD balances are kept separately, without currency conversion."
-              : "Refunds return to the original card or Apple Pay payment method in the booking's currency. Refund processing may continue after a cancellation or an admin decision; completed refunds are never issued twice. Historical wallet balances remain separate.",
+              ? "Historical wallet refunds are credited to Field Wallet in the game's currency. New card and digital wallet bookings are refunded to the original payment method. USD and historical BHD balances are kept separately, without currency conversion."
+              : "Refunds return to the original payment method in the booking's currency. Refund processing may continue after a cancellation or an admin decision; completed refunds are never issued twice. Historical wallet balances remain separate.",
           },
         ],
       },

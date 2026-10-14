@@ -4,6 +4,15 @@ import test from "node:test";
 
 const rootGradle = readFileSync(new URL("../../mobile/android/build.gradle.kts", import.meta.url), "utf8");
 const appGradle = readFileSync(new URL("../../mobile/android/app/build.gradle.kts", import.meta.url), "utf8");
+const manifest = readFileSync(new URL("../../mobile/android/app/src/main/AndroidManifest.xml", import.meta.url), "utf8");
+
+test("Android enables the Google Pay API at the application level", () => {
+  const application = manifest.match(/<application\b[^>]*>([\s\S]*?)<\/application>/)?.[1];
+  assert.ok(application, "Android application configuration must exist");
+  // Activity-only metadata does not enable the wallet API for the application.
+  const applicationMetadata = application.replace(/<activity\b[\s\S]*?<\/activity>/g, "");
+  assert.match(applicationMetadata, /<meta-data\s+android:name="com\.google\.android\.gms\.wallet\.api\.enabled"\s+android:value="true"\s*\/>/);
+});
 
 test("payment-only Stripe excludes only its restricted optional Google artifact", () => {
   assert.match(rootGradle, /if \(name == "stripe_android"\)\s*\{[\s\S]*?configurations\.configureEach\s*\{[\s\S]*?exclude\(\s*group = "com\.google\.android\.gms",\s*module = "play-services-tapandpay",/);

@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:field/src/payments/payment_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -23,6 +25,34 @@ Map<String, dynamic> _completed() => {
 };
 
 void main() {
+  tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+  test('Android wallet matches the build environment and USD checkout', () {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final wallet = PaymentService.nativeSheetConfiguration.googlePay;
+    expect(wallet, isNotNull);
+    expect(wallet!.merchantCountryCode, 'US');
+    expect(wallet.currencyCode, 'USD');
+    expect(
+      wallet.testEnv,
+      const String.fromEnvironment('APP_ENV') != 'production',
+    );
+    expect(wallet.buttonType, PlatformButtonType.pay);
+    // The authoritative PaymentIntent provides the price, never a static total.
+    expect(wallet.amount, isNull);
+  });
+
+  test('iOS keeps Apple Pay configuration without offering Google Pay', () {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    final configuration = PaymentService.nativeSheetConfiguration;
+    expect(configuration.googlePay, isNull);
+    const merchant = String.fromEnvironment('APPLE_MERCHANT_ID');
+    expect(
+      configuration.applePay?.merchantCountryCode,
+      merchant.isEmpty ? null : 'US',
+    );
+  });
+
   test(
     'embedded collector receives authoritative USD cents before verification',
     () async {

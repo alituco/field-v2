@@ -13,6 +13,7 @@ import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../home/navigation_profile_scope.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
 import '../markets/fieldrush_city.dart';
 import '../markets/fieldrush_city_repository.dart';
 import '../profile/fieldrush_city_picker.dart';
@@ -300,9 +301,9 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
       return;
     }
     final email = _email.text.trim();
-    final snapshot = await showDialog<FieldrushAccount>(
+    final snapshot = await showFieldrushModal<FieldrushAccount>(
       context: context,
-      barrierDismissible: false,
+      dismissible: false,
       builder: (context) => _EmailVerificationDialog(
         repository: widget.accountRepository,
         email: email,
@@ -340,9 +341,9 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
   });
 
   Future<bool> _reauthenticate(String purpose) async =>
-      await showDialog<bool>(
+      await showFieldrushModal<bool>(
         context: context,
-        barrierDismissible: false,
+        dismissible: false,
         builder: (context) => _ReauthenticationDialog(
           repository: widget.accountRepository,
           purpose: purpose,
@@ -353,9 +354,9 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
 
   Future<void> _changePhone() async {
     if (!await _reauthenticate('change your phone number') || !mounted) return;
-    final changed = await showDialog<bool>(
+    final changed = await showFieldrushModal<bool>(
       context: context,
-      barrierDismissible: false,
+      dismissible: false,
       builder: (context) => _ChangePhoneDialog(
         repository: widget.accountRepository,
         previousPhone: _account!.phone,
@@ -370,26 +371,26 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
   }
 
   Future<void> _deleteAccount() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFieldrushModal<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete your account?'),
-        content: const Text(
-          'This removes your account and personal profile. Some transaction or '
-          'safety records may need to be retained. Active bookings, payments or '
-          'other unsettled activity may need to be resolved first. Deleting an '
-          'account does not automatically cancel bookings or issue refunds.\n\n'
-          'You will verify your current phone number before continuing.',
-        ),
+      builder: (context) => FieldrushModal(
+        title: 'Delete your account?',
+        description:
+            'This removes your account and personal profile. Some transaction or '
+            'safety records may need to be retained. Active bookings, payments or '
+            'other unsettled activity may need to be resolved first. Deleting an '
+            'account does not automatically cancel bookings or issue refunds.\n\n'
+            'You will verify your current phone number before continuing.',
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep account'),
-          ),
-          TextButton(
+          FilledButton(
             key: const Key('fieldrush-delete-confirm'),
             onPressed: () => Navigator.pop(context, true),
+            style: FieldrushModal.primaryButtonStyle(destructive: true),
             child: const Text('Continue to verification'),
+          ),
+          OutlinedButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep account'),
           ),
         ],
       ),
@@ -434,20 +435,21 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
 
   Future<bool> _confirmDiscard() async {
     if (!_dirty) return true;
-    return await showDialog<bool>(
+    return await showFieldrushModal<bool>(
           context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Discard your changes?'),
-            content: const Text('Your unsaved account changes will be lost.'),
+          builder: (context) => FieldrushModal(
+            title: 'Discard your changes?',
+            description: 'Your unsaved account changes will be lost.',
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Keep editing'),
-              ),
-              TextButton(
+              FilledButton(
                 key: const Key('fieldrush-discard-changes'),
                 onPressed: () => Navigator.pop(context, true),
+                style: FieldrushModal.primaryButtonStyle(destructive: true),
                 child: const Text('Discard changes'),
+              ),
+              OutlinedButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Keep editing'),
               ),
             ],
           ),
@@ -1136,16 +1138,15 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
   }
 
   void _showBirthdayHelp() {
-    showDialog<void>(
+    showFieldrushModal<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Your date of birth'),
-        content: const Text(
-          'Your birthday is private and cannot be changed here. '
-          'Contact support for a correction. You must be 18 or older to play.',
-        ),
+      builder: (context) => FieldrushModal(
+        title: 'Your date of birth',
+        description:
+            'Your birthday is private and cannot be changed here. '
+            'Contact support for a correction. You must be 18 or older to play.',
         actions: [
-          TextButton(
+          FilledButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Got it'),
           ),
@@ -1155,13 +1156,8 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
   }
 
   Future<void> _changeCity() async {
-    final city = await showModalBottomSheet<FieldrushCity>(
+    final city = await showFieldrushModal<FieldrushCity>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: FieldrushAuthTheme.cream,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
       builder: (_) => FieldrushCityPicker(
         repository: widget.cityRepository ?? SupabaseFieldrushCityRepository(),
         currentCityId: _account?.preferredCityId,
@@ -1389,49 +1385,45 @@ class _ReauthenticationDialogState extends State<_ReauthenticationDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Confirm it’s you'),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Verify your current number ${widget.phone} to ${widget.purpose}.',
+  Widget build(BuildContext context) => FieldrushModal(
+    key: const Key('fieldrush-reauth-modal'),
+    title: 'Confirm it’s you',
+    description:
+        'Verify your current number ${widget.phone} to ${widget.purpose}.',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_sent) ...[
+          TextField(
+            key: const Key('fieldrush-reauth-code'),
+            controller: _code,
+            keyboardType: TextInputType.number,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            autofillHints: const [AutofillHints.oneTimeCode],
+            decoration: const InputDecoration(labelText: 'Verification code'),
           ),
-          if (_sent) ...[
-            const SizedBox(height: 16),
-            TextField(
-              key: const Key('fieldrush-reauth-code'),
-              controller: _code,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(6),
-              ],
-              autofillHints: const [AutofillHints.oneTimeCode],
-              decoration: const InputDecoration(labelText: 'Verification code'),
-            ),
-          ],
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: Text(
-                _error!,
-                style: TextStyle(color: FieldrushAuthTheme.danger),
-              ),
-            ),
         ],
-      ),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 12),
+            child: Text(
+              _error!,
+              style: TextStyle(color: FieldrushAuthTheme.danger),
+            ),
+          ),
+      ],
     ),
     actions: [
-      TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context, false),
-        child: const Text('Cancel'),
-      ),
       FilledButton(
         key: const Key('fieldrush-reauth-submit'),
         onPressed: _busy ? null : _submit,
+        style: FieldrushModal.primaryButtonStyle(
+          destructive: widget.purpose == 'delete your account',
+        ),
         child: Text(
           _busy
               ? 'Please wait…'
@@ -1441,6 +1433,10 @@ class _ReauthenticationDialogState extends State<_ReauthenticationDialog> {
                     : 'Verify & continue'
               : 'Send code',
         ),
+      ),
+      OutlinedButton(
+        onPressed: _busy ? null : () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
       ),
     ],
   );
@@ -1504,54 +1500,48 @@ class _ChangePhoneDialogState extends State<_ChangePhoneDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Your new phone number'),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'Your current number stays active until the new number is verified.',
-          ),
+  Widget build(BuildContext context) => FieldrushModal(
+    key: const Key('fieldrush-change-phone-modal'),
+    title: 'Your new phone number',
+    description:
+        'Your current number stays active until the new number is verified.',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        FieldrushPhoneField(
+          controller: _phone,
+          enabled: !_busy && _sentPhone == null,
+          onCountryChanged: (country) => _country = country,
+        ),
+        if (_sentPhone != null) ...[
           const SizedBox(height: 16),
-          FieldrushPhoneField(
-            controller: _phone,
-            enabled: !_busy && _sentPhone == null,
-            onCountryChanged: (country) => _country = country,
+          TextField(
+            key: const Key('fieldrush-new-phone-code'),
+            controller: _code,
+            keyboardType: TextInputType.number,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            autofillHints: const [AutofillHints.oneTimeCode],
+            decoration: const InputDecoration(labelText: 'Verification code'),
           ),
-          if (_sentPhone != null) ...[
-            const SizedBox(height: 16),
-            TextField(
-              controller: _code,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(6),
-              ],
-              autofillHints: const [AutofillHints.oneTimeCode],
-              decoration: const InputDecoration(labelText: 'Verification code'),
-            ),
-            TextButton(
-              onPressed: _busy
-                  ? null
-                  : () => setState(() {
-                      _sentPhone = null;
-                      _code.clear();
-                    }),
-              child: const Text('Use a different number'),
-            ),
-          ],
-          if (_error != null)
-            Text(_error!, style: TextStyle(color: FieldrushAuthTheme.danger)),
+          TextButton(
+            onPressed: _busy
+                ? null
+                : () => setState(() {
+                    _sentPhone = null;
+                    _code.clear();
+                  }),
+            child: const Text('Use a different number'),
+          ),
         ],
-      ),
+        if (_error != null)
+          Text(_error!, style: TextStyle(color: FieldrushAuthTheme.danger)),
+      ],
     ),
     actions: [
-      TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context, false),
-        child: const Text('Cancel'),
-      ),
       FilledButton(
         onPressed: _busy ? null : _submit,
         child: Text(
@@ -1561,6 +1551,10 @@ class _ChangePhoneDialogState extends State<_ChangePhoneDialog> {
               ? 'Send code'
               : 'Verify new number',
         ),
+      ),
+      OutlinedButton(
+        onPressed: _busy ? null : () => Navigator.pop(context, false),
+        child: const Text('Cancel'),
       ),
     ],
   );
@@ -1617,33 +1611,30 @@ class _EmailVerificationDialogState extends State<_EmailVerificationDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('Verify your email'),
-    content: SingleChildScrollView(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('Send a verification code to ${widget.email}.'),
-          if (_sent)
-            TextField(
-              controller: _code,
-              keyboardType: TextInputType.number,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(6),
-              ],
-              decoration: const InputDecoration(labelText: 'Verification code'),
-            ),
-          if (_error != null)
-            Text(_error!, style: TextStyle(color: FieldrushAuthTheme.danger)),
-        ],
-      ),
+  Widget build(BuildContext context) => FieldrushModal(
+    key: const Key('fieldrush-email-verification-modal'),
+    title: 'Verify your email',
+    description: 'Send a verification code to ${widget.email}.',
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_sent)
+          TextField(
+            key: const Key('fieldrush-email-verification-code'),
+            controller: _code,
+            keyboardType: TextInputType.number,
+            inputFormatters: [
+              FilteringTextInputFormatter.digitsOnly,
+              LengthLimitingTextInputFormatter(6),
+            ],
+            decoration: const InputDecoration(labelText: 'Verification code'),
+          ),
+        if (_error != null)
+          Text(_error!, style: TextStyle(color: FieldrushAuthTheme.danger)),
+      ],
     ),
     actions: [
-      TextButton(
-        onPressed: _busy ? null : () => Navigator.pop(context),
-        child: const Text('Cancel'),
-      ),
       FilledButton(
         onPressed: _busy ? null : _submit,
         child: Text(
@@ -1653,6 +1644,10 @@ class _EmailVerificationDialogState extends State<_EmailVerificationDialog> {
               ? 'Verify email'
               : 'Send code',
         ),
+      ),
+      OutlinedButton(
+        onPressed: _busy ? null : () => Navigator.pop(context),
+        child: const Text('Cancel'),
       ),
     ],
   );

@@ -242,21 +242,35 @@ void main() {
     },
   );
 
-  testWidgets(
-    'payment screen describes checkout availability without pretend saved cards',
-    (tester) async {
-      await show(tester, const YouPaymentMethodsScreen(), textScale: 1.4);
-      expect(find.text('Visa & Mastercard'), findsOneWidget);
-      expect(find.text('Apple Pay'), findsOneWidget);
-      expect(
-        find.textContaining('when supported on your device'),
-        findsOneWidget,
-      );
-      expect(find.byType(TextField), findsNothing);
-      expect(find.textContaining('4242'), findsNothing);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  for (final platform in [
+    TargetPlatform.android,
+    TargetPlatform.iOS,
+    TargetPlatform.linux,
+  ]) {
+    testWidgets(
+      'payment methods match $platform without pretend saved cards',
+      (tester) async {
+        await show(tester, const YouPaymentMethodsScreen(), textScale: 1.4);
+        expect(find.text('Visa & Mastercard'), findsOneWidget);
+        expect(
+          find.text('Google Pay'),
+          platform == TargetPlatform.android ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('Apple Pay'),
+          platform == TargetPlatform.iOS ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.textContaining('when supported on your device'),
+          platform == TargetPlatform.linux ? findsNothing : findsOneWidget,
+        );
+        expect(find.byType(TextField), findsNothing);
+        expect(find.textContaining('4242'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+      variant: TargetPlatformVariant({platform}),
+    );
+  }
 }
 
 class _Repository implements YouSettingsRepository {

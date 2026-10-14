@@ -1596,7 +1596,7 @@ function PaymentRefundRetryDialog({ accessToken, item, onClose, onSaved }: {
       <span className="admin-eyebrow">Payment refund</span>
       <h2>{item.title}</h2>
       <p className="admin-modal-lead">{item.detail}</p>
-      <p>The refund returns to the original card or Apple Pay payment method. A retry checks the existing processor reference and never creates a duplicate refund.</p>
+      <p>The refund returns to the original payment method. A retry checks the existing processor reference and never creates a duplicate refund.</p>
       <label className="admin-modal-field">
         <span>Reason for retry</span>
         <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={2000} disabled={saving} rows={4} />

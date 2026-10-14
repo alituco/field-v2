@@ -1069,7 +1069,7 @@ function CancellationRulesCard({ owner, config, issues, onChange }: {
                     label="Fee refunded"
                     maximum={100}
                     onChange={(value) => onChange(refundPath, value)}
-                    tooltip="Percentage of the original booking fee refunded. New card and Apple Pay bookings return to their original payment method. 100% means a full fee refund."
+                    tooltip="Percentage of the original booking fee refunded. New card and digital wallet bookings return to their original payment method. 100% means a full fee refund."
                     unit="%"
                     value={Number(getAtPath(config, refundPath))}
                   />
@@ -1446,7 +1446,7 @@ function AppealsCard({ config, onChange }: {
           ))}
         </div></fieldset>
         <div className={styles.lockedRule}><span>Routine traffic</span><strong>Not automatically excused</strong><small>An admin may still overturn a documented exceptional case. Automatic excusal is intentionally locked off.</small></div>
-        <div className={styles.lockedRule}><span>Refund destination</span><strong>{config.wallet.refundDestination === "FIELD_WALLET" ? "Historical Field Wallet rule" : "Original payment method"}</strong><small>New card and Apple Pay payments are refunded to the original payment method, in the booking's currency. Historical wallet credits remain separate. Bank processing can take a few days.</small></div>
+        <div className={styles.lockedRule}><span>Refund destination</span><strong>{config.wallet.refundDestination === "FIELD_WALLET" ? "Historical Field Wallet rule" : "Original payment method"}</strong><small>New card and digital wallet payments are refunded to the original payment method, in the booking's currency. Historical wallet credits remain separate. Bank processing can take a few days.</small></div>
       </div>
     </details>
   );

@@ -22,6 +22,7 @@ import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -601,8 +602,9 @@ void main() {
         find.byKey(const Key('home-notification-details')),
         findsOneWidget,
       );
-      final dialog = tester.widget<AlertDialog>(find.byType(AlertDialog));
-      expect((dialog.title! as Text).data, notice.title);
+      final sheet = tester.widget<FieldrushModal>(find.byType(FieldrushModal));
+      expect(sheet.title, notice.title);
+      expect(find.byType(AlertDialog), findsNothing);
       expect(find.byType(SelectableText), findsOneWidget);
       expect(
         tester.widget<SelectableText>(find.byType(SelectableText)).data,

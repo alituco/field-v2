@@ -288,31 +288,56 @@ Deno.test("webhook validates original raw bytes and rejects replay or future tim
   );
 });
 
-Deno.test("client confirm and webhook capture converge on the same locked database operation", async () => {
-  let calls = 0;
-  const admin = {
-    rpc(name: string, args: Record<string, unknown>) {
-      assert.equal(name, "record_stripe_payment_capture");
-      assert.equal(args.intent_id_to_capture, intent.id);
-      assert.equal(args.amount_minor_to_use, 1300);
-      assert.equal(args.payment_method_to_use, "APPLE_PAY");
-      calls++;
-      return Promise.resolve({
-        data: { status: "FINALIZED", resource_id: "same-booking" },
-        error: null,
-      });
-    },
-  } as unknown as PaymentDatabase;
-  const stripe = {
-    paymentIntents: { retrieve: () => Promise.resolve(payment()) },
-  } as unknown as Stripe;
-  const results = await Promise.all([
-    reconcilePayment(admin, stripe, intent, false),
-    reconcilePayment(admin, stripe, intent, false, payment()),
-  ]);
-  assert.equal(calls, 2);
-  assert.equal(results[0].resource_id, results[1].resource_id);
-});
+for (
+  const [label, method, card] of [
+    ["Apple Pay", "APPLE_PAY", {
+      brand: "visa",
+      wallet: { type: "apple_pay" },
+    }],
+    ["Google Pay", "GOOGLE_PAY", {
+      brand: "visa",
+      wallet: { type: "google_pay" },
+    }],
+    ["Visa", "VISA", { brand: "visa", wallet: null }],
+    ["Mastercard", "MASTERCARD", { brand: "mastercard", wallet: null }],
+    ["other card", "CARD", { brand: "amex", wallet: null }],
+  ] as const
+) {
+  Deno.test(`${label} client confirm and webhook capture record the verified method on the same booking`, async () => {
+    let calls = 0;
+    const verifiedPayment = payment({
+      latest_charge: {
+        id: "ch_test",
+        payment_method_details: { card },
+      },
+    });
+    const admin = {
+      rpc(name: string, args: Record<string, unknown>) {
+        assert.equal(name, "record_stripe_payment_capture");
+        assert.equal(args.intent_id_to_capture, intent.id);
+        assert.equal(args.amount_minor_to_use, 1300);
+        assert.equal(args.provider_intent_id_to_use, "pi_test");
+        assert.equal(args.provider_payment_id_to_use, "ch_test");
+        assert.equal(args.currency_to_use, "USD");
+        assert.equal(args.payment_method_to_use, method);
+        calls++;
+        return Promise.resolve({
+          data: { status: "FINALIZED", resource_id: "same-booking" },
+          error: null,
+        });
+      },
+    } as unknown as PaymentDatabase;
+    const stripe = {
+      paymentIntents: { retrieve: () => Promise.resolve(verifiedPayment) },
+    } as unknown as Stripe;
+    const results = await Promise.all([
+      reconcilePayment(admin, stripe, intent, false),
+      reconcilePayment(admin, stripe, intent, false, verifiedPayment),
+    ]);
+    assert.equal(calls, 2);
+    assert.equal(results[0].resource_id, results[1].resource_id);
+  });
+}
 
 Deno.test("mismatched capture never reaches finalization", async () => {
   const admin = {
@@ -629,32 +654,50 @@ Deno.test("a fenced stale refund attempt does not report a completed transfer", 
   assert.equal(result.pending, 1);
 });
 
-Deno.test("new partial refund uses persistent outbox idempotency and exact original payment", async () => {
-  const stripe = {
-    paymentIntents: { retrieve: () => Promise.resolve(payment()) },
-    refunds: {
-      list: () => ({ async *[Symbol.asyncIterator]() {} }),
-      create: (
-        params: Record<string, unknown>,
-        options: Record<string, unknown>,
-      ) => {
-        assert.equal(params.payment_intent, "pi_test");
-        assert.equal(params.amount, 650);
-        assert.equal(options.idempotencyKey, "fieldrush-refund-refund-row-0");
-        return Promise.resolve(refund({ status: "pending" }));
+for (const wallet of ["apple_pay", "google_pay"] as const) {
+  Deno.test(`${wallet} partial refund uses persistent outbox idempotency and exact original payment`, async () => {
+    let creates = 0;
+    const verifiedPayment = payment({
+      latest_charge: {
+        id: "ch_test",
+        payment_method_details: {
+          card: { brand: "visa", wallet: { type: wallet } },
+        },
       },
-    },
-  } as unknown as Stripe;
-  const result = await processRefunds(
-    refundDatabase((args) =>
-      assert.equal(args.provider_status_to_use, "pending")
-    ),
-    stripe,
-    false,
-  );
-  assert.equal(result.completed, 0);
-  assert.equal(result.pending, 1);
-});
+    });
+    const stripe = {
+      paymentIntents: {
+        retrieve: (id: string) => {
+          assert.equal(id, "pi_test");
+          return Promise.resolve(verifiedPayment);
+        },
+      },
+      refunds: {
+        list: () => ({ async *[Symbol.asyncIterator]() {} }),
+        create: (
+          params: Record<string, unknown>,
+          options: Record<string, unknown>,
+        ) => {
+          creates++;
+          assert.equal(params.payment_intent, "pi_test");
+          assert.equal(params.amount, 650);
+          assert.equal(options.idempotencyKey, "fieldrush-refund-refund-row-0");
+          return Promise.resolve(refund({ status: "pending" }));
+        },
+      },
+    } as unknown as Stripe;
+    const result = await processRefunds(
+      refundDatabase((args) =>
+        assert.equal(args.provider_status_to_use, "pending")
+      ),
+      stripe,
+      false,
+    );
+    assert.equal(creates, 1);
+    assert.equal(result.completed, 0);
+    assert.equal(result.pending, 1);
+  });
+}
 
 Deno.test("approved retry cannot reuse the previous failed Stripe refund", async () => {
   let creates = 0;
