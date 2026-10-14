@@ -9,6 +9,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../core/user_facing_error.dart';
+import '../ui/field_loading.dart';
 import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'fieldrush_account.dart';
@@ -62,6 +63,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   bool _consent = false;
   bool _editingReview = false;
   bool _awaitingAccount = false;
+  bool _openingApp = false;
   AccountDraft? _beforeEdit;
   Timer? _cooldownTimer;
   DateTime? _resendAt;
@@ -126,6 +128,12 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
 
   void _applyAccount(FieldrushAccount account) {
     _account = account;
+    _openingApp = account.completed && account.phoneVerified;
+    if (_openingApp) return;
+    // OTP proves ownership before deciding whether to resume signup. Both
+    // welcome actions use the same phone flow; only new/incomplete accounts
+    // need the signup details and review.
+    _login = false;
     _fillDraft(account.draft);
     if (account.phone.isNotEmpty) {
       try {
@@ -138,8 +146,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     }
     if (!account.phoneVerified) {
       _step = _Step.phone;
-    } else if (account.completed) {
-      _step = _Step.review;
     } else if (account.draft.firstName.isEmpty ||
         account.draft.lastName.isEmpty) {
       _step = _Step.name;
@@ -188,7 +194,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   }
 
   void _back() {
-    if (_busy) return;
+    if (_busy || _openingApp) return;
     if (_editingReview) {
       if (_beforeEdit != null) _fillDraft(_beforeEdit!);
       _editingReview = false;
@@ -263,12 +269,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       return;
     }
     await _run(() async {
-      if (_login && _account == null) {
-        // Log in must not create a new account for a mistyped number.
-        await widget.accountRepository.sendRecoveryCode(phone);
-      } else {
-        await widget.accountRepository.sendPhoneCode(phone);
-      }
+      await widget.accountRepository.sendPhoneCode(phone);
       if (!mounted) return;
       _pendingPhone = phone;
       _code.clear();
@@ -466,7 +467,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       if (!account.completed || !account.phoneVerified) {
         throw StateError('Your account is not complete yet. Please try again.');
       }
-      setState(() => _account = account);
+      setState(() => _applyAccount(account));
       widget.onOnboardingCompleted();
     });
   }
@@ -490,13 +491,20 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     data: FieldrushAuthTheme.theme(context),
     child: Builder(
       builder: (context) => PopScope(
-        canPop: _step == _Step.welcome,
+        canPop: _step == _Step.welcome && !_openingApp,
         onPopInvokedWithResult: (didPop, result) {
           if (!didPop) _back();
         },
         child: Scaffold(
           backgroundColor: FieldrushAuthTheme.cream,
-          body: _step == _Step.welcome ? _welcome(context) : _flow(context),
+          body: _openingApp
+              ? const SafeArea(
+                  key: Key('fieldrush-signing-in'),
+                  child: FieldLoadingContent(label: 'Signing you in'),
+                )
+              : _step == _Step.welcome
+              ? _welcome(context)
+              : _flow(context),
         ),
       ),
     ),

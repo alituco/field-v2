@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   ]);
   const error = catalog.error ?? cities.error;
   if (error) return NextResponse.json({ error: seasonErrorMessage(error) }, { status: 500, headers });
-  return NextResponse.json({ today: catalog.data.today,
+  return NextResponse.json({ today: catalog.data.today, currentSeasonId: catalog.data.current_season_id ?? null,
     seasons: (catalog.data.seasons ?? []).map(serializeAdminSeason), rewards: (catalog.data.rewards ?? []).map(serializeAdminSeasonReward),
     audit: (catalog.data.audit ?? []).map(serializeSeasonAudit), cities: (cities.data ?? []).map(serializeAdminCity) }, { headers });
 }

@@ -119,6 +119,65 @@ void main() {
     await _dispose(tester);
   });
 
+  testWidgets('phone login with a new number continues into signup after OTP', (
+    tester,
+  ) async {
+    final repo = _AccountRepository()
+      ..recoveryError = const AuthException('This phone has no account.');
+    var completed = 0;
+    await _pump(tester, repo, onCompleted: () => completed++);
+    await _tap(tester, 'fieldrush-log-in');
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-phone')),
+      '6025550148',
+    );
+    await _tap(tester, 'fieldrush-continue');
+    expect(repo.sentPhones, ['+16025550148']);
+    expect(repo.recoveryPhones, isEmpty);
+    expect(find.byKey(const Key('fieldrush-code')), findsOneWidget);
+    expect(find.text('What’s your\nname?'), findsNothing);
+
+    await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+    await _tap(tester, 'fieldrush-continue');
+    expect(find.text('What’s your\nname?'), findsOneWidget);
+    expect(find.text('Look\nright?'), findsNothing);
+    expect(repo.savedDrafts, isEmpty);
+    expect(repo.completedCount, 0);
+    expect(completed, 0);
+    await _dispose(tester);
+  });
+
+  testWidgets('returning phone login hands off without signup review', (
+    tester,
+  ) async {
+    final repo = _AccountRepository()
+      ..account = FieldrushAccount(
+        draft: _completeDraft,
+        phone: '+16025550148',
+        phoneVerified: true,
+        completed: true,
+      );
+    var completed = 0;
+    await _pump(tester, repo, onCompleted: () => completed++);
+    await _tap(tester, 'fieldrush-log-in');
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-phone')),
+      '6025550148',
+    );
+    await _tap(tester, 'fieldrush-continue');
+    await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+    await _tap(tester, 'fieldrush-continue');
+
+    expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+    expect(find.text('Look\nright?'), findsNothing);
+    expect(find.byKey(const Key('fieldrush-accept-policies')), findsNothing);
+    expect(repo.completedCount, 0);
+    expect(repo.savedDrafts, isEmpty);
+    expect(repo.recoveryPhones, isEmpty);
+    expect(completed, 1);
+    await _dispose(tester);
+  });
+
   testWidgets('completed account still requires a verified phone', (
     tester,
   ) async {
@@ -197,6 +256,8 @@ void main() {
     await _tap(tester, 'fieldrush-accept-policies');
     await _tap(tester, 'fieldrush-continue');
     expect(repo.completedCount, 1);
+    expect(find.text('Look\nright?'), findsNothing);
+    expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
     expect(find.text('Let’s go'), findsNothing);
     expect(repo.tourCompletions, 0);
     expect(completed, 1);
@@ -437,6 +498,7 @@ class _AccountRepository implements FieldrushAccountRepository {
     draft: AccountDraft(),
   );
   final List<String> sentPhones = [];
+  final List<String> recoveryPhones = [];
   final List<String> verifiedCodes = [];
   final List<AccountDraft> savedDrafts = [];
   int googleLaunches = 0;
@@ -444,6 +506,7 @@ class _AccountRepository implements FieldrushAccountRepository {
   int tourCompletions = 0;
   int loadFailures = 0;
   Object? sendError;
+  Object? recoveryError;
   Object? saveError;
   String? blockedUsername;
 
@@ -495,7 +558,11 @@ class _AccountRepository implements FieldrushAccountRepository {
   }
 
   @override
-  Future<void> sendRecoveryCode(String phone) => sendPhoneCode(phone);
+  Future<void> sendRecoveryCode(String phone) async {
+    recoveryPhones.add(phone);
+    if (recoveryError != null) throw recoveryError!;
+    await sendPhoneCode(phone);
+  }
 
   @override
   Future<void> verifyPhoneCode(String phone, String token) async {

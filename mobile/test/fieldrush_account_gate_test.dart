@@ -44,6 +44,152 @@ void main() {
     if (settle) await tester.pumpAndSettle();
   }
 
+  Future<void> logInWithPhone(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('fieldrush-log-in')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-phone')),
+      '4807469696',
+    );
+    await tester.ensureVisible(find.byKey(const Key('fieldrush-continue')));
+    await tester.tap(find.byKey(const Key('fieldrush-continue')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('fieldrush-code')), findsOneWidget);
+  }
+
+  Future<void> verifyLoginCode(WidgetTester tester) async {
+    await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+    await tester.ensureVisible(find.byKey(const Key('fieldrush-continue')));
+    await tester.tap(find.byKey(const Key('fieldrush-continue')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 150));
+  }
+
+  testWidgets('unknown phone entered through Log in starts signup after OTP', (
+    tester,
+  ) async {
+    auth.session = null;
+    accounts.account = const FieldrushAccount(
+      draft: AccountDraft(),
+      phone: '+14807469696',
+      phoneVerified: true,
+    );
+    accounts.onVerified = () => auth.signIn();
+    await showGate(tester);
+    await logInWithPhone(tester);
+    expect(accounts.sentPhones, ['+14807469696']);
+    expect(accounts.recoveryPhones, isEmpty);
+    expect(auth.currentUser, isNull);
+    expect(find.text('AUTHENTICATED APP'), findsNothing);
+
+    await verifyLoginCode(tester);
+    await tester.pumpAndSettle();
+    expect(accounts.verifiedCodes, ['123456']);
+    expect(auth.currentUser, isNotNull);
+    expect(find.text('What’s your\nname?'), findsOneWidget);
+    expect(find.text('Look\nright?'), findsNothing);
+    expect(find.byKey(const Key('fieldrush-accept-policies')), findsNothing);
+    expect(find.text('AUTHENTICATED APP'), findsNothing);
+    expect(accounts.completionCalls, 0);
+    expect(accounts.draftSaves, 0);
+    expect(moderation.calls, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'returning phone login waits for moderation without signup review',
+    (tester) async {
+      auth.session = null;
+      accounts.onVerified = () => auth.signIn();
+      final pending = Completer<ModerationStatus>();
+      moderation.nextLoad = () => pending.future;
+      await showGate(tester);
+      await logInWithPhone(tester);
+      await verifyLoginCode(tester);
+      for (var frame = 0; frame < 5; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(find.text('Look\nright?'), findsNothing);
+        expect(
+          find.byKey(const Key('fieldrush-accept-policies')),
+          findsNothing,
+        );
+        expect(find.text('AUTHENTICATED APP'), findsNothing);
+        expect(
+          tester
+              .widget<FieldLoadingContent>(find.byType(FieldLoadingContent))
+              .label,
+          'Signing you in',
+        );
+      }
+      expect(moderation.calls, greaterThanOrEqualTo(1));
+      expect(accounts.completionCalls, 0);
+      expect(accounts.draftSaves, 0);
+
+      pending.complete(const ModerationStatus.active());
+      await tester.pumpAndSettle();
+      expect(find.text('AUTHENTICATED APP'), findsOneWidget);
+      expect(find.byType(FieldrushAuthScreen), findsNothing);
+      expect(find.text('Look\nright?'), findsNothing);
+      expect(accounts.verifiedCodes, ['123456']);
+      expect(accounts.completionCalls, 0);
+      expect(accounts.tourCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'returning phone login still honors a delayed account restriction',
+    (tester) async {
+      auth.session = null;
+      accounts.onVerified = () => auth.signIn();
+      final pending = Completer<ModerationStatus>();
+      moderation.nextLoad = () => pending.future;
+      await showGate(tester);
+      await logInWithPhone(tester);
+      await verifyLoginCode(tester);
+      expect(find.text('Look\nright?'), findsNothing);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+
+      pending.complete(
+        const ModerationStatus(
+          state: ModerationState.banned,
+          scope: ModerationScope.account,
+          message: 'Restricted for safety.',
+          endsAt: null,
+          warningCount: 0,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(RestrictedAccountScreen), findsOneWidget);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+      expect(find.text('Look\nright?'), findsNothing);
+      expect(accounts.completionCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'returning phone login fails closed when moderation cannot load',
+    (tester) async {
+      auth.session = null;
+      accounts.onVerified = () => auth.signIn();
+      final pending = Completer<ModerationStatus>();
+      moderation.nextLoad = () => pending.future;
+      await showGate(tester);
+      await logInWithPhone(tester);
+      await verifyLoginCode(tester);
+      expect(find.text('Look\nright?'), findsNothing);
+
+      pending.completeError(StateError('moderation offline'));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not load your account'), findsOneWidget);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+      expect(find.text('Look\nright?'), findsNothing);
+      expect(accounts.completionCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('account loading uses a skeleton and then enters the real app', (
     tester,
   ) async {
@@ -258,6 +404,11 @@ class _Auth extends Fake implements AuthRepository {
   User? get currentUser => session?.user;
   @override
   Stream<AuthState> get authStateChanges => events.stream;
+  void signIn() {
+    session = _session();
+    events.add(AuthState(AuthChangeEvent.signedIn, session));
+  }
+
   @override
   Future<void> signOut() async {
     session = null;
@@ -269,6 +420,12 @@ class _Accounts extends Fake implements FieldrushAccountRepository {
   FieldrushAccount account = _account();
   Object? error;
   Future<FieldrushAccount> Function()? nextLoad;
+  VoidCallback? onVerified;
+  final sentPhones = <String>[];
+  final recoveryPhones = <String>[];
+  final verifiedCodes = <String>[];
+  int completionCalls = 0;
+  int draftSaves = 0;
   int tourCalls = 0;
   @override
   bool get emailDeliveryEnabled => false;
@@ -276,6 +433,33 @@ class _Accounts extends Fake implements FieldrushAccountRepository {
   Future<FieldrushAccount> loadAccount() async {
     if (error != null) throw error!;
     return nextLoad == null ? account : nextLoad!();
+  }
+
+  @override
+  Future<void> sendPhoneCode(String phone) async {
+    sentPhones.add(phone);
+  }
+
+  @override
+  Future<void> sendRecoveryCode(String phone) async {
+    recoveryPhones.add(phone);
+  }
+
+  @override
+  Future<void> verifyPhoneCode(String phone, String token) async {
+    verifiedCodes.add(token);
+    onVerified?.call();
+  }
+
+  @override
+  Future<void> saveDraft(AccountDraft draft) async {
+    draftSaves++;
+  }
+
+  @override
+  Future<FieldrushAccount> completeOnboarding(AccountDraft draft) async {
+    completionCalls++;
+    return account;
   }
 
   @override
@@ -293,10 +477,11 @@ class _Moderation extends Fake implements ModerationRepository {
   int calls = 0;
   Object? error;
   ModerationStatus status = const ModerationStatus.active();
+  Future<ModerationStatus> Function()? nextLoad;
   @override
   Future<ModerationStatus> getMyModerationStatus() async {
     calls++;
     if (error != null) throw error!;
-    return status;
+    return nextLoad == null ? status : nextLoad!();
   }
 }

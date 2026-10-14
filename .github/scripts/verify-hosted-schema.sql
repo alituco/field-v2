@@ -143,6 +143,12 @@ begin
     'public.admin_save_fieldrush_city(uuid,text,jsonb)',
     'public.admin_list_fieldrush_seasons(uuid)',
     'public.admin_save_fieldrush_season(uuid,text,jsonb,integer)',
+    'public.admin_update_fieldrush_season(uuid,text,text,jsonb,text,integer)',
+    'public.admin_duplicate_fieldrush_season(uuid,text,text,jsonb,integer)',
+    'public.admin_preview_fieldrush_season_transition(uuid,text,text,date)',
+    'public.admin_preview_fieldrush_season_end(uuid,text,date)',
+    'public.admin_schedule_fieldrush_season_transition(uuid,text,text,date,text,integer,integer)',
+    'public.process_fieldrush_season_transitions()',
     'public.admin_save_fieldrush_season_reward(uuid,text,text,text,jsonb,text,text,integer)'
   ] loop
     checked_rpc := to_regprocedure(rpc_signature);
@@ -171,6 +177,22 @@ begin
       and column_name = 'market_city_id'
   ) then
     raise exception 'Hosted city preference, game market or booked rating track is missing.';
+  end if;
+
+  if not exists (select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'fieldrush_seasons'
+      and column_name = 'lifecycle' and is_nullable = 'NO')
+    or not exists (select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'fieldrush_seasons'
+        and column_name = 'visible_to_players' and is_nullable = 'NO')
+    or not exists (select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'open_queue_games'
+        and column_name = 'season_id')
+    or not exists (select 1 from information_schema.columns
+      where table_schema = 'public' and table_name = 'player_rating_events'
+        and column_name = 'season_id')
+  then
+    raise exception 'Hosted season lifecycle, visibility or original-game season assignment is missing.';
   end if;
 
   if not exists (select 1 from public.fieldrush_cities where active)

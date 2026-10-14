@@ -111,6 +111,8 @@ int _leaderboardInt(Object? value, {int fallback = 0}) {
   return fallback;
 }
 
+enum LeaderboardSeasonLifecycle { draft, scheduled, active, ended }
+
 class LeaderboardSeason {
   const LeaderboardSeason({
     required this.id,
@@ -119,6 +121,8 @@ class LeaderboardSeason {
     required this.startsOn,
     required this.endsOn,
     this.minimumRatedGames = minimumPlayerLeaderboardMatches,
+    this.visibleToPlayers = true,
+    this.lifecycle,
   });
 
   final String id;
@@ -129,6 +133,11 @@ class LeaderboardSeason {
 
   /// Prize qualification is season-specific; placement remains two games.
   final int minimumRatedGames;
+
+  /// Visibility only controls the public season picker, not match history.
+  /// Older catalogs omit these fields and retain their date-based behavior.
+  final bool visibleToPlayers;
+  final LeaderboardSeasonLifecycle? lifecycle;
 
   String get fullLabel =>
       RegExp(r'^S\d+$', caseSensitive: false).hasMatch(label)
@@ -169,6 +178,19 @@ class LeaderboardSeason {
         'Prize qualification must be at least two games.',
       );
     }
+    final visibility = json['visible_to_players'];
+    if (visibility != null && visibility is! bool) {
+      throw const FormatException('Invalid season visibility.');
+    }
+    final lifecycleValue = json['lifecycle'];
+    final lifecycle = switch (lifecycleValue) {
+      null => null,
+      'DRAFT' => LeaderboardSeasonLifecycle.draft,
+      'SCHEDULED' => LeaderboardSeasonLifecycle.scheduled,
+      'ACTIVE' => LeaderboardSeasonLifecycle.active,
+      'ENDED' => LeaderboardSeasonLifecycle.ended,
+      _ => throw const FormatException('Invalid season lifecycle.'),
+    };
     return LeaderboardSeason(
       id: json['id'] as String,
       label: json['label'] as String,
@@ -176,6 +198,8 @@ class LeaderboardSeason {
       startsOn: startsOn,
       endsOn: endsOn,
       minimumRatedGames: minimumRatedGames,
+      visibleToPlayers: visibility as bool? ?? true,
+      lifecycle: lifecycle,
     );
   }
 }

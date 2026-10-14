@@ -86,7 +86,7 @@ void main() {
   });
 
   test(
-    'signed-out signup uses SMS identity rather than phone change',
+    'signed-out phone login allows a new identity and verifies SMS',
     () async {
       respond = (request) =>
           request.url.path.endsWith('/otp') ? _json({}) : _json(_session());
