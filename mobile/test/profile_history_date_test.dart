@@ -123,7 +123,7 @@ void main() {
         expect(metadataRequests, hasLength(1));
         expect(
           metadataRequests.single.url.queryParameters['select'],
-          'id,timezone',
+          'id,timezone,open_queue_events(occurred_at)',
         );
         expect(
           metadataRequests.single.url.queryParameters['id'],

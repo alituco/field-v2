@@ -50,6 +50,79 @@ void main() {
     expect(profile.isFollowedByMe, isFalse);
   });
 
+  ProfilePreviousGame positionedGame(String id, int day, String? role) =>
+      ProfilePreviousGame.fromJson({
+        ..._gameJson(id, day: day, home: 1, away: 0),
+        'player_role': role,
+      });
+
+  test(
+    'displayed position uses the most played role, not preference or latest alone',
+    () {
+      final profile = _profile([
+        positionedGame('latest-gk', 9, 'GK'),
+        positionedGame('def-two', 5, 'DEF'),
+        positionedGame('def-one', 2, 'DEF'),
+      ], position: 'Attacker');
+      expect(profile.playedPosition, 'DEF');
+      expect(profile.playedPositionLabel, 'Defender');
+    },
+  );
+
+  test(
+    'equal role counts use the latest played role across the full history',
+    () {
+      final profile = _profile([
+        positionedGame('old-gk', 1, 'GK'),
+        positionedGame('latest-def', 9, 'DEF'),
+        positionedGame('newer-gk', 8, 'GK'),
+        positionedGame('old-def', 2, 'DEF'),
+      ]);
+      expect(profile.playedPosition, 'DEF');
+      expect(profile.copyWith(isFollowedByMe: true).playedPosition, 'DEF');
+    },
+  );
+
+  test('duplicate history rows do not change the displayed role', () {
+    final defender = positionedGame('def', 8, 'DEF');
+    expect(
+      _profile([
+        defender,
+        defender,
+        positionedGame('keeper', 9, 'GK'),
+      ]).playedPosition,
+      'GK',
+    );
+  });
+
+  test('no played or known positions never display preferred metadata', () {
+    expect(_profile([], position: 'Goalkeeper').playedPositionLabel, isNull);
+    expect(
+      _profile([
+        positionedGame('unknown', 8, null),
+        positionedGame('invalid', 9, 'Captain'),
+      ], position: 'Defender').playedPositionLabel,
+      isNull,
+    );
+  });
+
+  test(
+    'played positions normalize roles and retain known historical midfield',
+    () {
+      for (final (role, label) in [
+        (' gk ', 'Goalkeeper'),
+        ('defender', 'Defender'),
+        ('ATT', 'Attacker'),
+        ('MID', 'Midfielder'),
+      ]) {
+        expect(
+          _profile([positionedGame('game', 9, role)]).playedPositionLabel,
+          label,
+        );
+      }
+    },
+  );
+
   test('missing score is unknown, not an artificial goalless draw', () {
     final unknown = ProfilePreviousGame.fromJson({
       'match_id': 'missing-score',
@@ -98,6 +171,102 @@ void main() {
     expect(followed.copyWith(isFollowedByMe: false).isFollowedByMe, isFalse);
     expect(original.isFollowedByMe, isFalse);
   });
+
+  for (final available in [true, false]) {
+    test(
+      'position ties use actual kickoff metadata when available: $available',
+      () async {
+        final client = SupabaseClient(
+          'https://fieldrush-tests.invalid',
+          'test-anon-key-not-a-secret',
+          authOptions: const AuthClientOptions(autoRefreshToken: false),
+          httpClient: MockClient((request) async {
+            final path = request.url.path;
+            final Object? payload;
+            if (path.endsWith('/profiles')) {
+              payload = {'id': 'player', 'display_name': 'Player'};
+            } else if (path.endsWith('/clan_members') ||
+                path.endsWith('/get_player_rating_history')) {
+              payload = null;
+            } else if (path.endsWith('/list_profile_previous_games')) {
+              payload = [
+                {
+                  ..._gameJson('keeper', day: 9, home: 1, away: 0),
+                  'player_role': 'GK',
+                },
+                {
+                  ..._gameJson('defender', day: 8, home: 1, away: 0),
+                  'player_role': 'DEF',
+                },
+              ];
+            } else if (path.endsWith('/open_queue_games')) {
+              expect(
+                request.url.queryParameters['select'],
+                'id,timezone,open_queue_events(occurred_at)',
+              );
+              expect(
+                request.url.queryParameters['open_queue_events.event_type'],
+                'eq.MATCH_STARTED',
+              );
+              if (!available) {
+                return http.Response(
+                  'Metadata unavailable',
+                  503,
+                  request: request,
+                );
+              }
+              payload = [
+                {
+                  'id': 'keeper',
+                  'timezone': 'America/Phoenix',
+                  'open_queue_events': [
+                    {'occurred_at': 'invalid'},
+                    {'occurred_at': '2026-10-07T19:00:00Z'},
+                    {'occurred_at': '2026-10-07T18:00:00Z'},
+                  ],
+                },
+                {
+                  'id': 'defender',
+                  'timezone': 'America/Phoenix',
+                  'open_queue_events': [
+                    {'occurred_at': '2026-10-09T18:00:00Z'},
+                  ],
+                },
+              ];
+            } else if (path.endsWith('/profile_follows') ||
+                path.endsWith('/profile_highlights') ||
+                path.endsWith('/list_profile_career_entries')) {
+              payload = [];
+            } else {
+              throw StateError('Unexpected public-profile request: $path');
+            }
+            return http.Response(
+              jsonEncode(payload),
+              200,
+              request: request,
+              headers: {
+                'content-type': 'application/json',
+                if (request.headers['prefer']?.contains('count=exact') == true)
+                  'content-range': '*/0',
+              },
+            );
+          }),
+        );
+        addTearDown(client.dispose);
+        final profile = await SupabaseProfileRepository(
+          client: client,
+        ).getProfile('player');
+        expect(profile.playedCount, 2);
+        expect(profile.playedPosition, available ? 'DEF' : 'GK');
+        if (available) {
+          expect(
+            profile.previousGames.first.playedAt.toUtc(),
+            DateTime.utc(2026, 10, 7, 18),
+          );
+        }
+      },
+    );
+  }
 
   for (final gameCount in [1000, 1001]) {
     test(

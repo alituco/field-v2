@@ -1,10 +1,17 @@
 import 'dart:async';
 
 import 'package:field/src/profile/fieldrush_player_profile.dart';
+import 'package:field/src/profile/fieldrush_match_history_screen.dart';
+import 'package:field/src/profile/fieldrush_you_widgets.dart';
+import 'package:field/src/profile/profile_clip_screen.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
 import 'package:field/src/ui/field_loading.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
+import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/open_queue_repository.dart';
+import 'package:field/src/fixtures/fixture_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -168,19 +175,182 @@ void main() {
     expect(find.text('@other'), findsOneWidget);
     expect(find.text('Player unavailable'), findsNothing);
   });
+
+  testWidgets(
+    'empty public profile shares themed record and clips without a made-up role',
+    (tester) async {
+      final repository = _Repository()
+        ..result = _profile('other', position: 'Goalkeeper');
+      await _pump(tester, repository);
+      await tester.pumpAndSettle();
+      expect(find.text('VIEW ONLY'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-played-position')),
+        findsNothing,
+      );
+      expect(find.text('Position unavailable'), findsNothing);
+      expect(find.text('No clan · plays solo'), findsNothing);
+      expect(find.text('Not in a clan'), findsOneWidget);
+      expect(find.byType(FieldrushProfileClips), findsOneWidget);
+      expect(find.byType(FieldrushMatchRecordCard), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.byKey(const ValueKey('player-clips'))).dy,
+        greaterThan(
+          tester.getBottomLeft(find.byKey(const ValueKey('player-no-clan'))).dy,
+        ),
+      );
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('player-match-history')),
+        240,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('No clips yet.'), findsOneWidget);
+      expect(find.text('0 played · 0% won'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('player-match-history')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushMatchHistoryScreen), findsOneWidget);
+      expect(find.text('No finished games yet.'), findsOneWidget);
+      expect(find.text('Your finished games will appear here.'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'public clips open the existing viewer directly with ownership controls disabled',
+    (tester) async {
+      final repository = _Repository()
+        ..result = _profile(
+          'other',
+          highlights: const [
+            ProfileHighlight(
+              id: 'public-clip',
+              title: 'Top corner',
+              thumbnailUrl: '',
+              duration: '0:12',
+              views: 3,
+              status: ProfileHighlightStatus.processing,
+            ),
+          ],
+        );
+      await _pump(tester, repository);
+      await tester.pumpAndSettle();
+      final clip = find.byKey(const ValueKey('player-clip-public-clip'));
+      await tester.scrollUntilVisible(
+        clip,
+        240,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(clip);
+      await tester.pumpAndSettle();
+      final screen = tester.widget<ProfileClipScreen>(
+        find.byType(ProfileClipScreen),
+      );
+      expect(screen.highlight.id, 'public-clip');
+      expect(screen.canManage, isFalse);
+      expect(
+        find.byKey(const ValueKey('clip-visibility-selector')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'missing public match scores stay unavailable instead of inventing a draw',
+    (tester) async {
+      final game = ProfilePreviousGame.fromJson({
+        'match_id': 'unknown-result',
+        'match_type': 'SOLO',
+        'played_at': '2026-10-10T02:00:00Z',
+        'timezone': 'America/Phoenix',
+        'player_side': 'WHITE',
+        'player_role': 'DEF',
+      });
+      final repository = _Repository()
+        ..result = _profile('other', games: [game]);
+      await _pump(tester, repository);
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('player-match-history')),
+        240,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1 played · Results incomplete'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('player-match-history')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Score unavailable'), findsOneWidget);
+      expect(find.textContaining('0–0'), findsNothing);
+      expect(find.text('—'), findsOneWidget);
+      expect(find.text('D'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'public lifetime record uses themed history and opens the current solo match screen',
+    (tester) async {
+      final game = _historyGame('game-one', role: 'DEF');
+      final repository = _Repository()
+        ..result = _profile(
+          'other',
+          position: 'Goalkeeper',
+          games: [game, game],
+        );
+      final matches = _Matches();
+      await _pump(tester, repository, matches: matches);
+      await tester.pumpAndSettle();
+      expect(find.text('Defender'), findsOneWidget);
+      expect(find.text('Goalkeeper'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('player-match-history')),
+        240,
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('1 played · 100% won'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('player-match-history')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushMatchHistoryScreen), findsOneWidget);
+      expect(find.text('1 played · 1W 0D 0L'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('player-history-game-one')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      expect(find.byType(FixtureDetailScreen), findsNothing);
+      expect(
+        tester
+            .widget<FieldrushGameDetailScreen>(
+              find.byType(FieldrushGameDetailScreen),
+            )
+            .gameId,
+        'game-one',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _pump(
   WidgetTester tester,
   _Repository repository, {
   String id = 'other',
+  OpenQueueRepository? matches,
 }) => tester.pumpWidget(
   MaterialApp(
-    home: ProfileScreen(profileId: id, profileRepository: repository),
+    home: ProfileScreen(
+      profileId: id,
+      profileRepository: repository,
+      openQueueRepository: matches,
+    ),
   ),
 );
 
-PlayerProfile _profile(String id, {bool following = false}) => PlayerProfile(
+PlayerProfile _profile(
+  String id, {
+  bool following = false,
+  String? position,
+  List<ProfilePreviousGame> games = const [],
+  List<ProfileHighlight> highlights = const [],
+}) => PlayerProfile(
   id: id,
   displayName: '$id P.',
   username: id,
@@ -191,7 +361,9 @@ PlayerProfile _profile(String id, {bool following = false}) => PlayerProfile(
   appearances: 0,
   goals: 0,
   assists: 0,
-  highlights: const [],
+  highlights: highlights,
+  position: position,
+  previousGames: games,
   career: const [],
   isFollowedByMe: following,
   playerRating: const ProfilePlayerRating(
@@ -207,6 +379,7 @@ PlayerProfile _profile(String id, {bool following = false}) => PlayerProfile(
 );
 
 class _Repository extends Fake implements ProfileRepository {
+  PlayerProfile? result;
   Completer<PlayerProfile>? load;
   Completer<void>? mutation;
   bool following = false, failLoad = false;
@@ -218,7 +391,7 @@ class _Repository extends Fake implements ProfileRepository {
   Future<PlayerProfile> getProfile(String id) async {
     if (failLoad) throw StateError('Offline');
     if (load != null) return load!.future;
-    return _profile(id, following: following);
+    return result ?? _profile(id, following: following);
   }
 
   @override
@@ -234,4 +407,50 @@ class _Repository extends Fake implements ProfileRepository {
     if (mutation != null) await mutation!.future;
     following = false;
   }
+}
+
+ProfilePreviousGame _historyGame(String id, {String role = 'DEF'}) =>
+    ProfilePreviousGame(
+      id: id,
+      type: ProfileGameType.solo,
+      playedAt: DateTime.utc(2026, 10, 10, 2),
+      venue: 'Phoenix Field',
+      homeName: 'White Team',
+      homeTag: 'WHITE',
+      homeEmblem: '',
+      awayName: 'Black Team',
+      awayTag: 'BLACK',
+      awayEmblem: '',
+      homeScore: 2,
+      awayScore: 1,
+      playerSide: 'WHITE',
+      playerRole: role,
+    );
+
+class _Matches extends Fake implements OpenQueueRepository {
+  @override
+  Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async =>
+      OpenQueueMatchDetail(
+        game: OpenQueueGame(
+          id: gameId,
+          status: 'FINAL',
+          venue: 'Phoenix Field',
+          startsAt: DateTime.utc(2026, 10, 10, 2),
+          endsAt: DateTime.utc(2026, 10, 10, 3),
+          timezone: 'America/Phoenix',
+          priceFils: 13000,
+          currency: 'USD',
+          ageLabel: '18+',
+          capacity: 14,
+          confirmedCount: 14,
+          spots: const {},
+          whiteScore: 2,
+          blackScore: 1,
+        ),
+        scorers: const [],
+        timeline: const [],
+      );
+
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => const [];
 }

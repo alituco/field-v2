@@ -10,11 +10,13 @@ class FieldrushMatchHistoryScreen extends StatefulWidget {
     required this.profile,
     required this.onOpenGame,
     this.ratingEvents,
+    this.playerName,
   });
 
   final PlayerProfile profile;
   final Future<void> Function(ProfilePreviousGame) onOpenGame;
   final List<ProfileRatingEvent>? ratingEvents;
+  final String? playerName;
 
   @override
   State<FieldrushMatchHistoryScreen> createState() =>
@@ -38,8 +40,10 @@ class _FieldrushMatchHistoryScreenState
 
   @override
   Widget build(BuildContext context) {
-    final games = [...widget.profile.previousGames]
-      ..sort((a, b) => b.playedAt.compareTo(a.playedAt));
+    final games = <String, ProfilePreviousGame>{
+      for (final game in widget.profile.previousGames)
+        if (game.id.trim().isNotEmpty) '${game.type.name}:${game.id}': game,
+    }.values.toList()..sort((a, b) => b.playedAt.compareTo(a.playedAt));
     final groups = <String, List<ProfilePreviousGame>>{};
     for (final game in games.take(_visible)) {
       final date = game.localPlayedAt;
@@ -75,6 +79,10 @@ class _FieldrushMatchHistoryScreenState
                         children: [
                           Text('Match history', style: _outfit(18)),
                           const SizedBox(height: 5),
+                          if (widget.playerName != null) ...[
+                            Text(widget.playerName!, style: _jakarta(12)),
+                            const SizedBox(height: 5),
+                          ],
                           Text(
                             '${games.length} played · ${wins}W ${draws}D ${losses}L',
                             style: _jakarta(11),
@@ -89,7 +97,9 @@ class _FieldrushMatchHistoryScreenState
                 Padding(
                   padding: const EdgeInsets.fromLTRB(20, 40, 20, 0),
                   child: Text(
-                    'Your finished games will appear here.',
+                    widget.playerName == null
+                        ? 'Your finished games will appear here.'
+                        : 'No finished games yet.',
                     style: _jakarta(13),
                   ),
                 ),
@@ -177,8 +187,13 @@ class _FieldrushMatchHistoryScreenState
     final dateLabel = date == null
         ? 'Date unavailable'
         : '${_months[date.month - 1].substring(0, 3)} ${date.day}';
+    final scoreLabel = game.hasFinalScore
+        ? '${game.homeScore}–${game.awayScore}'
+        : 'Score unavailable';
     return InkWell(
-      key: ValueKey('you-history-${game.id}'),
+      key: ValueKey(
+        '${widget.playerName == null ? 'you' : 'player'}-history-${game.id}',
+      ),
       onTap: _opening == null ? () => _open(game) : null,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 14, 12),
@@ -213,7 +228,7 @@ class _FieldrushMatchHistoryScreenState
                   ),
                   const SizedBox(height: 5),
                   Text(
-                    '$dateLabel · ${game.isSolo ? '' : 'Clan · '}${game.homeScore}–${game.awayScore}',
+                    '$dateLabel · ${game.isSolo ? '' : 'Clan · '}$scoreLabel',
                     style: _jakarta(10.5),
                   ),
                 ],

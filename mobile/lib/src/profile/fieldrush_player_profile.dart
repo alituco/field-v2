@@ -7,6 +7,7 @@ import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../ranking/rating_division.dart';
 import '../ui/field_loading.dart';
+import 'fieldrush_you_widgets.dart';
 import 'profile.dart';
 
 const _ink = FieldrushAuthTheme.ink;
@@ -51,7 +52,9 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     this.onFollow,
     this.onReport,
     this.onOpenClan,
-    this.positionLabel = 'Position unavailable',
+    this.positionLabel,
+    this.onMatchHistory,
+    this.onClip,
     this.played,
     this.winRate,
     this.showUpRate,
@@ -70,7 +73,9 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
   final VoidCallback? onFollow;
   final VoidCallback? onReport;
   final VoidCallback? onOpenClan;
-  final String positionLabel;
+  final String? positionLabel;
+  final VoidCallback? onMatchHistory;
+  final ValueChanged<ProfileHighlight>? onClip;
   final int? played;
   final double? winRate;
   final double? showUpRate;
@@ -114,7 +119,9 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final columns = MediaQuery.textScalerOf(context).scale(21) > 31.5
+            final scale = MediaQuery.textScalerOf(context).scale(21) / 21;
+            final columns =
+                scale > 1.5 || (constraints.maxWidth - 18) / 3 < 86 * scale
                 ? 1
                 : 3;
             final width = (constraints.maxWidth - (columns - 1) * 9) / columns;
@@ -193,6 +200,41 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         child: _PlayerClan(clan: profile.clan, onTap: onOpenClan),
       ),
+      if (onClip != null)
+        FieldrushProfileClips(
+          key: const ValueKey('player-clips'),
+          highlights: profile.highlights,
+          onClip: onClip!,
+          clipKeyPrefix: 'player',
+        ),
+      if (onMatchHistory != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+          child: Builder(
+            builder: (context) {
+              final games = <String, ProfilePreviousGame>{
+                for (final game in profile.previousGames)
+                  if (game.id.trim().isNotEmpty)
+                    '${game.type.name}:${game.id}': game,
+              }.values;
+              return FieldrushMatchRecordCard(
+                wins: games
+                    .where((game) => game.outcome == ProfileGameOutcome.win)
+                    .length,
+                draws: games
+                    .where((game) => game.outcome == ProfileGameOutcome.draw)
+                    .length,
+                losses: games
+                    .where((game) => game.outcome == ProfileGameOutcome.loss)
+                    .length,
+                played: games.length,
+                resultsKnown: games.every((game) => game.outcome != null),
+                actionKey: const ValueKey('player-match-history'),
+                onTap: onMatchHistory!,
+              );
+            },
+          ),
+        ),
       if (onReport != null)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
@@ -266,28 +308,7 @@ class _PlayerHeader extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        Expanded(
-          child: MediaQuery.textScalerOf(context).scale(18) > 25.2
-              ? Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name, style: _outfit(18)),
-                    const SizedBox(height: 8),
-                    Text(
-                      'VIEW ONLY',
-                      style: _jakarta(9.5, color: _muted, tracking: 1.14),
-                    ),
-                  ],
-                )
-              : Text(name, style: _outfit(18)),
-        ),
-        if (MediaQuery.textScalerOf(context).scale(18) <= 25.2) ...[
-          const SizedBox(width: 12),
-          Text(
-            'VIEW ONLY',
-            style: _jakarta(9.5, color: _muted, tracking: 1.14),
-          ),
-        ],
+        Expanded(child: Text(name, style: _outfit(18))),
       ],
     ),
   );
@@ -305,7 +326,7 @@ class _PlayerRatingCard extends StatelessWidget {
     this.unavailable = false,
   });
   final PlayerProfile profile;
-  final String positionLabel;
+  final String? positionLabel;
   final bool isFollowing;
   final bool followBusy;
   final VoidCallback? onFollow;
@@ -454,15 +475,18 @@ class _PlayerRatingCard extends StatelessWidget {
                                 color: palette.ink,
                               ).copyWith(fontWeight: FontWeight.w700),
                             ),
-                            const SizedBox(height: 7),
-                            Text(
-                              positionLabel,
-                              style: _jakarta(11, color: palette.accent)
-                                  .copyWith(
-                                    height: 1.35,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                            ),
+                            if (positionLabel?.trim().isNotEmpty == true) ...[
+                              const SizedBox(height: 7),
+                              Text(
+                                positionLabel!,
+                                key: const ValueKey('player-played-position'),
+                                style: _jakarta(11, color: palette.accent)
+                                    .copyWith(
+                                      height: 1.35,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            ],
                           ],
                         ),
                       ),
@@ -581,7 +605,18 @@ class _PlayerAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final initials = Center(
-      child: Text(profile.initials, style: _outfit(20, color: color)),
+      child: Padding(
+        padding: const EdgeInsets.all(4),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            profile.initials,
+            maxLines: 1,
+            softWrap: false,
+            style: _outfit(20, color: color),
+          ),
+        ),
+      ),
     );
     final url = profile.avatarUrl?.trim();
     if (url == null || url.isEmpty) return initials;
@@ -791,12 +826,37 @@ class _PlayerClan extends StatelessWidget {
       return _WhiteCard(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
-          child: Text(
-            'No clan · plays solo',
-            style: _jakarta(
-              12,
-              color: _muted,
-            ).copyWith(fontWeight: FontWeight.w600),
+          child: Row(
+            key: const ValueKey('player-no-clan'),
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF2EFE3),
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(
+                  Icons.shield_outlined,
+                  color: _muted,
+                  size: 23,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'CLAN',
+                      style: _jakarta(9.5, color: _muted, tracking: 1.14),
+                    ),
+                    const SizedBox(height: 7),
+                    Text('Not in a clan', style: _outfit(14, color: _muted)),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       );

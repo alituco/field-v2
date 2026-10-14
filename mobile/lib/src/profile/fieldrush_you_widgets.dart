@@ -333,7 +333,14 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
         if (recordAvailable)
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-            child: _RecordCard(rating: rating, onTap: widget.onMatchHistory),
+            child: FieldrushMatchRecordCard(
+              wins: rating.wins,
+              draws: rating.draws,
+              losses: rating.losses,
+              played: rating.matchesPlayed,
+              actionKey: const ValueKey('you-match-history'),
+              onTap: widget.onMatchHistory,
+            ),
           ),
         if (ranked) ...[
           Padding(
@@ -361,56 +368,11 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
             ),
           ),
         ],
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
-          child: Row(
-            children: [
-              Expanded(child: Text('CLIPS', style: _sectionStyle)),
-              Text(
-                '${widget.profile.highlights.length}',
-                style: _jakarta(11, color: _muted),
-              ),
-            ],
-          ),
+        FieldrushProfileClips(
+          highlights: widget.profile.highlights,
+          onClip: widget.onClip,
+          emptyMessage: 'Open the replay of a finished match and tap Clip.',
         ),
-        const SizedBox(height: 11),
-        if (widget.profile.highlights.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: CustomPaint(
-              painter: const _DashedBorderPainter(),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 18,
-                  vertical: 15,
-                ),
-                child: Text(
-                  'Open the replay of a finished match and tap Clip.',
-                  style: _jakarta(
-                    11.5,
-                    color: _muted,
-                  ).copyWith(fontWeight: FontWeight.w600, height: 1.5),
-                ),
-              ),
-            ),
-          )
-        else
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                for (var i = 0; i < widget.profile.highlights.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 10),
-                  _ClipTile(
-                    highlight: widget.profile.highlights[i],
-                    onTap: () => widget.onClip(widget.profile.highlights[i]),
-                  ),
-                ],
-              ],
-            ),
-          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 22, 16, 0),
           child: _WhiteCard(
@@ -1117,20 +1079,33 @@ class _Spread extends StatelessWidget {
   );
 }
 
-class _RecordCard extends StatelessWidget {
-  const _RecordCard({required this.rating, required this.onTap});
-  final PlayerRatingLeaderboardEntry rating;
+/// Shared match-history entry for You and public player profiles.
+class FieldrushMatchRecordCard extends StatelessWidget {
+  const FieldrushMatchRecordCard({
+    super.key,
+    required this.wins,
+    required this.draws,
+    required this.losses,
+    required this.played,
+    required this.onTap,
+    this.resultsKnown = true,
+    this.actionKey,
+  });
+  final int wins;
+  final int draws;
+  final int losses;
+  final int played;
+  final bool resultsKnown;
+  final Key? actionKey;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final percent = rating.matchesPlayed == 0
-        ? 0
-        : (rating.wins / rating.matchesPlayed * 100).round();
+    final percent = played == 0 ? 0 : (wins / played * 100).round();
     return _WhiteCard(
       radius: 20,
       child: InkWell(
-        key: const ValueKey('you-match-history'),
+        key: actionKey,
         onTap: onTap,
         child: Column(
           children: [
@@ -1138,9 +1113,9 @@ class _RecordCard extends StatelessWidget {
               child: Row(
                 children: [
                   for (final (index, count, label, color) in [
-                    (0, rating.wins, 'WON', _green),
-                    (1, rating.draws, 'DRAWN', const Color(0xFF8E897A)),
-                    (2, rating.losses, 'LOST', _danger),
+                    (0, wins, 'WON', _green),
+                    (1, draws, 'DRAWN', const Color(0xFF8E897A)),
+                    (2, losses, 'LOST', _danger),
                   ])
                     Expanded(
                       child: Container(
@@ -1180,7 +1155,9 @@ class _RecordCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      '${rating.matchesPlayed} played · $percent% won',
+                      resultsKnown
+                          ? '$played played · $percent% won'
+                          : '$played played · Results incomplete',
                       style: _jakarta(11.5, color: _muted),
                     ),
                   ),
@@ -1193,6 +1170,75 @@ class _RecordCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The same clip strip, empty state and native viewer entry on every profile.
+class FieldrushProfileClips extends StatelessWidget {
+  const FieldrushProfileClips({
+    super.key,
+    required this.highlights,
+    required this.onClip,
+    this.emptyMessage = 'No clips yet.',
+    this.clipKeyPrefix = 'you',
+  });
+  final List<ProfileHighlight> highlights;
+  final ValueChanged<ProfileHighlight> onClip;
+  final String emptyMessage;
+  final String clipKeyPrefix;
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+        child: Row(
+          children: [
+            Expanded(child: Text('CLIPS', style: _sectionStyle)),
+            Text('${highlights.length}', style: _jakarta(11, color: _muted)),
+          ],
+        ),
+      ),
+      const SizedBox(height: 11),
+      if (highlights.isEmpty)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: CustomPaint(
+            painter: const _DashedBorderPainter(),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
+              child: Text(
+                emptyMessage,
+                style: _jakarta(
+                  11.5,
+                  color: _muted,
+                ).copyWith(fontWeight: FontWeight.w600, height: 1.5),
+              ),
+            ),
+          ),
+        )
+      else
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < highlights.length; i++) ...[
+                if (i > 0) const SizedBox(width: 10),
+                _ClipTile(
+                  highlight: highlights[i],
+                  actionKey: ValueKey(
+                    '$clipKeyPrefix-clip-${highlights[i].id}',
+                  ),
+                  onTap: () => onClip(highlights[i]),
+                ),
+              ],
+            ],
+          ),
+        ),
+    ],
+  );
 }
 
 class _ResultPip extends StatelessWidget {
@@ -1244,9 +1290,14 @@ class _ResultPip extends StatelessWidget {
 }
 
 class _ClipTile extends StatelessWidget {
-  const _ClipTile({required this.highlight, required this.onTap});
+  const _ClipTile({
+    required this.highlight,
+    required this.onTap,
+    required this.actionKey,
+  });
   final ProfileHighlight highlight;
   final VoidCallback onTap;
+  final Key actionKey;
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -1254,7 +1305,7 @@ class _ClipTile extends StatelessWidget {
     child: Material(
       color: Colors.transparent,
       child: InkWell(
-        key: ValueKey('you-clip-${highlight.id}'),
+        key: actionKey,
         onTap: onTap,
         borderRadius: BorderRadius.circular(14),
         child: Column(

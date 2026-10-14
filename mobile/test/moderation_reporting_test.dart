@@ -67,11 +67,12 @@ void main() {
         ),
       ),
     );
-    await tester.pump();
+    await tester.pumpAndSettle();
 
     // The reference exposes reporting directly rather than hiding it in a menu.
     expect(find.byKey(const ValueKey('profile-options-menu')), findsNothing);
     await tester.ensureVisible(find.text('Report player'));
+    await tester.pumpAndSettle();
     expect(find.text('Report player'), findsOneWidget);
 
     await tester.tap(find.text('Report player'));

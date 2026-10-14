@@ -16,10 +16,10 @@ void main() {
     (tester) async {
       final actions = <String>[];
       await _pump(tester, _content(actions: actions));
-      expect(find.text('VIEW ONLY'), findsOneWidget);
+      expect(find.text('VIEW ONLY'), findsNothing);
       expect(find.text('DIVISION 4'), findsOneWidget);
       expect(find.text('1199'), findsOneWidget);
-      expect(find.text('Position unavailable'), findsOneWidget);
+      expect(find.text('Position unavailable'), findsNothing);
       expect(find.text('8'), findsOneWidget);
       expect(find.text('63%'), findsOneWidget);
       expect(find.text('99%'), findsNothing);
@@ -66,7 +66,8 @@ void main() {
       ),
     );
     expect(find.text('RATING UNAVAILABLE'), findsOneWidget);
-    expect(find.text('No clan · plays solo'), findsOneWidget);
+    expect(find.text('Not in a clan'), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-no-clan')), findsOneWidget);
     expect(find.text('0'), findsNothing);
     expect(find.text('0%'), findsNothing);
     expect(find.text('D'), findsNothing);
@@ -153,6 +154,41 @@ void main() {
         );
         expect(tester.takeException(), isNull);
       }
+    }
+  });
+
+  testWidgets('narrow enlarged text keeps stats and initials readable', (
+    tester,
+  ) async {
+    for (final scale in [1.3, 2.0]) {
+      await _pump(
+        tester,
+        FieldrushPlayerProfileContent(
+          profile: _profile(),
+          isFollowing: false,
+          followBusy: false,
+          onBack: () {},
+          played: 12,
+          winRate: 58,
+          showUpRate: 100,
+        ),
+        width: 320,
+        textScale: scale,
+      );
+      final played = tester.getRect(find.text('PLAYED'));
+      final winRate = tester.getRect(find.text('WIN RATE'));
+      final showUp = tester.getRect(find.text('SHOW-UP'));
+      expect(played.bottom, lessThan(winRate.top));
+      expect(winRate.bottom, lessThan(showUp.top));
+      final initials = tester.widget<Text>(find.text('JA'));
+      expect(initials.maxLines, 1);
+      expect(initials.softWrap, isFalse);
+      expect(
+        find.ancestor(of: find.text('JA'), matching: find.byType(FittedBox)),
+        findsOneWidget,
+      );
+      expect(find.text('100%'), findsOneWidget);
+      expect(tester.takeException(), isNull);
     }
   });
 
