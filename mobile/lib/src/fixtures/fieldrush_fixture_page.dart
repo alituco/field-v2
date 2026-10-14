@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
@@ -273,14 +275,11 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
 
   void _showRouteError(Object error) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          userFacingError(
-            error,
-            fallback: 'We could not open this game. Try again.',
-          ),
-        ),
+    showFieldrushToast(
+      context,
+      userFacingError(
+        error,
+        fallback: 'We could not open this game. Try again.',
       ),
     );
   }
@@ -539,11 +538,6 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                       ),
                     ),
                 ],
-                if (!_loading && _error == null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-                    child: _ClanComingSoon(slot: games.length + 1),
-                  ),
               ],
             ),
           ),
@@ -569,17 +563,30 @@ class _FixtureCalendar extends StatefulWidget {
 }
 
 class _FixtureCalendarState extends State<_FixtureCalendar> {
+  static const _chipWidth = 58.0;
+  static const _chipHeight = 70.0;
+  static const _chipGap = 7.0;
   final _scroll = ScrollController();
+  bool _revealQueued = false;
+  double? _metricsViewport;
+  double? _metricsScale;
+
+  double get _chipScale =>
+      (MediaQuery.textScalerOf(context).scale(20) / 20).clamp(1.0, 3.0);
+
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     _reveal();
   }
 
   @override
   void didUpdateWidget(covariant _FixtureCalendar oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selected != widget.selected) _reveal();
+    if (oldWidget.selected != widget.selected ||
+        !listEquals(oldWidget.dates, widget.dates)) {
+      _reveal();
+    }
   }
 
   @override
@@ -588,29 +595,40 @@ class _FixtureCalendarState extends State<_FixtureCalendar> {
     super.dispose();
   }
 
-  void _reveal() => WidgetsBinding.instance.addPostFrameCallback((_) {
-    if (!mounted || !_scroll.hasClients) return;
-    final scale = (MediaQuery.textScalerOf(context).scale(18) / 18).clamp(
-      1.0,
-      3.0,
-    );
-    final offset =
-        (widget.dates.indexOf(widget.selected) * (44.0 * scale + 7) +
-                22 * scale -
-                _scroll.position.viewportDimension / 2)
-            .clamp(0.0, _scroll.position.maxScrollExtent);
-    _scroll.animateTo(
-      offset,
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-    );
-  });
+  double _stripInset(double viewport, double width) {
+    final contentWidth =
+        widget.dates.length * width + (widget.dates.length - 1) * _chipGap;
+    // Center a short row as a group. Overflowing rows have no artificial edge
+    // padding: the first date starts at the left, while middle dates can center.
+    return ((viewport - contentWidth) / 2).clamp(0.0, viewport);
+  }
+
+  void _reveal() {
+    if (_revealQueued) return;
+    _revealQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _revealQueued = false;
+      if (!mounted || !_scroll.hasClients) return;
+      final width = _chipWidth * _chipScale;
+      final viewport = _scroll.position.viewportDimension;
+      final offset =
+          (widget.dates.indexOf(widget.selected) * (width + _chipGap) +
+                  width / 2 +
+                  _stripInset(viewport, width) -
+                  viewport / 2)
+              .clamp(0.0, _scroll.position.maxScrollExtent);
+      if ((_scroll.offset - offset).abs() < .1) return;
+      _scroll.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    final scale = (MediaQuery.textScalerOf(context).scale(18) / 18).clamp(
-      1.0,
-      3.0,
-    );
+    final scale = _chipScale;
     final index = widget.dates.indexOf(widget.selected);
     final next = widget.dates
         .where((date) => !date.isBefore(widget.today))
@@ -662,68 +680,88 @@ class _FixtureCalendarState extends State<_FixtureCalendar> {
           ),
           const SizedBox(height: 3),
           SizedBox(
-            height: 61 * scale,
+            height: _chipHeight * scale,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final contentWidth =
-                    widget.dates.length * 44 * scale +
-                    (widget.dates.length - 1) * 7;
-                final inset = ((constraints.maxWidth - contentWidth) / 2).clamp(
-                  0.0,
-                  constraints.maxWidth,
-                );
-                return ListView.separated(
-                  key: const ValueKey('fixtures-date-strip'),
-                  padding: EdgeInsets.symmetric(horizontal: inset),
-                  controller: _scroll,
-                  scrollDirection: Axis.horizontal,
-                  itemCount: widget.dates.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 7),
-                  itemBuilder: (_, i) {
-                    final date = widget.dates[i];
-                    final active = date == widget.selected;
-                    return Semantics(
-                      selected: active,
-                      button: true,
-                      label:
-                          '${_weekdays[date.weekday - 1]}, ${_months[date.month - 1]} ${date.day}, ${date.year}',
-                      child: Material(
-                        color: active ? _green : _wash,
-                        borderRadius: BorderRadius.circular(13),
-                        child: InkWell(
-                          key: ValueKey('fixtures-date-${_dateKey(date)}'),
-                          onTap: () => widget.onSelected(date),
-                          borderRadius: BorderRadius.circular(13),
-                          child: SizedBox(
-                            width: 44 * scale,
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  _weekdays[date.weekday - 1].toUpperCase(),
-                                  style: _jakarta(
-                                    9,
-                                    color: active
-                                        ? const Color(0xFFC7DD9B)
-                                        : _muted,
-                                    tracking: .8,
-                                  ),
+                final width = _chipWidth * scale;
+                final inset = _stripInset(constraints.maxWidth, width);
+                return NotificationListener<ScrollMetricsNotification>(
+                  onNotification: (notification) {
+                    if (_metricsViewport !=
+                            notification.metrics.viewportDimension ||
+                        _metricsScale != scale) {
+                      _metricsViewport = notification.metrics.viewportDimension;
+                      _metricsScale = scale;
+                      // Scroll metrics settle after a viewport/text-size change.
+                      // Re-center then, without fighting ordinary swipe events.
+                      _reveal();
+                    }
+                    return false;
+                  },
+                  child: ListView.builder(
+                    key: const ValueKey('fixtures-date-strip'),
+                    // Each fixed-width cell includes its following gap. For
+                    // short rows, trim that gap from the end inset for symmetry.
+                    padding: EdgeInsets.only(
+                      left: inset,
+                      right: (inset - _chipGap).clamp(
+                        0.0,
+                        constraints.maxWidth,
+                      ),
+                    ),
+                    controller: _scroll,
+                    scrollDirection: Axis.horizontal,
+                    itemExtent: width + _chipGap,
+                    itemCount: widget.dates.length,
+                    itemBuilder: (_, i) {
+                      final date = widget.dates[i];
+                      final active = date == widget.selected;
+                      return Padding(
+                        padding: const EdgeInsets.only(right: _chipGap),
+                        child: Semantics(
+                          selected: active,
+                          button: true,
+                          label:
+                              '${_weekdays[date.weekday - 1]}, ${_months[date.month - 1]} ${date.day}, ${date.year}',
+                          child: Material(
+                            color: active ? _green : _wash,
+                            borderRadius: BorderRadius.circular(13),
+                            child: InkWell(
+                              key: ValueKey('fixtures-date-${_dateKey(date)}'),
+                              onTap: () => widget.onSelected(date),
+                              borderRadius: BorderRadius.circular(13),
+                              child: SizedBox(
+                                width: width,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      _weekdays[date.weekday - 1].toUpperCase(),
+                                      style: _jakarta(
+                                        10,
+                                        color: active
+                                            ? const Color(0xFFC7DD9B)
+                                            : _muted,
+                                        tracking: .8,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 7),
+                                    Text(
+                                      '${date.day}',
+                                      style: _outfit(
+                                        20,
+                                        color: active ? Colors.white : _ink,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(height: 7),
-                                Text(
-                                  '${date.day}',
-                                  style: _outfit(
-                                    18,
-                                    color: active ? Colors.white : _ink,
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 );
               },
             ),
@@ -968,37 +1006,6 @@ class FieldrushFixtureCard extends StatelessWidget {
   );
 }
 
-class _ClanComingSoon extends StatelessWidget {
-  const _ClanComingSoon({required this.slot});
-  final int slot;
-  @override
-  Widget build(BuildContext context) => CustomPaint(
-    painter: const _DashedBorder(),
-    child: Padding(
-      padding: const EdgeInsets.fromLTRB(18, 15, 16, 15),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('SLOT $slot · CLAN', style: _jakarta(11, tracking: 1.2)),
-                const SizedBox(height: 8),
-                Text(
-                  'Clan games are coming soon',
-                  style: _jakarta(11.5).copyWith(fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          const _SoonPill(),
-        ],
-      ),
-    ),
-  );
-}
-
 class _SoonPill extends StatelessWidget {
   const _SoonPill();
   @override
@@ -1013,32 +1020,6 @@ class _SoonPill extends StatelessWidget {
       style: _jakarta(9, color: const Color(0xFF8A6516), tracking: 1),
     ),
   );
-}
-
-class _DashedBorder extends CustomPainter {
-  const _DashedBorder();
-  @override
-  void paint(Canvas canvas, Size size) {
-    final path = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(20)),
-      );
-    final paint = Paint()
-      ..color = const Color(0xFFDED8C6)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    for (final metric in path.computeMetrics()) {
-      for (double start = 0; start < metric.length; start += 8) {
-        canvas.drawPath(
-          metric.extractPath(start, (start + 4).clamp(0, metric.length)),
-          paint,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DashedBorder oldDelegate) => false;
 }
 
 class _FixtureState extends StatelessWidget {

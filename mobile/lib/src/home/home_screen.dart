@@ -24,6 +24,7 @@ import '../profile/fieldrush_you_screen.dart';
 import '../profile/fieldrush_you_settings.dart';
 import '../reliability/reliability_repository.dart';
 import '../support/support_repository.dart';
+import '../ui/fieldrush_toast.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
 import 'home_discovery_repository.dart';
@@ -111,21 +112,12 @@ class _HomeScreenState extends State<HomeScreen> {
         '${status.warningCount}';
     if (_shownModerationNoticeSignature == signature) return;
     _shownModerationNoticeSignature = signature;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: fieldGray900,
-        duration: const Duration(seconds: 8),
-        margin: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        padding: const EdgeInsets.fromLTRB(16, 13, 8, 13),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
-        content: ModerationStatusNoticeContent(status: status),
-        action: SnackBarAction(
-          label: 'GOT IT',
-          textColor: fieldEmerald500,
-          onPressed: () {},
-        ),
-      ),
+    showFieldrushToastContent(
+      context,
+      ModerationStatusNoticeContent(status: status),
+      duration: const Duration(seconds: 8),
+      actionLabel: 'GOT IT',
+      onAction: () {},
     );
   }
 

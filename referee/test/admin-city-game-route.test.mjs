@@ -38,6 +38,9 @@ test("game route uses the saved field city timezone even when the client forges 
   assert.equal(rpc[1].market_city_id, undefined);
   assert.equal(rpc[1].timezone, undefined);
   assert.equal(rpc[1].actor_admin_id, actor.profileId);
+  assert.equal(rpc[1].goalkeepers_per_side_to_use, 1);
+  assert.equal(rpc[1].defenders_per_side_to_use, 2);
+  assert.equal(rpc[1].attackers_per_side_to_use, 4);
 });
 test("closed cities and archived fields cannot create new games", async () => {
   for (const options of [{ active: false }, { marketActive: false }]) {

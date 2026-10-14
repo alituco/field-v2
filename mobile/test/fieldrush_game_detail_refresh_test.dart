@@ -86,6 +86,11 @@ void main() {
         changes++;
       },
     );
+    final ownPartySeat = find.byKey(
+      const ValueKey('fieldrush-party-member-mine'),
+    );
+    expect(ownPartySeat, findsOneWidget);
+    expect(find.text('Cancel party'), findsOneWidget);
     final stale = Completer<OpenQueuePartyContext>();
     repository.next = stale;
     await _party(
@@ -102,11 +107,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(repository.disbands, 1);
     expect(changes, 1);
-    expect(find.text('PLAY TOGETHER'), findsOneWidget);
+    expect(ownPartySeat, findsNothing);
+    expect(find.text('Cancel party'), findsNothing);
     stale.complete(old);
     await tester.pumpAndSettle();
-    expect(find.text('PLAY TOGETHER'), findsOneWidget);
-    expect(find.text('YOUR PARTY'), findsNothing);
+    expect(ownPartySeat, findsNothing);
+    expect(find.text('Cancel party'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

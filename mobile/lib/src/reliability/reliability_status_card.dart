@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../ui/fieldrush_modal.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'reliability.dart';
@@ -40,10 +41,9 @@ class _ReliabilityStatusCardState extends State<ReliabilityStatusCard> {
       incident: incident,
     );
     if (!mounted || !submitted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Appeal submitted. Field operations will review it.'),
-      ),
+    showFieldrushToast(
+      context,
+      'Appeal submitted. Field operations will review it.',
     );
     await _reload();
   }

@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../ui/fieldrush_modal.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
+import '../core/user_facing_error.dart';
 
 import '../clans/clan_widgets.dart';
 import 'open_queue.dart';
@@ -1238,70 +1240,145 @@ Future<void> showOpenQueuePartyInviteSheet({
   required BuildContext context,
   required OpenQueuePartyContext partyContext,
   required Future<String?> Function(OpenQueuePartyPlayer player) onInvite,
-}) {
-  return showFieldrushModal<void>(
+  OpenQueueGame? game,
+  Future<void> Function(String profileId)? onViewProfile,
+}) async {
+  final invited = await showFieldrushModal<OpenQueuePartyPlayer>(
     context: context,
-    builder: (_) =>
-        _PartyInviteSheet(partyContext: partyContext, onInvite: onInvite),
+    builder: (_) => _PartyInviteSheet(
+      partyContext: partyContext,
+      onInvite: onInvite,
+      game: game,
+      onViewProfile: onViewProfile,
+    ),
   );
+  if (invited != null && context.mounted) {
+    showFieldrushToast(
+      context,
+      'Invite sent to ${invited.displayName.split(' ').first}',
+    );
+  }
 }
 
 class _PartyInviteSheet extends StatefulWidget {
-  const _PartyInviteSheet({required this.partyContext, required this.onInvite});
+  const _PartyInviteSheet({
+    required this.partyContext,
+    required this.onInvite,
+    this.game,
+    this.onViewProfile,
+  });
 
   final OpenQueuePartyContext partyContext;
   final Future<String?> Function(OpenQueuePartyPlayer player) onInvite;
+  final OpenQueueGame? game;
+  final Future<void> Function(String profileId)? onViewProfile;
 
   @override
   State<_PartyInviteSheet> createState() => _PartyInviteSheetState();
 }
 
 class _PartyInviteSheetState extends State<_PartyInviteSheet> {
-  final Set<String> _sent = {};
-  String? _sending;
+  static const _pickerRoles = [
+    OpenQueueRole.attacker,
+    OpenQueueRole.defender,
+    OpenQueueRole.goalkeeper,
+  ];
+  OpenQueuePartyPlayer? _selected;
+  bool _sending = false;
   String? _error;
 
   Future<void> _invite(OpenQueuePartyPlayer player) async {
-    if (_sending != null) return;
+    if (_sending) return;
     setState(() {
-      _sending = player.profileId;
+      _sending = true;
       _error = null;
     });
-    final error = await widget.onInvite(player);
+    String? error;
+    try {
+      error = await widget.onInvite(player);
+    } catch (exception) {
+      error = userFacingError(
+        exception,
+        fallback: 'Could not send invitation. Please try again.',
+      );
+    }
     if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop(player);
+      return;
+    }
     setState(() {
-      _sending = null;
+      _sending = false;
       _error = error;
-      if (error == null) _sent.add(player.profileId);
     });
+  }
+
+  int get _openSlots =>
+      (widget.partyContext.maxPartySize -
+              (widget.partyContext.myParty?.members.length ?? 0))
+          .clamp(0, widget.partyContext.maxPartySize);
+
+  int _roleCount(OpenQueueRole role) =>
+      widget.partyContext.myParty?.members
+          .where((member) => member.role == role)
+          .length ??
+      0;
+
+  int? _roleLimit(OpenQueueRole role) =>
+      widget.game == null ? null : widget.game!.capacityFor(role) ~/ 2;
+
+  bool _roleFull(OpenQueueRole role) {
+    final limit = _roleLimit(role);
+    return limit != null && _roleCount(role) >= limit;
   }
 
   @override
   Widget build(BuildContext context) {
-    final party = widget.partyContext.myParty!;
-    final openSlots =
-        (widget.partyContext.maxPartySize - party.members.length - _sent.length)
-            .clamp(0, widget.partyContext.maxPartySize);
-    final players = widget.partyContext.eligiblePlayers;
+    if (_selected case final player?) return _confirmation(player);
+    final memberIds =
+        widget.partyContext.myParty?.members
+            .map((member) => member.profileId)
+            .toSet() ??
+        const <String>{};
+    final players = widget.partyContext.eligiblePlayers
+        .where((player) => !memberIds.contains(player.profileId))
+        .toList(growable: false);
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.sizeOf(context).height * .8,
+      ),
+      child: _picker(players),
+    );
+  }
+
+  Widget _picker(List<OpenQueuePartyPlayer> players) {
     return FieldrushModal(
       key: const ValueKey('party-invite-sheet'),
-      title: 'Invite confirmed players',
-      description:
-          '$openSlots party spot${openSlots == 1 ? '' : 's'} available · this game only',
+      title: 'Invite to your party',
+      headerAction: Padding(
+        padding: const EdgeInsets.only(top: 4, left: 8),
+        child: Text(
+          '$_openSlots spot${_openSlots == 1 ? '' : 's'} left',
+          key: const ValueKey('party-invite-spots-left'),
+          style: FieldrushModal.bodyStyle.copyWith(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_error != null) ...[
-            Text(
-              _error!,
-              key: const ValueKey('party-invite-sheet-error'),
-              style: FieldrushModal.bodyStyle.copyWith(
-                color: FieldrushAuthTheme.danger,
-              ),
-            ),
-            const SizedBox(height: 12),
-          ],
+          Row(
+            children: [
+              for (var index = 0; index < _pickerRoles.length; index++) ...[
+                if (index > 0) const SizedBox(width: 6),
+                Expanded(child: _roleChip(_pickerRoles[index])),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
           DecoratedBox(
             decoration: BoxDecoration(
               color: Colors.white,
@@ -1345,15 +1422,10 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
                             height: 1,
                             color: FieldrushAuthTheme.border,
                           ),
-                        _playerRow(players[index], openSlots),
+                        _playerRow(players[index]),
                       ],
                     ],
                   ),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'Players already in a party can still be invited. If they accept, they switch to yours before teams are assigned.',
-            style: FieldrushModal.bodyStyle,
           ),
         ],
       ),
@@ -1362,86 +1434,272 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
           key: const ValueKey('party-invite-sheet-close'),
           onPressed: () => Navigator.of(context).pop(),
           style: FieldrushModal.secondaryButtonStyle(),
-          child: const Text('Close'),
+          child: const Text('Done'),
         ),
       ],
     );
   }
 
-  Widget _playerRow(OpenQueuePartyPlayer player, int openSlots) {
-    final sent = _sent.contains(player.profileId);
-    final sending = _sending == player.profileId;
-    final initial = player.displayName.trim().isEmpty
-        ? 'F'
-        : player.displayName.trim().substring(0, 1).toUpperCase();
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 19,
-            backgroundColor: FieldrushAuthTheme.watermark,
-            foregroundImage: player.avatarUrl == null
-                ? null
-                : NetworkImage(player.avatarUrl!),
-            child: Text(
-              initial,
-              style: FieldrushModal.titleStyle.copyWith(fontSize: 15),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  player.displayName,
-                  style: FieldrushModal.bodyStyle.copyWith(
-                    color: FieldrushAuthTheme.ink,
-                    fontWeight: FontWeight.w800,
+  Widget _roleChip(OpenQueueRole role) {
+    final count = _roleCount(role);
+    final limit = _roleLimit(role);
+    final full = _roleFull(role);
+    final label = switch (role) {
+      OpenQueueRole.goalkeeper => 'Keeper',
+      OpenQueueRole.defender => 'Defenders',
+      OpenQueueRole.attacker => 'Attackers',
+      OpenQueueRole.midfielder => 'Midfielders',
+    };
+    return Container(
+      key: ValueKey('party-role-count-${role.code}'),
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+      decoration: BoxDecoration(
+        color: full ? FieldrushAuthTheme.ink : FieldrushAuthTheme.watermark,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        '$label $count${limit == null ? '' : '/$limit'}',
+        textAlign: TextAlign.center,
+        style: FieldrushModal.bodyStyle.copyWith(
+          fontSize: 10.5,
+          height: 1.1,
+          fontWeight: FontWeight.w800,
+          color: full ? Colors.white : FieldrushAuthTheme.muted,
+        ),
+      ),
+    );
+  }
+
+  Widget _playerRow(OpenQueuePartyPlayer player) {
+    final positionFull = _roleFull(player.role);
+    final enabled =
+        widget.partyContext.canUseParties && _openSlots > 0 && !positionFull;
+    final cta = !widget.partyContext.canUseParties
+        ? 'Closed'
+        : _openSlots == 0 || positionFull
+        ? 'Full'
+        : 'Invite';
+    return InkWell(
+      key: ValueKey('invite-party-player-${player.profileId}'),
+      onTap: enabled
+          ? () => setState(() {
+              _selected = player;
+              _error = null;
+            })
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          children: [
+            _inviteAvatar(player, size: 36, radius: 12, muted: !enabled),
+            const SizedBox(width: 11),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    player.displayName,
+                    style: FieldrushModal.bodyStyle.copyWith(
+                      color: enabled
+                          ? FieldrushAuthTheme.ink
+                          : const Color(0xFF8E897A),
+                      fontSize: 13,
+                      height: 1.2,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  player.isInParty
-                      ? '${player.role.label} · IN A PARTY · ${player.currentPartySize}/4${player.isCurrentPartyOwner ? ' · LEADER' : ''}'
-                      : '${player.role.label}${player.username == null ? '' : ' · @${player.username!.replaceFirst('@', '')}'}',
-                  style: FieldrushModal.bodyStyle.copyWith(fontSize: 10),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 82,
-            child: FilledButton(
-              key: ValueKey('invite-party-player-${player.profileId}'),
-              onPressed: sent || sending || openSlots <= 0
-                  ? null
-                  : () => _invite(player),
-              style: FieldrushModal.primaryButtonStyle().copyWith(
-                minimumSize: const WidgetStatePropertyAll(Size(0, 38)),
-                padding: const WidgetStatePropertyAll(
-                  EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                ),
-                textStyle: WidgetStatePropertyAll(
-                  FieldrushModal.bodyStyle.copyWith(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
+                  const SizedBox(height: 4),
+                  Text(
+                    player.isInParty
+                        ? '${player.role.label} · In a party'
+                        : '${player.role.label}${player.username == null ? '' : ' · @${player.username!.replaceFirst('@', '')}'}',
+                    style: FieldrushModal.bodyStyle.copyWith(
+                      fontSize: 10.5,
+                      height: 1.2,
+                    ),
                   ),
-                ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: enabled ? 13 : 0,
+                vertical: 9,
+              ),
+              decoration: BoxDecoration(
+                color: enabled ? FieldrushAuthTheme.forest : Colors.transparent,
+                borderRadius: BorderRadius.circular(999),
               ),
               child: Text(
-                sending
-                    ? 'Sending…'
-                    : sent
-                    ? 'Sent'
-                    : 'Invite',
+                cta,
+                style: FieldrushModal.bodyStyle.copyWith(
+                  fontSize: 11,
+                  height: 1,
+                  fontWeight: FontWeight.w800,
+                  color: enabled ? Colors.white : const Color(0xFFA9A490),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _confirmation(OpenQueuePartyPlayer player) => PopScope(
+    canPop: !_sending,
+    child: FieldrushModal(
+      key: const ValueKey('party-invite-confirmation'),
+      title: 'Invite to your party',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: Colors.white,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+              side: const BorderSide(color: FieldrushAuthTheme.border),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: const ValueKey('party-invite-player-profile'),
+              onTap: _sending || widget.onViewProfile == null
+                  ? null
+                  : () {
+                      Navigator.of(context).pop();
+                      widget.onViewProfile!(player.profileId);
+                    },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 13,
+                ),
+                child: Row(
+                  children: [
+                    _inviteAvatar(player, size: 46, radius: 15),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            player.displayName,
+                            style: FieldrushModal.titleStyle.copyWith(
+                              fontSize: 15,
+                              height: 1.1,
+                              letterSpacing: -.15,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            player.role.label,
+                            style: FieldrushModal.bodyStyle.copyWith(
+                              fontSize: 11,
+                              height: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (widget.onViewProfile != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        'Profile ›',
+                        style: FieldrushModal.bodyStyle.copyWith(
+                          fontSize: 11,
+                          height: 1,
+                          color: FieldrushAuthTheme.forest,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ),
             ),
           ),
+          const SizedBox(height: 12),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              '${player.displayName.split(' ').first} gets a notification. If they accept, you’re kept on the same side when teams are drawn.${player.isInParty ? ' They will leave their current party only if they accept.' : ''}',
+              style: FieldrushModal.bodyStyle,
+            ),
+          ),
+          if (_error case final error?) ...[
+            const SizedBox(height: 12),
+            Text(
+              error,
+              key: const ValueKey('party-invite-sheet-error'),
+              style: FieldrushModal.bodyStyle.copyWith(
+                color: FieldrushAuthTheme.danger,
+              ),
+            ),
+          ],
         ],
       ),
+      actions: [
+        FilledButton(
+          key: const ValueKey('party-invite-send'),
+          onPressed: _sending ? null : () => _invite(player),
+          style: FieldrushModal.primaryButtonStyle(),
+          child: Text(_sending ? 'Sending…' : 'Send invite'),
+        ),
+        OutlinedButton(
+          key: const ValueKey('party-invite-sheet-close'),
+          onPressed: _sending ? null : () => Navigator.of(context).pop(),
+          style: FieldrushModal.secondaryButtonStyle(),
+          child: const Text('Cancel'),
+        ),
+      ],
+    ),
+  );
+
+  Widget _inviteAvatar(
+    OpenQueuePartyPlayer player, {
+    required double size,
+    required double radius,
+    bool muted = false,
+  }) {
+    final initials = player.displayName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part.characters.first)
+        .join()
+        .toUpperCase();
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: muted ? const Color(0xFFF7F5EE) : FieldrushAuthTheme.watermark,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+      clipBehavior: Clip.antiAlias,
+      alignment: Alignment.center,
+      child: player.avatarUrl == null
+          ? Text(
+              initials.isEmpty ? 'F' : initials,
+              style: FieldrushModal.titleStyle.copyWith(
+                fontSize: size == 46 ? 14 : 12,
+                color: muted
+                    ? const Color(0xFFA9A490)
+                    : const Color(0xFF3C4A38),
+              ),
+            )
+          : Image.network(
+              player.avatarUrl!,
+              fit: BoxFit.cover,
+              width: size,
+              height: size,
+              errorBuilder: (_, _, _) => Text(
+                initials.isEmpty ? 'F' : initials,
+                style: FieldrushModal.titleStyle.copyWith(fontSize: 12),
+              ),
+            ),
     );
   }
 }

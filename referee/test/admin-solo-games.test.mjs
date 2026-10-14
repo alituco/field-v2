@@ -44,6 +44,9 @@ test("admin can prepare a Tuesday solo game in the Phoenix slot", () => {
     ageLabel: "18+",
     highestDivision: 1,
     lowestDivision: 5,
+    goalkeepersPerSide: 1,
+    defendersPerSide: 2,
+    attackersPerSide: 4,
   });
 });
 

@@ -90,6 +90,33 @@ Admin → Games → **Booking prices · USD** controls the future clan team pric
 ($80 by default). Clan checkout remains paused; editing that price does not
 enable it. Solo prices remain configurable per game, with $13 as the default.
 
+New solo games and recurring schedules default to one keeper, two defenders and
+four attackers per team. Admins can adjust the six outfield places when creating
+a game, editing an unused upcoming game, or changing a recurring rule for future
+games. Each saved game controls its booking quotas, party position limits and
+team assignment. Existing games and recurring rules retain their saved formation.
+Formation edits lock after any booking or payment attempt, including cancelled
+history, and after match activity. Price edits retain their separate existing rules.
+
+## Repairing an abandoned retired-provider checkout
+
+An expired `LEGACY` attempt can still hold the one-game checkout limit. The
+Stripe recovery worker intentionally processes only Stripe payments. For a
+verified unpaid legacy attempt on a cancelled solo game, operators can run
+`supabase/scripts/expire_unpaid_legacy_checkout.sql` in a transaction with
+transaction-local `field.repair_intent_id`, `field.repair_profile_id`,
+`field.repair_game_id`, `field.repair_admin_id`, and `field.repair_reason` settings.
+The admin ID must identify the active administrator authorizing the repair.
+Keep specific account identifiers in the private execution inputs.
+
+First run the transaction with `ROLLBACK` and review the result. Then repeat
+with `COMMIT` for the authorized record. The script locks and checks the exact
+owner, game and attempt; refuses any provider, capture, booking or refund
+evidence; and records full before/after snapshots in the admin audit history.
+It expires only that attempt and is idempotent for the same recorded repair.
+It does not change the one-game guard or enable automatic legacy cleanup.
+This maintenance script is not a migration and is never run by deployment.
+
 ## Apple Pay and native builds
 
 The staging App ID is `com.alialtaraif.field.staging`, Apple team `69B646V2WM`.

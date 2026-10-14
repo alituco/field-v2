@@ -7,6 +7,7 @@ import '../core/user_facing_error.dart';
 import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'onboarding_status.dart';
+import '../ui/fieldrush_toast.dart';
 
 enum AuthStep { welcome, phone, otp, name, dateOfBirth }
 
@@ -257,9 +258,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     try {
       await widget.authRepository.sendPhoneOtp(phone);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Code sent again.')));
+      showFieldrushToast(context, 'Code sent again.');
     } catch (error) {
       if (!mounted) return;
       setState(

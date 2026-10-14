@@ -730,18 +730,22 @@ void main() {
     await tester.tap(invite);
     await tester.pumpAndSettle();
 
-    expect(find.text('Invite confirmed players'), findsOneWidget);
+    expect(find.text('Invite to your party'), findsOneWidget);
     expect(find.text('Layla Abbas'), findsOneWidget);
     expect(find.textContaining('Midfielder'), findsOneWidget);
-    expect(find.textContaining('IN A PARTY · 2/4'), findsOneWidget);
+    expect(find.textContaining('In a party'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('invite-party-player-player-layla')),
     );
     await tester.pumpAndSettle();
 
+    expect(repository.sentInvites, 0);
+    await tester.tap(find.byKey(const ValueKey('party-invite-send')));
+    await tester.pumpAndSettle();
     expect(repository.sentInvites, 1);
-    expect(find.text('Sent'), findsOneWidget);
+    expect(find.text('Invite sent to Layla'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 3));
   });
 
   testWidgets('cancelling a party uses the themed confirmation', (

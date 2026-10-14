@@ -23,6 +23,7 @@ import 'package:field/src/open_queue/open_queue_review_screen.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/ui/fieldrush_modal.dart';
+import 'package:field/src/ui/fieldrush_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -667,7 +668,7 @@ void main() {
         _notice('FIXTURE', 'missing'),
         fixtures: _Fixtures(),
       );
-      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.byType(FieldrushToast), findsOneWidget);
       expect(find.textContaining('Could not open'), findsOneWidget);
       expect(find.byType(FixtureDetailScreen), findsNothing);
       expect(find.byType(FieldrushGameDetailScreen), findsNothing);

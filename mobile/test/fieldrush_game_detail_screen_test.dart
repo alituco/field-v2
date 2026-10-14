@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:field/src/fixtures/fixture.dart';
+import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_party.dart';
@@ -29,14 +30,22 @@ void main() {
     _Repository repository, {
     Future<void> Function(OpenQueueGame)? onJoin,
     bool settle = true,
+    double width = 390,
+    double textScale = 1,
   }) async {
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = Size(width, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         debugShowCheckedModeBanner: false,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
         home: FieldrushGameDetailScreen(
           repository: repository,
           gameId: 'game',
@@ -98,19 +107,89 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('game facts show the configured division eligibility range', (
+  testWidgets('configured division crests appear beside the game title', (
     tester,
   ) async {
     await show(
       tester,
       _Repository(_detail(highestDivision: 2, lowestDivision: 4)),
     );
-    await tester.ensureVisible(find.text('Divisions'));
-    await tester.pumpAndSettle();
-    expect(find.text('Divisions'), findsOneWidget);
+    final band = find.byKey(const ValueKey('game-header-divisions'));
+    expect(band, findsOneWidget);
     expect(find.text('DIV 2–4'), findsOneWidget);
+    expect(
+      tester.getRect(band).bottom,
+      lessThan(
+        tester.getRect(find.byKey(const ValueKey('fieldrush-game-hero'))).top,
+      ),
+    );
+    expect(tester.widget<FieldrushGameDivisionRange>(band).compact, isTrue);
+    expect(
+      find.descendant(of: band, matching: find.byType(FieldrushDivisionShield)),
+      findsNWidgets(3),
+    );
+    expect(find.text('Divisions'), findsNothing);
     expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets('upcoming game details retain only the HTML facts rows', (
+    tester,
+  ) async {
+    await show(
+      tester,
+      _Repository(
+        _detail(
+          durationMinutes: 60,
+          teamAssignmentAt: DateTime.utc(2030, 1, 11, 23),
+        ),
+      ),
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('fieldrush-game-facts')),
+      200,
+    );
+    final facts = find.byKey(const ValueKey('fieldrush-game-facts'));
+    for (final label in ['Format', 'Rated', 'Teams', 'Cancellation']) {
+      expect(
+        find.descendant(of: facts, matching: find.text(label)),
+        findsOneWidget,
+      );
+    }
+    expect(find.text('7-a-side · 60 min slot'), findsOneWidget);
+    expect(find.text('Yes · counts to skill rating'), findsOneWidget);
+    expect(find.text('Drawn 4:00 PM'), findsOneWidget);
+    expect(find.text('Shown before payment'), findsOneWidget);
+    expect(find.text('Eligibility'), findsNothing);
+    expect(find.text('18+'), findsNothing);
+    expect(find.text('Divisions'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final size in [(width: 320.0, scale: 1.0), (width: 390.0, scale: 2.0)]) {
+    testWidgets('game header fits ${size.width}px with ${size.scale} text', (
+      tester,
+    ) async {
+      await show(
+        tester,
+        _Repository(_detail(booked: true)),
+        width: size.width,
+        textScale: size.scale,
+      );
+      expect(find.text('Solo game'), findsOneWidget);
+      expect(find.text('DIV 1–5'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byKey(const ValueKey('game-header-divisions')),
+          matching: find.byType(FieldrushDivisionShield),
+        ),
+        findsNWidgets(5),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
 
   testWidgets('saved field address is shown without changing legacy layouts', (
     tester,
@@ -334,7 +413,7 @@ void main() {
     final repository = _PartyRepository(_detail(booked: true));
     repository.booking = _booking(repository.detail.game);
     await show(tester, repository);
-    await tester.scrollUntilVisible(find.text('PLAY TOGETHER'), 150);
+    await tester.scrollUntilVisible(find.text('YOUR PARTY'), 150);
     expect(find.text('You'), findsOneWidget);
     expect(find.text('Invite'), findsNWidgets(3));
     expect(find.text('Invites close 5:30 PM'), findsOneWidget);
@@ -358,9 +437,7 @@ void main() {
     );
     expect(find.text('Invite'), findsNothing);
     expect(
-      find.text(
-        'Party changes are closed for this game. Your confirmed booking is unchanged.',
-      ),
+      find.text('Party changes are closed. You’re still in the game.'),
       findsOneWidget,
     );
     Object? failure;
@@ -419,7 +496,7 @@ void main() {
     );
 
     expect(inviteSlots, findsNWidgets(3));
-    expect(find.text('Invite confirmed players'), findsOneWidget);
+    expect(find.text('Invite to your party'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('invite-party-player-target')),
       findsOneWidget,
@@ -440,6 +517,7 @@ OpenQueueMatchDetail _detail({
   int durationMinutes = 60,
   int highestDivision = 1,
   int lowestDivision = 5,
+  DateTime? teamAssignmentAt,
   int? white,
   int? black,
   List<OpenQueuePlayer> players = const [],
@@ -464,6 +542,7 @@ OpenQueueMatchDetail _detail({
     currency: 'USD',
     highestDivision: highestDivision,
     lowestDivision: lowestDivision,
+    teamAssignmentAt: teamAssignmentAt,
     ageLabel: '18+',
     capacity: 14,
     confirmedCount: count,

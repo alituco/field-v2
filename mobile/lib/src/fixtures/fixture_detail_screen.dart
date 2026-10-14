@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan.dart';
 import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
@@ -174,10 +175,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   Future<void> _joinFixture() async {
     final membership = widget.myClanMembership;
     if (membership == null || !membership.canManageMatches) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Only clan owners and leaders can join matches.'),
-        ),
+      showFieldrushToast(
+        context,
+        'Only clan owners and leaders can join matches.',
       );
       return;
     }
@@ -235,9 +235,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       _configureRefreshTimer();
       unawaited(_loadReliabilityRoster(quiet: true));
       unawaited(_loadMatchResolution());
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Match joined. Game on.')));
+      showFieldrushToast(context, 'Match joined. Game on.');
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -300,16 +298,13 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       if (!mounted) return;
       await _refreshFixture();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            cancellationRefundMessage(
-              refundAmountFils: cancelled.refundAmountFils,
-              destination: cancelled.refundDestination,
-              status: cancelled.refundStatus,
-              isClan: true,
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        cancellationRefundMessage(
+          refundAmountFils: cancelled.refundAmountFils,
+          destination: cancelled.refundDestination,
+          status: cancelled.refundStatus,
+          isClan: true,
         ),
       );
     } catch (error) {
@@ -327,12 +322,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   Future<void> _completeFixture() async {
     if (!_canComplete) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Only participating clan owners and leaders can finalize scores.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        'Only participating clan owners and leaders can finalize scores.',
       );
       return;
     }
@@ -363,9 +355,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _didChange = true;
       });
       _configureRefreshTimer();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Score finalized. SR updated.')),
-      );
+      showFieldrushToast(context, 'Score finalized. SR updated.');
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -430,14 +420,11 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open that clan. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open that clan. Try again.',
         ),
       );
     } finally {
@@ -568,12 +555,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         _reliabilityRoster = saved;
         _didChange = true;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '${saved.confirmedCount} players confirmed for matchday.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        '${saved.confirmedCount} players confirmed for matchday.',
       );
     } catch (error) {
       if (!mounted) return;
@@ -3430,25 +3414,19 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
       );
       if (!mounted) return;
       setState(() => _savedGoalEventIds.add(eventId));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            highlight.isReady
-                ? '${isAssist ? 'Assist' : 'Goal'} added to your profile.'
-                : '${isAssist ? 'Assist' : 'Goal'} is being prepared for your profile.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        highlight.isReady
+            ? '${isAssist ? 'Assist' : 'Goal'} added to your profile.'
+            : '${isAssist ? 'Assist' : 'Goal'} is being prepared for your profile.',
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not add this clip. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not add this clip. Try again.',
         ),
       );
     } finally {
@@ -3495,9 +3473,7 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
         },
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Goal saved to your Photos.')),
-      );
+      showFieldrushToast(context, 'Goal saved to your Photos.');
     } catch (error) {
       _showMediaError(error, 'We could not download this goal. Try again.');
     } finally {
@@ -3566,9 +3542,7 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
         },
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Full game saved to your Photos.')),
-      );
+      showFieldrushToast(context, 'Full game saved to your Photos.');
     } catch (error) {
       _showMediaError(error, 'We could not download the full game. Try again.');
     } finally {
@@ -3651,9 +3625,7 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
       if (outcome == _CustomClipOutcome.saveToProfile) {
         await widget.profileRepository.createCustomClip(request);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Clip added to your profile.')),
-        );
+        showFieldrushToast(context, 'Clip added to your profile.');
       } else {
         final media = await widget.profileRepository.getCustomClipDownload(
           request,
@@ -3667,9 +3639,7 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
           },
         );
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Clip saved to your Photos.')),
-        );
+        showFieldrushToast(context, 'Clip saved to your Photos.');
       }
     } catch (error) {
       _showMediaError(error, 'We could not create this clip. Try again.');
@@ -3788,9 +3758,7 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
 
   void _showMediaError(Object error, String fallback) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(userFacingError(error, fallback: fallback))),
-    );
+    showFieldrushToast(context, userFacingError(error, fallback: fallback));
   }
 
   @override

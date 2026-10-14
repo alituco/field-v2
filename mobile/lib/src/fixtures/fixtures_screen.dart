@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
@@ -286,14 +287,11 @@ class _FixturesScreenState extends State<LegacyFixturesScreen> {
       if (mounted) await _load();
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open this solo match. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open this solo match. Try again.',
         ),
       );
     }

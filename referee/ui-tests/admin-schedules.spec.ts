@@ -6,7 +6,7 @@ import type { AdminGameSchedule } from "../src/lib/admin-game-schedules";
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
 const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
 const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
-const sampleSchedule: AdminGameSchedule = { id: "c1000000-0000-4000-8000-000000000001", name: "Saturday football", fieldId: sampleField.id, fieldName: sampleField.name, weekdays: [6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2026-10-10", endsOn: null, bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 1, lowestDivision: 5, isActive: true, timezone: "America/Phoenix", createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z", occurrences: [], skips: [] };
+const sampleSchedule: AdminGameSchedule = { id: "c1000000-0000-4000-8000-000000000001", name: "Saturday football", fieldId: sampleField.id, fieldName: sampleField.name, weekdays: [6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2026-10-10", endsOn: null, bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 1, lowestDivision: 5, goalkeepersPerSide: 1, defendersPerSide: 3, attackersPerSide: 3, isActive: true, timezone: "America/Phoenix", createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z", occurrences: [], skips: [] };
 
 async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; schedules?: AdminGameSchedule[]; loadError?: boolean; saveError?: boolean; skipError?: boolean } = {}) {
   const writes: { path: string; method: string; body: Record<string, unknown> }[] = [];
@@ -74,6 +74,10 @@ test("Saturday schedule defaults are clear and additional days are sent explicit
   await expect(page.getByLabel("Price per player (USD)", { exact: true })).toHaveValue("13.00");
   await expect(page.getByLabel("Highest division", { exact: true })).toHaveValue("1");
   await expect(page.getByLabel("Lowest division", { exact: true })).toHaveValue("5");
+  await expect(page.getByLabel("Goalkeepers per team")).toHaveValue("1");
+  await expect(page.getByLabel("Goalkeepers per team")).toBeDisabled();
+  await expect(page.getByLabel("Defenders per team")).toHaveValue("2");
+  await expect(page.getByLabel("Attackers per team")).toHaveValue("4");
   await expect(page.getByText("The booked position determines the rating used. Placement players (fewer than 2 games in that track) can only book unrestricted Division 1–5 games.", { exact: true })).toBeVisible();
   await expect(page.getByText("Phoenix · America/Phoenix", { exact: true })).toBeVisible();
   await page.getByLabel("Tuesday", { exact: true }).check();
@@ -85,7 +89,7 @@ test("Saturday schedule defaults are clear and additional days are sent explicit
   await page.getByRole("button", { name: "Save schedule", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Saturday football", exact: true })).toBeVisible();
   expect(writes).toHaveLength(1);
-  expect(writes[0].body).toEqual({ name: "Saturday football", fieldId: sampleField.id, weekdays: [2, 6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2099-07-04", endsOn: "2099-08-01", bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 2, lowestDivision: 4, isActive: true });
+  expect(writes[0].body).toEqual({ name: "Saturday football", fieldId: sampleField.id, weekdays: [2, 6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2099-07-04", endsOn: "2099-08-01", bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 2, lowestDivision: 4, goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4, isActive: true });
 });
 
 test("missing field routes through adding a field and restores the schedule", async ({ page }) => {
@@ -112,6 +116,8 @@ test("add-field round trip preserves schedule draft and selects the new field", 
   await page.getByLabel("Kickoff time", { exact: true }).fill("18:00");
   await page.getByLabel("Highest division", { exact: true }).selectOption("2");
   await page.getByLabel("Lowest division", { exact: true }).selectOption("3");
+  await page.getByLabel("Defenders per team").selectOption("0");
+  await expect(page.getByLabel("Attackers per team")).toHaveValue("6");
   await page.getByRole("button", { name: "Add a new field" }).click();
   await page.getByLabel("Field / pitch name").fill("Second pitch");
   await page.getByLabel("Street address").fill(sampleField.address);
@@ -124,6 +130,8 @@ test("add-field round trip preserves schedule draft and selects the new field", 
   await expect(page.getByLabel("Kickoff time", { exact: true })).toHaveValue("18:00");
   await expect(page.getByLabel("Highest division", { exact: true })).toHaveValue("2");
   await expect(page.getByLabel("Lowest division", { exact: true })).toHaveValue("3");
+  await expect(page.getByLabel("Defenders per team")).toHaveValue("0");
+  await expect(page.getByLabel("Attackers per team")).toHaveValue("6");
   await expect(page.getByLabel("Field / pitch", { exact: true })).toHaveValue("f1000000-0000-4000-8000-000000000002");
 });
 
@@ -170,6 +178,22 @@ test("pause and resume change only the schedule and explain existing games stay 
   await page.getByRole("button", { name: "Resume schedule", exact: true }).click();
   await expect(page.getByRole("button", { name: "Generate next games", exact: true })).toBeEnabled();
   expect(writes.map((write) => write.body)).toEqual([{ isActive: false }, { isActive: true }]);
+});
+
+test("existing schedules retain their formation until an admin changes future games", async ({ page }) => {
+  const writes = await mockAdmin(page, { schedules: [sampleSchedule] });
+  await page.goto("/admin?section=schedules");
+  await page.getByRole("button", { name: "Edit schedule", exact: true }).click();
+  await expect(page.getByLabel("Defenders per team")).toHaveValue("3");
+  await expect(page.getByLabel("Attackers per team")).toHaveValue("3");
+  await page.getByLabel("Defenders per team").selectOption("2");
+  await expect(page.getByLabel("Attackers per team")).toHaveValue("4");
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Saturday football", exact: true })).toBeVisible();
+  expect(writes).toHaveLength(1);
+  expect(writes[0].method).toBe("PATCH");
+  expect(writes[0].path).toBe(`/api/referee/admin/game-schedules/${sampleSchedule.id}`);
+  expect(writes[0].body).toMatchObject({ goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4 });
 });
 
 test("skip and restore use explicit reasons without cancelling generated games", async ({ page }) => {

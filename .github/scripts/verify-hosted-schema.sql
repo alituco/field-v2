@@ -141,6 +141,8 @@ begin
 
   foreach rpc_signature in array array[
     'public.admin_save_fieldrush_city(uuid,text,jsonb)',
+    'public.admin_create_open_queue_game(uuid,uuid,timestamptz,integer,text,integer,integer,integer,integer,integer,integer)',
+    'public.admin_update_open_queue_game_formation(uuid,uuid,integer,integer,integer,text)',
     'public.admin_list_fieldrush_seasons(uuid)',
     'public.admin_save_fieldrush_season(uuid,text,jsonb,integer)',
     'public.admin_update_fieldrush_season(uuid,text,text,jsonb,text,integer)',

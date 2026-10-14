@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/profile/fieldrush_player_profile.dart';
+import 'package:field/src/profile/fieldrush_you_widgets.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -16,12 +17,15 @@ void main() {
     (tester) async {
       final actions = <String>[];
       await _pump(tester, _content(actions: actions));
-      expect(find.text('VIEW ONLY'), findsOneWidget);
+      expect(find.text('VIEW ONLY'), findsNothing);
       expect(find.text('DIVISION 4'), findsOneWidget);
       expect(find.text('1199'), findsOneWidget);
-      expect(find.text('Position unavailable'), findsOneWidget);
-      expect(find.text('8'), findsOneWidget);
-      expect(find.text('63%'), findsOneWidget);
+      expect(find.text('Position unavailable'), findsNothing);
+      expect(find.byType(FieldrushMatchRecordCard), findsOneWidget);
+      expect(find.text('0 played · 0% won'), findsOneWidget);
+      expect(find.text('PLAYED'), findsNothing);
+      expect(find.text('WIN RATE'), findsNothing);
+      expect(find.text('SHOW-UP'), findsNothing);
       expect(find.text('99%'), findsNothing);
       expect(find.textContaining('private'), findsNothing);
       expect(find.textContaining('+1602'), findsNothing);
@@ -66,16 +70,14 @@ void main() {
       ),
     );
     expect(find.text('RATING UNAVAILABLE'), findsOneWidget);
-    expect(find.text('No clan · plays solo'), findsOneWidget);
+    expect(find.text('Not in a clan'), findsOneWidget);
+    expect(find.byKey(const ValueKey('player-no-clan')), findsOneWidget);
     expect(find.text('0'), findsNothing);
     expect(find.text('0%'), findsNothing);
     expect(find.text('D'), findsNothing);
     expect(find.text('Report player'), findsNothing);
     expect(find.byType(FieldrushDivisionShield), findsNothing);
-    expect(
-      find.bySemanticsLabel(RegExp('SHOW-UP: unavailable')),
-      findsOneWidget,
-    );
+    expect(find.bySemanticsLabel(RegExp('SHOW-UP:')), findsNothing);
     expect(find.bySemanticsLabel('No completed game'), findsNWidgets(5));
     semantics.dispose();
   });
@@ -156,6 +158,40 @@ void main() {
     }
   });
 
+  testWidgets('narrow enlarged text keeps the record and initials readable', (
+    tester,
+  ) async {
+    for (final scale in [1.3, 2.0]) {
+      await _pump(
+        tester,
+        FieldrushPlayerProfileContent(
+          profile: _profile(),
+          isFollowing: false,
+          followBusy: false,
+          onBack: () {},
+          onMatchHistory: () {},
+        ),
+        width: 320,
+        textScale: scale,
+      );
+      expect(find.byType(FieldrushMatchRecordCard), findsOneWidget);
+      expect(find.text('WON'), findsOneWidget);
+      expect(find.text('DRAWN'), findsOneWidget);
+      expect(find.text('LOST'), findsOneWidget);
+      expect(find.text('PLAYED'), findsNothing);
+      expect(find.text('WIN RATE'), findsNothing);
+      expect(find.text('SHOW-UP'), findsNothing);
+      final initials = tester.widget<Text>(find.text('JA'));
+      expect(initials.maxLines, 1);
+      expect(initials.softWrap, isFalse);
+      expect(
+        find.ancestor(of: find.text('JA'), matching: find.byType(FittedBox)),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('loading skeleton is static and retains working back control', (
     tester,
   ) async {
@@ -178,6 +214,7 @@ void main() {
       isTrue,
     );
     expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byKey(const ValueKey('player-record-loading')), findsOneWidget);
     expect(tester.binding.transientCallbackCount, 0);
     await tester.tap(find.byKey(const ValueKey('player-back')));
     expect(backs, 1);
@@ -279,8 +316,7 @@ FieldrushPlayerProfileContent _content({
   onFollow: () => actions?.add('follow'),
   onReport: () => actions?.add('report'),
   onOpenClan: () => actions?.add('clan'),
-  played: 8,
-  winRate: 62.5,
+  onMatchHistory: () => actions?.add('history'),
   recentResults: const [
     ProfileGameOutcome.win,
     null,

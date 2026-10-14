@@ -18,15 +18,18 @@ import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
 import '../open_queue/open_queue.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability_repository.dart';
 import '../reliability/reliability_status_card.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'fieldrush_player_profile.dart';
+import 'fieldrush_match_history_screen.dart';
 import 'profile.dart';
 import 'profile_clip_screen.dart';
 import 'profile_connections_screen.dart';
@@ -139,8 +142,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (mounted && version == _profileLoadVersion) {
       _ratings = ratings;
       if (_latestProfile?.id != profile.id) {
-        _ratingTrack =
-            ['GK', 'GOALKEEPER'].contains(profile.position?.toUpperCase())
+        _ratingTrack = profile.playedPosition == 'GK'
             ? RatingTrack.goalkeeper
             : RatingTrack.outfield;
       }
@@ -201,14 +203,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _latestProfile = profile;
         _profileFuture = Future.value(profile);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not update that follow. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not update that follow. Try again.',
         ),
       );
     } finally {
@@ -224,9 +223,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     await Clipboard.setData(ClipboardData(text: '@${profile.username}'));
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('@${profile.username} copied')));
+    showFieldrushToast(context, '@${profile.username} copied');
   }
 
   Future<void> _openPreviousGame(ProfilePreviousGame game) {
@@ -246,7 +243,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (mounted) await _refresh();
   }
 
-  Future<void> _openRatedMatch(ProfilePreviousGame game) async {
+  Future<void> _openRatedMatch(
+    ProfilePreviousGame game, {
+    BuildContext? historyContext,
+  }) async {
     final matchId = game.id;
     final isSolo = game.isSolo;
     if (_openingGameId != null) return;
@@ -256,51 +256,72 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (isSolo) {
         final detail = await _openQueueRepository.getMatchDetail(matchId);
         final playerRatingUpdate = _playerRatingUpdateFor(game, detail);
-        if (!mounted) return;
+        if (!mounted ||
+            (historyContext != null &&
+                (!historyContext.mounted ||
+                    ModalRoute.of(historyContext)?.isCurrent != true))) {
+          return;
+        }
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(
-            builder: (_) => FixtureDetailScreen(
-              fixture: detail.toFixture(),
-              fixtureRepository: _fixtureRepository,
-              clanRepository: _clanRepository,
-              myClanMembership: null,
-              sourceLabel: 'SOLO',
-              showTeamRatings: false,
-              playerRatingUpdate: playerRatingUpdate,
-              profileRepository: widget.profileRepository,
-              refreshFixture: () async {
-                final next = await _openQueueRepository.getMatchDetail(matchId);
-                return next.toFixture();
-              },
-            ),
+            builder: (_) => historyContext != null
+                ? FieldrushGameDetailScreen(
+                    repository: _openQueueRepository,
+                    gameId: matchId,
+                    initialDetail: detail,
+                    playerRatingUpdate: playerRatingUpdate,
+                    profileRepository: widget.profileRepository,
+                    fixtureRepository: _fixtureRepository,
+                  )
+                : FixtureDetailScreen(
+                    fixture: detail.toFixture(),
+                    fixtureRepository: _fixtureRepository,
+                    clanRepository: _clanRepository,
+                    myClanMembership: null,
+                    sourceLabel: 'SOLO',
+                    showTeamRatings: false,
+                    playerRatingUpdate: playerRatingUpdate,
+                    profileRepository: widget.profileRepository,
+                    refreshFixture: () async {
+                      final next = await _openQueueRepository.getMatchDetail(
+                        matchId,
+                      );
+                      return next.toFixture();
+                    },
+                  ),
           ),
         );
       } else {
         final fixture = await _fixtureRepository.getFixture(matchId);
-        if (!mounted) return;
+        if (!mounted ||
+            (historyContext != null &&
+                (!historyContext.mounted ||
+                    ModalRoute.of(historyContext)?.isCurrent != true))) {
+          return;
+        }
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(
-            builder: (_) => FixtureDetailScreen(
-              fixture: fixture,
-              fixtureRepository: _fixtureRepository,
-              clanRepository: _clanRepository,
-              myClanMembership: null,
-              sourceLabel: 'CLAN',
-              profileRepository: widget.profileRepository,
+            builder: (_) => Theme(
+              data: FieldrushAuthTheme.theme(context),
+              child: FixtureDetailScreen(
+                fixture: fixture,
+                fixtureRepository: _fixtureRepository,
+                clanRepository: _clanRepository,
+                myClanMembership: null,
+                sourceLabel: 'CLAN',
+                profileRepository: widget.profileRepository,
+              ),
             ),
           ),
         );
       }
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open this match. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open this match. Try again.',
         ),
       );
     } finally {
@@ -485,12 +506,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : profileName,
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Report sent privately · reference ${receipt.shortReference}',
-        ),
-      ),
+    showFieldrushToast(
+      context,
+      'Report sent privately · reference ${receipt.shortReference}',
     );
   }
 
@@ -501,10 +519,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       requestContext: const {'entry_point': 'profile'},
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Request sent · reference ${receipt.shortReference}'),
-      ),
+    showFieldrushToast(
+      context,
+      'Request sent · reference ${receipt.shortReference}',
     );
   }
 
@@ -774,10 +791,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               clanName: profile.clan!.name,
                             ),
                       onBack: _isUpdatingFollow ? null : back,
-                      positionLabel: profile.position ?? 'Position unavailable',
-                      played: profile.playedCount,
-                      winRate: profile.winRatePercent,
-                      showUpRate: profile.showUpPercent,
+                      positionLabel: profile.playedPositionLabel,
+                      onMatchHistory: () => _openPublicHistory(profile),
+                      onClip: _openHighlight,
                       recentResults: profile.lastFiveResults,
                       trailingChildren: [
                         Padding(
@@ -794,13 +810,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                                 ),
                                 label: const Text('Share profile'),
                               ),
-                              if (profile.previousGames.isNotEmpty ||
-                                  profile.highlights.isNotEmpty ||
-                                  profile.career.isNotEmpty)
-                                TextButton(
-                                  onPressed: () => _openPublicHistory(profile),
-                                  child: const Text('Match history & clips'),
-                                ),
                             ],
                           ),
                         ),
@@ -819,44 +828,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _openPublicHistory(PlayerProfile profile) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (context) => Theme(
-          data: FieldrushAuthTheme.theme(context),
-          child: Scaffold(
-            appBar: AppBar(title: Text(profile.displayName)),
-            body: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                if (profile.previousGames.isNotEmpty)
-                  _MatchHistoryCard(
-                    games: profile.previousGames,
-                    openingMatchId: _openingGameId,
-                    onOpenGame: _openPreviousGame,
-                  ),
-                if (profile.highlights.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _HighlightsCard(
-                    highlights: profile.highlights,
-                    showEmptyState: false,
-                    onOpenHighlight: _openHighlight,
-                  ),
-                ],
-                if (profile.career.isNotEmpty) ...[
-                  const SizedBox(height: 16),
-                  _CareerCard(
-                    entries: profile.career,
-                    onOpenClan: (entry) {
-                      if (entry.clanId != null) {
-                        _openClan(
-                          clanId: entry.clanId!,
-                          clanName: entry.clanName,
-                        );
-                      }
-                    },
-                  ),
-                ],
-              ],
-            ),
+        builder: (historyContext) => FieldrushMatchHistoryScreen(
+          profile: profile,
+          playerName: profile.displayName,
+          ratingEvents: _ratings?.mergeHistory(
+            profile.playerRating?.events ?? const [],
           ),
+          onOpenGame: (game) =>
+              _openRatedMatch(game, historyContext: historyContext),
         ),
       ),
     );

@@ -107,7 +107,7 @@ void main() {
     },
   );
 
-  test('new roles use 7v7 while historical MID capacity remains available', () {
+  test('older 7v7 payloads retain their original 1/3/3 formation', () {
     expect(OpenQueueRole.goalkeeper.matchCapacity, 2);
     expect(OpenQueueRole.defender.matchCapacity, 6);
     expect(OpenQueueRole.midfielder.matchCapacity, 0);
@@ -120,6 +120,104 @@ void main() {
       ),
       14,
     );
+  });
+
+  group('saved game formation', () {
+    Map<String, dynamic> gameJson({int capacity = 14}) => {
+      'id': 'formation-game',
+      'status': 'OPEN',
+      'starts_at': '2099-01-01T00:00:00Z',
+      'ends_at': '2099-01-01T01:00:00Z',
+      'capacity': capacity,
+      'goalkeeper_spots': 2,
+      'defender_spots': 4,
+      'midfielder_spots': 0,
+      'attacker_spots': 8,
+    };
+
+    test(
+      'feed, match detail and booking history use saved 1/2/4 capacities',
+      () {
+        final json = {
+          ...gameJson(),
+          'goalkeeper_capacity': 2,
+          'defender_capacity': 4,
+          'midfielder_capacity': 0,
+          'attacker_capacity': 8,
+        };
+        for (final game in [
+          OpenQueueGame.fromJson(json),
+          OpenQueueGame.fromBookingJson(json),
+          OpenQueueMatchDetail.fromJson({'game': json}).game,
+        ]) {
+          expect(game.goalkeeperCapacity, 2);
+          expect(game.defenderCapacity, 4);
+          expect(game.midfielderCapacity, 0);
+          expect(game.attackerCapacity, 8);
+          expect(game.capacityFor(OpenQueueRole.goalkeeper), 2);
+          expect(game.capacityFor(OpenQueueRole.defender), 4);
+          expect(game.capacityFor(OpenQueueRole.midfielder), 0);
+          expect(game.capacityFor(OpenQueueRole.attacker), 8);
+        }
+      },
+    );
+
+    test('omitted capacity metadata preserves old 7v7 and 6v6 history', () {
+      for (final parse in [
+        OpenQueueGame.fromJson,
+        OpenQueueGame.fromBookingJson,
+      ]) {
+        final seven = parse(gameJson());
+        expect(seven.goalkeeperCapacity, isNull);
+        expect(seven.defenderCapacity, isNull);
+        expect(seven.attackerCapacity, isNull);
+        expect(seven.capacityFor(OpenQueueRole.goalkeeper), 2);
+        expect(seven.capacityFor(OpenQueueRole.defender), 6);
+        expect(seven.capacityFor(OpenQueueRole.midfielder), 0);
+        expect(seven.capacityFor(OpenQueueRole.attacker), 6);
+        final six = parse(gameJson(capacity: 12));
+        expect(six.capacityFor(OpenQueueRole.goalkeeper), 2);
+        expect(six.capacityFor(OpenQueueRole.defender), 4);
+        expect(six.capacityFor(OpenQueueRole.midfielder), 4);
+        expect(six.capacityFor(OpenQueueRole.attacker), 2);
+      }
+    });
+
+    test('zero defender capacity stays unavailable even with stale spots', () {
+      final game = OpenQueueGame.fromJson({
+        ...gameJson(),
+        'goalkeeper_capacity': 2,
+        'defender_capacity': 0,
+        'midfielder_capacity': 0,
+        'attacker_capacity': 12,
+      });
+      expect(game.capacityFor(OpenQueueRole.defender), 0);
+      expect(game.canBook(OpenQueueRole.defender), isFalse);
+      expect(game.canBook(OpenQueueRole.attacker), isTrue);
+    });
+
+    test('booking copies keep their saved formation', () {
+      final booking = OpenQueueBooking.fromJson({
+        'id': 'booking',
+        'game_id': 'formation-game',
+        'profile_id': 'profile',
+        'role': 'ATT',
+        'status': 'CONFIRMED',
+        'amount_paid_fils': 13000,
+        'booked_at': '2098-12-31T12:00:00Z',
+        'game': {
+          ...gameJson(),
+          'goalkeeper_capacity': 2,
+          'defender_capacity': 4,
+          'midfielder_capacity': 0,
+          'attacker_capacity': 8,
+        },
+      });
+      final copied = booking.copyWith();
+      expect(copied.game.capacityFor(OpenQueueRole.defender), 4);
+      expect(copied.game.capacityFor(OpenQueueRole.attacker), 8);
+      expect(copied.role, OpenQueueRole.attacker);
+    });
   });
 
   test('fixture feed games parse results and the caller booking safely', () {

@@ -14,6 +14,7 @@ import type { RefereeFixture } from "./types";
 import { adminGameCurrency, type AdminGameCurrency } from "./admin-game-money";
 import { refundRequiresManualReview } from "./payment-refunds";
 import { loadAdminGamePricing, type AdminGamePricing } from "./admin-game-pricing";
+import { loadAdminGameFormation, type AdminGameFormation } from "./admin-game-formation";
 
 export type AdminGameAuditItem = {
   id: string;
@@ -108,6 +109,7 @@ export type AdminGameDetail = {
   fixture: RefereeFixture;
   currency: AdminGameCurrency;
   pricing: AdminGamePricing | null;
+  formation: AdminGameFormation | null;
   participants: AdminGameParticipants;
   reserves: {
     active: AdminGameReserve[];
@@ -167,6 +169,7 @@ export async function loadAdminGameDetail(
     resolutionCase,
     currencyResult,
     pricing,
+    formation,
   ] = await Promise.all([
     gamePromise,
     loadAdminGameParticipants(db, matchKind, matchId),
@@ -202,6 +205,7 @@ export async function loadAdminGameDetail(
     db.from(matchKind === "SOLO" ? "open_queue_games" : "fixtures")
       .select("currency").eq("id", matchId).single(),
     matchKind === "SOLO" ? loadAdminGamePricing(db, matchId) : Promise.resolve(null),
+    matchKind === "SOLO" ? loadAdminGameFormation(db, matchId) : Promise.resolve(null),
   ]);
 
   const fixture = games.find((game) => game.id === matchId);
@@ -218,6 +222,7 @@ export async function loadAdminGameDetail(
     fixture,
     currency: adminGameCurrency(matchKind, currencyResult.data?.currency),
     pricing,
+    formation,
     participants,
     reserves,
     assignedReferee: assignment && referee.profile_id ? {

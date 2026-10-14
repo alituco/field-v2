@@ -88,6 +88,10 @@ class SupabaseOpenQueueRepository
     currency,
     highest_division,
     lowest_division,
+    goalkeeper_capacity,
+    defender_capacity,
+    midfielder_capacity,
+    attacker_capacity,
     field_id,
     market_city_id,
     location_address,
@@ -179,8 +183,8 @@ class SupabaseOpenQueueRepository
     ];
     if (rows.isEmpty) return rows;
     // Existing table-returning RPC signatures remain compatible for history.
-    // Enrich with currency and the game's saved location snapshot, without
-    // exposing the admin-only fields catalog to player clients.
+    // Enrich with currency, formation and the game's saved location snapshot,
+    // without exposing the admin-only fields catalog to player clients.
     final metadata = await _client
         .from('open_queue_games')
         .select('id, $_gameMetadataSelect')

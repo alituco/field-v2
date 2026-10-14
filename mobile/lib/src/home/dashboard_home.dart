@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan.dart';
@@ -443,14 +444,11 @@ class _DashboardHomeState extends State<DashboardHome> {
       if (mounted) await _load();
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              userFacingError(
-                error,
-                fallback: 'Could not open this game. Try again.',
-              ),
-            ),
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'Could not open this game. Try again.',
           ),
         );
       }
@@ -515,14 +513,11 @@ class _DashboardHomeState extends State<DashboardHome> {
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'Could not open this notification. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'Could not open this notification. Try again.',
         ),
       );
     }

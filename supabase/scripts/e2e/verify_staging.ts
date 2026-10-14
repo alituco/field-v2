@@ -210,8 +210,8 @@ async function verifyPreparedGames(): Promise<void> {
     );
     assertRoleCounts(matchBookings, {
       GK: 2,
-      DEF: 5,
-      ATT: 6,
+      DEF: 3,
+      ATT: 8,
     });
     assert(
       matchBookings.every((booking) =>
@@ -297,6 +297,13 @@ async function verifyCompletedMatch(): Promise<void> {
       (bookings ?? []).filter((row) => row.team === "BLACK").length === 7,
     "E2E teams must contain seven players each.",
   );
+  for (const team of ["WHITE", "BLACK"]) {
+    assertRoleCounts((bookings ?? []).filter((row) => row.team === team), {
+      GK: 1,
+      DEF: 2,
+      ATT: 4,
+    });
+  }
 
   const { data: ratingEvents, error: ratingError } = await admin
     .from("player_rating_events")
@@ -608,7 +615,7 @@ function assertRoleCounts(
   for (const [role, count] of Object.entries(expected)) {
     assert(
       rows.filter((row) => row.role === role).length === count,
-      `Prepared E2E roster needs ${count} ${role} booking(s).`,
+      `E2E roster needs ${count} ${role} booking(s).`,
     );
   }
 }

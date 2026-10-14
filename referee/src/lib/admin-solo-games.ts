@@ -1,4 +1,31 @@
-export type AdminSoloGameCreateInput = {
+export type SoloFormation = {
+  goalkeepersPerSide: number;
+  defendersPerSide: number;
+  attackersPerSide: number;
+};
+
+export const DEFAULT_SOLO_FORMATION: SoloFormation = {
+  goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4,
+};
+
+/** Seven-a-side always reserves one keeper; the six outfield spots are configurable. */
+export function parseSoloFormation(body: Record<string, unknown>, useDefaults = false): SoloFormation {
+  const read = (key: keyof SoloFormation, label: string) => {
+    const value = body[key] === undefined && useDefaults ? DEFAULT_SOLO_FORMATION[key] : body[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 6) {
+      throw new Error(`${label} per team must be a whole number from 0 to 6.`);
+    }
+    return value;
+  };
+  const goalkeepersPerSide = read("goalkeepersPerSide", "Goalkeepers");
+  const defendersPerSide = read("defendersPerSide", "Defenders");
+  const attackersPerSide = read("attackersPerSide", "Attackers");
+  if (goalkeepersPerSide !== 1) throw new Error("Seven-a-side games require exactly one goalkeeper per team.");
+  if (defendersPerSide + attackersPerSide !== 6) throw new Error("Defenders and attackers must add up to six players per team.");
+  return { goalkeepersPerSide, defendersPerSide, attackersPerSide };
+}
+
+export type AdminSoloGameCreateInput = SoloFormation & {
   fieldId: string;
   matchDate: string;
   startsAt: string;
@@ -138,6 +165,7 @@ export function parseAdminSoloGameCreateInput(
     ageLabel: cleanText(body.ageLabel, "Age label", 2, 40),
     highestDivision,
     lowestDivision,
+    ...parseSoloFormation(body, true),
   };
 }
 

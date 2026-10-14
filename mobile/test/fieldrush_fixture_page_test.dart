@@ -90,6 +90,174 @@ void main() {
     );
     expect(selected.center.dx, closeTo(strip.center.dx, .1));
   });
+
+  for (final width in [375.0, 390.0, 430.0]) {
+    testWidgets('matchday chips have a five-to-six day density at $width', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _Repository(
+          fixtures: [
+            for (var day = 1; day <= 22; day++)
+              _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+          ],
+        ),
+        width: width,
+      );
+      final chip = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-10')),
+      );
+      final strip = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-strip')),
+      );
+      expect(chip.width, 58);
+      expect(chip.height, 70);
+      expect((strip.width / (chip.width + 7)).ceil(), inInclusiveRange(5, 6));
+      expect(chip.center.dx, closeTo(strip.center.dx, .1));
+      expect(find.textContaining('· CLAN'), findsNothing);
+      expect(find.text('Clan games are coming soon'), findsNothing);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('previous and next clamp long-strip dates at the natural edges', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _Repository(
+        fixtures: [
+          for (var day = 1; day <= 22; day++)
+            _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+        ],
+      ),
+    );
+    final previous = find.byKey(const ValueKey('fixtures-previous-day'));
+    final next = find.byKey(const ValueKey('fixtures-next-day'));
+    for (var index = 0; index < 10; index++) {
+      await tester.tap(previous);
+      await tester.pumpAndSettle();
+    }
+    final strip = tester.getRect(
+      find.byKey(const ValueKey('fixtures-date-strip')),
+    );
+    expect(tester.widget<IconButton>(previous).onPressed, isNull);
+    expect(
+      tester
+          .getRect(find.byKey(const ValueKey('fixtures-date-2026-09-30')))
+          .left,
+      closeTo(strip.left, .1),
+    );
+    for (var index = 0; index < 21; index++) {
+      await tester.tap(next);
+      await tester.pumpAndSettle();
+    }
+    expect(tester.widget<IconButton>(next).onPressed, isNull);
+    expect(
+      tester
+          .getRect(find.byKey(const ValueKey('fixtures-date-2026-10-21')))
+          .right,
+      closeTo(strip.right - 7, .1),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [320.0, 430.0]) {
+    testWidgets('first selected date starts at the left at $width', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _Repository(
+          upcoming: [
+            for (var day = 11; day <= 22; day++)
+              _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+          ],
+        ),
+        width: width,
+      );
+      final stripFinder = find.byKey(const ValueKey('fixtures-date-strip'));
+      final strip = tester.getRect(stripFinder);
+      final first = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-10')),
+      );
+      expect(tester.widget<ListView>(stripFinder).controller!.offset, 0);
+      expect(first.left, closeTo(strip.left, .1));
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('fixtures-previous-day')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-11')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+    'horizontal browsing and tapping a date preserve centered selection',
+    (tester) async {
+      final repository = _Repository(
+        fixtures: [
+          for (var day = 1; day <= 22; day++)
+            _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+        ],
+      );
+      await _pump(tester, repository);
+      final stripFinder = find.byKey(const ValueKey('fixtures-date-strip'));
+      final controller = tester.widget<ListView>(stripFinder).controller!;
+      final offset = controller.offset;
+      await tester.drag(stripFinder, const Offset(-220, 0));
+      await tester.pumpAndSettle();
+      expect(controller.offset, greaterThan(offset));
+      await tester.tap(find.byKey(const ValueKey('fixtures-date-2026-10-13')));
+      await tester.pumpAndSettle();
+      expect(find.text('Tue, Oct 13'), findsOneWidget);
+      expect(find.byKey(const ValueKey('solo-fixture-day-14')), findsOneWidget);
+      expect(
+        tester
+            .getCenter(find.byKey(const ValueKey('fixtures-date-2026-10-13')))
+            .dx,
+        closeTo(tester.getRect(stripFinder).center.dx, .1),
+      );
+      expect(repository.bookCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'resizing and enlarged text re-center the same selected matchday',
+    (tester) async {
+      final repository = _Repository(
+        fixtures: [
+          for (var day = 1; day <= 22; day++)
+            _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+        ],
+      );
+      await _pump(tester, repository);
+      await tester.tap(find.byKey(const ValueKey('fixtures-next-day')));
+      await tester.pumpAndSettle();
+      for (final (width, scale) in [(430.0, 1.0), (320.0, 1.3)]) {
+        await _pump(tester, repository, width: width, scale: scale);
+        final chip = tester.getRect(
+          find.byKey(const ValueKey('fixtures-date-2026-10-11')),
+        );
+        final strip = tester.getRect(
+          find.byKey(const ValueKey('fixtures-date-strip')),
+        );
+        expect(find.text('Sun, Oct 11'), findsOneWidget);
+        expect(chip.center.dx, closeTo(strip.center.dx, .1));
+        expect(chip.width, closeTo(58 * scale, .1));
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
   testWidgets(
     'short matchday row is centered and division artwork retains stars',
     (tester) async {
@@ -236,7 +404,8 @@ void main() {
       expect(find.byType(FieldrushFixturePage), findsOneWidget);
       expect(find.byType(LegacyFixturesScreen), findsNothing);
       expect(find.text('Phoenix, AZ'), findsOneWidget);
-      expect(find.text('Clan games are coming soon'), findsOneWidget);
+      expect(find.text('Clan games are coming soon'), findsNothing);
+      expect(find.textContaining('· CLAN'), findsNothing);
       expect(find.text('Match Calendar'), findsNothing);
       expect(legacy.calls, 0);
       await tester.tap(
@@ -316,8 +485,8 @@ void main() {
     await _pump(tester, _Repository());
     expect(find.text('No games yet'), findsOneWidget);
     expect(find.byKey(const ValueKey('fixtures-next-day')), findsNothing);
-    expect(find.text('Clan games are coming soon'), findsOneWidget);
-    expect(find.text('COMING SOON'), findsOneWidget);
+    expect(find.text('Clan games are coming soon'), findsNothing);
+    expect(find.text('COMING SOON'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('fixtures-city-picker')));
     await tester.pumpAndSettle();
     expect(find.text('Phoenix, AZ'), findsNWidgets(2));

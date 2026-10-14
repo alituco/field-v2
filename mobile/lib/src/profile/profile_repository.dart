@@ -726,6 +726,7 @@ class SupabaseProfileRepository implements ProfileRepository {
         .toSet()
         .toList();
     final timezones = <String, String>{};
+    final actualStarts = <String, DateTime>{};
     // The historical RPC does not return timezone. Fetch only public game
     // metadata in bounded batches, without changing its database signature.
     // Date metadata is optional: an outage must not hide the whole profile.
@@ -734,12 +735,30 @@ class SupabaseProfileRepository implements ProfileRepository {
       try {
         final metadata = await _client
             .from('open_queue_games')
-            .select('id,timezone')
-            .inFilter('id', soloIds.sublist(start, end));
+            .select('id,timezone,open_queue_events(occurred_at)')
+            .inFilter('id', soloIds.sublist(start, end))
+            .eq('open_queue_events.event_type', 'MATCH_STARTED');
         for (final row in metadata) {
           final timezone = row['timezone'];
           if (timezone is String && timezone.trim().isNotEmpty) {
             timezones[row['id'] as String] = timezone.trim();
+          }
+          // An early or delayed kickoff is the played time, not its advertised
+          // booking slot. Use the first actual start for position tie-breaking.
+          final events = row['open_queue_events'];
+          if (events is List) {
+            for (final event in events.whereType<Map>()) {
+              final value = event['occurred_at'];
+              final occurredAt = value is String
+                  ? DateTime.tryParse(value)
+                  : null;
+              if (occurredAt == null) continue;
+              final id = row['id'] as String;
+              final previous = actualStarts[id];
+              if (previous == null || occurredAt.isBefore(previous)) {
+                actualStarts[id] = occurredAt;
+              }
+            }
           }
         }
       } catch (_) {
@@ -750,6 +769,8 @@ class SupabaseProfileRepository implements ProfileRepository {
       for (var index = 0; index < records.length; index++)
         ProfilePreviousGame.fromJson({
           ...records[index],
+          if (games[index].isSolo && actualStarts[games[index].id] != null)
+            'played_at': actualStarts[games[index].id]!.toIso8601String(),
           'timezone': games[index].isSolo
               ? timezones[games[index].id]
               : 'Asia/Bahrain',

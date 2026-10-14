@@ -13,7 +13,8 @@ const base = { name: "Saturday football", fieldId: id, weekdays: [6], kickoffTim
 
 test("weekly Saturday schedules use Phoenix defaults, 60 minutes, $13, and four weeks", () => {
   assert.deepEqual(parse(base), { name: base.name, field_id: id, weekdays: [6], kickoff_time: "18:15", duration_minutes: 60,
-    starts_on: "2099-07-25", ends_on: null, booking_window_days: 28, price_fils: 13000, age_label: "18+", highest_division: 1, lowest_division: 5, is_active: true });
+    starts_on: "2099-07-25", ends_on: null, booking_window_days: 28, price_fils: 13000, age_label: "18+", highest_division: 1, lowest_division: 5,
+    goalkeepers_per_side: 1, defenders_per_side: 2, attackers_per_side: 4, is_active: true });
   const custom = parse({ ...base, weekdays: [7, 2, 6], durationMinutes: 90, priceUsd: "15.50", bookingWindowDays: 42, highestDivision: 2, lowestDivision: 4 });
   assert.deepEqual(custom.weekdays, [2, 6, 7]);
   assert.equal(custom.price_fils, 15500);

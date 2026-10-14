@@ -42,8 +42,8 @@ class PlayerProfile {
   final List<ProfilePreviousGame> previousGames;
   final ProfilePlayerRating? playerRating;
 
-  /// Null until a public, player-owned position is available. A historical
-  /// booking role is not a declaration of the player's preferred position.
+  /// Legacy preferred-position metadata. Public presentation uses the position
+  /// actually played, derived from verified match history below.
   final String? position;
 
   /// A public attendance aggregate, if supplied. Private reliability records
@@ -69,6 +69,31 @@ class PlayerProfile {
   }
 
   int get playedCount => _publicPlayedGames.length;
+
+  /// Most frequently played booked position. History is already sorted newest
+  /// first, so the most recently played position wins an equal-count tie.
+  /// Unknown legacy roles do not invent a position for a player.
+  String? get playedPosition {
+    final roles = [
+      for (final game in _publicPlayedGames)
+        if (_playedPositionCode(game.playerRole) case final role?) role,
+    ];
+    if (roles.isEmpty) return null;
+    final counts = <String, int>{};
+    for (final role in roles) {
+      counts[role] = (counts[role] ?? 0) + 1;
+    }
+    final most = counts.values.reduce((a, b) => a > b ? a : b);
+    return roles.firstWhere((role) => counts[role] == most);
+  }
+
+  String? get playedPositionLabel => switch (playedPosition) {
+    'GK' => 'Goalkeeper',
+    'DEF' => 'Defender',
+    'MID' => 'Midfielder',
+    'ATT' => 'Attacker',
+    _ => null,
+  };
 
   /// Unknown or absent results must not be represented as a 0% win rate.
   double? get winRatePercent {
@@ -128,6 +153,15 @@ class PlayerProfile {
         .toUpperCase();
   }
 }
+
+String? _playedPositionCode(String? value) =>
+    switch (value?.trim().toUpperCase()) {
+      'GK' || 'GOALKEEPER' => 'GK',
+      'DEF' || 'DEFENDER' => 'DEF',
+      'MID' || 'MIDFIELDER' => 'MID',
+      'ATT' || 'ATTACKER' => 'ATT',
+      _ => null,
+    };
 
 class ProfilePlayerRating {
   const ProfilePlayerRating({

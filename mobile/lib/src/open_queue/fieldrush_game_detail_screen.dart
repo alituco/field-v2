@@ -12,10 +12,12 @@ import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../home/field_bottom_nav.dart';
+import '../home/fieldrush_home_widgets.dart';
 import '../payments/refund_status.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import 'fieldrush_game_detail_party.dart';
 import 'fieldrush_game_loading.dart';
 import 'open_queue.dart';
@@ -174,11 +176,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   }
 
   void _message(String message) {
-    if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
+    if (mounted) showFieldrushToast(context, message);
   }
 
   Future<void> _join() async {
@@ -373,6 +371,13 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
               children: [
                 _DetailHeader(
                   title: 'Solo game',
+                  titleAccessory: game == null
+                      ? null
+                      : FieldrushGameDivisionRange(
+                          key: const ValueKey('game-header-divisions'),
+                          game: game,
+                          compact: true,
+                        ),
                   trailing: game == null
                       ? null
                       : Text(
@@ -890,6 +895,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
             game: game,
             viewerProfileId: _booking?.profileId ?? me?.id,
             onChanged: () => _load(quiet: true),
+            onViewProfile: _openPlayer,
           ),
         _Card(
           padding: EdgeInsets.zero,
@@ -987,6 +993,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
             ),
           ),
         _Card(
+          key: const ValueKey('fieldrush-game-facts'),
           padding: EdgeInsets.zero,
           child: Column(
             children: [
@@ -994,14 +1001,13 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 'Format',
                 '${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
               ),
-              _Fact('Eligibility', game.ageLabel),
+              const _Fact('Rated', 'Yes · counts to skill rating'),
               _Fact(
                 'Teams',
                 game.teamAssignmentAt == null
                     ? 'Timing to be confirmed'
                     : 'Drawn ${_localClock(game.localDateTime(game.teamAssignmentAt!))}',
               ),
-              _Fact('Divisions', game.divisionRangeLabel),
               _Fact(
                 'Cancellation',
                 _isBooked
@@ -1250,8 +1256,14 @@ class FieldrushGameRosterScreen extends StatelessWidget {
 }
 
 class _DetailHeader extends StatelessWidget {
-  const _DetailHeader({required this.title, this.subtitle, this.trailing});
+  const _DetailHeader({
+    required this.title,
+    this.titleAccessory,
+    this.subtitle,
+    this.trailing,
+  });
   final String title;
+  final Widget? titleAccessory;
   final String? subtitle;
   final Widget? trailing;
   @override
@@ -1279,7 +1291,15 @@ class _DetailHeader extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title, style: _display(18)),
+            Wrap(
+              spacing: 9,
+              runSpacing: 6,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(title, style: _display(18)),
+                if (titleAccessory != null) titleAccessory!,
+              ],
+            ),
             if (subtitle != null)
               Padding(
                 padding: const EdgeInsets.only(top: 5),
@@ -1297,7 +1317,11 @@ class _DetailHeader extends StatelessWidget {
 }
 
 class _Card extends StatelessWidget {
-  const _Card({required this.child, this.padding = const EdgeInsets.all(18)});
+  const _Card({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(18),
+  });
   final Widget child;
   final EdgeInsets padding;
   @override
@@ -1344,12 +1368,15 @@ class _Fact extends StatelessWidget {
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: _body(12, weight: FontWeight.w600)),
+        Text(
+          label,
+          style: _body(12.5, weight: FontWeight.w600).copyWith(height: 1),
+        ),
         const SizedBox(width: 15),
         Expanded(
           child: Text(
             value,
-            style: _body(12, color: _ink),
+            style: _body(12.5, color: _ink).copyWith(height: 1),
             textAlign: TextAlign.right,
           ),
         ),

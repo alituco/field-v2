@@ -70,6 +70,8 @@ test("empty catalogue redirects into field creation then resumes the solo game",
   await expect(page.getByRole("heading", { name: "Create a solo game" })).toBeVisible();
   await expect(page.getByLabel("Field / pitch", { exact: false })).toHaveValue(sampleField.id);
   await page.getByLabel("Match date").fill("2099-07-24");
+  await page.getByLabel("Defenders per team").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: info.outputPath("solo-game-editor-desktop.png"), fullPage: true });
   await page.getByRole("button", { name: "Create and open game" }).click();
   await expect(page.getByText("Solo game created and opened for bookings.")).toBeVisible();
   const create = writes.find((write) => write.path.endsWith("solo-games"));
@@ -82,6 +84,9 @@ test("empty catalogue redirects into field creation then resumes the solo game",
     ageLabel: "18+",
     highestDivision: 1,
     lowestDivision: 5,
+    goalkeepersPerSide: 1,
+    defendersPerSide: 2,
+    attackersPerSide: 4,
   });
 });
 
@@ -113,6 +118,8 @@ test("adding a field midway preserves the game draft and validates the map pin",
   await page.getByLabel("Price per player (USD)").fill("15.50");
   await page.getByLabel("Highest division").selectOption("2");
   await page.getByLabel("Lowest division").selectOption("4");
+  await page.getByLabel("Attackers per team").selectOption("5");
+  await expect(page.getByLabel("Defenders per team")).toHaveValue("1");
   await page.getByRole("button", { name: "Add a new field", exact: false }).click();
   await fillField(page);
   await page.getByLabel("Latitude", { exact: false }).fill("91");
@@ -127,6 +134,9 @@ test("adding a field midway preserves the game draft and validates the map pin",
   await expect(page.getByLabel("Price per player (USD)")).toHaveValue("15.50");
   await expect(page.getByLabel("Highest division")).toHaveValue("2");
   await expect(page.getByLabel("Lowest division")).toHaveValue("4");
+  await expect(page.getByLabel("Goalkeepers per team")).toHaveValue("1");
+  await expect(page.getByLabel("Defenders per team")).toHaveValue("1");
+  await expect(page.getByLabel("Attackers per team")).toHaveValue("5");
   await page.getByRole("button", { name: "Create and open game" }).click();
   const create = writes.find((write) => write.path.endsWith("solo-games"));
   expect(create?.body).toMatchObject({
@@ -134,6 +144,9 @@ test("adding a field midway preserves the game draft and validates the map pin",
     lowestDivision: 4,
     durationMinutes: 90,
     priceUsd: "15.50",
+    goalkeepersPerSide: 1,
+    defendersPerSide: 1,
+    attackersPerSide: 5,
   });
 });
 

@@ -1,3 +1,5 @@
+import { parseSoloFormation, type SoloFormation } from "./admin-solo-games.ts";
+
 export type ScheduleOccurrence = {
   matchDate: string;
   status: "CREATED" | "SKIPPED" | "CONFLICT";
@@ -5,7 +7,7 @@ export type ScheduleOccurrence = {
   errorMessage: string | null;
 };
 
-export type AdminGameSchedule = {
+export type AdminGameSchedule = SoloFormation & {
   id: string; name: string; fieldId: string; fieldName: string;
   weekdays: number[]; kickoffTime: string; durationMinutes: number;
   startsOn: string; endsOn: string | null; bookingWindowDays: number;
@@ -16,8 +18,9 @@ export type AdminGameSchedule = {
   skips: Array<{ matchDate: string; reason: string }>;
 };
 
-export const SCHEDULE_SELECT = "id,name,field_id,weekdays,kickoff_time,duration_minutes,starts_on,ends_on,booking_window_days,price_fils,age_label,highest_division,lowest_division,is_active,timezone,created_at,updated_at";
-const KEYS = ["name", "fieldId", "weekdays", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "highestDivision", "lowestDivision", "isActive"];
+export const SCHEDULE_SELECT = "id,name,field_id,weekdays,kickoff_time,duration_minutes,starts_on,ends_on,booking_window_days,price_fils,age_label,highest_division,lowest_division,goalkeepers_per_side,defenders_per_side,attackers_per_side,is_active,timezone,created_at,updated_at";
+const FORMATION_KEYS = ["goalkeepersPerSide", "defendersPerSide", "attackersPerSide"];
+const KEYS = ["name", "fieldId", "weekdays", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "highestDivision", "lowestDivision", "isActive", ...FORMATION_KEYS];
 
 export function parseScheduleId(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error("Choose a valid schedule.");
@@ -67,6 +70,12 @@ export function parseAdminGameScheduleInput(value: unknown, partial = false): Re
   const body = record(value);
   if (Object.keys(body).some((key) => !KEYS.includes(key)) || Object.keys(body).length === 0) throw new Error("Unknown or missing schedule detail. Refresh and try again.");
   const result: Record<string, unknown> = {};
+  if (!partial || FORMATION_KEYS.some((key) => key in body)) {
+    const formation = parseSoloFormation(body, !partial);
+    result.goalkeepers_per_side = formation.goalkeepersPerSide;
+    result.defenders_per_side = formation.defendersPerSide;
+    result.attackers_per_side = formation.attackersPerSide;
+  }
   if (!partial || "name" in body) result.name = text(body.name, "Schedule name", 2, 80);
   if (!partial || "fieldId" in body) {
     try { result.field_id = parseScheduleId(body.fieldId); } catch { throw new Error("Choose an active saved field."); }
@@ -108,6 +117,7 @@ export function serializeGameSchedule(row: Record<string, unknown>, fieldName: s
     startsOn: String(row.starts_on), endsOn: row.ends_on ? String(row.ends_on) : null, bookingWindowDays: Number(row.booking_window_days),
     priceUsd: (Number(row.price_fils) / 1000).toFixed(2), ageLabel: String(row.age_label),
     highestDivision: Number(row.highest_division), lowestDivision: Number(row.lowest_division), isActive: row.is_active === true,
+    goalkeepersPerSide: Number(row.goalkeepers_per_side), defendersPerSide: Number(row.defenders_per_side), attackersPerSide: Number(row.attackers_per_side),
     timezone: String(row.timezone), createdAt: String(row.created_at), updatedAt: String(row.updated_at),
     occurrences: occurrences.map((item) => ({ matchDate: String(item.match_date), status: item.status as ScheduleOccurrence["status"], gameId: item.game_id ? String(item.game_id) : null, errorMessage: item.error_message ? String(item.error_message) : null })),
     skips: skips.map((item) => ({ matchDate: String(item.match_date), reason: String(item.reason) })),
