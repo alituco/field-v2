@@ -259,17 +259,26 @@ class PaymentService {
   }
 
   /// Shared appearance and wallet configuration, deliberately without a secret.
-  static SetupPaymentSheetParameters get nativeSheetConfiguration =>
-      SetupPaymentSheetParameters(
-        merchantDisplayName: 'Fieldrush',
-        returnURL: '$_returnScheme://safepay',
-        allowsDelayedPaymentMethods: false,
-        applePay: _appleMerchantId.isEmpty
-            ? null
-            : const PaymentSheetApplePay(merchantCountryCode: 'US'),
-        style: ThemeMode.light,
-        appearance: fieldrushPaymentSheetAppearance,
-      );
+  static SetupPaymentSheetParameters
+  get nativeSheetConfiguration => SetupPaymentSheetParameters(
+    merchantDisplayName: 'Fieldrush',
+    returnURL: '$_returnScheme://safepay',
+    allowsDelayedPaymentMethods: false,
+    applePay: _appleMerchantId.isEmpty
+        ? null
+        : const PaymentSheetApplePay(merchantCountryCode: 'US'),
+    googlePay: !kIsWeb && defaultTargetPlatform == TargetPlatform.android
+        ? const PaymentSheetGooglePay(
+            merchantCountryCode: 'US',
+            currencyCode: 'USD',
+            // Match the Stripe key guard: only production uses live wallets.
+            testEnv: _environment != 'production',
+            buttonType: PlatformButtonType.pay,
+          )
+        : null,
+    style: ThemeMode.light,
+    appearance: fieldrushPaymentSheetAppearance,
+  );
 
   /// This only skips native collection; the existing server E2E gate remains.
   static bool get stagingE2EBypass =>

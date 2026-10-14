@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
@@ -784,6 +785,13 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   @override
   Widget build(BuildContext context) {
     final preview = _preview;
+    final walletName = kIsWeb
+        ? null
+        : switch (defaultTargetPlatform) {
+            TargetPlatform.android => 'Google Pay',
+            TargetPlatform.iOS => 'Apple Pay',
+            _ => null,
+          };
     return Theme(
       data: FieldrushAuthTheme.theme(context),
       child: PopScope<OpenQueueBooking>(
@@ -885,7 +893,9 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Card or Apple Pay',
+                                    walletName == null
+                                        ? 'Card'
+                                        : 'Card or $walletName',
                                     style: bookingText(
                                       13,
                                       color: FieldrushAuthTheme.ink,
@@ -893,7 +903,9 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                                     ),
                                   ),
                                   Text(
-                                    'Choose securely in the app. Apple Pay appears on supported devices.',
+                                    walletName == null
+                                        ? 'Choose securely in the app.'
+                                        : 'Choose securely in the app. $walletName appears on supported devices.',
                                     style: bookingText(11),
                                   ),
                                 ],

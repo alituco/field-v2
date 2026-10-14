@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:field/src/payments/fieldrush_embedded_payment.dart';
 import 'package:field/src/payments/payment_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -28,6 +29,7 @@ void main() {
   tearDown(() async {
     await session.close();
     session.dispose();
+    debugDefaultTargetPlatformOverride = null;
   });
 
   Future<EmbeddedPaymentElement> ready() async {
@@ -60,6 +62,31 @@ void main() {
     );
     expect(view.onFormSheetConfirmComplete, isNull);
   });
+
+  test(
+    'Android embeds Google Pay without starting payment on selection',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      await session.initialize();
+      final view = session.buildView() as EmbeddedPaymentElement;
+      expect(view.configuration.googlePay?.merchantCountryCode, 'US');
+      expect(view.configuration.googlePay?.currencyCode, 'USD');
+      expect(
+        view.configuration.googlePay?.testEnv,
+        const String.fromEnvironment('APP_ENV') != 'production',
+      );
+      view.onHeightChanged!(100);
+      view.onPaymentOptionChanged!(
+        const PaymentSheetPaymentOption(label: 'Google Pay'),
+      );
+      expect(session.isReady, isTrue);
+      expect(session.hasSelection, isTrue);
+      expect(controller.confirmCount, 0);
+      expect(responses, isEmpty);
+      view.onPaymentOptionChanged!(null);
+      expect(session.hasSelection, isFalse);
+    },
+  );
 
   test('native height is load readiness, never payment selection', () async {
     await session.initialize();

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
@@ -290,6 +291,13 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final walletName = kIsWeb
+        ? null
+        : switch (defaultTargetPlatform) {
+            TargetPlatform.android => 'Google Pay',
+            TargetPlatform.iOS => 'Apple Pay',
+            _ => null,
+          };
     return Scaffold(
       extendBody: true,
       backgroundColor: fieldBackground,
@@ -353,14 +361,20 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: fieldGray100),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.apple_rounded, color: fieldGray900, size: 22),
-                  SizedBox(width: 11),
+                  const Icon(
+                    Icons.credit_card_rounded,
+                    color: fieldGray900,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 11),
                   Expanded(
                     child: Text(
-                      'Apple Pay · Visa · Mastercard',
-                      style: TextStyle(
+                      walletName == null
+                          ? 'Visa · Mastercard'
+                          : '$walletName · Visa · Mastercard',
+                      style: const TextStyle(
                         color: fieldGray900,
                         fontSize: 13,
                         fontWeight: FontWeight.w800,

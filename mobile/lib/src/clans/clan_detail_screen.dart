@@ -13,6 +13,7 @@ import '../moderation/report_issue_sheet.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
 import 'clan.dart';
 import 'clan_reliability.dart';
 import 'clan_repository.dart';
@@ -376,6 +377,51 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
           ),
         ),
       );
+  Future<void> _showMemberActions(ClanMember member) async {
+    if (_working || !_manager || member.isOwner) return;
+    final action = await showFieldrushModal<String>(
+      context: context,
+      builder: (sheetContext) => FieldrushModal(
+        key: ValueKey('clan-member-actions-${member.profileId}'),
+        title: 'Manage ${member.displayName}',
+        description: 'Member of ${_clan.name}',
+        actions: [
+          if (_owner)
+            OutlinedButton(
+              key: const ValueKey('clan-member-action-role'),
+              onPressed: () => Navigator.of(
+                sheetContext,
+              ).pop(member.isLeader ? 'demote' : 'promote'),
+              style: FieldrushModal.secondaryButtonStyle(),
+              child: Text(
+                member.isLeader ? 'Remove captain role' : 'Make captain',
+              ),
+            ),
+          if (_owner)
+            OutlinedButton(
+              key: const ValueKey('clan-member-action-transfer'),
+              onPressed: () => Navigator.of(sheetContext).pop('transfer'),
+              style: FieldrushModal.secondaryButtonStyle(),
+              child: const Text('Transfer ownership'),
+            ),
+          if (_owner || !member.isLeader)
+            OutlinedButton(
+              key: const ValueKey('clan-member-action-remove'),
+              onPressed: () => Navigator.of(sheetContext).pop('remove'),
+              style: FieldrushModal.secondaryButtonStyle(destructive: true),
+              child: const Text('Remove from clan'),
+            ),
+          OutlinedButton(
+            onPressed: () => Navigator.of(sheetContext).pop(),
+            style: FieldrushModal.secondaryButtonStyle(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (action != null && mounted) await _memberAction(member, action);
+  }
+
   Future<void> _memberAction(ClanMember member, String action) async {
     if (_working) return;
     if ((action == 'remove' || action == 'transfer') &&
@@ -933,30 +979,9 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
             ),
           ),
           if (_manager && !member.isOwner && !me)
-            PopupMenuButton<String>(
+            IconButton(
               tooltip: 'Manage ${member.displayName}',
-              enabled: !_working,
-              color: Colors.white,
-              onSelected: (action) => _memberAction(member, action),
-              itemBuilder: (_) => [
-                if (_owner)
-                  PopupMenuItem(
-                    value: member.isLeader ? 'demote' : 'promote',
-                    child: Text(
-                      member.isLeader ? 'Remove captain role' : 'Make captain',
-                    ),
-                  ),
-                if (_owner)
-                  const PopupMenuItem(
-                    value: 'transfer',
-                    child: Text('Transfer ownership'),
-                  ),
-                if (_owner || !member.isLeader)
-                  const PopupMenuItem(
-                    value: 'remove',
-                    child: Text('Remove from clan'),
-                  ),
-              ],
+              onPressed: _working ? null : () => _showMemberActions(member),
               icon: const Icon(
                 Icons.more_horiz,
                 size: 20,

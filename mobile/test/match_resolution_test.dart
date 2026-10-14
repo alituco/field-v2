@@ -1,5 +1,7 @@
+import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/fixtures/match_resolution.dart';
 import 'package:field/src/fixtures/match_resolution_panel.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -111,6 +113,31 @@ void main() {
         find.byKey(const ValueKey('match-resolution-dispute-sheet')),
         findsOneWidget,
       );
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.text('Tell us what needs another look.'))
+            .style
+            ?.fontFamily,
+        'Outfit',
+      );
+      final sendButton = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('submit-match-resolution-dispute')),
+      );
+      expect(
+        sendButton.style?.backgroundColor?.resolve({}),
+        FieldrushAuthTheme.forest,
+      );
+      expect(find.text('Send to Fieldrush'), findsOneWidget);
+
+      await tester.tap(find.text('Not now'));
+      await tester.pumpAndSettle();
+      expect(repository.submittedReasons, isEmpty);
+      expect(find.byType(FieldrushModal), findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('open-match-resolution-dispute')),
+      );
+      await tester.pumpAndSettle();
 
       await tester.enterText(
         find.byKey(const ValueKey('match-resolution-dispute-reason')),

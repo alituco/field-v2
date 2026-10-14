@@ -300,35 +300,53 @@ void main() {
     expect(find.textContaining(r'$15.00'), findsWidgets);
   });
 
-  testWidgets('checkout keeps in-app payment wording and the quoted CTA', (
-    tester,
-  ) async {
-    final repository = _Repository([_game('one')]);
-    await _pump(
-      tester,
-      FieldrushCheckoutSheet(
-        repository: repository,
-        game: repository.games.first,
-        role: OpenQueueRole.attacker,
-      ),
-      size: const Size(320, 740),
-      scale: 1.6,
+  for (final platform in [
+    TargetPlatform.android,
+    TargetPlatform.iOS,
+    TargetPlatform.linux,
+  ]) {
+    testWidgets(
+      'checkout keeps $platform methods and the quoted CTA',
+      (tester) async {
+        final walletName = switch (platform) {
+          TargetPlatform.android => 'Google Pay',
+          TargetPlatform.iOS => 'Apple Pay',
+          _ => null,
+        };
+        final repository = _Repository([_game('one')]);
+        await _pump(
+          tester,
+          FieldrushCheckoutSheet(
+            repository: repository,
+            game: repository.games.first,
+            role: OpenQueueRole.attacker,
+          ),
+          size: const Size(320, 740),
+          scale: 1.6,
+        );
+        expect(
+          find.text(walletName == null ? 'Card' : 'Card or $walletName'),
+          findsOneWidget,
+        );
+        expect(
+          find.text(
+            walletName == null
+                ? 'Choose securely in the app.'
+                : 'Choose securely in the app. $walletName appears on supported devices.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Choose securely in Stripe'), findsNothing);
+        expect(find.text(r'Continue to Pay · $13.00'), findsOneWidget);
+        await tester.ensureVisible(find.text('Secure payments by Stripe'));
+        await tester.pumpAndSettle();
+        expect(find.text('Secure payments by Stripe'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        expect(repository.bookCalls, 0);
+      },
+      variant: TargetPlatformVariant({platform}),
     );
-    expect(find.text('Card or Apple Pay'), findsOneWidget);
-    expect(
-      find.text(
-        'Choose securely in the app. Apple Pay appears on supported devices.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.textContaining('Choose securely in Stripe'), findsNothing);
-    expect(find.text(r'Continue to Pay · $13.00'), findsOneWidget);
-    await tester.ensureVisible(find.text('Secure payments by Stripe'));
-    await tester.pumpAndSettle();
-    expect(find.text('Secure payments by Stripe'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-    expect(repository.bookCalls, 0);
-  });
+  }
 
   testWidgets('quote failure disables checkout and can be retried', (
     tester,

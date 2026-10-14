@@ -294,7 +294,7 @@ export default function AdminGameDetailPage() {
             <p className={styles.actionHint}>
               {needsResolution
                 ? "Use the no-data review so attendance, refunds, SR and strikes are decided together."
-                : "Admin cancellation gives every payer a full refund, including held reliability deposits. Card and Apple Pay payments return to the original payment method."}
+                : "Admin cancellation gives every payer a full refund, including held reliability deposits. Card and digital wallet payments return to the original payment method."}
             </p>
           </section>
 
@@ -1716,7 +1716,7 @@ function CancelGameDialog({ accessToken, detail, onClose, onSaved }: {
     <div className={styles.modalBackdrop} role="presentation">
       <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
         <header><div><span>ADMIN CANCELLATION</span><h2>Cancel this game?</h2></div><button onClick={onClose}>×</button></header>
-        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers. Card and Apple Pay payments are refunded to the original payment method; historical wallet payments keep their recorded destination.</p></div>
+        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers. Card and digital wallet payments are refunded to the original payment method; historical wallet payments keep their recorded destination.</p></div>
         <label><span>Cancellation category</span><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>{CANCELLATION_REASONS.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></label>
         <label><span>Reason</span><textarea maxLength={1000} placeholder="Why is Field cancelling this game?" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <label><span>Type CANCEL to confirm</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>

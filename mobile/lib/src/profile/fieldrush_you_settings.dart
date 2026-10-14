@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -492,7 +493,7 @@ class _YouWalletScreenState extends State<YouWalletScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4),
                 child: Text(
-                  'Your existing Fieldrush wallet credit is shown here. Refunds for new card and Apple Pay bookings return to the original payment method.',
+                  'Your existing Fieldrush wallet credit is shown here. Refunds for new bookings return to the original payment method.',
                   style: _body(12),
                 ),
               ),
@@ -562,45 +563,58 @@ class YouPaymentMethodsScreen extends StatelessWidget {
   const YouPaymentMethodsScreen({super.key});
 
   @override
-  Widget build(BuildContext context) => _SettingsScaffold(
-    title: 'Payment methods',
-    children: [
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Text(
-          'Choose your payment method when you book a game.',
-          style: _body(12.5),
+  Widget build(BuildContext context) {
+    final walletName = kIsWeb
+        ? null
+        : switch (defaultTargetPlatform) {
+            TargetPlatform.android => 'Google Pay',
+            TargetPlatform.iOS => 'Apple Pay',
+            _ => null,
+          };
+    return _SettingsScaffold(
+      title: 'Payment methods',
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            'Choose your payment method when you book a game.',
+            style: _body(12.5),
+          ),
         ),
-      ),
-      const SizedBox(height: 16),
-      _WhiteCard(
-        child: Column(
-          children: [
-            _PaymentRow(
-              icon: Icons.credit_card_rounded,
-              title: 'Visa & Mastercard',
-              description: 'Enter your card details securely at checkout.',
-            ),
-            const Divider(height: 1, color: _divider),
-            _PaymentRow(
-              icon: Icons.phone_iphone_rounded,
-              title: 'Apple Pay',
-              description:
-                  'Shown at checkout when supported on your device and available for your payment.',
-            ),
-          ],
+        const SizedBox(height: 16),
+        _WhiteCard(
+          child: Column(
+            children: [
+              _PaymentRow(
+                icon: Icons.credit_card_rounded,
+                title: 'Visa & Mastercard',
+                description: 'Enter your card details securely at checkout.',
+              ),
+              if (walletName != null) ...[
+                const Divider(height: 1, color: _divider),
+                _PaymentRow(
+                  icon: defaultTargetPlatform == TargetPlatform.android
+                      ? Icons.phone_android_rounded
+                      : Icons.phone_iphone_rounded,
+                  title: walletName,
+                  description:
+                      'Shown at checkout when supported on your device and available for your payment.',
+                ),
+              ],
+            ],
+          ),
         ),
-      ),
-      const SizedBox(height: 14),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Text(
-          'Saved cards are not available in Fieldrush yet.',
-          style: _body(11.5),
+        const SizedBox(height: 14),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            'Saved cards are not available in Fieldrush yet.',
+            style: _body(11.5),
+          ),
         ),
-      ),
-    ],
-  );
+      ],
+    );
+  }
 }
 
 class _PaymentRow extends StatelessWidget {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/clans/clan.dart';
 import 'package:field/src/clans/clan_detail_screen.dart';
@@ -10,6 +12,7 @@ import 'package:field/src/moderation/report_issue_sheet.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -85,18 +88,20 @@ void main() {
       tester.widget<Text>(find.text('Report Noor Saleh')).style?.fontFamily,
       'Outfit',
     );
-    final surface = tester.widget<Container>(
+    expect(find.byType(FieldrushModal), findsOneWidget);
+    final surface = tester.widget<Material>(
       find
           .descendant(
             of: find.byKey(moderationReportSheetKey),
-            matching: find.byType(Container),
+            matching: find.byWidgetPredicate(
+              (widget) =>
+                  widget is Material &&
+                  widget.color == FieldrushAuthTheme.cream,
+            ),
           )
           .first,
     );
-    expect(
-      (surface.decoration! as BoxDecoration).color,
-      FieldrushAuthTheme.cream,
-    );
+    expect(surface.color, FieldrushAuthTheme.cream);
     await tester.tap(
       find.byKey(const ValueKey('moderation-category-harassment')),
     );
@@ -172,6 +177,93 @@ void main() {
     expect(find.text('Report clan'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'private report fits a small-phone keyboard and retains urgency and context',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewInsets);
+      final response = Completer<ModerationReportReceipt>();
+      final repository = _FakeModerationRepository(pending: response);
+      ModerationReportReceipt? received;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: FilledButton(
+                onPressed: () async {
+                  received = await showReportIssueSheet(
+                    context: context,
+                    repository: repository,
+                    subjectType: ModerationSubjectType.player,
+                    subjectId: 'player-id',
+                    subjectName: 'Player with a much longer display name',
+                    fixtureId: 'fixture-id',
+                    openQueueGameId: 'solo-id',
+                  );
+                },
+                child: const Text('Open report'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open report'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      final category = find.byKey(
+        const ValueKey('moderation-category-threats_or_violence'),
+      );
+      await tester.ensureVisible(category);
+      await tester.pumpAndSettle();
+      await tester.tap(category);
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'If anyone is in immediate danger, contact venue staff or local emergency services now. Reports are not monitored live.',
+        ),
+        findsOneWidget,
+      );
+      tester.view.viewInsets = const FakeViewPadding(bottom: 240);
+      await tester.pumpAndSettle();
+      final details = find.byKey(const ValueKey('moderation-report-details'));
+      await tester.ensureVisible(details);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        details,
+        'Please investigate a threat made during this match.',
+      );
+      final submit = find.byKey(const ValueKey('moderation-report-submit'));
+      await tester.ensureVisible(submit);
+      await tester.pumpAndSettle();
+      await tester.tap(submit);
+      await tester.pump();
+      expect(tester.widget<FilledButton>(submit).onPressed, isNull);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('moderation-report-close')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(tester.widget<TextField>(details).enabled, isFalse);
+      expect(repository.reports.single.fixtureId, 'fixture-id');
+      expect(repository.reports.single.openQueueGameId, 'solo-id');
+      expect(
+        repository.reports.single.category,
+        ModerationReportCategory.threatsOrViolence,
+      );
+      response.complete(const ModerationReportReceipt(id: 'report-id'));
+      await tester.pumpAndSettle();
+      expect(received?.id, 'report-id');
+      expect(find.byType(FieldrushModal), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _pumpClan(WidgetTester tester, {String? role}) async {
@@ -230,6 +322,8 @@ const _clan = Clan(
 );
 
 class _FakeModerationRepository implements ModerationRepository {
+  _FakeModerationRepository({this.pending});
+  final Completer<ModerationReportReceipt>? pending;
   final List<ModerationReportDraft> reports = [];
 
   @override
@@ -242,6 +336,7 @@ class _FakeModerationRepository implements ModerationRepository {
     ModerationReportDraft report,
   ) async {
     reports.add(report);
+    if (pending != null) return pending!.future;
     return const ModerationReportReceipt(id: 'report-id');
   }
 }

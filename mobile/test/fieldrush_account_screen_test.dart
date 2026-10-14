@@ -5,6 +5,7 @@ import 'package:field/src/auth/fieldrush_recovery_screen.dart';
 import 'package:field/src/home/navigation_profile_scope.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
+import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
@@ -29,6 +30,7 @@ void main() {
     Size size = const Size(600, 2600),
     bool routed = false,
     bool withNavigationAvatar = false,
+    double keyboardInset = 0,
     Widget? bottomNavigationBar,
     Widget Function(Future<bool> Function() confirmLeave)?
     bottomNavigationBuilder,
@@ -56,12 +58,14 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
-        builder: withNavigationAvatar
-            ? (context, child) => FieldNavigationProfileScope(
-                authRepository: auth,
-                child: child!,
-              )
-            : null,
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(
+            context,
+          ).copyWith(viewInsets: EdgeInsets.only(bottom: keyboardInset)),
+          child: withNavigationAvatar
+              ? FieldNavigationProfileScope(authRepository: auth, child: child!)
+              : child!,
+        ),
         home: routed ? const Scaffold(body: Text('SIGNED OUT ROOT')) : screen,
       ),
     );
@@ -93,7 +97,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(
       find.descendant(
-        of: find.byType(AlertDialog),
+        of: find.byType(FieldrushModal),
         matching: find.byType(TextField),
       ),
       '123456',
@@ -177,7 +181,7 @@ void main() {
     );
     await showAccount(tester);
     await submitEmailCode(tester);
-    expect(find.byType(AlertDialog), findsOneWidget);
+    expect(find.byType(FieldrushModal), findsOneWidget);
     expect(find.text('Could not confirm email status.'), findsOneWidget);
     expect(find.text('Email verified.'), findsNothing);
   });
@@ -324,7 +328,7 @@ void main() {
     await tester.enterText(
       find
           .descendant(
-            of: find.byType(AlertDialog),
+            of: find.byType(FieldrushModal),
             matching: find.byType(TextField),
           )
           .first,
@@ -336,7 +340,7 @@ void main() {
     await tester.enterText(
       find
           .descendant(
-            of: find.byType(AlertDialog),
+            of: find.byType(FieldrushModal),
             matching: find.byType(TextField),
           )
           .last,
@@ -451,6 +455,75 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'phone verification sheet stays usable above a small-phone keyboard',
+    (tester) async {
+      await showAccount(tester, size: const Size(320, 640), keyboardInset: 260);
+      final changePhone = find.byKey(const Key('fieldrush-change-phone'));
+      await tester.scrollUntilVisible(
+        changePhone,
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(changePhone);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      expect(
+        tester.widget<BottomSheet>(find.byType(BottomSheet)).enableDrag,
+        isFalse,
+      );
+      await tester.tap(find.byKey(const Key('fieldrush-reauth-submit')));
+      await tester.pumpAndSettle();
+      final code = find.byKey(const Key('fieldrush-reauth-code'));
+      await tester.ensureVisible(code);
+      await tester.enterText(code, '123456');
+      final verify = find.byKey(const Key('fieldrush-reauth-submit'));
+      await tester.ensureVisible(verify);
+      await tester.pumpAndSettle();
+      await tester.tap(verify);
+      await tester.pumpAndSettle();
+      expect(accounts.reauthSendCalls, 1);
+      expect(accounts.reauthVerifyCalls, 1);
+      expect(
+        find.byKey(const Key('fieldrush-change-phone-modal')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'discard sheet preserves the draft when cancelled on a small phone',
+    (tester) async {
+      await showAccount(tester, size: const Size(320, 640), keyboardInset: 220);
+      await tester.tap(find.byKey(const Key('fieldrush-edit-name')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('fieldrush-first-name')),
+        'Jordan',
+      );
+      final editUsername = find.byKey(const Key('fieldrush-edit-username'));
+      await tester.ensureVisible(editUsername);
+      await tester.pumpAndSettle();
+      await tester.tap(editUsername);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      expect(find.text('Discard your changes?'), findsOneWidget);
+      final keepEditing = find.widgetWithText(OutlinedButton, 'Keep editing');
+      await tester.ensureVisible(keepEditing);
+      await tester.pumpAndSettle();
+      await tester.tap(keepEditing);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushModal), findsNothing);
+      expect(find.text('Jordan'), findsOneWidget);
+      expect(accounts.saved, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('account design shows saved values without an open editor', (
     tester,

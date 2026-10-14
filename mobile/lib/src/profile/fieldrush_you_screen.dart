@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
 import '../home/navigation_profile_scope.dart';
 
 import '../auth/fieldrush_account.dart';
@@ -407,26 +408,25 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   }
 
   Future<void> _signOut() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFieldrushModal<bool>(
       context: context,
-      builder: (context) => Theme(
-        data: FieldrushAuthTheme.theme(context),
-        child: AlertDialog(
-          title: const Text('Sign out?'),
-          content: const Text(
+      builder: (context) => FieldrushModal(
+        title: 'Sign out?',
+        description:
             'You can sign back in with your phone or linked Google account.',
+        actions: [
+          FilledButton(
+            key: const ValueKey('fieldrush-sign-out-confirm'),
+            onPressed: () => Navigator.pop(context, true),
+            style: FieldrushModal.primaryButtonStyle(destructive: true),
+            child: const Text('Sign out'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Stay signed in'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Sign out'),
-            ),
-          ],
-        ),
+          OutlinedButton(
+            key: const ValueKey('fieldrush-sign-out-cancel'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Stay signed in'),
+          ),
+        ],
       ),
     );
     if (confirmed != true || !mounted) return;

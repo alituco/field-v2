@@ -5,6 +5,7 @@ import '../ui/field_loading.dart';
 import 'package:video_player/video_player.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
+import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import 'goal_clip_downloader.dart';
 import 'profile.dart';
@@ -294,70 +295,17 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
 
   Future<void> _deleteClip() async {
     if (!widget.canManage || _isDeleting || _isUpdatingVisibility) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showFieldConfirmDialog(
       context: context,
-      barrierColor: FieldrushAuthTheme.ink.withValues(alpha: 0.56),
-      builder: (dialogContext) => Theme(
-        data: FieldrushAuthTheme.theme(context),
-        child: AlertDialog(
-          key: const ValueKey('field-confirmation-dialog'),
-          backgroundColor: FieldrushAuthTheme.cream,
-          surfaceTintColor: Colors.transparent,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(24),
-            side: const BorderSide(color: FieldrushAuthTheme.border),
-          ),
-          icon: const Icon(
-            Icons.delete_outline_rounded,
-            color: FieldrushAuthTheme.danger,
-          ),
-          title: const Text(
-            'Delete this clip?',
-            style: TextStyle(
-              fontFamily: 'Outfit',
-              fontSize: 24,
-              fontWeight: FontWeight.w800,
-              color: FieldrushAuthTheme.ink,
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '“${_highlight.title}” will be removed from your profile. The original match recording will not be affected.',
-                style: const TextStyle(
-                  color: FieldrushAuthTheme.muted,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text(
-                'This cannot be undone.',
-                style: TextStyle(
-                  color: FieldrushAuthTheme.danger,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              key: const ValueKey('field-confirmation-cancel'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Keep clip'),
-            ),
-            FilledButton(
-              key: const ValueKey('field-confirmation-confirm'),
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              style: FilledButton.styleFrom(
-                backgroundColor: FieldrushAuthTheme.danger,
-              ),
-              child: const Text('Delete clip'),
-            ),
-          ],
-        ),
-      ),
+      icon: Icons.delete_outline_rounded,
+      eyebrow: 'Clip',
+      title: 'Delete this clip?',
+      message:
+          '“${_highlight.title}” will be removed from your profile. The original match recording will not be affected.',
+      detail: 'This cannot be undone.',
+      cancelLabel: 'Keep clip',
+      confirmLabel: 'Delete clip',
+      destructive: true,
     );
     if (!mounted || confirmed != true) return;
     setState(() => _isDeleting = true);

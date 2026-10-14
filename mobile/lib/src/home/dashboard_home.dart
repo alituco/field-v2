@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan.dart';
@@ -498,14 +499,14 @@ class _DashboardHomeState extends State<DashboardHome> {
       }
 
       if (!mounted) return;
-      await showDialog<void>(
+      await showFieldrushModal<void>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => FieldrushModal(
           key: const Key('home-notification-details'),
-          title: Text(item.title),
-          content: SingleChildScrollView(child: SelectableText(item.body)),
+          title: item.title,
+          content: SelectableText(item.body, style: FieldrushModal.bodyStyle),
           actions: [
-            TextButton(
+            OutlinedButton(
               onPressed: () => Navigator.of(context).pop(),
               child: const Text('Close'),
             ),

@@ -298,6 +298,7 @@ export function paymentMethod(payment: Stripe.PaymentIntent) {
     : null;
   const card = charge?.payment_method_details?.card;
   if (card?.wallet?.type === "apple_pay") return "APPLE_PAY";
+  if (card?.wallet?.type === "google_pay") return "GOOGLE_PAY";
   if (card?.brand === "visa") return "VISA";
   if (card?.brand === "mastercard") return "MASTERCARD";
   return "CARD";

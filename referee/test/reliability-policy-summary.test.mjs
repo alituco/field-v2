@@ -42,7 +42,7 @@ test("human summary includes attendance, deposits, sanctions, SR, and appeals", 
   assert.match(text, /Player sanction ladder/);
   assert.match(text, /Late-player SR/);
   assert.match(text, /Routine traffic is not automatically excused/);
-  assert.match(text, /original card or Apple Pay payment method/);
+  assert.match(text, /original payment method/);
   assert.match(text, /Historical wallet balances remain separate/);
 });
 
