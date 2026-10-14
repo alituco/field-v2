@@ -305,7 +305,7 @@ void main() {
     await _capture(tester, 'you-new-ladders');
   });
 
-  testWidgets('public profile switches score, record and placement with its role', (
+  testWidgets('public profile switches score and placement with its role', (
     tester,
   ) async {
     var track = RatingTrack.outfield;
@@ -317,6 +317,7 @@ void main() {
           isFollowing: false,
           followBusy: false,
           onBack: () {},
+          onMatchHistory: () {},
           ratings: _ratings,
           track: track,
           onTrack: (value) => setState(() => track = value),
@@ -324,23 +325,17 @@ void main() {
       ),
     );
     expect(find.text('1680'), findsOneWidget);
-    expect(
-      find.byTooltip(
-        'Wins divided by played outfield games this season. Draws count as games played.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.byType(FieldrushMatchRecordCard), findsOneWidget);
+    expect(find.text('WIN RATE'), findsNothing);
+    expect(find.text('SHOW-UP'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('rating-track-GOALKEEPER')));
     await tester.pumpAndSettle();
     expect(find.text('1680'), findsNothing);
     expect(find.text('????'), findsOneWidget);
     expect(find.text('1/2 placement games'), findsOneWidget);
-    expect(
-      find.byTooltip(
-        'Wins divided by played games in goal this season. Draws count as games played.',
-      ),
-      findsOneWidget,
-    );
+    expect(find.byType(FieldrushMatchRecordCard), findsOneWidget);
+    expect(find.text('WIN RATE'), findsNothing);
+    expect(find.text('SHOW-UP'), findsNothing);
     final pillAlignment = tester.widget<Align>(
       find
           .ancestor(

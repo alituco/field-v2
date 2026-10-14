@@ -805,9 +805,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       positionLabel: profile.playedPositionLabel,
                       onMatchHistory: () => _openPublicHistory(profile),
                       onClip: _openHighlight,
-                      played: profile.playedCount,
-                      winRate: profile.winRatePercent,
-                      showUpRate: profile.showUpPercent,
                       recentResults: profile.lastFiveResults,
                       trailingChildren: [
                         Padding(

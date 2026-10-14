@@ -193,6 +193,24 @@ void main() {
       expect(find.text('Not in a clan'), findsOneWidget);
       expect(find.byType(FieldrushProfileClips), findsOneWidget);
       expect(find.byType(FieldrushMatchRecordCard), findsOneWidget);
+      expect(find.text('PLAYED'), findsNothing);
+      expect(find.text('WIN RATE'), findsNothing);
+      expect(find.text('SHOW-UP'), findsNothing);
+      final record = tester.getRect(find.byType(FieldrushMatchRecordCard));
+      final rating = tester.getRect(
+        find.byKey(const ValueKey('player-rating-section')),
+      );
+      expect(record.top, greaterThanOrEqualTo(rating.bottom));
+      expect(
+        record.bottom,
+        lessThan(tester.getTopLeft(find.text('LAST FIVE')).dy),
+      );
+      expect(
+        record.bottom,
+        lessThan(
+          tester.getTopLeft(find.byKey(const ValueKey('player-clips'))).dy,
+        ),
+      );
       expect(
         tester.getTopLeft(find.byKey(const ValueKey('player-clips'))).dy,
         greaterThan(

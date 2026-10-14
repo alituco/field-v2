@@ -39,8 +39,8 @@ TextStyle _outfit(double size, {Color color = _ink, double height = 1}) =>
 /// Reference-matched public player presentation. The owner supplies scrolling,
 /// safe areas, authenticated actions, and verified public statistics.
 ///
-/// Rates are percentages (0–100). Results are supplied newest first and shown
-/// chronologically. Null results are unknown outcomes, never assumed draws.
+/// Results are supplied newest first and shown chronologically. Null results
+/// are unknown outcomes, never assumed draws.
 /// Missing values remain unknown; private account fields are never displayed.
 class FieldrushPlayerProfileContent extends StatelessWidget {
   const FieldrushPlayerProfileContent({
@@ -55,9 +55,6 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     this.positionLabel,
     this.onMatchHistory,
     this.onClip,
-    this.played,
-    this.winRate,
-    this.showUpRate,
     this.recentResults = const [],
     this.trailingChildren = const [],
     this.ratings,
@@ -76,9 +73,6 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
   final String? positionLabel;
   final VoidCallback? onMatchHistory;
   final ValueChanged<ProfileHighlight>? onClip;
-  final int? played;
-  final double? winRate;
-  final double? showUpRate;
   final List<ProfileGameOutcome?> recentResults;
   final List<Widget> trailingChildren;
   final FieldrushPlayerRatings? ratings;
@@ -94,6 +88,7 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     children: [
       _PlayerHeader(name: profile.displayName, onBack: onBack),
       Padding(
+        key: const ValueKey('player-rating-section'),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         child: _PlayerRatingCard(
           profile: profile,
@@ -115,68 +110,35 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
           onFollow: onFollow,
         ),
       ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final scale = MediaQuery.textScalerOf(context).scale(21) / 21;
-            final columns =
-                scale > 1.5 || (constraints.maxWidth - 18) / 3 < 86 * scale
-                ? 1
-                : 3;
-            final width = (constraints.maxWidth - (columns - 1) * 9) / columns;
-            return Wrap(
-              spacing: 9,
-              runSpacing: 9,
-              children: [
-                for (final stat in [
-                  (
-                    label: 'PLAYED',
-                    value: _trackRating != null
-                        ? '${_trackRating!.matchesPlayed}'
-                        : played != null && played! >= 0
-                        ? '$played'
-                        : '—',
-                    definition: ratings != null
-                        ? 'Played ${track.label.toLowerCase()} games this season.'
-                        : 'Verified played solo and clan games.',
-                  ),
-                  (
-                    label: 'WIN RATE',
-                    value: _percentage(
-                      _trackRating != null
-                          ? (_trackRating!.matchesPlayed == 0
-                                ? null
-                                : 100 *
-                                      _trackRating!.wins /
-                                      _trackRating!.matchesPlayed)
-                          : winRate,
-                    ),
-                    definition: ratings != null
-                        ? 'Wins divided by played ${track == RatingTrack.goalkeeper ? 'games in goal' : 'outfield games'} this season. Draws count as games played.'
-                        : 'Wins divided by verified played solo and clan games. Draws count as games played. Unavailable when a recorded result is unknown.',
-                  ),
-                  (
-                    label: 'SHOW-UP',
-                    value: _percentage(showUpRate),
-                    definition: showUpRate == null
-                        ? 'Public attendance data is unavailable.'
-                        : 'The percentage of attendance-eligible games the player attended.',
-                  ),
-                ])
-                  SizedBox(
-                    width: width,
-                    child: _PlayerStat(
-                      label: stat.label,
-                      value: stat.value,
-                      definition: stat.definition,
-                    ),
-                  ),
-              ],
-            );
-          },
+      if (onMatchHistory != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: Builder(
+            builder: (context) {
+              final games = <String, ProfilePreviousGame>{
+                for (final game in profile.previousGames)
+                  if (game.id.trim().isNotEmpty)
+                    '${game.type.name}:${game.id}': game,
+              }.values;
+              return FieldrushMatchRecordCard(
+                key: const ValueKey('player-match-record'),
+                wins: games
+                    .where((game) => game.outcome == ProfileGameOutcome.win)
+                    .length,
+                draws: games
+                    .where((game) => game.outcome == ProfileGameOutcome.draw)
+                    .length,
+                losses: games
+                    .where((game) => game.outcome == ProfileGameOutcome.loss)
+                    .length,
+                played: games.length,
+                resultsKnown: games.every((game) => game.outcome != null),
+                actionKey: const ValueKey('player-match-history'),
+                onTap: onMatchHistory!,
+              );
+            },
+          ),
         ),
-      ),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         child: _LastFive(
@@ -207,34 +169,6 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
           onClip: onClip!,
           clipKeyPrefix: 'player',
         ),
-      if (onMatchHistory != null)
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-          child: Builder(
-            builder: (context) {
-              final games = <String, ProfilePreviousGame>{
-                for (final game in profile.previousGames)
-                  if (game.id.trim().isNotEmpty)
-                    '${game.type.name}:${game.id}': game,
-              }.values;
-              return FieldrushMatchRecordCard(
-                wins: games
-                    .where((game) => game.outcome == ProfileGameOutcome.win)
-                    .length,
-                draws: games
-                    .where((game) => game.outcome == ProfileGameOutcome.draw)
-                    .length,
-                losses: games
-                    .where((game) => game.outcome == ProfileGameOutcome.loss)
-                    .length,
-                played: games.length,
-                resultsKnown: games.every((game) => game.outcome != null),
-                actionKey: const ValueKey('player-match-history'),
-                onTap: onMatchHistory!,
-              );
-            },
-          ),
-        ),
       if (onReport != null)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
@@ -259,11 +193,6 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     ],
   );
 }
-
-String _percentage(double? value) =>
-    value == null || !value.isFinite || value < 0 || value > 100
-    ? '—'
-    : '${value.round()}%';
 
 class _PlayerHeader extends StatelessWidget {
   const _PlayerHeader({required this.name, required this.onBack});
@@ -689,41 +618,6 @@ class _FollowButton extends StatelessWidget {
   );
 }
 
-class _PlayerStat extends StatelessWidget {
-  const _PlayerStat({
-    required this.label,
-    required this.value,
-    required this.definition,
-  });
-  final String label;
-  final String value;
-  final String definition;
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-    message: definition,
-    child: Semantics(
-      label: '$label: ${value == '—' ? 'unavailable' : value}. $definition',
-      child: ExcludeSemantics(
-        child: _WhiteCard(
-          radius: 17,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 15),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(value, style: _outfit(21)),
-                const SizedBox(height: 6),
-                Text(label, style: _jakarta(9, color: _muted, tracking: .81)),
-              ],
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
 class _LastFive extends StatelessWidget {
   const _LastFive({required this.results});
   final List<ProfileGameOutcome?> results;
@@ -918,15 +812,14 @@ class _PlayerClan extends StatelessWidget {
 }
 
 class _WhiteCard extends StatelessWidget {
-  const _WhiteCard({required this.child, this.radius = 20});
+  const _WhiteCard({required this.child});
   final Widget child;
-  final double radius;
 
   @override
   Widget build(BuildContext context) => Material(
     color: Colors.white,
     shape: RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(radius),
+      borderRadius: BorderRadius.circular(20),
       side: const BorderSide(color: _border),
     ),
     child: child,
@@ -955,14 +848,10 @@ class FieldrushPlayerProfileLoadingContent extends StatelessWidget {
               children: [
                 const _Skeleton(height: 193, radius: 24),
                 const SizedBox(height: 12),
-                const Row(
-                  children: [
-                    Expanded(child: _Skeleton(height: 66, radius: 17)),
-                    SizedBox(width: 9),
-                    Expanded(child: _Skeleton(height: 66, radius: 17)),
-                    SizedBox(width: 9),
-                    Expanded(child: _Skeleton(height: 66, radius: 17)),
-                  ],
+                const _Skeleton(
+                  key: ValueKey('player-record-loading'),
+                  height: 142,
+                  radius: 20,
                 ),
                 const SizedBox(height: 12),
                 const _Skeleton(height: 93, radius: 20),
@@ -978,7 +867,7 @@ class FieldrushPlayerProfileLoadingContent extends StatelessWidget {
 }
 
 class _Skeleton extends StatelessWidget {
-  const _Skeleton({required this.height, required this.radius});
+  const _Skeleton({super.key, required this.height, required this.radius});
   final double height;
   final double radius;
 

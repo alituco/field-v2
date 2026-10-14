@@ -121,7 +121,7 @@ void main() {
     });
   }
 
-  testWidgets('previous and next center the first and last long-strip dates', (
+  testWidgets('previous and next clamp long-strip dates at the natural edges', (
     tester,
   ) async {
     await _pump(
@@ -145,9 +145,9 @@ void main() {
     expect(tester.widget<IconButton>(previous).onPressed, isNull);
     expect(
       tester
-          .getCenter(find.byKey(const ValueKey('fixtures-date-2026-09-30')))
-          .dx,
-      closeTo(strip.center.dx, .1),
+          .getRect(find.byKey(const ValueKey('fixtures-date-2026-09-30')))
+          .left,
+      closeTo(strip.left, .1),
     );
     for (var index = 0; index < 21; index++) {
       await tester.tap(next);
@@ -156,12 +156,49 @@ void main() {
     expect(tester.widget<IconButton>(next).onPressed, isNull);
     expect(
       tester
-          .getCenter(find.byKey(const ValueKey('fixtures-date-2026-10-21')))
-          .dx,
-      closeTo(strip.center.dx, .1),
+          .getRect(find.byKey(const ValueKey('fixtures-date-2026-10-21')))
+          .right,
+      closeTo(strip.right - 7, .1),
     );
     expect(tester.takeException(), isNull);
   });
+
+  for (final width in [320.0, 430.0]) {
+    testWidgets('first selected date starts at the left at $width', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        _Repository(
+          upcoming: [
+            for (var day = 11; day <= 22; day++)
+              _game('day-$day', start: DateTime.utc(2026, 10, day, 3)),
+          ],
+        ),
+        width: width,
+      );
+      final stripFinder = find.byKey(const ValueKey('fixtures-date-strip'));
+      final strip = tester.getRect(stripFinder);
+      final first = tester.getRect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-10')),
+      );
+      expect(tester.widget<ListView>(stripFinder).controller!.offset, 0);
+      expect(first.left, closeTo(strip.left, .1));
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const ValueKey('fixtures-previous-day')),
+            )
+            .onPressed,
+        isNull,
+      );
+      expect(
+        find.byKey(const ValueKey('fixtures-date-2026-10-11')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets(
     'horizontal browsing and tapping a date preserve centered selection',

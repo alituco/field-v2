@@ -600,10 +600,9 @@ class _FixtureCalendarState extends State<_FixtureCalendar> {
   double _stripInset(double viewport, double width) {
     final contentWidth =
         widget.dates.length * width + (widget.dates.length - 1) * _chipGap;
-    // Short rows remain centered as a group. A long strip has enough padding
-    // at both ends to center the first and last matchday, not just middle days.
-    return ((viewport - (contentWidth > viewport ? width : contentWidth)) / 2)
-        .clamp(0.0, viewport);
+    // Center a short row as a group. Overflowing rows have no artificial edge
+    // padding: the first date starts at the left, while middle dates can center.
+    return ((viewport - contentWidth) / 2).clamp(0.0, viewport);
   }
 
   void _reveal() {
@@ -703,8 +702,8 @@ class _FixtureCalendarState extends State<_FixtureCalendar> {
                   },
                   child: ListView.builder(
                     key: const ValueKey('fixtures-date-strip'),
-                    // Each fixed-width cell includes its following gap. Trim
-                    // the final gap from the end padding so rows stay symmetric.
+                    // Each fixed-width cell includes its following gap. For
+                    // short rows, trim that gap from the end inset for symmetry.
                     padding: EdgeInsets.only(
                       left: inset,
                       right: (inset - _chipGap).clamp(
