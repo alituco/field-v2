@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/field_confirmation_dialog.dart';
@@ -102,15 +103,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       setState(() => _booking = latest);
     } catch (error) {
       if (!mounted || quiet) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'Could not refresh the player count.',
-            ),
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        userFacingError(error, fallback: 'Could not refresh the player count.'),
       );
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -162,17 +157,13 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         _refreshBooking(quiet: true, requireFresh: true),
       ]);
       if (!mounted) return true;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      showFieldrushToast(context, successMessage);
       return true;
     } catch (error) {
       if (!mounted) return false;
       final message = userFacingError(error, fallback: fallbackError);
       setState(() => _partyError = message);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      showFieldrushToast(context, message);
       return false;
     } finally {
       if (mounted) setState(() => _partyAction = null);
@@ -322,12 +313,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       preview = await widget.repository.previewCancellation(_booking.id);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(error, fallback: 'Cancellation is unavailable.'),
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        userFacingError(error, fallback: 'Cancellation is unavailable.'),
       );
       return;
     }
@@ -373,14 +361,11 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         );
       } catch (error) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              userFacingError(
-                error,
-                fallback: 'Could not verify the cancellation terms.',
-              ),
-            ),
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'Could not verify the cancellation terms.',
           ),
         );
         return;
@@ -394,28 +379,21 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     try {
       final cancelled = await widget.repository.cancelBooking(_booking.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            cancellationRefundMessage(
-              refundAmountFils:
-                  cancelled.refundAmountFils ?? preview.refundAmountFils,
-              destination:
-                  cancelled.refundDestination ?? preview.refundDestination,
-              status: cancelled.refundStatus,
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        cancellationRefundMessage(
+          refundAmountFils:
+              cancelled.refundAmountFils ?? preview.refundAmountFils,
+          destination: cancelled.refundDestination ?? preview.refundDestination,
+          status: cancelled.refundStatus,
         ),
       );
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(error, fallback: 'Could not cancel booking.'),
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        userFacingError(error, fallback: 'Could not cancel booking.'),
       );
     } finally {
       if (mounted) setState(() => _cancelling = false);

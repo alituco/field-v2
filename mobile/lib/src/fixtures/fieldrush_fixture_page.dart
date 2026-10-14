@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
@@ -274,14 +275,11 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
 
   void _showRouteError(Object error) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          userFacingError(
-            error,
-            fallback: 'We could not open this game. Try again.',
-          ),
-        ),
+    showFieldrushToast(
+      context,
+      userFacingError(
+        error,
+        fallback: 'We could not open this game. Try again.',
       ),
     );
   }

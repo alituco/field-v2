@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
@@ -72,12 +73,9 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
 
   Future<void> _openReview(OpenQueueGame game, OpenQueueRole role) async {
     if (_upcomingBookings.isNotEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'You already have an upcoming or active game. Finish or cancel it before booking another.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        'You already have an upcoming or active game. Finish or cancel it before booking another.',
       );
       return;
     }

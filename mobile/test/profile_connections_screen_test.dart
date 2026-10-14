@@ -4,6 +4,7 @@ import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_connections_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/ui/field_loading.dart';
+import 'package:field/src/ui/fieldrush_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -153,7 +154,14 @@ void main() {
       expect(find.text('Fans · 2'), findsOneWidget);
       expect(find.text('Following'), findsOneWidget);
       expect(find.text('Follow back'), findsOneWidget);
-      expect(find.byType(SnackBar), findsOneWidget);
+      expect(find.byType(FieldrushToast), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(FieldrushToast),
+          matching: find.text('Follow failed.'),
+        ),
+        findsOneWidget,
+      );
       expect(tester.takeException(), isNull);
     },
   );

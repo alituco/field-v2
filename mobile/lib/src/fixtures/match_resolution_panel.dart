@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'match_resolution.dart';
@@ -62,12 +63,9 @@ class _MatchResolutionPanelState extends State<MatchResolutionPanel> {
         setState(() => _resolutionCase = refreshed);
         widget.onChanged?.call(refreshed);
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Your dispute was sent. Refund processing will continue.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        'Your dispute was sent. Refund processing will continue.',
       );
     } catch (error) {
       if (!mounted) return;

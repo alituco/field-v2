@@ -5,6 +5,7 @@ import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 
@@ -97,14 +98,11 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _switchingUserId = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not switch to that user. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not switch to that user. Try again.',
         ),
       );
     }

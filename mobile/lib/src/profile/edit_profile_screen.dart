@@ -6,6 +6,7 @@ import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
+import '../ui/fieldrush_toast.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
@@ -63,9 +64,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     final validationError = _validate(bio: bio, avatarUrl: avatarUrl);
     if (validationError != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(validationError)));
+      showFieldrushToast(context, validationError);
       return;
     }
 
@@ -94,14 +93,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not save your profile. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not save your profile. Try again.',
         ),
       );
     }
@@ -133,14 +129,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open that photo. Try another one.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open that photo. Try another one.',
         ),
       );
     } finally {

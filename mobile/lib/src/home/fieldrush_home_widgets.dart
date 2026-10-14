@@ -683,14 +683,19 @@ class _OpenNightRow extends StatelessWidget {
 
 /// Configured admission band, not the average of an incomplete lineup.
 class FieldrushGameDivisionRange extends StatelessWidget {
-  const FieldrushGameDivisionRange({super.key, required this.game});
+  const FieldrushGameDivisionRange({
+    super.key,
+    required this.game,
+    this.compact = false,
+  });
   final OpenQueueGame game;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final divisions = game.allowedDivisions;
-    const size = 20.0;
-    const stride = 13.5;
+    final size = compact ? 16.0 : 20.0;
+    final stride = compact ? 11.0 : 13.5;
     return Semantics(
       label: game.highestDivision == game.lowestDivision
           ? 'Division ${game.highestDivision} only'
@@ -701,7 +706,7 @@ class FieldrushGameDivisionRange extends StatelessWidget {
           ExcludeSemantics(
             child: SizedBox(
               width: size + stride * (divisions.length - 1),
-              height: 26,
+              height: compact ? 21 : 26,
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
@@ -718,8 +723,15 @@ class FieldrushGameDivisionRange extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 8),
-          Flexible(child: Text(game.divisionRangeLabel, style: _outfit(11.5))),
+          SizedBox(width: compact ? 6 : 8),
+          Flexible(
+            child: Text(
+              game.divisionRangeLabel,
+              style: compact
+                  ? _jakarta(9.5, color: _ink, tracking: .76)
+                  : _outfit(11.5),
+            ),
+          ),
         ],
       ),
     );

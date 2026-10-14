@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import 'package:video_player/video_player.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
@@ -89,14 +90,11 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       return next;
     } catch (error) {
       if (mounted && showError) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              userFacingError(
-                error,
-                fallback: 'We could not refresh this clip. Try again.',
-              ),
-            ),
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'We could not refresh this clip. Try again.',
           ),
         );
       }
@@ -227,19 +225,14 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
         },
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Goal saved to your Photos.')),
-      );
+      showFieldrushToast(context, 'Goal saved to your Photos.');
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not save this goal. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not save this goal. Try again.',
         ),
       );
     } finally {
@@ -267,25 +260,19 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       );
       if (!mounted) return;
       setState(() => _highlight = next);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            isPublic
-                ? 'Clip is now public on your profile.'
-                : 'Clip is now private. Only you can see it.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        isPublic
+            ? 'Clip is now public on your profile.'
+            : 'Clip is now private. Only you can see it.',
       );
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not change this clip’s visibility.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not change this clip’s visibility.',
         ),
       );
     } finally {
@@ -312,21 +299,16 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     try {
       await widget.profileRepository.deleteHighlight(_highlight.id);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Clip deleted.')));
+      showFieldrushToast(context, 'Clip deleted.');
       Navigator.of(context).pop();
     } catch (error) {
       if (!mounted) return;
       setState(() => _isDeleting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not delete this clip. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not delete this clip. Try again.',
         ),
       );
     }

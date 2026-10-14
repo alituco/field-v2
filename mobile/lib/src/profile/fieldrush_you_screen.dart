@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import '../home/navigation_profile_scope.dart';
 
 import '../auth/fieldrush_account.dart';
@@ -445,18 +446,15 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       repository: repository,
     );
     if (mounted && receipt != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Request sent · reference ${receipt.shortReference}'),
-        ),
+      showFieldrushToast(
+        context,
+        'Request sent · reference ${receipt.shortReference}',
       );
     }
   }
 
   void _showError(Object error, String fallback) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(userFacingError(error, fallback: fallback))),
-    );
+    showFieldrushToast(context, userFacingError(error, fallback: fallback));
   }
 
   @override

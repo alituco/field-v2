@@ -14,6 +14,7 @@ import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import 'clan.dart';
 import 'clan_reliability.dart';
 import 'clan_repository.dart';
@@ -157,14 +158,11 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     }
   }
 
-  void _showError(Object error) => ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(
-        userFacingError(
-          error,
-          fallback: 'Could not complete that action. Try again.',
-        ),
-      ),
+  void _showError(Object error) => showFieldrushToast(
+    context,
+    userFacingError(
+      error,
+      fallback: 'Could not complete that action. Try again.',
     ),
   );
   Future<bool> _confirm(

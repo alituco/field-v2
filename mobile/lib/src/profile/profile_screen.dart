@@ -25,6 +25,7 @@ import '../reliability/reliability_status_card.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
 import 'fieldrush_player_profile.dart';
@@ -202,14 +203,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _latestProfile = profile;
         _profileFuture = Future.value(profile);
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not update that follow. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not update that follow. Try again.',
         ),
       );
     } finally {
@@ -225,9 +223,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     await Clipboard.setData(ClipboardData(text: '@${profile.username}'));
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('@${profile.username} copied')));
+    showFieldrushToast(context, '@${profile.username} copied');
   }
 
   Future<void> _openPreviousGame(ProfilePreviousGame game) {
@@ -321,14 +317,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open this match. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open this match. Try again.',
         ),
       );
     } finally {
@@ -513,12 +506,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : profileName,
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Report sent privately · reference ${receipt.shortReference}',
-        ),
-      ),
+    showFieldrushToast(
+      context,
+      'Report sent privately · reference ${receipt.shortReference}',
     );
   }
 
@@ -529,10 +519,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       requestContext: const {'entry_point': 'profile'},
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Request sent · reference ${receipt.shortReference}'),
-      ),
+    showFieldrushToast(
+      context,
+      'Request sent · reference ${receipt.shortReference}',
     );
   }
 

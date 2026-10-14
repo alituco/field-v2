@@ -8,6 +8,7 @@ import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
 import 'package:field/src/ui/field_loading.dart';
+import 'package:field/src/ui/fieldrush_toast.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
@@ -54,7 +55,14 @@ void main() {
     );
     expect(content.isFollowing, isFalse);
     expect(content.followBusy, isFalse);
-    expect(find.byType(SnackBar), findsOneWidget);
+    expect(find.byType(FieldrushToast), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(FieldrushToast),
+        matching: find.text('Network unavailable.'),
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 

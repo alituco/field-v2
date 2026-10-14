@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support.dart';
@@ -124,10 +125,9 @@ class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
       await widget.onSignOut();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('We could not sign you out. Please try again.'),
-          ),
+        showFieldrushToast(
+          context,
+          'We could not sign you out. Please try again.',
         );
       }
     } finally {
@@ -151,10 +151,9 @@ class _RestrictedAccountScreenState extends State<RestrictedAccountScreen> {
       },
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Request sent · reference ${receipt.shortReference}'),
-      ),
+    showFieldrushToast(
+      context,
+      'Request sent · reference ${receipt.shortReference}',
     );
   }
 

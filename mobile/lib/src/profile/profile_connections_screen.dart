@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 
@@ -135,14 +136,11 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
           connection.id,
         );
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not update that follow. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not update that follow. Try again.',
         ),
       );
     } finally {

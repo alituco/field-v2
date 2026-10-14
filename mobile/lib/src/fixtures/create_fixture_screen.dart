@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'fixture.dart';
@@ -194,11 +195,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     }
 
     if (fixture.homeClanId == _membership.clan.id) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Your clan is already hosting this match.'),
-        ),
-      );
+      showFieldrushToast(context, 'Your clan is already hosting this match.');
       return;
     }
 
@@ -373,10 +370,9 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   }
 
   void _showOwnerSnack() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Only clan owners and leaders can schedule matches.'),
-      ),
+    showFieldrushToast(
+      context,
+      'Only clan owners and leaders can schedule matches.',
     );
   }
 

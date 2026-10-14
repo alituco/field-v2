@@ -22,11 +22,13 @@ class FieldrushGameDetailParty extends StatefulWidget {
     required this.game,
     required this.onChanged,
     this.viewerProfileId,
+    this.onViewProfile,
   });
   final OpenQueueRepository repository;
   final OpenQueueGame game;
   final Future<void> Function() onChanged;
   final String? viewerProfileId;
+  final Future<void> Function(String profileId)? onViewProfile;
   @override
   State<FieldrushGameDetailParty> createState() =>
       _FieldrushGameDetailPartyState();
@@ -138,6 +140,8 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
     await showOpenQueuePartyInviteSheet(
       context: context,
       partyContext: data,
+      game: widget.game,
+      onViewProfile: widget.onViewProfile,
       onInvite: (player) => _run((repository) async {
         await repository.invitePartyMember(
           partyId: party.id,
@@ -255,6 +259,7 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
     final party = data?.myParty;
     final canChange = data?.canUseParties == true && !_busy;
     final members = party?.members ?? const <OpenQueuePartyMember>[];
+    final owner = members.where((member) => member.isOwner).firstOrNull;
     final maxSize = data?.maxPartySize ?? widget.game.maxPartySize ?? 4;
     final lock = data?.partyLockAt;
     final localLock = lock == null ? null : widget.game.localDateTime(lock);
@@ -276,7 +281,9 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
           Row(
             children: [
               Text(
-                party == null ? 'PLAY TOGETHER' : 'YOUR PARTY',
+                party == null || party.isOwner || owner == null
+                    ? 'YOUR PARTY'
+                    : '${owner.displayName.split(' ').first.toUpperCase()}’S PARTY',
                 style: _text(
                   11,
                   color: const Color(0xFF24472C),
@@ -331,46 +338,93 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
                         : i < members.length
                         ? _slot(members[i], canChange && party?.isOwner == true)
                         : _emptySlot(
-                            canChange && (party == null || party.isOwner),
+                            canChange &&
+                                data.eligiblePlayers.isNotEmpty &&
+                                (party == null || party.isOwner),
                           ),
                   ),
                 ],
               ],
             ),
             const SizedBox(height: 12),
-            Text(
-              !data.canUseParties
-                  ? 'Party changes are closed for this game. Your confirmed booking is unchanged.'
-                  : party == null
-                  ? 'Invite players already booked into this game. A party keeps you on the same team.'
-                  : 'Your accepted party members will be assigned together. Pending invites reserve no game spots.',
-              style: _text(11, weight: FontWeight.w600),
-            ),
-            if (party != null && canChange)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton(
-                  onPressed: _leave,
+            Row(
+              children: [
+                Expanded(
                   child: Text(
-                    party.isOwner ? 'Cancel party' : 'Leave party',
-                    style: _text(11.5, color: FieldrushAuthTheme.danger),
+                    !data.canUseParties
+                        ? 'Party changes are closed. You’re still in the game.'
+                        : party != null && !party.isOwner
+                        ? 'Only the party lead can invite.'
+                        : members.length >= maxSize
+                        ? 'Party full. Pending invites reserve no game spots.'
+                        : 'Kept on the same side when teams are drawn.',
+                    style: _text(11, weight: FontWeight.w600),
                   ),
                 ),
-              ),
+                if (party != null && canChange) ...[
+                  const SizedBox(width: 12),
+                  OutlinedButton(
+                    onPressed: _leave,
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: FieldrushAuthTheme.danger,
+                      minimumSize: const Size(0, 40),
+                      padding: const EdgeInsets.symmetric(horizontal: 15),
+                      side: const BorderSide(color: FieldrushAuthTheme.border),
+                      shape: const StadiumBorder(),
+                    ),
+                    child: Text(
+                      party.isOwner ? 'Cancel party' : 'Leave party',
+                      style: _text(
+                        11.5,
+                        color: FieldrushAuthTheme.danger,
+                        weight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
             for (final invite in data.receivedInvites)
               Container(
                 margin: const EdgeInsets.only(top: 12),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFF2EFE3),
-                  borderRadius: BorderRadius.circular(14),
+                  color: FieldrushAuthTheme.cream,
+                  border: Border.all(color: FieldrushAuthTheme.border),
+                  borderRadius: BorderRadius.circular(18),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      '${invite.owner.displayName} invited you',
-                      style: _text(12, color: FieldrushAuthTheme.ink),
+                    Row(
+                      children: [
+                        _avatar(
+                          invite.owner.displayName,
+                          invite.owner.avatarUrl,
+                        ),
+                        const SizedBox(width: 11),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${invite.owner.displayName} invited you',
+                                style: _text(13, color: FieldrushAuthTheme.ink),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'PARTY INVITE',
+                                style: _text(
+                                  9,
+                                  color: FieldrushAuthTheme.forest,
+                                  weight: FontWeight.w800,
+                                ).copyWith(letterSpacing: .8),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 5),
                     Text(
@@ -385,14 +439,43 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
                             onPressed: canChange
                                 ? () => _respond(invite, true)
                                 : null,
+                            style: FilledButton.styleFrom(
+                              backgroundColor: FieldrushAuthTheme.forest,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(44),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              textStyle: _text(
+                                12,
+                                color: Colors.white,
+                                weight: FontWeight.w800,
+                              ),
+                            ),
                             child: const Text('Accept'),
                           ),
                         ),
                         const SizedBox(width: 8),
-                        TextButton(
+                        OutlinedButton(
                           onPressed: canChange
                               ? () => _respond(invite, false)
                               : null,
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size(0, 44),
+                            side: const BorderSide(
+                              color: FieldrushAuthTheme.border,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            backgroundColor: Colors.white,
+                            foregroundColor: FieldrushAuthTheme.ink,
+                            textStyle: _text(
+                              12,
+                              color: FieldrushAuthTheme.ink,
+                              weight: FontWeight.w800,
+                            ),
+                          ),
                           child: const Text('Decline'),
                         ),
                       ],
@@ -417,116 +500,312 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
   Widget _slot(OpenQueuePartyMember member, bool canManage) {
     final pending = member.status == OpenQueuePartyMemberStatus.invited;
     final isMe = member.profileId == widget.viewerProfileId;
-    final initials = member.displayName
-        .split(RegExp(r'\s+'))
-        .where((part) => part.isNotEmpty)
-        .take(2)
-        .map((part) => part.characters.first)
-        .join();
+    final foreground = isMe ? Colors.white : FieldrushAuthTheme.ink;
     return InkWell(
-      onTap: pending && canManage ? () => _cancelInvite(member) : null,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 3),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF2EFE3),
-          borderRadius: BorderRadius.circular(14),
-        ),
-        child: Column(
-          children: [
-            Text(
-              member.isOwner
-                  ? 'OWNER'
-                  : pending
-                  ? 'INVITED'
-                  : 'IN',
-              style: _text(
-                8,
-                color: pending
-                    ? const Color(0xFF926B27)
-                    : FieldrushAuthTheme.forest,
-                weight: FontWeight.w800,
+      key: ValueKey('fieldrush-party-member-${member.membershipId}'),
+      onTap: pending && canManage
+          ? () => _cancelInvite(member)
+          : !pending && widget.onViewProfile != null
+          ? () => widget.onViewProfile!(member.profileId)
+          : null,
+      borderRadius: BorderRadius.circular(16),
+      child: _PartySlotSurface(
+        dashed: pending,
+        borderColor: FieldrushAuthTheme.forest,
+        color: pending
+            ? Colors.white
+            : isMe
+            ? FieldrushAuthTheme.forest
+            : FieldrushAuthTheme.watermark,
+        child: SizedBox(
+          width: double.infinity,
+          child: Stack(
+            alignment: Alignment.topCenter,
+            clipBehavior: Clip.none,
+            children: [
+              Column(
+                children: [
+                  _avatar(
+                    member.displayName,
+                    member.avatarUrl,
+                    isMe: isMe,
+                    pending: pending,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    isMe ? 'You' : member.displayName.split(' ').first,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _text(
+                      11.5,
+                      color: foreground,
+                      weight: FontWeight.w800,
+                    ).copyWith(height: 1.1),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    pending ? 'Pending' : _roleWord(member.role),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _text(
+                      9.5,
+                      color: pending
+                          ? FieldrushAuthTheme.forest
+                          : isMe
+                          ? Colors.white.withValues(alpha: .8)
+                          : FieldrushAuthTheme.muted,
+                    ).copyWith(height: 1, letterSpacing: .285),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: 34,
-              height: 34,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: isMe ? FieldrushAuthTheme.forest : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                initials.toUpperCase(),
-                style: _text(
-                  11,
-                  color: isMe ? Colors.white : FieldrushAuthTheme.ink,
-                  weight: FontWeight.w800,
+              if (member.isOwner && (_data?.myParty?.acceptedCount ?? 0) > 1)
+                Positioned(
+                  top: -8,
+                  right: 2,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: isMe
+                          ? Colors.white.withValues(alpha: .2)
+                          : Colors.white,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      'LEAD',
+                      style: _text(
+                        7.5,
+                        color: isMe ? Colors.white : const Color(0xFF24472C),
+                        weight: FontWeight.w800,
+                      ).copyWith(height: 1, letterSpacing: .75),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-            const SizedBox(height: 7),
-            Text(
-              isMe ? 'You' : member.displayName.split(' ').first,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: _text(10, color: FieldrushAuthTheme.ink),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              pending && canManage ? 'Tap to cancel' : member.role.code,
-              style: _text(8),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _emptySlot(bool enabled) => InkWell(
+    key: const ValueKey('fieldrush-party-empty-slot'),
     onTap: enabled ? _invite : null,
-    borderRadius: BorderRadius.circular(14),
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 3),
-      decoration: BoxDecoration(
-        border: Border.all(color: FieldrushAuthTheme.border),
-        borderRadius: BorderRadius.circular(14),
-      ),
+    borderRadius: BorderRadius.circular(16),
+    child: _PartySlotSurface(
+      dashed: true,
+      borderColor: enabled ? const Color(0xFF9DBB9A) : const Color(0xFFE1DACA),
+      color: enabled ? Colors.white : const Color(0xFFFBFAF4),
       child: Column(
         children: [
-          const SizedBox(height: 8),
-          Icon(
-            enabled ? Icons.add_rounded : Icons.lock_outline_rounded,
-            size: 30,
-            color: FieldrushAuthTheme.muted,
+          Container(
+            width: 38,
+            height: 38,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: enabled
+                  ? const Color(0xFFEFF6E4)
+                  : FieldrushAuthTheme.watermark,
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.add_rounded,
+              size: 26,
+              color: enabled
+                  ? FieldrushAuthTheme.forest
+                  : const Color(0xFFB5AE98),
+            ),
           ),
-          const SizedBox(height: 10),
-          Text(enabled ? 'Invite' : 'Open', style: _text(10)),
-          const SizedBox(height: 11),
+          const SizedBox(height: 6),
+          Text(
+            enabled ? 'Invite' : 'Open',
+            style: _text(
+              11.5,
+              weight: FontWeight.w800,
+              color: enabled
+                  ? FieldrushAuthTheme.forest
+                  : const Color(0xFFA9A490),
+            ).copyWith(height: 1.1),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '·',
+            style: _text(9.5, color: Colors.transparent).copyWith(height: 1),
+          ),
         ],
       ),
     ),
   );
 
-  Widget _soloSlot() => Container(
-    padding: const EdgeInsets.symmetric(vertical: 13, horizontal: 3),
-    decoration: BoxDecoration(
-      color: FieldrushAuthTheme.forest,
-      borderRadius: BorderRadius.circular(14),
-    ),
+  Widget _soloSlot() => _PartySlotSurface(
+    color: FieldrushAuthTheme.forest,
     child: Column(
       children: [
-        const SizedBox(height: 8),
-        const Icon(Icons.person_outline_rounded, size: 30, color: Colors.white),
-        const SizedBox(height: 10),
-        Text('You', style: _text(10, color: Colors.white)),
-        const SizedBox(height: 4),
+        Container(
+          width: 38,
+          height: 38,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: .18),
+            borderRadius: BorderRadius.circular(13),
+          ),
+          child: Text(
+            'YOU',
+            style: _text(
+              9,
+              color: Colors.white,
+              weight: FontWeight.w800,
+            ).copyWith(height: 1, letterSpacing: .54),
+          ),
+        ),
+        const SizedBox(height: 6),
         Text(
-          widget.game.myBookingRole?.code ?? 'IN',
-          style: _text(8, color: Colors.white70),
+          'You',
+          style: _text(
+            11.5,
+            color: Colors.white,
+            weight: FontWeight.w800,
+          ).copyWith(height: 1.1),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          widget.game.myBookingRole == null
+              ? 'Booked'
+              : _roleWord(widget.game.myBookingRole!),
+          style: _text(
+            9.5,
+            color: Colors.white.withValues(alpha: .8),
+          ).copyWith(height: 1, letterSpacing: .285),
         ),
       ],
     ),
   );
+
+  String _roleWord(OpenQueueRole role) => switch (role) {
+    OpenQueueRole.goalkeeper => 'Keeper',
+    OpenQueueRole.defender => 'Defender',
+    OpenQueueRole.attacker => 'Attacker',
+    OpenQueueRole.midfielder => 'Midfielder',
+  };
+
+  Widget _avatar(
+    String name,
+    String? avatarUrl, {
+    bool isMe = false,
+    bool pending = false,
+  }) {
+    final initials = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part.characters.first)
+        .join()
+        .toUpperCase();
+    return Container(
+      width: 38,
+      height: 38,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: isMe
+            ? Colors.white.withValues(alpha: .18)
+            : pending
+            ? const Color(0xFFEFF6E4)
+            : Colors.white,
+        borderRadius: BorderRadius.circular(13),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: avatarUrl == null
+          ? Text(
+              isMe
+                  ? 'YOU'
+                  : initials.isEmpty
+                  ? 'F'
+                  : initials,
+              style: TextStyle(
+                fontFamily: isMe ? 'PlusJakartaSans' : 'Outfit',
+                fontSize: isMe ? 9 : 13,
+                fontWeight: FontWeight.w800,
+                color: isMe ? Colors.white : const Color(0xFF3C4A38),
+              ),
+            )
+          : Image.network(
+              avatarUrl,
+              width: 38,
+              height: 38,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => Text(
+                isMe
+                    ? 'YOU'
+                    : initials.isEmpty
+                    ? 'F'
+                    : initials,
+                style: _text(
+                  13,
+                  color: isMe ? Colors.white : FieldrushAuthTheme.ink,
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _PartySlotSurface extends StatelessWidget {
+  const _PartySlotSurface({
+    required this.color,
+    required this.child,
+    this.dashed = false,
+    this.borderColor = FieldrushAuthTheme.border,
+  });
+  final Color color;
+  final Widget child;
+  final bool dashed;
+  final Color borderColor;
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+    foregroundPainter: dashed ? _PartySlotDashPainter(borderColor) : null,
+    child: Container(
+      constraints: const BoxConstraints(minHeight: 100),
+      padding: const EdgeInsets.fromLTRB(4, 14, 4, 11),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      alignment: Alignment.topCenter,
+      child: child,
+    ),
+  );
+}
+
+class _PartySlotDashPainter extends CustomPainter {
+  const _PartySlotDashPainter(this.color);
+  final Color color;
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          (Offset.zero & size).deflate(.75),
+          const Radius.circular(16),
+        ),
+      );
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final metric in path.computeMetrics()) {
+      for (var offset = 0.0; offset < metric.length; offset += 8) {
+        canvas.drawPath(
+          metric.extractPath(offset, (offset + 4).clamp(0, metric.length)),
+          paint,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _PartySlotDashPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
