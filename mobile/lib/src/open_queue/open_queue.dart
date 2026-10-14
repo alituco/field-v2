@@ -128,6 +128,8 @@ extension OpenQueueRoleX on OpenQueueRole {
     OpenQueueRole.attacker => 'Attacker',
   };
 
+  /// Compatibility formation for 7v7 games returned by older servers.
+  /// Active game capacities must come from [OpenQueueGame.capacityFor].
   int get matchCapacity => switch (this) {
     OpenQueueRole.goalkeeper => 2,
     OpenQueueRole.defender || OpenQueueRole.attacker => 6,
@@ -163,6 +165,10 @@ class OpenQueueGame {
     required this.capacity,
     required this.confirmedCount,
     required this.spots,
+    this.goalkeeperCapacity,
+    this.defenderCapacity,
+    this.midfielderCapacity,
+    this.attackerCapacity,
     this.currency = 'BHD',
     this.highestDivision = 1,
     this.lowestDivision = 5,
@@ -206,6 +212,12 @@ class OpenQueueGame {
   final int capacity;
   final int confirmedCount;
   final Map<OpenQueueRole, int> spots;
+
+  /// Saved whole-match position capacities. Older payloads may omit them.
+  final int? goalkeeperCapacity;
+  final int? defenderCapacity;
+  final int? midfielderCapacity;
+  final int? attackerCapacity;
   final String currency;
   final int highestDivision;
   final int lowestDivision;
@@ -397,8 +409,16 @@ class OpenQueueGame {
   List<OpenQueueRole> get supportedRoles =>
       isFieldrushFormat ? fieldrushOpenQueueRoles : OpenQueueRole.values;
 
-  int capacityFor(OpenQueueRole role) =>
-      isFieldrushFormat ? role.matchCapacity : role.legacyMatchCapacity;
+  int capacityFor(OpenQueueRole role) {
+    final saved = switch (role) {
+      OpenQueueRole.goalkeeper => goalkeeperCapacity,
+      OpenQueueRole.defender => defenderCapacity,
+      OpenQueueRole.midfielder => midfielderCapacity,
+      OpenQueueRole.attacker => attackerCapacity,
+    };
+    return saved ??
+        (isFieldrushFormat ? role.matchCapacity : role.legacyMatchCapacity);
+  }
 
   int spotsFor(OpenQueueRole role) => spots[role] ?? 0;
 
@@ -496,6 +516,10 @@ class OpenQueueGame {
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
+      goalkeeperCapacity: _asNullableInt(json['goalkeeper_capacity']),
+      defenderCapacity: _asNullableInt(json['defender_capacity']),
+      midfielderCapacity: _asNullableInt(json['midfielder_capacity']),
+      attackerCapacity: _asNullableInt(json['attacker_capacity']),
       spots: {
         OpenQueueRole.goalkeeper: _asInt(json['goalkeeper_spots']),
         OpenQueueRole.defender: _asInt(json['defender_spots']),
@@ -556,6 +580,10 @@ class OpenQueueGame {
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
+      goalkeeperCapacity: _asNullableInt(json['goalkeeper_capacity']),
+      defenderCapacity: _asNullableInt(json['defender_capacity']),
+      midfielderCapacity: _asNullableInt(json['midfielder_capacity']),
+      attackerCapacity: _asNullableInt(json['attacker_capacity']),
       spots: const {},
       whiteScore: _asNullableInt(json['white_score']),
       blackScore: _asNullableInt(json['black_score']),

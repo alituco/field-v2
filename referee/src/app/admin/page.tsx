@@ -36,6 +36,8 @@ import { SchedulesPanel } from "./schedules-panel";
 import { CitiesPanel } from "./cities-panel";
 import { SeasonsPanel } from "./seasons-panel";
 import type { AdminField } from "@/lib/admin-fields";
+import { DEFAULT_SOLO_FORMATION, parseSoloFormation, type SoloFormation } from "@/lib/admin-solo-games";
+import { SoloFormationFields } from "./solo-formation-fields";
 
 type AdminSection =
   | "overview"
@@ -222,7 +224,7 @@ type SoloGameDialog =
   | { kind: "remove"; fixture: RefereeFixture }
   | null;
 
-type SoloGameDraft = {
+type SoloGameDraft = SoloFormation & {
   matchDate: string;
   kickoffTime: string;
   durationMinutes: number;
@@ -585,6 +587,9 @@ export default function AdminPage() {
     ageLabel: string;
     highestDivision: number;
     lowestDivision: number;
+    goalkeepersPerSide: number;
+    defendersPerSide: number;
+    attackersPerSide: number;
   }) {
     setSubmitting("create-solo-game");
     setError(null);
@@ -3546,6 +3551,9 @@ function SoloGameManagementDialog({
     ageLabel: string;
     highestDivision: number;
     lowestDivision: number;
+    goalkeepersPerSide: number;
+    defendersPerSide: number;
+    attackersPerSide: number;
   }) => void;
   onRemove: (fixture: RefereeFixture, reason: string) => void;
 }) {
@@ -3558,6 +3566,11 @@ function SoloGameManagementDialog({
   const [ageLabel, setAgeLabel] = useState(draft?.ageLabel ?? "18+");
   const [highestDivision, setHighestDivision] = useState(draft?.highestDivision ?? 1);
   const [lowestDivision, setLowestDivision] = useState(draft?.lowestDivision ?? 5);
+  const [formation, setFormation] = useState<SoloFormation>(draft ? {
+    goalkeepersPerSide: draft.goalkeepersPerSide, defendersPerSide: draft.defendersPerSide, attackersPerSide: draft.attackersPerSide,
+  } : DEFAULT_SOLO_FORMATION);
+  let validFormation = false;
+  try { parseSoloFormation(formation); validFormation = true; } catch { /* Form remains unsaveable until valid. */ }
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const creating = dialog.kind === "create";
@@ -3573,7 +3586,7 @@ function SoloGameManagementDialog({
     ageLabel.trim().length >= 2 &&
     Number.isInteger(highestDivision) && highestDivision >= 1 && highestDivision <= 5 &&
     Number.isInteger(lowestDivision) && lowestDivision >= 1 && lowestDivision <= 5 &&
-    highestDivision <= lowestDivision;
+    highestDivision <= lowestDivision && validFormation;
   const removeReady =
     reason.trim().length >= 8 &&
     confirmation.trim().toUpperCase() === "REMOVE";
@@ -3606,7 +3619,7 @@ function SoloGameManagementDialog({
             </select>
             <small>{selectedField ? `${selectedField.address}, ${selectedField.city}, ${selectedField.state}` : "Players will see this field’s address and map pin in the app."}</small>
           </label>
-          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, priceUsd, ageLabel, highestDivision, lowestDivision })}>+ Add a new field</button>
+          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, priceUsd, ageLabel, highestDivision, lowestDivision, ...formation })}>+ Add a new field</button>
           <div className="admin-solo-game-fields">
             <label className="admin-modal-field">
               <span>Match date</span>
@@ -3670,6 +3683,8 @@ function SoloGameManagementDialog({
               value={ageLabel}
             />
           </label>
+          <SoloFormationFields value={formation} onChange={setFormation} disabled={submitting} />
+          <p className="admin-detail-hint">Formation can be changed from the game overview until its first booking or payment attempt.</p>
         </>
       ) : (
         <>
@@ -3725,6 +3740,7 @@ function SoloGameManagementDialog({
                 ageLabel: ageLabel.trim(),
                 highestDivision,
                 lowestDivision,
+                ...formation,
               });
             } else {
               onRemove(dialog.fixture, reason.trim());

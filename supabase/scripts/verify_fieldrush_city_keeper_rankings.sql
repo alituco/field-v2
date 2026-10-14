@@ -41,7 +41,7 @@ begin
       insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(player,'active',now())
         on conflict(user_id) do update set status='active',onboarding_completed_at=now();
     end if;
-    role:=case when i<=2 then 'GK' when i<=8 then 'DEF' else 'ATT' end;
+    role:=case when i<=2 then 'GK' when i<=6 then 'DEF' else 'ATT' end;
     insert into public.open_queue_bookings(game_id,profile_id,role,status,amount_paid_fils,base_amount_fils,payment_method)
     values(game,player,role,'CONFIRMED',0,0,'FREE');
   end loop;

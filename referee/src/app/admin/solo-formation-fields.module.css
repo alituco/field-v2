@@ -1,0 +1,10 @@
+.fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.fields legend { color: var(--ink, #22301f); font-size: 13px; font-weight: 750; margin-bottom: 12px; padding: 0; }
+.row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.row label { display: grid; gap: 8px; min-width: 0; }
+.row span { color: var(--muted, #596c4f); font-size: 12px; font-weight: 700; }
+.row select { box-sizing: border-box; width: 100%; min-height: 48px; padding: 10px 13px; border: 1px solid var(--line, #e7dfca); border-radius: 12px; background: var(--surface, #fff); color: var(--ink, #22301f); font: inherit; font-size: 15px; font-weight: 700; }
+.row select:focus-visible { outline: 2px solid var(--green, #386641); outline-offset: 2px; }
+.row select:disabled { color: var(--muted, #596c4f); opacity: .7; }
+.fields p { margin: 10px 0 0; color: var(--muted, #596c4f); font-size: 12px; line-height: 1.7; }
+@media (max-width: 400px) { .row { gap: 8px; } .row span { font-size: 11px; } }

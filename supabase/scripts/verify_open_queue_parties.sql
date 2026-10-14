@@ -509,7 +509,7 @@ begin
       impossible_invitation_id, true
     );
   exception when others then
-    if position('would make the required' in lower(sqlerrm)) > 0 then
+    if sqlerrm = 'Joining this party would make the configured team formation impossible.' then
       rejection_seen := true;
     else
       raise;

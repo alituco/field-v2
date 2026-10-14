@@ -267,6 +267,48 @@ void main() {
     await _finish(tester);
   });
 
+  testWidgets('party role limits follow the game saved 1/2/4 formation', (
+    tester,
+  ) async {
+    final game = _formationGame();
+    await _open(tester, _context(), game: game, onInvite: (_) async => null);
+    expect(find.text('Attackers 0/4'), findsOneWidget);
+    expect(find.text('Defenders 1/2'), findsOneWidget);
+    expect(find.text('Keeper 0/1'), findsOneWidget);
+    await _finish(tester);
+  });
+
+  testWidgets('a pending defender fills the saved two-defender party limit', (
+    tester,
+  ) async {
+    var calls = 0;
+    await _open(
+      tester,
+      _context(
+        memberCount: 2,
+        pendingMembers: 1,
+        candidateRole: OpenQueueRole.defender,
+      ),
+      game: _formationGame(),
+      onInvite: (_) async {
+        calls++;
+        return null;
+      },
+    );
+    expect(find.text('Defenders 2/2'), findsOneWidget);
+    final candidate = find.byKey(
+      const ValueKey('invite-party-player-player-0'),
+    );
+    expect(tester.widget<InkWell>(candidate).onTap, isNull);
+    expect(
+      find.descendant(of: candidate, matching: find.text('Full')),
+      findsOneWidget,
+    );
+    expect(find.text('2 spots left'), findsOneWidget);
+    expect(calls, 0);
+    await _finish(tester);
+  });
+
   testWidgets('closed server party context cannot select a candidate', (
     tester,
   ) async {
@@ -348,7 +390,9 @@ Future<void> _open(
 
 OpenQueuePartyContext _context({
   int memberCount = 1,
+  int pendingMembers = 0,
   int playerCount = 1,
+  OpenQueueRole candidateRole = OpenQueueRole.attacker,
   bool canUseParties = true,
   bool includeMemberCandidate = false,
 }) => OpenQueuePartyContext(
@@ -361,7 +405,7 @@ OpenQueuePartyContext _context({
     id: 'party',
     ownerProfileId: 'owner',
     isOwner: true,
-    acceptedCount: memberCount,
+    acceptedCount: memberCount - pendingMembers,
     members: [
       for (var index = 0; index < memberCount; index++)
         OpenQueuePartyMember(
@@ -369,7 +413,9 @@ OpenQueuePartyContext _context({
           profileId: 'member-$index',
           displayName: 'Member $index',
           role: OpenQueueRole.defender,
-          status: OpenQueuePartyMemberStatus.accepted,
+          status: index >= memberCount - pendingMembers
+              ? OpenQueuePartyMemberStatus.invited
+              : OpenQueuePartyMemberStatus.accepted,
           isOwner: index == 0,
           invitedAt: null,
         ),
@@ -387,9 +433,32 @@ OpenQueuePartyContext _context({
         profileId: 'player-$index',
         displayName: 'Player $index',
         username: 'player$index',
-        role: OpenQueueRole.attacker,
+        role: candidateRole,
         isInParty: index.isOdd,
         currentPartySize: index.isOdd ? 2 : 0,
       ),
   ],
+);
+
+OpenQueueGame _formationGame() => OpenQueueGame(
+  id: 'game',
+  status: 'OPEN',
+  venue: 'Test pitch',
+  startsAt: DateTime.utc(2030, 1, 1),
+  endsAt: DateTime.utc(2030, 1, 1, 1),
+  timezone: 'America/Phoenix',
+  priceFils: 13000,
+  currency: 'USD',
+  ageLabel: '18+',
+  capacity: 14,
+  goalkeeperCapacity: 2,
+  defenderCapacity: 4,
+  midfielderCapacity: 0,
+  attackerCapacity: 8,
+  confirmedCount: 2,
+  spots: const {
+    OpenQueueRole.goalkeeper: 2,
+    OpenQueueRole.defender: 4,
+    OpenQueueRole.attacker: 8,
+  },
 );

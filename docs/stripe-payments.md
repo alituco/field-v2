@@ -90,6 +90,14 @@ Admin → Games → **Booking prices · USD** controls the future clan team pric
 ($80 by default). Clan checkout remains paused; editing that price does not
 enable it. Solo prices remain configurable per game, with $13 as the default.
 
+New solo games and recurring schedules default to one keeper, two defenders and
+four attackers per team. Admins can adjust the six outfield places when creating
+a game, editing an unused upcoming game, or changing a recurring rule for future
+games. Each saved game controls its booking quotas, party position limits and
+team assignment. Existing games and recurring rules retain their saved formation.
+Formation edits lock after any booking or payment attempt, including cancelled
+history, and after match activity. Price edits retain their separate existing rules.
+
 ## Repairing an abandoned retired-provider checkout
 
 An expired `LEGACY` attempt can still hold the one-game checkout limit. The

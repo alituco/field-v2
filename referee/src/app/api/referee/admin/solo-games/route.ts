@@ -34,6 +34,9 @@ export async function POST(request: NextRequest) {
         duration_minutes_to_use: input.durationMinutes,
         highest_division_to_use: input.highestDivision,
         lowest_division_to_use: input.lowestDivision,
+        goalkeepers_per_side_to_use: input.goalkeepersPerSide,
+        defenders_per_side_to_use: input.defendersPerSide,
+        attackers_per_side_to_use: input.attackersPerSide,
       },
     );
     if (error) {

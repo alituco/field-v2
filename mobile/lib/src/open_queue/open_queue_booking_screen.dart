@@ -276,6 +276,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     await showOpenQueuePartyInviteSheet(
       context: context,
       partyContext: data,
+      game: _booking.game,
       onInvite: (player) async {
         final succeeded = await _runPartyAction(
           key: 'invite-${player.profileId}',

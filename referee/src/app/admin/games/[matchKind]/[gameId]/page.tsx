@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
+import { GameFormationPanel } from "../../../game-formation-panel";
 
 import type {
   AdminGameDetail,
@@ -187,7 +188,7 @@ export default function AdminGameDetailPage() {
       <div className={styles.grid}>
         <div className={styles.mainColumn}>
           <section className={styles.card}>
-            <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the official six, or change rating eligibility." />
+            <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the playing squad, or change rating eligibility." />
             <div className={styles.reserveGrid}>
               <ReserveSlot
                 reserve={activeReserve}
@@ -212,6 +213,10 @@ export default function AdminGameDetailPage() {
           {detail.pricing ? (
             <GamePricingPanel pricing={detail.pricing} onEdit={() => setEditingPrice(true)} />
           ) : null}
+          {detail.formation ? <GameFormationPanel formation={detail.formation} accessToken={accessToken} gameId={fixture.id} onSaved={async () => {
+            setNotice("Formation updated. Booking positions and party limits now use this game’s saved formation.");
+            await load(true);
+          }} /> : null}
 
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />

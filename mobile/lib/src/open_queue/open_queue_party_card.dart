@@ -1471,10 +1471,12 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
   }
 
   Widget _playerRow(OpenQueuePartyPlayer player) {
-    final enabled = widget.partyContext.canUseParties && _openSlots > 0;
+    final positionFull = _roleFull(player.role);
+    final enabled =
+        widget.partyContext.canUseParties && _openSlots > 0 && !positionFull;
     final cta = !widget.partyContext.canUseParties
         ? 'Closed'
-        : _openSlots == 0
+        : _openSlots == 0 || positionFull
         ? 'Full'
         : 'Invite';
     return InkWell(

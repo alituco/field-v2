@@ -4,12 +4,13 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
 import type { AdminField } from "@/lib/admin-fields";
 import type { AdminGameSchedule } from "@/lib/admin-game-schedules";
-import { cityKickoffToUtc, cityToday } from "@/lib/admin-solo-games";
+import { cityKickoffToUtc, cityToday, DEFAULT_SOLO_FORMATION, parseSoloFormation, type SoloFormation } from "@/lib/admin-solo-games";
+import { SoloFormationFields } from "./solo-formation-fields";
 import styles from "./schedules-panel.module.css";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const DRAFT_KEY = "fieldrush-schedule-field-return-draft";
-type ScheduleDraft = { scheduleId: string | null; knownFieldIds: string[]; name: string; fieldId: string; weekdays: number[]; kickoffTime: string; durationMinutes: string; startsOn: string; endsOn: string; bookingWindowDays: string; priceUsd: string; ageLabel: string; highestDivision: string; lowestDivision: string; isActive: boolean };
+type ScheduleDraft = SoloFormation & { scheduleId: string | null; knownFieldIds: string[]; name: string; fieldId: string; weekdays: number[]; kickoffTime: string; durationMinutes: string; startsOn: string; endsOn: string; bookingWindowDays: string; priceUsd: string; ageLabel: string; highestDivision: string; lowestDivision: string; isActive: boolean };
 type Props = { accessToken: string; onAddField: () => void; refreshKey?: number; newlyAddedFieldId?: string | null };
 
 function readReturnDraft(): ScheduleDraft | null {
@@ -17,7 +18,9 @@ function readReturnDraft(): ScheduleDraft | null {
     const value = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || "null") as ScheduleDraft | null;
     if (value && value.highestDivision === undefined) value.highestDivision = "1";
     if (value && value.lowestDivision === undefined) value.lowestDivision = "5";
+    if (value && value.goalkeepersPerSide === undefined) Object.assign(value, value.scheduleId ? { goalkeepersPerSide: 1, defendersPerSide: 3, attackersPerSide: 3 } : DEFAULT_SOLO_FORMATION);
     if (!value || !["name", "fieldId", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "highestDivision", "lowestDivision"].every((key) => typeof value[key as keyof ScheduleDraft] === "string") || typeof value.isActive !== "boolean" || !Array.isArray(value.weekdays) || !value.weekdays.every((day) => Number.isInteger(day) && day >= 1 && day <= 7) || !Array.isArray(value.knownFieldIds) || !value.knownFieldIds.every((id) => typeof id === "string") || !(value.scheduleId === null || typeof value.scheduleId === "string")) return null;
+    parseSoloFormation(value);
     return value;
   } catch { return null; }
 }
@@ -77,7 +80,7 @@ export function SchedulesPanel({ accessToken, onAddField, refreshKey = 0, newlyA
   const [returnDraft, setReturnDraft] = useState<ScheduleDraft | null>(null);
 
   function addFirstField() {
-    const draft: ScheduleDraft = { scheduleId: null, knownFieldIds: fields.map((field) => field.id), name: "Saturday football", fieldId: "", weekdays: [6], kickoffTime: "20:30", durationMinutes: "60", startsOn: cityToday(fields.find((field) => field.marketActive)?.marketTimezone || "America/Phoenix"), endsOn: "", bookingWindowDays: "28", priceUsd: "13.00", ageLabel: "18+", highestDivision: "1", lowestDivision: "5", isActive: true };
+    const draft: ScheduleDraft = { scheduleId: null, knownFieldIds: fields.map((field) => field.id), name: "Saturday football", fieldId: "", weekdays: [6], kickoffTime: "20:30", durationMinutes: "60", startsOn: cityToday(fields.find((field) => field.marketActive)?.marketTimezone || "America/Phoenix"), endsOn: "", bookingWindowDays: "28", priceUsd: "13.00", ageLabel: "18+", highestDivision: "1", lowestDivision: "5", isActive: true, ...DEFAULT_SOLO_FORMATION };
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); }
     catch { setError("Your browser could not preserve the schedule draft. Please enable browser storage and try again."); return; }
     onAddField();
@@ -137,7 +140,7 @@ export function SchedulesPanel({ accessToken, onAddField, refreshKey = 0, newlyA
     {loading ? <LoadingSkeleton label="Loading schedules" /> : !schedules.length && !error ? <section className={styles.empty}><h3>Your week, on repeat.</h3><p>For example: every Saturday at 8:30 PM, with 60-minute games and bookings available four weeks ahead.</p><button className="admin-primary-button" type="button" onClick={() => fields.some((field) => field.isActive && field.marketActive) ? setEditing("new") : addFirstField()}>{fields.some((field) => field.isActive && field.marketActive) ? "Create your first schedule" : "Add a field first"}</button></section> : <div className={styles.cards}>{schedules.map((schedule) => <article key={schedule.id} className={styles.card} aria-label={schedule.name}>
       <header className={styles.cardHeader}><div><span className={schedule.isActive ? styles.active : styles.paused}>{schedule.isActive ? "Active" : "Paused"}</span><h3>{schedule.name}</h3><p>{schedule.fieldName}</p></div><button type="button" className="admin-secondary-button" disabled={busy !== null} onClick={() => setEditing(schedule)}>Edit schedule</button></header>
       <p className={styles.summary}>Every {daysLabel(schedule.weekdays)} · {timeLabel(schedule.kickoffTime)} · {schedule.timezone} · {schedule.durationMinutes} minutes</p>
-      <div className={styles.facts}><span><strong>${Number(schedule.priceUsd).toFixed(2)}</strong> per player</span><span><strong>Division {schedule.highestDivision}–{schedule.lowestDivision}</strong></span><span><strong>{schedule.bookingWindowDays} days</strong> booking window</span><span>From <strong>{prettyDate(schedule.startsOn)}</strong>{schedule.endsOn ? <> to <strong>{prettyDate(schedule.endsOn)}</strong></> : " · No end date"}</span></div>
+      <div className={styles.facts}><span><strong>${Number(schedule.priceUsd).toFixed(2)}</strong> per player</span><span><strong>{schedule.goalkeepersPerSide} GK · {schedule.defendersPerSide} DEF · {schedule.attackersPerSide} ATT</strong> per team</span><span><strong>Division {schedule.highestDivision}–{schedule.lowestDivision}</strong></span><span><strong>{schedule.bookingWindowDays} days</strong> booking window</span><span>From <strong>{prettyDate(schedule.startsOn)}</strong>{schedule.endsOn ? <> to <strong>{prettyDate(schedule.endsOn)}</strong></> : " · No end date"}</span></div>
       <div className={styles.actions}><button className="admin-secondary-button" type="button" disabled={busy !== null} onClick={() => void mutate(schedule, "toggle")}>{busy === schedule.id ? "Updating…" : schedule.isActive ? "Pause schedule" : "Resume schedule"}</button><button className={styles.quiet} type="button" disabled={busy !== null || !schedule.isActive} onClick={() => void mutate(schedule, "generate")}>Generate next games</button><button className={styles.quiet} type="button" disabled={busy !== null} onClick={() => setSkipping(skipping === schedule.id ? null : schedule.id)}>Skip a date</button></div>
       {!schedule.isActive ? <p className={styles.hint}>Paused: no new games will be generated. Already-created games stay open.</p> : null}
       {skipping === schedule.id ? <SkipDateForm accessToken={accessToken} schedule={schedule} onCancel={() => setSkipping(null)} onSaved={() => { setSkipping(null); setNotice("Date skipped. If a game already exists on that date, open it to cancel it separately."); void load(); }} /> : null}
@@ -163,6 +166,11 @@ function ScheduleEditor({ accessToken, fields, schedule, returnDraft, newlyAdded
   const [ageLabel, setAge] = useState(returnDraft?.ageLabel ?? schedule?.ageLabel ?? "18+");
   const [highestDivision, setHighestDivision] = useState(returnDraft?.highestDivision ?? String(schedule?.highestDivision ?? 1));
   const [lowestDivision, setLowestDivision] = useState(returnDraft?.lowestDivision ?? String(schedule?.lowestDivision ?? 5));
+  const [formation, setFormation] = useState<SoloFormation>(returnDraft ? {
+    goalkeepersPerSide: returnDraft.goalkeepersPerSide, defendersPerSide: returnDraft.defendersPerSide, attackersPerSide: returnDraft.attackersPerSide,
+  } : schedule ? {
+    goalkeepersPerSide: schedule.goalkeepersPerSide, defendersPerSide: schedule.defendersPerSide, attackersPerSide: schedule.attackersPerSide,
+  } : DEFAULT_SOLO_FORMATION);
   const [isActive, setActive] = useState(returnDraft?.isActive ?? schedule?.isActive ?? true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -171,7 +179,7 @@ function ScheduleEditor({ accessToken, fields, schedule, returnDraft, newlyAdded
   const dates = previewDates(weekdays, startsOn, endsOn, Number(bookingWindowDays), kickoffTime, [...(schedule?.skips.map((item) => item.matchDate) ?? []), ...(schedule?.occurrences.filter((item) => item.status === "CREATED").map((item) => item.matchDate) ?? [])], selectedField?.marketTimezone ?? "");
 
   function addField() {
-    const draft: ScheduleDraft = { scheduleId: schedule?.id ?? null, knownFieldIds: fields.map((field) => field.id), name, fieldId, weekdays, kickoffTime, durationMinutes, startsOn, endsOn, bookingWindowDays, priceUsd, ageLabel, highestDivision, lowestDivision, isActive };
+    const draft: ScheduleDraft = { scheduleId: schedule?.id ?? null, knownFieldIds: fields.map((field) => field.id), name, fieldId, weekdays, kickoffTime, durationMinutes, startsOn, endsOn, bookingWindowDays, priceUsd, ageLabel, highestDivision, lowestDivision, isActive, ...formation };
     try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); }
     catch { setError("Your browser could not preserve this draft. Save or copy your details before leaving to add a field."); return; }
     onAddField();
@@ -188,7 +196,8 @@ function ScheduleEditor({ accessToken, fields, schedule, returnDraft, newlyAdded
     if (Number(highestDivision) > Number(lowestDivision)) { setError("Highest division must be less than or equal to lowest division."); return; }
     setSaving(true); setError(null);
     try {
-      await request(accessToken, schedule ? `/${schedule.id}` : "", { method: schedule ? "PATCH" : "POST", body: JSON.stringify({ name, fieldId, weekdays: [...weekdays].sort((a, b) => a - b), kickoffTime, durationMinutes: Number(durationMinutes), startsOn, endsOn: endsOn || null, bookingWindowDays: Number(bookingWindowDays), priceUsd, ageLabel, highestDivision: Number(highestDivision), lowestDivision: Number(lowestDivision), isActive }) });
+      parseSoloFormation(formation);
+      await request(accessToken, schedule ? `/${schedule.id}` : "", { method: schedule ? "PATCH" : "POST", body: JSON.stringify({ name, fieldId, weekdays: [...weekdays].sort((a, b) => a - b), kickoffTime, durationMinutes: Number(durationMinutes), startsOn, endsOn: endsOn || null, bookingWindowDays: Number(bookingWindowDays), priceUsd, ageLabel, highestDivision: Number(highestDivision), lowestDivision: Number(lowestDivision), isActive, ...formation }) });
       onSaved();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not save the schedule."); }
     finally { setSaving(false); }
@@ -211,6 +220,7 @@ function ScheduleEditor({ accessToken, fields, schedule, returnDraft, newlyAdded
         <small>Division 1 is highest and Division 5 is lowest.</small>
         <small>The booked position determines the rating used. Placement players (fewer than 2 games in that track) can only book unrestricted Division 1–5 games.</small>
         <label><span>Age label</span><input required maxLength={40} value={ageLabel} onChange={(event) => setAge(event.target.value)} /></label>
+        <SoloFormationFields value={formation} onChange={setFormation} disabled={saving} />
         <label className={styles.check}><input type="checkbox" checked={isActive} onChange={(event) => setActive(event.target.checked)} /><span>Active — automatically create upcoming games</span></label>
         <div className={styles.help}>{isActive ? "Saving an active schedule opens eligible upcoming games for booking immediately. The generator keeps filling the booking window over time." : "This schedule will be saved paused. It will not create games until you resume it."} Existing games, prices, bookings and refunds are never changed by editing a schedule.</div>
       </section>
