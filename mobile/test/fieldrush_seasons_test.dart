@@ -5,8 +5,10 @@ import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/home/dashboard_home.dart';
+import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/leaderboard/fieldrush_leaderboard_widgets.dart';
 import 'package:field/src/leaderboard/fieldrush_rating_tracks.dart';
+import 'package:field/src/leaderboard/fieldrush_season_rewards.dart';
 import 'package:field/src/leaderboard/fieldrush_seasons.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
@@ -104,6 +106,138 @@ void main() {
     expect(catalog.visibleSeasons.map((s) => s.id), ['old']);
   });
 
+  test(
+    'catalog excludes hidden and draft seasons while retaining legacy rows',
+    () {
+      final catalog = FieldrushSeasonCatalog.fromJson({
+        'today': '2026-10-13',
+        'current_season_id': 'current',
+        'seasons': [
+          _seasonJson('legacy', '2026-01-01', '2026-03-31'),
+          {
+            ..._seasonJson('hidden', '2026-04-01', '2026-06-30'),
+            'visible_to_players': false,
+            'lifecycle': 'ENDED',
+          },
+          {
+            ..._seasonJson('draft', '2026-07-01', '2026-09-30'),
+            'visible_to_players': true,
+            'lifecycle': 'DRAFT',
+          },
+          {
+            ..._seasonJson('current', '2026-10-01', '2026-12-31'),
+            'visible_to_players': true,
+            'lifecycle': 'ACTIVE',
+          },
+          {
+            ..._seasonJson('next', '2027-01-01', '2027-03-31'),
+            'visible_to_players': true,
+            'lifecycle': 'SCHEDULED',
+          },
+        ],
+      });
+      expect(catalog.visibleSeasons.map((s) => s.id), ['legacy', 'current']);
+      expect(catalog.currentSeason.id, 'current');
+      expect(catalog.seasonForSelection('hidden').id, 'current');
+      expect(catalog.seasonForSelection('draft').id, 'current');
+      expect(catalog.seasonForSelection('legacy').id, 'legacy');
+      expect(catalog.seasons.first.visibleToPlayers, isTrue);
+      expect(catalog.seasons.first.lifecycle, isNull);
+    },
+  );
+
+  test('a calendar gap never falls back to the most recent hidden season', () {
+    final catalog = FieldrushSeasonCatalog.fromJson({
+      'today': '2026-10-13',
+      'current_season_id': null,
+      'seasons': [
+        _seasonJson('visible', '2026-01-01', '2026-06-30'),
+        {
+          ..._seasonJson('hidden', '2026-07-01', '2026-09-30'),
+          'visible_to_players': false,
+          'lifecycle': 'ENDED',
+        },
+      ],
+    });
+    expect(catalog.currentSeason.id, 'visible');
+    expect(catalog.seasonForSelection('hidden').id, 'visible');
+  });
+
+  test('an inconsistent hidden or draft current season is never displayed', () {
+    for (final flags in [
+      {'visible_to_players': false, 'lifecycle': 'ACTIVE'},
+      {'visible_to_players': true, 'lifecycle': 'DRAFT'},
+    ]) {
+      final catalog = FieldrushSeasonCatalog.fromJson({
+        'today': '2026-10-13',
+        'current_season_id': 'current',
+        'seasons': [
+          _seasonJson('past', '2026-06-01', '2026-09-30'),
+          {..._seasonJson('current', '2026-10-01', '2026-12-31'), ...flags},
+        ],
+      });
+      expect(catalog.visibleSeasons.map((s) => s.id), ['past']);
+      expect(() => catalog.currentSeason, throwsFormatException);
+    }
+  });
+
+  test('server midnight transition overrides the device day', () {
+    final catalog = FieldrushSeasonCatalog.fromJson({
+      'today': '2027-01-01',
+      'current_season_id': 'new',
+      'seasons': [
+        {
+          ..._seasonJson('old', '2026-10-01', '2026-12-31'),
+          'lifecycle': 'ENDED',
+        },
+        {
+          ..._seasonJson('new', '2027-01-01', '2027-03-31'),
+          'lifecycle': 'ACTIVE',
+        },
+      ],
+    }, today: DateTime.utc(2026, 12, 31));
+    expect(catalog.currentSeason.id, 'new');
+    expect(catalog.visibleSeasons.map((s) => s.id), ['old', 'new']);
+  });
+
+  test(
+    'scheduled season stays hidden when its start arrived but rollover is blocked',
+    () {
+      final catalog = FieldrushSeasonCatalog.fromJson({
+        'today': '2027-01-01',
+        'current_season_id': 'old',
+        'seasons': [
+          {
+            ..._seasonJson('old', '2026-10-01', '2027-01-01'),
+            'lifecycle': 'ACTIVE',
+          },
+          {
+            ..._seasonJson('next', '2027-01-01', '2027-03-31'),
+            'lifecycle': 'SCHEDULED',
+          },
+        ],
+      });
+      expect(catalog.visibleSeasons.map((s) => s.id), ['old']);
+      expect(catalog.currentSeason.id, 'old');
+      expect(catalog.seasonForSelection('next').id, 'old');
+    },
+  );
+
+  test('season parsing rejects invalid visibility and lifecycle flags', () {
+    for (final flags in [
+      {'visible_to_players': 'false'},
+      {'lifecycle': 'UNKNOWN'},
+    ]) {
+      expect(
+        () => LeaderboardSeason.fromJson({
+          ..._seasonJson('test', '2026-10-01', '2026-12-31'),
+          ...flags,
+        }),
+        throwsFormatException,
+      );
+    }
+  });
+
   test('server day overrides a skewed device clock for visible seasons', () {
     final catalog = FieldrushSeasonCatalog.fromJson({
       'today': '2027-02-20',
@@ -188,6 +322,42 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Home receives the renamed current season from the catalog', (
+    tester,
+  ) async {
+    final renamed = _renamedServerSeason();
+    final ratings = _Ratings()
+      ..catalog = FieldrushSeasonCatalog(
+        seasons: [renamed],
+        currentSeasonId: renamed.id,
+        today: DateTime.utc(2026, 11, 10),
+      );
+    await _pump(
+      tester,
+      DashboardHome(
+        profileRepository: _Profiles(),
+        clanRepository: _Clans(),
+        fixtureRepository: _Fixtures(),
+        leaderboardRepository: ratings,
+        openQueueRepository: _Queue(),
+        onOpenClans: () {},
+        onOpenFixtures: () {},
+        onOpenRanks: () {},
+        onOpenProfile: () {},
+        onNavigateTab: (_) {},
+      ),
+    );
+    expect(ratings.requested.single.label, 'Founders Season');
+    expect(
+      tester
+          .widget<FieldrushHomeRating>(find.byType(FieldrushHomeRating))
+          .season!
+          .label,
+      'Founders Season',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'public Profile loads role statistics with the server season dates',
     (tester) async {
@@ -230,6 +400,106 @@ void main() {
     expect(find.text('Retry'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('Ranks refresh removes a hidden selected historical season', (
+    tester,
+  ) async {
+    final old = LeaderboardSeason.fromJson(
+      _seasonJson('past', '2026-06-01', '2026-09-30'),
+    );
+    final ratings = _Ratings()
+      ..catalog = FieldrushSeasonCatalog(
+        seasons: [old, _serverSeason],
+        currentSeasonId: _serverSeason.id,
+        today: DateTime.utc(2026, 11, 10),
+      );
+    await _pump(tester, _ranksScreen(ratings));
+    tester
+        .widget<FieldrushLeaderboardContent>(
+          find.byType(FieldrushLeaderboardContent),
+        )
+        .onSeason(old);
+    await tester.pumpAndSettle();
+    expect(ratings.pageSeasons.last.id, old.id);
+
+    ratings.catalog = FieldrushSeasonCatalog(
+      seasons: [
+        LeaderboardSeason.fromJson({
+          ..._seasonJson('past', '2026-06-01', '2026-09-30'),
+          'visible_to_players': false,
+          'lifecycle': 'ENDED',
+        }),
+        _serverSeason,
+      ],
+      currentSeasonId: _serverSeason.id,
+      today: DateTime.utc(2026, 11, 10),
+    );
+    await tester
+        .widget<FieldrushLeaderboardContent>(
+          find.byType(FieldrushLeaderboardContent),
+        )
+        .onRefresh();
+    await tester.pumpAndSettle();
+    final content = tester.widget<FieldrushLeaderboardContent>(
+      find.byType(FieldrushLeaderboardContent),
+    );
+    expect(content.season.id, _serverSeason.id);
+    expect(content.seasons!.map((s) => s.id), [_serverSeason.id]);
+    expect(ratings.pageSeasons.last.id, _serverSeason.id);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'Ranks refresh picks up a renamed current season without resetting SR',
+    (tester) async {
+      final ratings = _Ratings()
+        ..rating = const PlayerRatingLeaderboardEntry(
+          rank: 1,
+          profileId: 'me',
+          displayName: 'Alex P.',
+          username: 'alex',
+          skillRating: 1373,
+          matchesPlayed: 3,
+          wins: 2,
+          losses: 1,
+          draws: 0,
+          lastChange: 23,
+          region: 'phoenix',
+        )
+        ..rewards = const FieldrushSeasonRewards(
+          minimumRatedGames: 2,
+          prizesInCents: [15000, 10000, 5000],
+          players: [],
+        );
+      await _pump(tester, _ranksScreen(ratings));
+      expect(find.text('SEASON 99'), findsOneWidget);
+      final renamed = _renamedServerSeason();
+      ratings.catalog = FieldrushSeasonCatalog(
+        seasons: [renamed],
+        currentSeasonId: renamed.id,
+        today: DateTime.utc(2026, 11, 10),
+      );
+      await tester
+          .widget<FieldrushLeaderboardContent>(
+            find.byType(FieldrushLeaderboardContent),
+          )
+          .onRefresh();
+      await tester.pumpAndSettle();
+      expect(find.text('FOUNDERS SEASON'), findsOneWidget);
+      final content = tester.widget<FieldrushLeaderboardContent>(
+        find.byType(FieldrushLeaderboardContent),
+      );
+      expect(content.season.label, 'Founders Season');
+      expect(find.text('When Founders Season ends'), findsOneWidget);
+      expect(ratings.rewardSeasons.last.label, 'Founders Season');
+      expect(ratings.requested.last.id, _serverSeason.id);
+      expect(ratings.requested.last.startsOn, _serverSeason.startsOn);
+      expect(ratings.requested.last.endsOn, _serverSeason.endsOn);
+      expect(content.currentRating!.skillRating, 1373);
+      expect(content.currentRating!.matchesPlayed, 3);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   for (final scenario in [
     (
@@ -313,6 +583,25 @@ Map<String, Object> _seasonJson(String id, String start, String end) => {
   'ends_on': end,
 };
 
+Widget _ranksScreen(_Ratings ratings) => LeaderboardScreen(
+  clanRepository: _Clans(),
+  fixtureRepository: _Fixtures(),
+  leaderboardRepository: ratings,
+  profileRepository: _Profiles(),
+  cityRepository: _Cities(),
+);
+
+LeaderboardSeason _renamedServerSeason() => LeaderboardSeason.fromJson({
+  ..._seasonJson(
+    _serverSeason.id,
+    _serverSeason.startsOn,
+    _serverSeason.endsOn,
+  ),
+  'label': 'Founders Season',
+  'visible_to_players': true,
+  'lifecycle': 'ACTIVE',
+});
+
 Future<void> _pump(WidgetTester tester, Widget widget) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
@@ -335,20 +624,38 @@ class _Ratings extends Fake
     implements
         LeaderboardRepository,
         TrackLeaderboardRepository,
-        SeasonLeaderboardRepository {
+        SeasonLeaderboardRepository,
+        SeasonRewardsRepository {
   _Ratings({this.primaryCityId = 'phoenix', this.preferredCityId});
   final String? primaryCityId, preferredCityId;
   bool failCatalog = false;
+  FieldrushSeasonCatalog? catalog;
+  FieldrushSeasonRewards? rewards;
+  PlayerRatingLeaderboardEntry rating = _rating;
   final requested = <LeaderboardSeason>[];
   final pageScopes = <(RatingTrack, String?)>[];
+  final pageSeasons = <LeaderboardSeason>[];
+  final rewardSeasons = <LeaderboardSeason>[];
+
+  @override
+  Future<FieldrushSeasonRewards?> loadSeasonRewards({
+    required LeaderboardSeason season,
+    required RatingTrack track,
+    required String cityId,
+  }) async {
+    rewardSeasons.add(season);
+    return rewards;
+  }
+
   @override
   Future<FieldrushSeasonCatalog> loadSeasons() async {
     if (failCatalog) throw StateError('Catalog unavailable');
-    return FieldrushSeasonCatalog(
-      seasons: [_serverSeason],
-      currentSeasonId: _serverSeason.id,
-      today: DateTime.utc(2026, 11, 10),
-    );
+    return catalog ??
+        FieldrushSeasonCatalog(
+          seasons: [_serverSeason],
+          currentSeasonId: _serverSeason.id,
+          today: DateTime.utc(2026, 11, 10),
+        );
   }
 
   @override
@@ -358,8 +665,8 @@ class _Ratings extends Fake
   }) async {
     requested.add(season);
     return FieldrushPlayerRatings(
-      outfield: _rating,
-      goalkeeper: _rating,
+      outfield: rating,
+      goalkeeper: rating,
       primaryCityId: primaryCityId,
       preferredCityId: preferredCityId,
     );
@@ -374,6 +681,7 @@ class _Ratings extends Fake
     int pageSize = 23,
   }) async {
     pageScopes.add((track, cityId));
+    pageSeasons.add(season);
     return const PlayerRatingLeaderboardPage(
       players: [],
       aroundMe: [],

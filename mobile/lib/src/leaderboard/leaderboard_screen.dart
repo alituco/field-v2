@@ -173,12 +173,11 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
             .loadSeasons();
         if (!mounted || generation != _generation) return;
         _seasons = catalog.visibleSeasons;
-        final selected = _seasons!.where((s) => s.id == _season.id).firstOrNull;
-        _season =
-            _useCurrentSeason || _lastActiveSeasonId != catalog.currentSeason.id
-            ? catalog.currentSeason
-            : selected ?? catalog.currentSeason;
-        _lastActiveSeasonId = catalog.currentSeason.id;
+        final current = catalog.currentSeason;
+        _season = _useCurrentSeason || _lastActiveSeasonId != current.id
+            ? current
+            : catalog.seasonForSelection(_season.id);
+        _lastActiveSeasonId = current.id;
       } else if (_useCurrentSeason ||
           _lastActiveSeasonId != activeLeaderboardSeason.id) {
         _season = activeLeaderboardSeason;

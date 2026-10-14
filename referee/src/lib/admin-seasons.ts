@@ -2,9 +2,16 @@ import type { AdminCity } from "./admin-cities";
 
 export type RatingTrack = "OUTFIELD" | "GOALKEEPER";
 export type RewardAction = "SAVE" | "PUBLISH" | "CORRECT";
+export type SeasonLifecycle = "DRAFT" | "SCHEDULED" | "ACTIVE" | "ENDED";
+export type SeasonReadiness = { code: string; message: string; blocking: boolean };
 export type AdminSeason = {
   id: string; label: string; startsOn: string; endsOn: string; minimumRatedGames: number;
   revision: number; editable: boolean; publishedRewardsLocked: boolean;
+  lifecycle: SeasonLifecycle; visible: boolean; canChangeEnd: boolean;
+  canHide: boolean; transitionState: "READY" | "BLOCKED_LIVE"; blockedReason: string | null;
+  gamesPlayed: number; rankedPlayers: number; placementPlayers: number;
+  unfinishedGames: number; liveGames: number; publishedPrizeCents: number;
+  readiness: SeasonReadiness[];
 };
 export type AdminSeasonReward = {
   seasonId: string; cityId: string; ratingTrack: RatingTrack; currency: "USD";
@@ -13,13 +20,19 @@ export type AdminSeasonReward = {
 };
 export type SeasonAuditItem = {
   id: string; seasonId: string; cityId: string | null; ratingTrack: RatingTrack | null;
-  action: string; actorAdminId: string; reason: string | null; createdAt: string;
+  action: string; actorAdminId: string | null; reason: string | null; createdAt: string;
   beforeState: Record<string, unknown> | null; afterState: Record<string, unknown> | null;
 };
 export type AdminSeasonCatalog = {
   today: string; seasons: AdminSeason[]; rewards: AdminSeasonReward[];
-  audit: SeasonAuditItem[]; cities: AdminCity[];
+  audit: SeasonAuditItem[]; cities: AdminCity[]; currentSeasonId: string | null;
 };
+export type SeasonTransitionGame = { id: string; venue: string; status: string; kind: string };
+export type SeasonTransitionPreview = { currentSeason: AdminSeason; nextSeason: AdminSeason;
+  startsOn: string; endsOn: string; liveGames: SeasonTransitionGame[]; unfinishedGames: SeasonTransitionGame[];
+  affectedFutureGames: SeasonTransitionGame[]; canSchedule: boolean; blockers: string[] };
+export type SeasonEndPreview = { currentSeason: AdminSeason; endsOn: string; liveGames: SeasonTransitionGame[];
+  unfinishedGames: SeasonTransitionGame[]; affectedFutureGames: SeasonTransitionGame[]; canSave: boolean; blockers: string[] };
 
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid season details.");
@@ -54,15 +67,66 @@ function date(value: unknown) {
   return value;
 }
 
+function label(value: unknown) {
+  if (typeof value !== "string" || value.trim().length < 1 || value.trim().length > 40) throw new Error("Season name must be between 1 and 40 characters.");
+  return value.trim();
+}
+
+export function parseSeasonChangeReason(value: unknown) {
+  if (typeof value !== "string" || value.trim().length < 10 || value.trim().length > 1000) throw new Error("Explain this season change in 10–1,000 characters.");
+  return value.trim();
+}
+
+export function parseAdminSeasonActionInput(value: unknown) {
+  const body = strict(value, ["action", "label", "visible", "endsOn", "reason", "expectedRevision"]);
+  const actions = ["RENAME", "VISIBILITY", "SCHEDULE", "MAKE_DRAFT", "END_DATE"];
+  if (!actions.includes(String(body.action))) throw new Error("Choose a valid season action.");
+  const action = String(body.action);
+  const values: Record<string, unknown> = {};
+  if (action === "RENAME") values.label = label(body.label);
+  if (action === "VISIBILITY") {
+    if (typeof body.visible !== "boolean") throw new Error("Choose whether this season is visible to players.");
+    values.visible_to_players = body.visible;
+  }
+  if (action === "END_DATE") values.ends_on = date(body.endsOn);
+  const permitted = action === "RENAME" ? "label" : action === "VISIBILITY" ? "visible" : action === "END_DATE" ? "endsOn" : null;
+  for (const key of ["label", "visible", "endsOn"]) if (key !== permitted && body[key] !== undefined) throw new Error("Unknown detail for this season action.");
+  if (action !== "END_DATE" && body.reason !== undefined && body.reason !== null && body.reason !== "") throw new Error("A reason is only used for end-date changes.");
+  return { action, values, reason: action === "END_DATE" ? parseSeasonChangeReason(body.reason) : null,
+    expectedRevision: integer(body.expectedRevision, "Revision", 1, 2147483647) };
+}
+
+export function parseAdminSeasonDuplicateInput(value: unknown) {
+  const body = strict(value, ["id", "label", "startsOn", "endsOn", "minimumRatedGames", "expectedSourceRevision"]);
+  const parsed = parseAdminSeasonInput({ label: body.label, startsOn: body.startsOn, endsOn: body.endsOn,
+    minimumRatedGames: body.minimumRatedGames, expectedRevision: 0 });
+  return { id: parseSeasonId(body.id), values: parsed.values,
+    expectedSourceRevision: integer(body.expectedSourceRevision, "Source revision", 1, 2147483647) };
+}
+
+export function parseAdminSeasonTransitionInput(value: unknown, scheduling = false) {
+  const body = strict(value, scheduling ? ["currentSeasonId", "nextSeasonId", "startsOn", "reason", "expectedCurrentRevision", "expectedNextRevision"] : ["currentSeasonId", "nextSeasonId", "startsOn"]);
+  const currentSeasonId = parseSeasonId(body.currentSeasonId); const nextSeasonId = parseSeasonId(body.nextSeasonId);
+  if (currentSeasonId === nextSeasonId) throw new Error("Choose a different next season.");
+  return { currentSeasonId, nextSeasonId, startsOn: date(body.startsOn),
+    ...(scheduling ? { reason: parseSeasonChangeReason(body.reason),
+      expectedCurrentRevision: integer(body.expectedCurrentRevision, "Current season revision", 1, 2147483647),
+      expectedNextRevision: integer(body.expectedNextRevision, "Next season revision", 1, 2147483647) } : {}) };
+}
+
+export function parseAdminSeasonEndPreviewInput(value: unknown) {
+  return { endsOn: date(strict(value, ["endsOn"]).endsOn) };
+}
+
 export function parseAdminSeasonInput(value: unknown) {
   const body = strict(value, ["label", "startsOn", "endsOn", "minimumRatedGames", "expectedRevision"]);
-  if (typeof body.label !== "string" || body.label.trim().length < 1 || body.label.trim().length > 40) throw new Error("Season name must be between 1 and 40 characters.");
+  const seasonLabel = label(body.label);
   const startsOn = date(body.startsOn); const endsOn = date(body.endsOn);
   if (endsOn < startsOn) throw new Error("Season end date must be on or after its start date.");
   if (Date.parse(endsOn) - Date.parse(startsOn) > 370 * 86400000) throw new Error("A season can span at most 370 days between its start and end dates.");
   return {
     expectedRevision: integer(body.expectedRevision, "Revision", 0, 2147483647),
-    values: { label: body.label.trim(), starts_on: startsOn, ends_on: endsOn,
+    values: { label: seasonLabel, starts_on: startsOn, ends_on: endsOn,
       minimum_rated_games: integer(body.minimumRatedGames, "Prize qualification games", 2, 100) },
   };
 }
@@ -91,9 +155,32 @@ export function parseAdminRewardInput(value: unknown) {
 }
 
 export function serializeAdminSeason(row: Record<string, unknown>): AdminSeason {
+  const stats = row.stats && typeof row.stats === "object" ? row.stats as Record<string, unknown> : {};
   return { id: String(row.id), label: String(row.label), startsOn: String(row.starts_on), endsOn: String(row.ends_on),
     minimumRatedGames: Number(row.minimum_rated_games), revision: Number(row.revision),
-    editable: row.editable === true, publishedRewardsLocked: row.published_rewards_locked === true };
+    editable: row.editable === true, publishedRewardsLocked: row.published_rewards_locked === true,
+    lifecycle: ["DRAFT", "SCHEDULED", "ACTIVE", "ENDED"].includes(String(row.lifecycle)) ? row.lifecycle as SeasonLifecycle : "DRAFT",
+    visible: row.visible_to_players === true, canHide: row.can_hide === true, canChangeEnd: row.can_change_end === true,
+    transitionState: row.transition_state === "BLOCKED_LIVE" ? "BLOCKED_LIVE" : "READY", blockedReason: row.blocked_reason ? String(row.blocked_reason) : null,
+    gamesPlayed: Number(stats.games ?? 0), rankedPlayers: Number(stats.ranked_players ?? 0), placementPlayers: Number(stats.in_placement ?? 0),
+    unfinishedGames: Number(stats.unfinished_games ?? 0), liveGames: Number(stats.live_games ?? 0), publishedPrizeCents: Number(stats.published_prize_cents ?? 0),
+    readiness: Array.isArray(row.readiness) ? row.readiness.map((message) => ({ code: String(message), message: String(message), blocking: false })) : [] };
+}
+
+export function serializeSeasonTransition(row: Record<string, unknown>): SeasonTransitionPreview {
+  function games(value: unknown): SeasonTransitionGame[] {
+    return Array.isArray(value) ? value.map((item) => ({ id: String(item.id), venue: String(item.venue ?? "Game"), status: String(item.status), kind: String(item.kind) })) : [];
+  }
+  return { currentSeason: serializeAdminSeason(record(row.current_season)), nextSeason: serializeAdminSeason(record(row.next_season)),
+    startsOn: String(row.starts_on), endsOn: String(row.ends_on), liveGames: games(row.live_games), unfinishedGames: games(row.unfinished_games),
+    affectedFutureGames: games(row.affected_future_games), canSchedule: row.can_schedule === true, blockers: Array.isArray(row.blockers) ? row.blockers.map(String) : [] };
+}
+
+export function serializeSeasonEndPreview(row: Record<string, unknown>): SeasonEndPreview {
+  const transition = serializeSeasonTransition({ ...row, next_season: row.current_season });
+  return { currentSeason: transition.currentSeason, endsOn: transition.endsOn, liveGames: transition.liveGames,
+    unfinishedGames: transition.unfinishedGames, affectedFutureGames: transition.affectedFutureGames,
+    canSave: row.can_save === true, blockers: transition.blockers };
 }
 
 export function serializeAdminSeasonReward(row: Record<string, unknown>): AdminSeasonReward {
@@ -104,7 +191,7 @@ export function serializeAdminSeasonReward(row: Record<string, unknown>): AdminS
 
 export function serializeSeasonAudit(row: Record<string, unknown>): SeasonAuditItem {
   return { id: String(row.id), seasonId: String(row.season_id), cityId: row.city_id ? String(row.city_id) : null,
-    ratingTrack: row.rating_track ? parseRatingTrack(row.rating_track) : null, action: String(row.action), actorAdminId: String(row.actor_admin_id),
+    ratingTrack: row.rating_track ? parseRatingTrack(row.rating_track) : null, action: String(row.action), actorAdminId: row.actor_admin_id ? String(row.actor_admin_id) : null,
     reason: row.reason ? String(row.reason) : null, createdAt: String(row.created_at),
     beforeState: row.before_state && typeof row.before_state === "object" ? row.before_state as Record<string, unknown> : null,
     afterState: row.after_state && typeof row.after_state === "object" ? row.after_state as Record<string, unknown> : null };

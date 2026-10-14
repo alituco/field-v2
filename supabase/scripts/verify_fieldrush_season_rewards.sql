@@ -66,7 +66,9 @@ begin
   perform pg_temp.expect(not has_function_privilege('authenticated','public.admin_list_fieldrush_seasons(uuid)','EXECUTE'),'admin read RPC not executable by players');
   perform pg_temp.expect(not has_function_privilege('anon','public.list_fieldrush_seasons()','EXECUTE'),'anonymous season reads denied');
   payload:=public.list_fieldrush_seasons();
-  perform pg_temp.expect(jsonb_array_length(payload->'seasons')>=18,'existing season zero and quarterly catalog preserved');
+  perform pg_temp.expect(jsonb_array_length(payload->'seasons')>=2
+    and not exists(select 1 from jsonb_array_elements(payload->'seasons') s where s->>'lifecycle' in ('DRAFT','SCHEDULED')),
+    'public catalog includes visible started seasons and omits unstarted drafts/schedules');
   perform pg_temp.expect(payload->>'current_season_id'=(select id from public.fieldrush_seasons where (now() at time zone 'America/Phoenix')::date between starts_on and ends_on),'active season comes from catalog');
 
   day_one:=(select greatest(max(ends_on)+1,(now() at time zone 'America/Phoenix')::date+400) from public.fieldrush_seasons);
@@ -74,7 +76,7 @@ begin
   begin perform public.admin_save_fieldrush_season(alpha,season_id,jsonb_build_object('label','Test','starts_on',day_one,'ends_on',day_one+89),0);
   exception when raise_exception then rejected:=true; end;
   perform pg_temp.expect(rejected,'non-admin cannot configure season');
-  season:=public.admin_save_fieldrush_season(admin_id,season_id,jsonb_build_object('label','TEST','starts_on',day_one,'ends_on',day_one+89),0);
+  season:=public.admin_save_fieldrush_season(admin_id,season_id,jsonb_build_object('label','TEST','starts_on',day_one,'ends_on',day_one+89,'lifecycle','SCHEDULED'),0);
   perform pg_temp.expect(season->>'minimum_rated_games'='2' and season->>'revision'='1','new season defaults to two prize-qualification games');
   season:=public.admin_save_fieldrush_season(admin_id,season_id,'{"minimum_rated_games":3}',1);
   perform pg_temp.expect(season->>'revision'='2' and season->>'minimum_rated_games'='3','future season minimum configurable independently');
@@ -83,7 +85,7 @@ begin
   exception when serialization_failure then rejected:=true; end;
   perform pg_temp.expect(rejected,'stale season revision rejected');
   rejected:=false;
-  begin perform public.admin_save_fieldrush_season(admin_id,second_season,jsonb_build_object('label','Overlap','starts_on',day_one+89,'ends_on',day_one+100),0);
+  begin perform public.admin_save_fieldrush_season(admin_id,second_season,jsonb_build_object('label','Overlap','starts_on',day_one+89,'ends_on',day_one+100,'lifecycle','SCHEDULED'),0);
   exception when raise_exception then rejected:=true; end;
   perform pg_temp.expect(rejected,'inclusive boundary overlapping dates rejected');
   rejected:=false;
@@ -98,10 +100,8 @@ begin
   begin perform public.admin_save_fieldrush_season(admin_id,season_id,'{"label":"Injected","unexpected":true}',2);
   exception when raise_exception then rejected:=true; end;
   perform pg_temp.expect(rejected,'unknown season settings rejected');
-  rejected:=false;
-  begin perform public.admin_save_fieldrush_season(admin_id,'s0','{"label":"Changed"}',1);
-  exception when raise_exception then rejected:=true; end;
-  perform pg_temp.expect(rejected,'started season settings immutable');
+  season:=public.admin_save_fieldrush_season(admin_id,'s0','{"label":"Changed"}',1);
+  perform pg_temp.expect(season->>'label'='Changed' and season->>'revision'='2','past season display names may be changed without changing ranking dates or qualification');
   perform pg_temp.expect(public.get_fieldrush_season_rewards(season_id,'phoenix','OUTFIELD') is null,'private drafts never advertised');
   payload:=public.admin_list_fieldrush_seasons(admin_id);
   perform pg_temp.expect(payload->>'today'=(now() at time zone 'America/Phoenix')::date::text,'admin date boundary supplied by database');
@@ -207,7 +207,7 @@ begin
   perform pg_temp.expect(payload#>>'{prize_players,0,profile_id}'=alpha::text,'keeper qualification does not remove outfield prize eligibility');
 
   -- Date edits are authoritative and permit intentional gaps, not overlaps.
-  season:=public.admin_save_fieldrush_season(admin_id,second_season,jsonb_build_object('label','NEXT','starts_on',day_one+100,'ends_on',day_one+189),0);
+  season:=public.admin_save_fieldrush_season(admin_id,second_season,jsonb_build_object('label','NEXT','starts_on',day_one+100,'ends_on',day_one+189,'lifecycle','SCHEDULED'),0);
   season:=public.admin_save_fieldrush_season(admin_id,second_season,jsonb_build_object('starts_on',day_one+110,'ends_on',day_one+200),1);
   perform pg_temp.expect((select starts_on=day_one+110 and ends_on=day_one+200 from fieldrush_rating_private.current_season_bounds(day_one+120)),'active server bounds reflect configured dates');
   perform pg_temp.expect(not exists(select 1 from fieldrush_rating_private.current_season_bounds(day_one+105)),'gap does not fall back to hardcoded quarter');

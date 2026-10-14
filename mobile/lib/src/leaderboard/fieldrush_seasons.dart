@@ -16,13 +16,18 @@ class FieldrushSeasonCatalog {
   final String? currentSeasonId;
   final DateTime _today;
 
-  /// No future ladder is selectable before its start, even though its draft
-  /// dates and prize settings can already exist on the server.
+  /// Hidden and unpublished ladders are not selectable. A scheduled season
+  /// must actually activate, even if its date arrived during a blocked rollover.
+  /// Older catalogs without lifecycle flags retain their date-based behavior.
   List<LeaderboardSeason> get visibleSeasons {
     final day = _today.toIso8601String().substring(0, 10);
     return [
       for (final season in seasons)
-        if (season.startsOn.compareTo(day) <= 0) season,
+        if (season.visibleToPlayers &&
+            season.lifecycle != LeaderboardSeasonLifecycle.draft &&
+            season.lifecycle != LeaderboardSeasonLifecycle.scheduled &&
+            season.startsOn.compareTo(day) <= 0)
+          season,
     ];
   }
 
@@ -31,7 +36,15 @@ class FieldrushSeasonCatalog {
   LeaderboardSeason get currentSeason {
     if (currentSeasonId != null) {
       final matches = seasons.where((season) => season.id == currentSeasonId);
-      if (matches.isNotEmpty) return matches.single;
+      if (matches.isNotEmpty) {
+        final current = matches.single;
+        if (!visibleSeasons.any((season) => season.id == current.id)) {
+          throw const FormatException(
+            'Current season is not available to players.',
+          );
+        }
+        return current;
+      }
       throw const FormatException(
         'Current season is missing from the catalog.',
       );
@@ -42,6 +55,14 @@ class FieldrushSeasonCatalog {
     }
     return started.last;
   }
+
+  /// Retain a player's historical selection after refresh only while it is
+  /// still visible. Fresh objects also pick up an admin's renamed label.
+  LeaderboardSeason seasonForSelection(String? selectedSeasonId) =>
+      visibleSeasons
+          .where((season) => season.id == selectedSeasonId)
+          .firstOrNull ??
+      currentSeason;
 
   factory FieldrushSeasonCatalog.fromJson(
     Map<String, dynamic> json, {

@@ -157,6 +157,24 @@ test("season rewards are verified against the fully replayed schema", () => {
   assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
 });
 
+test("season transitions are verified against the fully replayed schema", () => {
+  const source = job("database");
+  const script = "supabase/scripts/verify_fieldrush_season_management.sql";
+  const check = stepContaining(source, script);
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+});
+
+test("season lock ordering is checked with two local database connections", () => {
+  const source = job("database");
+  const check = stepContaining(source, "verify_fieldrush_season_concurrency.mjs");
+  assert.match(check, /node supabase\/scripts\/verify_fieldrush_season_concurrency\.mjs/);
+  assert.match(check, /set -euo pipefail/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+});
+
 test("match corrections verify both historical protection and current-period rating replay", () => {
   const source = job("database");
   const script = "supabase/scripts/verify_match_resolution_rating_era.sql";
