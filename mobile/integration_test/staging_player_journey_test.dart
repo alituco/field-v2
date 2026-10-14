@@ -23,6 +23,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'helpers/fieldrush_fixture_auth_repository.dart';
+import 'helpers/staging_party_navigation.dart';
 import 'helpers/staging_profile_navigation.dart';
 import 'helpers/staging_test_helpers.dart';
 
@@ -1046,26 +1047,7 @@ Future<void> _createAndSendPartyInvite(
   expect(created.myParty, isNotNull);
   expect(created.myParty!.ownerProfileId, _currentUserId());
   expect(created.myParty!.isOwner, isTrue);
-  final inviteAction = find.byKey(ValueKey('invite-party-player-$inviteeId'));
-  await scrollUntilFound(
-    tester,
-    inviteAction,
-    reason: 'The pre-booked E2E player was not listed for a party invite.',
-  );
-  await _tapEnabledFilledButton(
-    tester,
-    inviteAction,
-    reason: 'The pre-booked E2E player was not eligible for a party.',
-  );
-  await pumpUntilFound(
-    tester,
-    find.text('Sent'),
-    reason: 'The party invitation was not confirmed in the UI.',
-  );
-  await tapWhenVisible(
-    tester,
-    find.byKey(const ValueKey('party-invite-sheet-close')),
-  );
+  await sendPartyInviteThroughUi(tester, inviteeId: inviteeId);
   final invited = await _boundedRemoteStep(
     'verify persisted party invitation',
     SupabaseOpenQueueRepository().getPartyContext(gameId),
@@ -1102,10 +1084,6 @@ Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
     accept,
     reason: 'The accepted party invitation remained pending.',
   );
-  await pumpUntilFound(
-    tester,
-    find.descendant(of: party, matching: find.text('YOUR PARTY')),
-  );
   final accepted = await _boundedRemoteStep(
     'verify persisted party acceptance',
     SupabaseOpenQueueRepository().getPartyContext(gameId),
@@ -1118,6 +1096,7 @@ Future<void> _acceptPartyInvite(WidgetTester tester, String gameId) async {
   );
   expect(membership.status, OpenQueuePartyMemberStatus.accepted);
   expect(accepted.receivedInvites, isEmpty);
+  await expectAcceptedPartyMembershipVisible(tester, membership: membership);
   await _goHomeFromGame(tester);
 }
 

@@ -9,7 +9,26 @@ import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../integration_test/helpers/staging_party_navigation.dart';
+
 void main() {
+  testWidgets('staging member assertion uses the exact accepted slot', (
+    tester,
+  ) async {
+    final repository = _Repository(_context(isOwner: false));
+    await _show(tester, repository);
+    expect(find.text('KEVIN’S PARTY'), findsOneWidget);
+    expect(find.text('YOUR PARTY'), findsNothing);
+    final membership = repository.data.myParty!.members.singleWhere(
+      (member) => member.profileId == 'me',
+    );
+
+    await expectAcceptedPartyMembershipVisible(tester, membership: membership);
+
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('first plus creates the party before loading its invite picker', (
     tester,
   ) async {

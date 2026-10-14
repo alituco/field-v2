@@ -8,7 +8,123 @@ import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../integration_test/helpers/staging_party_navigation.dart';
+
 void main() {
+  testWidgets(
+    'staging journey sends the selected player through confirmation',
+    (tester) async {
+      final invited = <String>[];
+      await _open(
+        tester,
+        _context(playerCount: 2),
+        onInvite: (player) async {
+          expect(
+            find.byKey(const ValueKey('party-invite-confirmation')),
+            findsOneWidget,
+          );
+          invited.add(player.profileId);
+          return null;
+        },
+      );
+
+      await sendPartyInviteThroughUi(tester, inviteeId: 'player-1');
+
+      expect(invited, ['player-1']);
+      expect(find.byType(FieldrushModal), findsNothing);
+      expect(find.text('Invite sent to Player'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await _finish(tester);
+    },
+  );
+
+  testWidgets('staging invite waits for acknowledgement and sends only once', (
+    tester,
+  ) async {
+    var calls = 0;
+    var acknowledged = false;
+    await _open(
+      tester,
+      _context(),
+      onInvite: (_) async {
+        calls++;
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        expect(
+          tester
+              .widget<FilledButton>(
+                find.byKey(const ValueKey('party-invite-send')),
+              )
+              .onPressed,
+          isNull,
+        );
+        acknowledged = true;
+        return null;
+      },
+    );
+
+    await sendPartyInviteThroughUi(tester, inviteeId: 'player-0');
+
+    expect(acknowledged, isTrue);
+    expect(calls, 1);
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(tester.takeException(), isNull);
+    await _finish(tester);
+  });
+
+  testWidgets('staging invite does not accept a rejected send as success', (
+    tester,
+  ) async {
+    var calls = 0;
+    await _open(
+      tester,
+      _context(),
+      onInvite: (_) async {
+        calls++;
+        return 'Could not send invitation. Try again.';
+      },
+    );
+
+    await expectLater(
+      sendPartyInviteThroughUi(
+        tester,
+        inviteeId: 'player-0',
+        timeout: const Duration(milliseconds: 300),
+      ),
+      throwsA(isA<TestFailure>()),
+    );
+
+    expect(calls, 1);
+    expect(find.text('Could not send invitation. Try again.'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('party-invite-confirmation')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+    await _finish(tester);
+  });
+
+  testWidgets('staging invite refuses a disabled player row', (tester) async {
+    var calls = 0;
+    await _open(
+      tester,
+      _context(memberCount: 4),
+      onInvite: (_) async {
+        calls++;
+        return null;
+      },
+    );
+
+    await expectLater(
+      sendPartyInviteThroughUi(tester, inviteeId: 'player-0'),
+      throwsA(isA<TestFailure>()),
+    );
+
+    expect(calls, 0);
+    expect(find.byKey(const ValueKey('party-invite-send')), findsNothing);
+    expect(tester.takeException(), isNull);
+    await _finish(tester);
+  });
+
   testWidgets('party invitations use the shared theme and preserve retry', (
     tester,
   ) async {
