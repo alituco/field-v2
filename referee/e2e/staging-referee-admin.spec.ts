@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import { verifyAdminRequestInboxes } from "./support/admin-request-navigation";
+import { finishSoloMatch } from "./support/finish-solo-match";
 import {
   installAdminSession,
   loadStagingManifest,
@@ -95,10 +96,14 @@ test("referee runs the match and admin sees player-created requests", async ({
 
   const endMatch = page.locator("details.timer-end-disclosure");
   await endMatch.locator("summary").click();
-  await endMatch.getByRole("button", {
-    name: "Finish match",
-    exact: true,
-  }).click();
+  await finishSoloMatch(
+    page,
+    manifest.games.match.id,
+    endMatch.getByRole("button", {
+      name: "Finish match",
+      exact: true,
+    }),
+  );
   await expect(page.locator(".fixture-status")).toHaveText("Finished", {
     timeout: 30_000,
   });

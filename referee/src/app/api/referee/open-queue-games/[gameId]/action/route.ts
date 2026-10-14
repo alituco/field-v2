@@ -18,6 +18,7 @@ import {
 import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock";
 import { soloScheduledDurationSeconds, soloStartDurationSeconds } from "@/lib/match-duration";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
+import { finalizeSoloMatch } from "@/lib/solo-match-finalization";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
 
@@ -609,10 +610,20 @@ async function expireBlueCard(db: SupabaseClient, gameId: string, blueCardId?: s
 }
 
 async function finishGame(db: SupabaseClient, gameId: string) {
-  await assertNoError(
-    db.rpc("referee_complete_open_queue_game", { game_id_to_complete: gameId }),
-    "Could not finalize solo game",
-  );
+  await finalizeSoloMatch(gameId, {
+    complete: () => db.rpc("referee_complete_open_queue_game", { game_id_to_complete: gameId }),
+    readGame: async () => {
+      const result = await db.from("open_queue_games")
+        .select("id,status,operational_state")
+        .eq("id", gameId)
+        .single();
+      if (!result.error && result.data?.status === "LIVE" &&
+          !canRefereePerformOperationalAction(result.data.operational_state, "finish")) {
+        throw new Error("This match is locked for admin review. Refresh the game before trying again.");
+      }
+      return result;
+    },
+  });
 }
 
 async function setGameTime(

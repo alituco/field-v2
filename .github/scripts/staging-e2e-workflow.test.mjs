@@ -80,6 +80,7 @@ test("the shared admin inbox navigation is verified before hosted deployments", 
   const browser = stepContaining(source, "npm run test:ui -- admin-inbox-navigation.spec.ts");
   assert.match(browser, /admin-cities\.spec\.ts/);
   assert.match(browser, /admin-seasons\.spec\.ts/);
+  assert.match(browser, /referee-finalization-diagnostics\.spec\.ts/);
   assert.match(browser, /--project=chromium/);
   assert.match(source, /npx playwright install --with-deps chromium/);
   assert.ok(source.indexOf("Check admin inbox navigation") < source.indexOf("Build referee app"));
