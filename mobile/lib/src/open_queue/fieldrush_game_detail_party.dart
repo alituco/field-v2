@@ -127,7 +127,7 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
 
   Future<void> _invite() async {
     var data = _data;
-    if (data == null || !data.canUseParties) return;
+    if (data == null || !data.canUseParties || _busy) return;
     if (data.myParty == null) {
       final error = await _run((repository) async {
         await repository.createParty(widget.game.id);
@@ -136,7 +136,13 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
       data = _data;
     }
     final party = data?.myParty;
-    if (data == null || party == null || !party.isOwner || !mounted) return;
+    if (data == null ||
+        !data.canUseParties ||
+        party == null ||
+        !party.isOwner ||
+        !mounted) {
+      return;
+    }
     await showOpenQueuePartyInviteSheet(
       context: context,
       partyContext: data,
@@ -338,9 +344,7 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
                         : i < members.length
                         ? _slot(members[i], canChange && party?.isOwner == true)
                         : _emptySlot(
-                            canChange &&
-                                data.eligiblePlayers.isNotEmpty &&
-                                (party == null || party.isOwner),
+                            canChange && (party == null || party.isOwner),
                           ),
                   ),
                 ],

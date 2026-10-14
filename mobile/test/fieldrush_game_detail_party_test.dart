@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_party.dart';
 import 'package:field/src/open_queue/open_queue.dart';
@@ -8,6 +10,100 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('first plus creates the party before loading its invite picker', (
+    tester,
+  ) async {
+    final create = Completer<String>();
+    final repository = _Repository(_soloContext())
+      ..createdContext = _context()
+      ..createResult = create.future;
+    await _show(tester, repository);
+    final plus = find.byKey(const ValueKey('fieldrush-party-empty-slot')).first;
+    expect(find.text('Invite'), findsNWidgets(3));
+    await tester.tap(plus);
+    await tester.pump();
+    expect(repository.createCalls, 1);
+    expect(find.byKey(const ValueKey('party-invite-sheet')), findsNothing);
+    await tester.tap(plus);
+    await tester.pump();
+    expect(repository.createCalls, 1);
+    create.complete('party');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('party-invite-sheet')), findsOneWidget);
+    expect(find.text('Alex Smith'), findsWidgets);
+    expect(repository.contextCalls, 2);
+    expect(repository.inviteCalls, 0);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'a creation failure leaves plus available for a successful retry',
+    (tester) async {
+      final repository = _Repository(_soloContext())
+        ..createdContext = _context()
+        ..createError = StateError('Unable to create party');
+      await _show(tester, repository);
+      final plus = find
+          .byKey(const ValueKey('fieldrush-party-empty-slot'))
+          .first;
+      await tester.tap(plus);
+      await tester.pumpAndSettle();
+      expect(repository.createCalls, 1);
+      expect(find.byKey(const ValueKey('party-invite-sheet')), findsNothing);
+      expect(find.text('Invite'), findsNWidgets(3));
+      repository.createError = null;
+      await tester.tap(plus);
+      await tester.pumpAndSettle();
+      expect(repository.createCalls, 2);
+      expect(find.byKey(const ValueKey('party-invite-sheet')), findsOneWidget);
+      expect(repository.inviteCalls, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'plus opens the empty picker when no booked players are available',
+    (tester) async {
+      final repository = _Repository(_soloContext())
+        ..createdContext = _soloContext(party: _context().myParty);
+      await _show(tester, repository);
+      await tester.tap(
+        find.byKey(const ValueKey('fieldrush-party-empty-slot')).first,
+      );
+      await tester.pumpAndSettle();
+      expect(repository.createCalls, 1);
+      expect(find.byKey(const ValueKey('party-invite-sheet')), findsOneWidget);
+      expect(find.text('No one is available to invite'), findsOneWidget);
+      expect(repository.inviteCalls, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'a cutoff crossed during creation does not open the invite picker',
+    (tester) async {
+      final repository = _Repository(_soloContext())
+        ..createdContext = _soloContext(
+          party: _context().myParty,
+          canUseParties: false,
+        );
+      await _show(tester, repository);
+      await tester.tap(
+        find.byKey(const ValueKey('fieldrush-party-empty-slot')).first,
+      );
+      await tester.pumpAndSettle();
+      expect(repository.createCalls, 1);
+      expect(find.byKey(const ValueKey('party-invite-sheet')), findsNothing);
+      expect(find.text('Invite'), findsNothing);
+      expect(repository.inviteCalls, 0);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets(
     'party slots use reference role words and real player navigation',
     (tester) async {
@@ -107,7 +203,7 @@ Future<void> _show(
                 capacity: 14,
                 confirmedCount: 2,
                 myBookingId: 'booking',
-                myBookingRole: repository.data.myParty!.isOwner
+                myBookingRole: repository.data.myParty?.isOwner != false
                     ? OpenQueueRole.attacker
                     : OpenQueueRole.defender,
                 spots: const {
@@ -179,12 +275,54 @@ OpenQueuePartyContext _context({bool isOwner = true}) => OpenQueuePartyContext(
   ),
 );
 
+OpenQueuePartyContext _soloContext({
+  OpenQueueParty? party,
+  bool canUseParties = true,
+}) => OpenQueuePartyContext(
+  gameId: 'game',
+  gameStatus: 'OPEN',
+  canUseParties: canUseParties,
+  maxPartySize: 4,
+  partyLockAt: DateTime.utc(2030, 1, 12, 0, 30),
+  receivedInvites: const [],
+  eligiblePlayers: const [],
+  myParty: party,
+);
+
 class _Repository implements OpenQueueRepository, OpenQueuePartyRepository {
   _Repository(this.data);
-  final OpenQueuePartyContext data;
+  OpenQueuePartyContext data;
+  OpenQueuePartyContext? createdContext;
+  Future<String>? createResult;
+  Object? createError;
+  int createCalls = 0;
+  int contextCalls = 0;
+  int inviteCalls = 0;
   int cancelCalls = 0;
   @override
-  Future<OpenQueuePartyContext> getPartyContext(String gameId) async => data;
+  Future<OpenQueuePartyContext> getPartyContext(String gameId) async {
+    contextCalls++;
+    return data;
+  }
+
+  @override
+  Future<String> createParty(String gameId) async {
+    createCalls++;
+    if (createError case final error?) throw error;
+    final id = await (createResult ?? Future.value('party'));
+    data = createdContext ?? data;
+    return id;
+  }
+
+  @override
+  Future<String> invitePartyMember({
+    required String partyId,
+    required String profileId,
+  }) async {
+    inviteCalls++;
+    return 'invitation';
+  }
+
   @override
   Future<void> cancelPartyInvite(String membershipId) async {
     cancelCalls++;
