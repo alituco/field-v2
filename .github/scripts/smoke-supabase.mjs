@@ -95,8 +95,13 @@ if (typeof healthPayload !== "object" || healthPayload === null) {
 
 const tables = [
   "clans",
-  "open_queue_games",
 ];
+// Staging's rating-privacy rollout deliberately removes anonymous game-table
+// access. Check that boundary below; do not restore grants just for a probe.
+// Production has not received that rollout and keeps its existing contract.
+if (serviceRoleKey || environment === "production") {
+  tables.push("open_queue_games");
+}
 if (serviceRoleKey) {
   tables.push(
     "profiles",
@@ -112,6 +117,9 @@ if (!serviceRoleKey) {
   await assertAnonymousAccessDenied("profiles");
   await assertAnonymousAccessDenied("season_zero_waitlist");
   await assertAnonymousAccessDenied("reliability_policy_versions");
+  if (environment === "staging") {
+    await assertAnonymousAccessDenied("open_queue_games");
+  }
 }
 const counts = {};
 
