@@ -59,10 +59,12 @@ try {
       begin if position(needle in definition)=0 then raise exception 'Missing contract'; end if; return replace(definition,needle,replacement); end$$;
     create function search_fieldrush_players(query_to_use text) returns jsonb language plpgsql as $$begin
       -- case when coalesce(s.played,0)>=2 then r.skill_rating end skill_rating
-      return '[{"id":"${user}","display_name":"Player","skill_rating":1080,"matches_played":0}]'; end$$;
+      return case when query_to_use='missing' then '[]'::jsonb
+        else '[{"id":"${user}","display_name":"Player","skill_rating":1080,"matches_played":0}]'::jsonb end; end$$;
     create function list_fieldrush_clan_members(clan_id_to_use uuid) returns jsonb language plpgsql as $$begin
       -- case when stats.played>=2 then r.skill_rating end
-      return '[{"profile_id":"${user}","skill_rating":1080,"matches_played":0}]'; end$$;
+      return case when clan_id_to_use='00000000-0000-4000-8000-000000000000'::uuid then '[]'::jsonb
+        else '[{"profile_id":"${user}","skill_rating":1080,"matches_played":0}]'::jsonb end; end$$;
     create function fieldrush_rating_private.track_rankings(text,text,text,date,date) returns jsonb language plpgsql as $$begin
       -- having count(*)>=2
       return '[]'; end$$;
@@ -86,6 +88,27 @@ try {
       language sql as $$select id,white_average_sr,black_average_sr,match_average_sr,team_sr_spread from open_queue_games$$;`);
   }
   await db.exec(await readFile(new URL('../migrations/20261014001500_lifetime_rating_visibility.sql', import.meta.url), 'utf8'));
+  await db.exec(await readFile(new URL('../migrations/20261014002100_preserve_rating_privacy_array_responses.sql', import.meta.url), 'utf8'));
+  await check(`select jsonb_array_length(public.search_fieldrush_players('Player'))`,1);
+  await check(`select jsonb_array_length(public.list_fieldrush_clan_members($1))`,1,[game]);
+  await check(`select public.search_fieldrush_players('missing')`,[]);
+  await check(`select public.list_fieldrush_clan_members('00000000-0000-4000-8000-000000000000')`,[]);
+  await check(`select public.search_fieldrush_players('Player')->0->>'id'`,user);
+  await check(`select public.list_fieldrush_clan_members($1)->0->>'profile_id'`,user,[game]);
+  await check(`select public.search_fieldrush_players('Player')->0->'skill_rating'`,1080);
+  await db.exec(`update fieldrush_player_rating_tracks set matches_played=1 where rating_track='OUTFIELD'`);
+  await check(`select public.search_fieldrush_players('Player')->0->'skill_rating'`,null);
+  await check(`select public.list_fieldrush_clan_members($1)->0->'skill_rating'`,null,[game]);
+  await db.exec(`update fieldrush_player_rating_tracks set matches_played=2 where rating_track='OUTFIELD'`);
+  for (const signature of ['search_fieldrush_players(text)','list_fieldrush_clan_members(uuid)']) {
+    await check(`select has_function_privilege('authenticated',$1,'execute')`,true,[signature]);
+    await check(`select has_function_privilege('anon',$1,'execute')`,false,[signature]);
+  }
+  for (const signature of ['search_fieldrush_players_before_sr_privacy(text)','list_fieldrush_clan_members_before_sr_privacy(uuid)']) {
+    for (const role of ['anon','authenticated','service_role']) {
+      await check(`select has_function_privilege($1,$2,'execute')`,false,[role,signature]);
+    }
+  }
   const result = await value(`select get_fieldrush_player_ratings($1::uuid,'2027-01-01','2027-03-31')`,[user]);
   assert.equal(result.ratings.OUTFIELD.skill_rating,1080); checks++;
   assert.equal(result.ratings.OUTFIELD.lifetime_counted_matches,2); checks++;
