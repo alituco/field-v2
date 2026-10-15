@@ -59,30 +59,40 @@ export async function loadRefereeOpenQueueGames(
   db: SupabaseClient,
   refereeId: string,
 ): Promise<RefereeFixture[]> {
-  const { data: assignments, error: assignmentsError } = await db
-    .from("open_queue_referee_assignments")
-    .select("game_id")
-    .eq("referee_id", refereeId);
-
-  if (assignmentsError) throw assignmentsError;
-  const gameIds = (assignments ?? []).map((row) => String(row.game_id));
+  const assignedGameIds = new Set<string>();
+  const pageSize = 200;
+  for (let from = 0; ; from += pageSize) {
+    const { data: assignments, error } = await db
+      .from("open_queue_referee_assignments")
+      .select("game_id")
+      .eq("referee_id", refereeId)
+      .order("game_id")
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    for (const row of assignments ?? []) assignedGameIds.add(String(row.game_id));
+    if ((assignments ?? []).length < pageSize) break;
+  }
+  const gameIds = [...assignedGameIds];
   if (gameIds.length === 0) return [];
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await db
-    .from("open_queue_games")
-    .select(gameSelect)
-    .in("id", gameIds)
-    .in("status", ["FULL", "LIVE", "FINAL"])
-    .gte("starts_at", since)
-    .order("starts_at");
-
-  if (error) throw error;
-  return hydrateOpenQueueRows(
-    db,
-    (data ?? []) as Record<string, unknown>[],
-    true,
-  );
+  const fixtures: RefereeFixture[] = [];
+  // Assignment is the visibility boundary, not status or age. Bounded batches
+  // also keep long assignment histories below REST URL and response limits.
+  for (let index = 0; index < gameIds.length; index += 50) {
+    const { data, error } = await db
+      .from("open_queue_games")
+      .select(gameSelect)
+      .in("id", gameIds.slice(index, index + 50))
+      .order("starts_at")
+      .order("id");
+    if (error) throw error;
+    fixtures.push(...await hydrateOpenQueueRows(
+      db,
+      (data ?? []) as Record<string, unknown>[],
+      true,
+    ));
+  }
+  return fixtures;
 }
 
 export async function loadAdminOpenQueueGames(
