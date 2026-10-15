@@ -50,36 +50,38 @@ export async function loadRefereeFixtures(
   db: SupabaseClient,
   refereeId: string,
 ): Promise<RefereeFixture[]> {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  today.setUTCDate(today.getUTCDate() - 1);
-
-  const { data: assignments, error: assignmentsError } = await db
-    .from("fixture_referee_assignments")
-    .select("fixture_id")
-    .eq("referee_id", refereeId);
-
-  if (assignmentsError) throw assignmentsError;
-
-  const assignedFixtureIds = (assignments ?? []).map((row) =>
-    String(row.fixture_id)
-  );
+  const assignedIds = new Set<string>();
+  const pageSize = 200;
+  for (let from = 0; ; from += pageSize) {
+    const { data: assignments, error } = await db
+      .from("fixture_referee_assignments")
+      .select("fixture_id")
+      .eq("referee_id", refereeId)
+      .order("fixture_id")
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    for (const row of assignments ?? []) assignedIds.add(String(row.fixture_id));
+    if ((assignments ?? []).length < pageSize) break;
+  }
+  const assignedFixtureIds = [...assignedIds];
 
   if (assignedFixtureIds.length === 0) return [];
 
-  const { data: fixtures, error: fixturesError } = await db
-    .from("fixtures")
-    .select(fixtureSelect)
-    .in("id", assignedFixtureIds)
-    .in("status", ["SCHEDULED", "LIVE", "FINAL"])
-    .not("away_clan_id", "is", null)
-    .gte("match_date", today.toISOString().slice(0, 10))
-    .order("match_date")
-    .order("time_slot");
-
-  if (fixturesError) throw fixturesError;
-
-  return hydrateFixtureRows(db, fixtures ?? [], true);
+  const fixtures: RefereeFixture[] = [];
+  // Assigned matches remain visible while open, awaiting an opponent, live,
+  // completed or cancelled. Do not silently truncate long assignment histories.
+  for (let index = 0; index < assignedFixtureIds.length; index += 50) {
+    const { data, error } = await db
+      .from("fixtures")
+      .select(fixtureSelect)
+      .in("id", assignedFixtureIds.slice(index, index + 50))
+      .order("match_date")
+      .order("time_slot")
+      .order("id");
+    if (error) throw error;
+    fixtures.push(...await hydrateFixtureRows(db, data ?? [], true));
+  }
+  return fixtures;
 }
 
 export async function loadAdminFixtures(
@@ -118,7 +120,7 @@ async function hydrateFixtureRows(
       fixtureRows.flatMap((fixture) => [
         fixture.homeClan.id,
         fixture.awayClan.id,
-      ]),
+      ]).filter(Boolean),
     ),
   ];
 
@@ -369,7 +371,7 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     teamSrSpread: null,
     teamsAssignedAt: null,
     homeClan: normalizeClan(asObject(row.home_clan)),
-    awayClan: normalizeClan(asObject(row.away_clan)),
+    awayClan: normalizeClan(asObject(row.away_clan), "Opponent pending"),
     players: [],
     participantIds: [],
     clock: null,
@@ -381,11 +383,11 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
   } satisfies RefereeFixture;
 }
 
-function normalizeClan(row: Record<string, unknown>): Clan {
+function normalizeClan(row: Record<string, unknown>, pendingName = ""): Clan {
   return {
-    id: String(row.id),
-    name: String(row.name ?? ""),
-    tag: String(row.tag ?? ""),
+    id: String(row.id ?? ""),
+    name: String(row.name ?? pendingName),
+    tag: String(row.tag ?? (pendingName ? "TBD" : "")),
     emblem: String(row.emblem ?? "⚽"),
     skillRating: Number(row.skill_rating ?? 1500),
   };

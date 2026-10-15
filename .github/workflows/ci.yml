@@ -276,7 +276,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Check admin inbox navigation before hosted journeys
-        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts season-zero-operations.spec.ts --project=chromium
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts referee-assigned-games.spec.ts season-zero-operations.spec.ts --project=chromium
 
       - name: Build referee app
         run: npm run build

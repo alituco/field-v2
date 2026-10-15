@@ -2,6 +2,7 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import { verifyAdminRequestInboxes } from "./support/admin-request-navigation";
 import { finishSoloMatch } from "./support/finish-solo-match";
+import { refereeMatchKey } from "../src/lib/referee-assigned-matches";
 import {
   installAdminSession,
   loadStagingManifest,
@@ -19,7 +20,7 @@ test("referee runs the match and admin sees player-created requests", async ({
 
   const matchSelector = page.getByLabel("Choose assigned match");
   if (await matchSelector.count() > 0) {
-    await matchSelector.selectOption(manifest.games.match.id);
+    await matchSelector.selectOption(refereeMatchKey({ matchKind: "SOLO", id: manifest.games.match.id }));
   }
   await expect(page.locator(".referee-kickoff-details")).toContainText(
     manifest.games.match.venue,
