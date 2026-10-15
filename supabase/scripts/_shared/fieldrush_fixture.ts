@@ -29,6 +29,10 @@ export async function completeLocalFieldrushFixture(input: {
   });
   if (loginError) throw loginError;
   try {
+    const { data: account, error: accountError } = await client.rpc(
+      "get_my_fieldrush_account",
+    );
+    if (accountError) throw accountError;
     const { error } = await client.rpc("complete_fieldrush_onboarding", {
       draft: {
         first_name: input.firstName,
@@ -36,6 +40,9 @@ export async function completeLocalFieldrushFixture(input: {
         username: input.username,
         date_of_birth: input.dateOfBirth,
         email: `${input.username}@fieldrush-fixture.example`,
+        ...(account.skill_assessment_required === true
+          ? { skill_assessment: "not_sure" }
+          : {}),
       },
       terms_version: "fieldrush-v1",
       privacy_version: "fieldrush-v1",

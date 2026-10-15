@@ -177,7 +177,9 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
                     const SizedBox(height: 16),
                     Text(
                       _error ??
-                          'Your account is locked while deletion finishes. Retry to complete it, or contact support.',
+                          'Your account is locked while deletion finishes. Completing deletion '
+                              'permanently removes wallet access and forfeits any remaining balance. '
+                              'Retry to complete it, or contact support.',
                       textAlign: TextAlign.center,
                     ),
                     const SizedBox(height: 24),

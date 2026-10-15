@@ -276,7 +276,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Check admin inbox navigation before hosted journeys
-        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts --project=chromium
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts season-zero-operations.spec.ts --project=chromium
 
       - name: Build referee app
         run: npm run build
@@ -390,6 +390,20 @@ jobs:
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_solo_rebooking.mjs
 
+      - name: Verify prospective Season 0 rating math, evidence, replay, privacy, and transfers
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          node supabase/scripts/test_season_zero_sr_calculator.mjs
+          node supabase/scripts/test_season_zero_rating_initialization.mjs
+          node supabase/scripts/test_season_zero_sr_timeline.mjs
+          node supabase/scripts/test_season_zero_match_evidence.mjs
+          node supabase/scripts/test_season_zero_sr_settlement.mjs
+          node supabase/scripts/test_lifetime_rating_visibility.mjs
+          node supabase/scripts/test_season_zero_rebalance.mjs
+          node supabase/scripts/test_season_zero_migration_chain.mjs
+
       - name: Replay migrations on a fresh local Supabase stack
         run: >-
           supabase start
@@ -410,6 +424,39 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_fieldrush_accounts.sql
+
+      - name: Verify staff offboarding and atomic account-deletion wallet forfeiture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_staff_offboarding_account_deletion.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_account_deletion_wallet_forfeiture.sql
+
+      - name: Verify once-only assessment initialization on the full schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_season_zero_rating_initialization.sql
+
+      - name: Verify Season 0 assignment and settlement on the full schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_season_zero_assignment.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_season_zero_full_schema.sql
 
       - name: Verify private launch interest capture
         shell: bash

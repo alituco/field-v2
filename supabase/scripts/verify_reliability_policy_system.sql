@@ -306,6 +306,15 @@ begin
   select pg_get_functiondef(
     'public.list_open_queue_games()'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.list_open_queue_games_before_sr_privacy()') is not null then
+    if position('public.list_open_queue_games_before_sr_privacy()' in function_text)=0
+      or position('fieldrush_rating_private.public_match_ratings_visible' in function_text)=0
+      or exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r,'public.list_open_queue_games_before_sr_privacy()','EXECUTE')) then
+      raise exception 'Public game listing bypasses its private marketplace/privacy boundary.';
+    end if;
+    function_text:=function_text||pg_get_functiondef('public.list_open_queue_games_before_sr_privacy()'::regprocedure);
+  end if;
   if position('postCheckInDeadlineMarketplaceEnabled' in function_text) = 0
     or position('terms.check_in_deadline_at' in function_text) = 0
   then

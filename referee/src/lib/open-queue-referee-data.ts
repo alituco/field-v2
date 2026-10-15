@@ -34,6 +34,7 @@ const BLACK = {
 
 const gameSelect = `
   id,
+  rating_policy_id,
   status,
   operational_state,
   operational_state_updated_at,
@@ -147,6 +148,7 @@ async function hydrateOpenQueueRows(
 
     return {
       matchKind: "SOLO",
+      ratingPolicyId: String(row.rating_policy_id ?? "LEGACY"),
       id,
       status: String(row.status) as RefereeFixture["status"],
       operationalState: nullableString(row.operational_state),

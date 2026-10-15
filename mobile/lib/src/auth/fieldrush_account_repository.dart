@@ -228,9 +228,12 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<FieldrushAccount> updateAccount(AccountDraft draft) async {
+    // Self-assessment is an onboarding-only answer, never a profile-edit input.
+    // The server must also reject attempts to alter the established seed.
+    final profileDraft = draft.toJson()..remove('skill_assessment');
     final value = await _client.rpc(
       'update_my_fieldrush_account',
-      params: {'draft': draft.toJson()},
+      params: {'draft': profileDraft},
     );
     return FieldrushAccount.fromJson(_object(value));
   }
@@ -245,7 +248,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
     try {
       final result = await _client.functions.invoke(
         'fieldrush-delete-account',
-        body: {'confirmation': 'DELETE'},
+        body: {'confirmation': 'DELETE', 'wallet_forfeiture_confirmed': true},
       );
       if (result.status != 200 ||
           result.data is! Map ||

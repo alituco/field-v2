@@ -53,6 +53,9 @@ begin
   for i in 1..array_length(members,1) loop
     member:=members[i];
     insert into auth.users(id,phone,phone_confirmed_at) values(member,'15559992'||lpad(i::text,3,'0'),now());
+    -- Preserve the legacy seed/history in these rollback-only reward fixtures.
+    -- Prospective assessment behavior has its own initialization suite.
+    delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=member;
     insert into public.profiles(id,auth_user_id,display_name,username) values(member,member,names[i],'reward_regression_'||i)
       on conflict(id) do update set display_name=excluded.display_name,username=excluded.username;
     insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(member,'active',now())
@@ -159,8 +162,8 @@ begin
   perform pg_temp.expect(rejected,'unbounded prize amounts rejected');
 
   -- Individual goals trump conceded goals/name, conceded goals trump name,
-  -- and name breaks the final tie. The two-game player stays ranked but does
-  -- not qualify for this season's configurable three-game prize requirement.
+  -- and name breaks the final tie. Lifetime calibration remains two games,
+  -- while this season's ranking and prizes both require its configured three.
   for i in 1..5 loop
     member:=members[i];
     for j in 1..case when i=5 then 2 else 3 end loop
@@ -172,23 +175,26 @@ begin
   end loop;
   update public.fieldrush_player_rating_tracks set skill_rating=1500 where profile_id=any(members[1:5]) and rating_track='OUTFIELD';
   payload:=public.list_fieldrush_rating_page('CITY','phoenix','OUTFIELD',day_one,day_one+89,0,20);
-  perform pg_temp.expect(payload#>>'{players,0,profile_id}'=two_games::text,'ranked eligibility remains two games even when cash minimum is three');
-  perform pg_temp.expect(payload#>>'{players,1,profile_id}'=alpha::text,'more individual goals beats lower conceded/name');
-  perform pg_temp.expect(payload#>>'{players,2,profile_id}'=beta::text and payload#>>'{players,3,profile_id}'=gamma::text,'name resolves equal SR, goals scored and conceded');
-  perform pg_temp.expect(payload#>>'{players,4,profile_id}'=delta::text,'fewer goals conceded beats alphabetical name');
+  perform pg_temp.expect(not exists(select 1 from jsonb_array_elements(payload->'players') p where p->>'profile_id'=two_games::text),
+    'season ranking honors its configured three-game minimum');
+  perform pg_temp.expect(payload#>>'{players,0,profile_id}'=alpha::text,'more individual goals beats lower conceded/name');
+  perform pg_temp.expect(payload#>>'{players,1,profile_id}'=beta::text and payload#>>'{players,2,profile_id}'=gamma::text,'name resolves equal SR, goals scored and conceded');
+  perform pg_temp.expect(payload#>>'{players,3,profile_id}'=delta::text,'fewer goals conceded beats alphabetical name');
+  perform pg_temp.expect(fieldrush_rating_private.public_rating_state(two_games,'OUTFIELD')->>'rating_visible'='true',
+    'a calibrated two-game player keeps visible SR despite not qualifying this season');
   payload:=public.get_fieldrush_season_rewards(season_id,'phoenix','OUTFIELD');
   perform pg_temp.expect(payload->>'total_qualified'='4' and jsonb_array_length(payload->'prize_players')=3,'prize qualification filtered on server with three winners maximum');
   perform pg_temp.expect(payload#>>'{prize_players,0,profile_id}'=alpha::text and payload#>>'{prize_players,0,rank}'='1'
-    and payload#>>'{prize_players,0,leaderboard_rank}'='2','prize rank independent from overall two-game ranking');
+    and payload#>>'{prize_players,0,leaderboard_rank}'='1','prize and season ranking share the configured qualification minimum');
   perform pg_temp.expect(payload#>>'{current_player,profile_id}'=alpha::text and payload#>>'{next_player,profile_id}'=beta::text,'real current/next qualifiers returned for honest SR-gap copy');
   perform set_config('request.jwt.claim.sub',two_games::text,true);
   payload:=public.get_fieldrush_season_rewards(season_id,'phoenix','OUTFIELD');
-  perform pg_temp.expect(payload->'current_player'='null'::jsonb and payload->'next_player'='null'::jsonb,'ranked but prize-unqualified user never represented as a winner');
+  perform pg_temp.expect(payload->'current_player'='null'::jsonb and payload->'next_player'='null'::jsonb,'calibrated but season-unqualified user never represented as a winner');
   perform set_config('request.jwt.claim.sub',alpha::text,true);
   -- Audit events must not add a second scorer count for the same real goal.
   insert into public.open_queue_events(game_id,event_type,team,profile_id,minute) values(first_game,'GOAL','WHITE',beta,5);
   payload:=public.list_fieldrush_rating_page('CITY','phoenix','OUTFIELD',day_one,day_one+89,0,20);
-  perform pg_temp.expect(payload#>>'{players,2,profile_id}'=beta::text,'goal event log is not counted as a scored goal');
+  perform pg_temp.expect(payload#>>'{players,1,profile_id}'=beta::text,'goal event log is not counted as a scored goal');
 
   -- The same person can lead both roles. Keeper pool has exactly two eligible
   -- players, so its third place stays empty and the first/second amounts do not

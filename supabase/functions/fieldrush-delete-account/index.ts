@@ -49,7 +49,10 @@ Deno.serve(async (request) => {
   }
   try {
     if (!readDeletionConfirmation(await request.json())) {
-      return json({ error: "Confirm account deletion first." }, 400);
+      return json({
+        error:
+          "Confirm account deletion and permanent loss of your remaining wallet balance first.",
+      }, 400);
     }
   } catch {
     return json({ error: "Invalid request body." }, 400);
@@ -68,6 +71,7 @@ Deno.serve(async (request) => {
   });
   const { error: preparationError } = await user.rpc(
     "prepare_fieldrush_account_deletion",
+    { wallet_forfeiture_confirmed: true },
   );
   if (preparationError) {
     // These messages are deliberately actionable business/auth errors, never

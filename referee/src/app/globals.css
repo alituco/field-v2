@@ -583,6 +583,13 @@
   }
 }
 
+.season-zero-player-list { display: grid; gap: 0; }
+.season-zero-player-row { padding: 16px 0; border-top: 1px solid var(--line, #e4decb); }
+.season-zero-player-row small { display: block; margin-top: 4px; color: var(--muted, #58694f); }
+.season-zero-player-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.season-zero-confirm { margin-top: 16px; padding: 20px; border: 1px solid var(--line, #e4decb); border-radius: 20px; background: var(--canvas, #faf7ef); }
+.season-zero-confirm textarea { display: block; width: 100%; min-height: 80px; margin-top: 8px; padding: 12px; border: 1px solid var(--line, #e4decb); border-radius: 12px; font: inherit; }
+
 @media (min-width: 761px) {
   .admin-table-toolbar {
     grid-template-columns: minmax(220px, 1fr) repeat(3, auto);

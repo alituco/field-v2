@@ -16,6 +16,7 @@ import '../home/fieldrush_home_widgets.dart';
 import '../payments/refund_status.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../ranking/player_rating_visibility.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
 import 'fieldrush_game_detail_party.dart';
@@ -62,6 +63,10 @@ class FieldrushGameDetailScreen extends StatefulWidget {
     this.initialGame,
     this.initialDetail,
     this.playerRatingUpdate,
+    this.ratingStatus,
+    this.ratingExplanation,
+    this.countedAsPlayed,
+    this.ratingProfileId,
     this.onJoin,
     this.onNavigateTab,
     this.profileRepository,
@@ -74,6 +79,10 @@ class FieldrushGameDetailScreen extends StatefulWidget {
   final OpenQueueGame? initialGame;
   final OpenQueueMatchDetail? initialDetail;
   final FixturePlayerRatingUpdate? playerRatingUpdate;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+  final bool? countedAsPlayed;
+  final String? ratingProfileId;
   final Future<void> Function(OpenQueueGame game)? onJoin;
   final ValueChanged<int>? onNavigateTab;
   final ProfileRepository? profileRepository;
@@ -102,6 +111,52 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   Timer? _timer;
 
   OpenQueueGame? get _game => _detail?.game ?? widget.initialGame;
+  OpenQueuePlayer? get _ratingPlayer => _detail?.players
+      .where(
+        (p) => widget.ratingProfileId == null
+            ? p.isMe
+            : p.id == widget.ratingProfileId,
+      )
+      .firstOrNull;
+  String? get _ratingStatus =>
+      _ratingPlayer?.ratingStatus ??
+      _detail?.ratingStatus ??
+      widget.ratingStatus;
+  bool? get _countedAsPlayed =>
+      _ratingPlayer?.countedAsPlayed ?? widget.countedAsPlayed;
+  String? get _ratingMessage =>
+      _ratingPlayer?.publicRatingExplanation ??
+      publicRatingAppearanceExplanation(
+        widget.ratingExplanation,
+        _countedAsPlayed,
+      ) ??
+      _detail?.ratingExplanation ??
+      publicRatingStatusLabel(_ratingStatus);
+  FixturePlayerRatingUpdate? get _ratingUpdate {
+    if (!permitsPublicRatingResult(_ratingStatus) ||
+        _ratingPlayer?.ratingVisible == false) {
+      return null;
+    }
+    final player = _ratingPlayer;
+    // Current per-player settlement evidence outranks a history-card snapshot.
+    if (player != null && player.countedAsPlayed != null) {
+      final before = player.displayedRating;
+      final delta = player.publicRatingChange;
+      if (before == null || delta == null) return null;
+      return FixturePlayerRatingUpdate(
+        ratingBefore: before,
+        ratingChange: delta,
+        ratingAfter: before + delta,
+      );
+    }
+    final update =
+        widget.playerRatingUpdate ??
+        (widget.ratingProfileId == null ? _detail?.viewerRatingUpdate : null);
+    return _countedAsPlayed == false && update?.ratingChange == 0
+        ? null
+        : update;
+  }
+
   bool get _isBooked =>
       _booking != null || (!_bookingKnown && (_game?.hasMyBooking ?? false));
 
@@ -331,8 +386,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
             myClanMembership: null,
             sourceLabel: 'SOLO',
             showTeamRatings: false,
-            playerRatingUpdate:
-                widget.playerRatingUpdate ?? detail.viewerRatingUpdate,
+            playerRatingUpdate: _ratingUpdate,
             initiallyShowWatch: true,
             profileRepository: widget.profileRepository,
             refreshFixture: () async => (await widget.repository.getMatchDetail(
@@ -416,10 +470,20 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 if (game != null) ...[
                   const SizedBox(height: 16),
                   _hero(game),
-                  if ((widget.playerRatingUpdate ?? _detail?.viewerRatingUpdate)
-                      case final ratingUpdate? when game.status == 'FINAL') ...[
+                  if (_ratingUpdate case final ratingUpdate?
+                      when game.status == 'FINAL') ...[
                     const SizedBox(height: 12),
                     _ratingSummary(ratingUpdate),
+                  ],
+                  if (_ratingMessage case final explanation?) ...[
+                    const SizedBox(height: 12),
+                    _Card(
+                      child: Text(
+                        explanation,
+                        key: const ValueKey('game-rating-explanation'),
+                        style: _body(12),
+                      ),
+                    ),
                   ],
                   const SizedBox(height: 16),
                   Container(
@@ -1001,7 +1065,20 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 'Format',
                 '${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
               ),
-              const _Fact('Rated', 'Yes · counts to skill rating'),
+              _Fact(
+                'Rated',
+                publicRatingStatusLabel(_ratingStatus) ??
+                    (_countedAsPlayed == false
+                        ? 'Appearance not counted'
+                        : _countedAsPlayed == true
+                        ? 'Yes · counted appearance'
+                        : _ratingStatus != null &&
+                              permitsPublicRatingResult(_ratingStatus)
+                        ? 'Match rated · individual eligibility applies'
+                        : permitsPublicRatingResult(_ratingStatus)
+                        ? 'Yes · counts to skill rating'
+                        : 'Rating under review'),
+              ),
               _Fact(
                 'Teams',
                 game.teamAssignmentAt == null

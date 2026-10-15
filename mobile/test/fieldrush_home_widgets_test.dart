@@ -8,6 +8,7 @@ import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/profile/profile.dart';
+import 'package:field/src/ranking/player_rating_visibility.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -34,6 +35,29 @@ void main() {
     );
   });
   final now = DateTime.utc(2099, 6, 1);
+
+  testWidgets('revealed home SR stays visible in a new season', (tester) async {
+    await _pump(
+      tester,
+      FieldrushHomeRating(
+        profile: _profile(
+          matches: 0,
+          visibility: const PlayerRatingVisibility(
+            lifetimeCountedMatches: 2,
+            seasonCountedMatches: 0,
+            ratingVisible: true,
+            provisional: true,
+            placementMatchesRemaining: 0,
+          ),
+        ),
+        onTap: () {},
+      ),
+    );
+    expect(find.textContaining('1199', findRichText: true), findsOneWidget);
+    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.textContaining('games to reveal'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'open nights show every configured division even before teams exist',
@@ -71,7 +95,7 @@ void main() {
         onTap: () {},
       ),
     );
-    final caption = find.text('2 games to reveal your division');
+    final caption = find.text('Real rating after 2 games');
     final text = tester.widget<Text>(caption);
     expect(text.maxLines, 1);
     expect(text.softWrap, isFalse);
@@ -419,8 +443,8 @@ void main() {
       expect(find.text('1 / 2'), findsOneWidget);
       expect(find.text('????'), findsOneWidget);
       expect(find.byType(FieldrushPlacementRatingCard), findsOneWidget);
-      expect(find.textContaining('#? IN'), findsOneWidget);
-      expect(find.text('1 game to reveal your division'), findsOneWidget);
+      expect(find.textContaining('#? IN'), findsNothing);
+      expect(find.text('Real rating after 1 more game'), findsOneWidget);
       expect(find.textContaining('SEASON 0'), findsNothing);
       await _pump(
         tester,
@@ -798,6 +822,7 @@ OpenQueueBooking _booking(OpenQueueGame game, {String? team}) =>
 PlayerProfile _profile({
   List<ProfileRatingEvent> events = const [],
   int matches = 0,
+  PlayerRatingVisibility? visibility,
 }) => PlayerProfile(
   id: 'profile',
   displayName: 'Sam Rivera',
@@ -819,6 +844,7 @@ PlayerProfile _profile({
     lastChange: 4,
     region: 'phoenix',
     events: events,
+    visibility: visibility,
   ),
 );
 PlayerRatingLeaderboardEntry _rating({

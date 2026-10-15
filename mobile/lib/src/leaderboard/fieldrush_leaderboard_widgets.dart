@@ -128,8 +128,7 @@ class FieldrushLeaderboardContent extends StatelessWidget {
       (cityId == null ||
           currentRating!.region.trim().toLowerCase() == cityId ||
           currentRating!.region.isEmpty && currentRating!.matchesPlayed == 0);
-  bool get _placement =>
-      _home && currentRating!.matchesPlayed < minimumPlayerLeaderboardMatches;
+  bool get _placement => _home && !currentRating!.ratingVisible;
 
   List<PlayerRatingLeaderboardEntry> get _rows {
     final podiumIds = (rewards?.players ?? players.take(3))
@@ -376,6 +375,7 @@ class FieldrushLeaderboardContent extends StatelessWidget {
                     rating: currentRating!,
                     cityName: _cityName,
                     keeper: track == RatingTrack.goalkeeper,
+                    prediction: ratings?.predictionFor(track),
                     onTap: () => onPlayer(currentRating!.profileId),
                   )
                 else if (currentRating != null)
@@ -623,12 +623,12 @@ class _PrizePlaces extends StatelessWidget {
 
   InlineSpan? get _gap {
     final own = rewards.currentPlayer;
-    if (own == null) return null;
+    if (own == null || !own.ratingVisible) return null;
     final third = rewards.players.where((p) => p.rank == 3).firstOrNull;
     final next = rewards.nextPlayer;
     String pre = '', strong = '', post = '';
-    if (own.rank > 3 && third != null) {
-      final gap = third.skillRating - own.skillRating;
+    if (own.rank > 3 && third?.ratingVisible == true) {
+      final gap = third!.skillRating! - own.skillRating!;
       if (gap <= 0) {
         post =
             'You’re tied on SR with 3rd place. Goals scored, then fewer goals conceded, then name decide the order.';
@@ -639,8 +639,9 @@ class _PrizePlaces extends StatelessWidget {
       }
     } else if (own.rank <= 3) {
       const ordinals = ['1st', '2nd', '3rd', '4th'];
-      if (next != null && own.skillRating > next.skillRating) {
-        strong = '${own.skillRating - next.skillRating} SR';
+      if (next?.ratingVisible == true &&
+          own.skillRating! > next!.skillRating!) {
+        strong = '${own.skillRating! - next.skillRating!} SR';
         post = ' ahead of ${ordinals[own.rank]}. ';
       } else if (next != null && own.skillRating == next.skillRating) {
         pre = 'Tied on SR; tiebreakers decide the order. ';
@@ -832,7 +833,9 @@ class _PrizeRow extends StatelessWidget {
                 Text(
                   open
                       ? 'No one here yet'
-                      : '${entry.divisionLabel} · ${entry.skillRating} skill rating',
+                      : entry.ratingVisible
+                      ? '${entry.divisionLabel} · ${entry.skillRating} skill rating'
+                      : 'Rating in placement',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: _jakarta(
@@ -938,7 +941,7 @@ class _SparseLadder extends StatelessWidget {
   Widget build(BuildContext context) {
     final keeper = track == RatingTrack.goalkeeper;
     final others = placements
-        .where((p) => p.profileId != currentProfileId)
+        .where((p) => p.profileId != currentProfileId && p.isPlacement)
         .toList();
     final visible = allPlacements ? others : others.take(4).toList();
     final own = ownPlacement;
@@ -951,6 +954,7 @@ class _SparseLadder extends StatelessWidget {
           displayName: own.displayName,
           username: own.username,
           matchesPlayed: own.matchesPlayed,
+          visibility: own.visibility,
           avatarUrl: own.avatarUrl,
         ),
     ];
@@ -1198,7 +1202,7 @@ class _SparsePlacementRow extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '${player.matchesPlayed.clamp(0, 1)} of 2 games${keeper ? ' in goal' : ''}',
+                    '${player.lifetimeCountedMatches.clamp(0, 1)} of 2 games${keeper ? ' in goal' : ''}',
                     style: _jakarta(
                       10.5,
                       color: _muted,
@@ -1218,7 +1222,7 @@ class _SparsePlacementRow extends StatelessWidget {
                     width: 16,
                     height: 6,
                     decoration: BoxDecoration(
-                      color: i < player.matchesPlayed ? _ink : _border,
+                      color: i < player.lifetimeCountedMatches ? _ink : _border,
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -1391,10 +1395,8 @@ class _BoardTab extends StatelessWidget {
             FieldrushDivisionShield(
               size: 14,
               mini: true,
-              placement:
-                  (rating?.matchesPlayed ?? 0) <
-                  minimumPlayerLeaderboardMatches,
-              division: rating?.division.number ?? 5,
+              placement: rating?.ratingVisible != true,
+              division: rating?.division?.number ?? 5,
             ),
             const SizedBox(width: 7),
           ],
@@ -1551,20 +1553,23 @@ class _StandingCard extends StatelessWidget {
     required this.onTap,
     required this.cityName,
     this.keeper = false,
+    this.prediction,
   });
   final PlayerRatingLeaderboardEntry rating;
   final VoidCallback onTap;
   final String cityName;
   final bool keeper;
+  final FieldrushPlacementPrediction? prediction;
   @override
   Widget build(BuildContext context) {
-    final placement = rating.matchesPlayed < minimumPlayerLeaderboardMatches;
-    final palette = _palettes[placement ? 0 : rating.division.number]!;
-    final next = rating.division.nextDivisionRating;
+    final placement = !rating.ratingVisible;
+    final division = rating.division;
+    final palette = _palettes[placement ? 0 : division!.number]!;
+    final next = division?.nextDivisionRating;
     final count = placement ? 2 : 10;
     final filled = placement
-        ? rating.matchesPlayed.clamp(0, 2)
-        : (rating.division.progressFor(rating.skillRating) * 10).round();
+        ? (2 - rating.placementMatchesRemaining).clamp(0, 2)
+        : (division!.progressFor(rating.skillRating!) * 10).round();
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 16, 16, 0),
       decoration: BoxDecoration(
@@ -1616,9 +1621,14 @@ class _StandingCard extends StatelessWidget {
                               tracking: 1.71,
                             ),
                           ),
-                          if (!placement && rating.matchesPlayed > 0)
+                          if (rating.provisional)
                             Text(
-                              '${_signed(rating.lastChange)} SR last game',
+                              'Provisional',
+                              style: _jakarta(10, color: palette.ink),
+                            ),
+                          if (!placement && rating.lastChange != null)
+                            Text(
+                              '${_signed(rating.lastChange!)} SR last game',
                               style: _jakarta(
                                 11.5,
                                 color: palette.ink,
@@ -1632,7 +1642,7 @@ class _StandingCard extends StatelessWidget {
                         children: [
                           FieldrushDivisionShield(
                             size: 62,
-                            division: rating.division.number,
+                            division: division?.number ?? 5,
                             placement: placement,
                           ),
                           const SizedBox(width: 15),
@@ -1653,7 +1663,7 @@ class _StandingCard extends StatelessWidget {
                                 ),
                                 const SizedBox(height: 8),
                                 Text(
-                                  '${cityName == 'Global' ? 'Worldwide' : 'in $cityName'} · ${placement ? '????' : rating.skillRating} ${keeper ? 'keeper ' : ''}skill rating',
+                                  '${cityName == 'Global' ? 'Worldwide' : 'in $cityName'} · ${placement ? prediction?.skillRating ?? '????' : rating.skillRating} ${placement ? 'predicted' : '${keeper ? 'keeper ' : ''}skill rating'}',
                                   style: _jakarta(
                                     11.5,
                                     color: palette.ink,
@@ -1690,10 +1700,13 @@ class _StandingCard extends StatelessWidget {
                         children: [
                           Text(
                             placement
-                                ? '${2 - filled} ${2 - filled == 1 ? 'game' : 'games'}${keeper ? ' in goal' : ''} to reveal your division'
+                                ? 'Real rating after ${filled == 1 ? '1 more game' : '2 games'}${keeper ? ' in goal' : ''}'
+                                : rating.seasonCountedMatches <
+                                      rating.seasonQualificationGames
+                                ? '${rating.gamesNeededToRank} ${rating.gamesNeededToRank == 1 ? 'game' : 'games'} to qualify this season'
                                 : next == null
                                 ? 'Top division'
-                                : '${next - rating.skillRating} SR to Division ${rating.division.number - 1}',
+                                : '${next - rating.skillRating!} SR to Division ${division!.number - 1}',
                             style: _jakarta(
                               11.5,
                               color: palette.ink,
@@ -1705,7 +1718,7 @@ class _StandingCard extends StatelessWidget {
                                 ? '$filled / 2'
                                 : next == null
                                 ? '1650+'
-                                : '$next · D${rating.division.number - 1} ›',
+                                : '$next · D${division!.number - 1} ›',
                             style: _jakarta(
                               10,
                               color: palette.accent,
@@ -1762,7 +1775,12 @@ class _PodiumPlayer extends StatelessWidget {
             style: _jakarta(11.5, weight: FontWeight.w700),
           ),
           const SizedBox(height: 4),
-          Text('${player.skillRating}', style: _outfit(first ? 19 : 16)),
+          Text(
+            player.ratingVisible ? '${player.skillRating}' : '????',
+            style: _outfit(first ? 19 : 16),
+          ),
+          if (player.provisional)
+            Text('Provisional', style: _jakarta(9, color: _muted)),
           const SizedBox(height: 7),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
@@ -1857,6 +1875,8 @@ class _PlayerRow extends StatelessWidget {
                       weight: FontWeight.w600,
                     ),
                   ),
+                  if (player.provisional)
+                    Text('Provisional', style: _jakarta(9, color: _muted)),
                 ],
               ),
             ),
@@ -1865,7 +1885,9 @@ class _PlayerRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  sparse
+                  !player.ratingVisible
+                      ? '????'
+                      : sparse
                       ? '${player.skillRating}'.replaceAllMapped(
                           RegExp(r'(\d)(?=(\d{3})+(?!\d))'),
                           (m) => '${m[1]},',
@@ -1874,23 +1896,24 @@ class _PlayerRow extends StatelessWidget {
                   style: _outfit(13.5),
                 ),
                 const SizedBox(height: 4),
-                Semantics(
-                  label:
-                      '${_signed(player.lastChange)} skill rating from last game',
-                  child: Text(
-                    sparse && player.matchesPlayed == 2
-                        ? 'NEW'
-                        : _signed(player.lastChange),
-                    style: _jakarta(
-                      10,
-                      color: player.lastChange < 0
-                          ? FieldrushAuthTheme.danger
-                          : player.lastChange > 0
-                          ? _green
-                          : _muted,
+                if (player.ratingVisible && player.lastChange != null)
+                  Semantics(
+                    label:
+                        '${_signed(player.lastChange!)} skill rating from last game',
+                    child: Text(
+                      sparse && player.lifetimeCountedMatches == 2
+                          ? 'NEW'
+                          : _signed(player.lastChange!),
+                      style: _jakarta(
+                        10,
+                        color: player.lastChange! < 0
+                            ? FieldrushAuthTheme.danger
+                            : player.lastChange! > 0
+                            ? _green
+                            : _muted,
+                      ),
                     ),
                   ),
-                ),
               ],
             ),
           ],
@@ -1943,7 +1966,8 @@ class _PlayerBadge extends StatelessWidget {
         right: podium ? -7 : -9,
         bottom: podium ? -7 : -9,
         child: FieldrushDivisionShield(
-          division: player.division.number,
+          division: player.division?.number ?? 5,
+          placement: !player.ratingVisible,
           size: shieldSize ?? (podium ? 22 : 18),
         ),
       ),
@@ -2006,8 +2030,8 @@ class _PlacementRow extends StatelessWidget {
                   const SizedBox(height: 5),
                   Text(
                     keeper
-                        ? 'Placement · ${2 - rating.matchesPlayed.clamp(0, 2)} ${rating.matchesPlayed.clamp(0, 2) == 1 ? 'game' : 'games'} in goal to go'
-                        : 'Placement · ${rating.matchesPlayed.clamp(0, 2)} of 2 played',
+                        ? 'Placement · ${rating.placementMatchesRemaining} ${rating.placementMatchesRemaining == 1 ? 'game' : 'games'} in goal to go'
+                        : 'Placement · ${(2 - rating.placementMatchesRemaining).clamp(0, 2)} of 2 played',
                     style: _jakarta(
                       10.5,
                       color: _muted,

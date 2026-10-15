@@ -317,14 +317,19 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                   repository: widget.openQueueRepository,
                   gameId: game.id,
                   initialDetail: detail,
+                  ratingStatus: event?.ratingStatus,
+                  ratingExplanation: event?.publicRatingExplanation,
+                  countedAsPlayed: event?.countedAsPlayed,
                   profileRepository: widget.profileRepository,
                   fixtureRepository: widget.fixtureRepository,
                   playerRatingUpdate: event == null
                       ? detail?.viewerRatingUpdate
+                      : !event.hasPublicRating
+                      ? null
                       : FixturePlayerRatingUpdate(
-                          ratingBefore: event.ratingBefore,
-                          ratingChange: event.ratingChange,
-                          ratingAfter: event.ratingAfter,
+                          ratingBefore: event.ratingBefore!,
+                          ratingChange: event.ratingChange!,
+                          ratingAfter: event.ratingAfter!,
                           result: event.result,
                           scoreMargin: event.scoreMargin,
                           marginMultiplier: event.marginMultiplier,
@@ -341,12 +346,12 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                     profileRepository: widget.profileRepository,
                     myClanMembership: null,
                     sourceLabel: game.typeLabel,
-                    playerRatingUpdate: event == null
+                    playerRatingUpdate: event == null || !event.hasPublicRating
                         ? null
                         : FixturePlayerRatingUpdate(
-                            ratingBefore: event.ratingBefore,
-                            ratingChange: event.ratingChange,
-                            ratingAfter: event.ratingAfter,
+                            ratingBefore: event.ratingBefore!,
+                            ratingChange: event.ratingChange!,
+                            ratingAfter: event.ratingAfter!,
                             result: event.result,
                             scoreMargin: event.scoreMargin,
                             marginMultiplier: event.marginMultiplier,

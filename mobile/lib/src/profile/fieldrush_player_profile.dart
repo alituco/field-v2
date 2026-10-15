@@ -101,8 +101,8 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
                   ratings: ratings,
                   onChanged: onTrack!,
                   dark:
-                      (_trackRating?.matchesPlayed ?? 0) < 2 ||
-                      ![3, 4].contains(_trackRating?.division.number),
+                      _trackRating?.ratingVisible != true ||
+                      ![3, 4].contains(_trackRating?.division?.number),
                 ),
           positionLabel: positionLabel,
           isFollowing: isFollowing,
@@ -277,15 +277,14 @@ class _PlayerRatingCard extends StatelessWidget {
             losses: override.losses,
             draws: override.draws,
             lastChange: override.lastChange,
+            visibility: override.visibility,
             region: override.region,
             events: const [],
           );
-    final placement =
-        rating != null &&
-        rating.matchesPlayed < minimumPlayerLeaderboardMatches;
+    final placement = rating != null && !rating.ratingVisible;
     final division = rating == null || placement
         ? null
-        : divisionFromRating(rating.skillRating).number;
+        : divisionFromRating(rating.skillRating!).number;
     final palette = _palettes[division] ?? _placementPalette;
     final light = division == 3 || division == 4;
     final heading = rating == null
@@ -509,11 +508,18 @@ class _PlayerRatingCard extends StatelessWidget {
                   if (placement) ...[
                     const SizedBox(height: 12),
                     Text(
-                      '${rating.matchesPlayed}/$minimumPlayerLeaderboardMatches placement games',
+                      '${2 - rating.placementMatchesRemaining}/$minimumPlayerLeaderboardMatches placement games',
                       style: _jakarta(
                         11,
                         color: palette.accent,
                       ).copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ],
+                  if (rating?.provisional == true) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Provisional',
+                      style: _jakarta(11, color: palette.accent),
                     ),
                   ],
                 ],

@@ -12,6 +12,67 @@ Profile photos use Supabase Storage bucket `profile-avatars`. The migration
 creates the bucket and storage policies. Users can upload only into a folder
 named after their own auth user id.
 
+## Season 0 v2 rating rollout
+
+Migrations `20261014001000` through `20261014001800` add the prospective
+`field-sr-season0-v2` solo-match policy. The activation flag defaults to **off**.
+Existing games retain their pinned policy; activation does not reset players,
+seed existing accounts again, or convert previously created games.
+
+The approved adaptations retain independent Outfield and Keeper pools, with one
+new-account assessment seeding both. Each pool reveals SR after two lifetime
+counted appearances; season-specific minimums still govern leaderboard/prize
+qualification. During placement the signed-in player sees their own current SR
+as **Predicted**. The owner-only snapshot is separate from public ranks, profiles,
+and match history, which continue hiding numeric SR until two counted games.
+Blue cards last 120 wall-clock seconds (including pauses), and
+the referee confirms actual return. While suspended, the player retains their
+rating contribution but earns no participation/protection time. Below ten actual
+playing minutes, conduct permits negative adjustments only and no counted
+appearance. Pre-kickoff moves preserve parties and formation, with recorded
+consent for present movers; already revealed teams are not silently reshuffled.
+
+The flag controls **new-game policy assignment only**, not the entire migration:
+new-account assessment requirements and public lifetime-rating visibility take
+effect when their migrations are installed. Coordinate the mobile, referee/admin
+and database release; an older client cannot complete the newly required
+assessment. Do not treat switching the flag off as a schema/client rollback.
+
+Before enabling the policy:
+
+1. Run the workflow's fresh-schema replay, normal local seed and SQL verifiers,
+   Flutter tests/builds, and referee tests/browser checks. The isolated PGlite
+   suites verify application SQL but substitute managed auth/storage/cron/network
+   contracts; they do not replace the real Supabase checks.
+2. On a disposable multi-connection PostgreSQL/Supabase database, test duplicate
+   finish requests, finish versus correction, activation versus game creation,
+   and booking/party mutations versus assignment/start. Verify atomic rollback,
+   no duplicate active awards, and bounded lock/statement behavior.
+3. Verify the updated mobile onboarding and hidden/revealed ratings, and the
+   referee participation, blue-card return, pause, finish and admin-review paths
+   against staging. Keep the policy disabled until compatible clients and
+   referee tools are available. Do not use live bookings as test fixtures.
+4. An authorized admin can then use **Season settings → Solo rating policy →
+   Enable Season 0 v2 for future games**, entering a reason and confirming scope.
+   Subsequent manually created and schedule-generated games receive the policy;
+   already-created future games do not change.
+
+If rollout needs to stop, disable it for future games through the same audited
+control. Games already pinned to v2 still require the v2 tools. Do not delete
+audit evidence, rewrite settled history, or reset ratings as a rollback strategy.
+
+## Account deletion and wallet forfeiture
+
+Account deletion permanently removes wallet access and forfeits the remaining
+BHD and USD balances; it does not refund or transfer those balances. The mobile
+confirmation and deletion endpoint require explicit acknowledgement. Migration
+`20261014002000`, the deletion Edge Function and the updated mobile client must
+roll out together. Older deletion requests fail closed without acknowledgement.
+Wallet debits are append-only `ACCOUNT_DELETION_FORFEITURE` records in the final
+Auth deletion transaction, not in the preparation/Storage step. A failed deletion
+rolls back the debit. Unsettled payments/refunds and other deletion obligations
+still block deletion; historical ledger and transaction evidence remain intact.
+
 ## Server-side environment files
 
 The legacy root `.env` and `.env.staging` point to Field Staging. Create them

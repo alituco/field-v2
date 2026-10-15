@@ -6,6 +6,7 @@ declare
   protected_table text;
   rpc_signature text;
   checked_rpc regprocedure;
+  retired_rpc regprocedure;
 begin
   select array_agg(table_name order by table_name)
   into missing_tables
@@ -58,10 +59,10 @@ begin
       array_to_string(missing_functions, ', ');
   end if;
 
-  -- Mobile Ranks requires this exact RPC signature, not just a function with
-  -- the same name. Check it before declaring a hosted deployment successful.
+  -- Mobile Ranks uses the city/role-aware privacy boundary. Verify its exact
+  -- arguments before declaring a hosted deployment successful.
   ranks_function := to_regprocedure(
-    'public.list_fieldrush_player_rating_page(text,date,date,integer,integer)'
+    'public.list_fieldrush_rating_page(text,text,text,date,date,integer,integer)'
   );
   if ranks_function is null then
     raise exception 'Hosted schema is missing the Fieldrush Ranks RPC.';
@@ -71,10 +72,29 @@ begin
     raise exception 'Fieldrush Ranks must be executable by signed-in users only.';
   end if;
   if (select proargnames from pg_proc where oid = ranks_function) is distinct from
-    array['region_to_use', 'season_starts_on', 'season_ends_on',
-          'offset_to_use', 'page_size_to_use']::text[] then
+    array['scope_to_use', 'city_id_to_use', 'rating_track_to_use',
+          'season_starts_on', 'season_ends_on', 'offset_to_use',
+          'page_size_to_use']::text[] then
     raise exception 'Fieldrush Ranks RPC argument names do not match the mobile contract.';
   end if;
+
+  -- Retired single-pool APIs bypass lifetime SR visibility. They may remain
+  -- as internal dependencies, but public callers must use the wrappers above.
+  for retired_rpc in
+    select p.oid::regprocedure
+    from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public' and p.proname in (
+      'get_my_player_rating', 'get_my_season_player_rating',
+      'list_player_rating_leaderboard', 'list_season_player_rating_leaderboard',
+      'season_player_rating_rankings', 'list_fieldrush_player_rating_page'
+    )
+  loop
+    if has_function_privilege('anon', retired_rpc, 'EXECUTE')
+      or has_function_privilege('authenticated', retired_rpc, 'EXECUTE')
+    then
+      raise exception 'Retired rating API % must not be executable by public callers.', retired_rpc;
+    end if;
+  end loop;
 
   if not exists (
     select 1 from information_schema.columns

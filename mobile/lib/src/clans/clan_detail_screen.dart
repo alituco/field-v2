@@ -875,10 +875,11 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
 
   Widget _memberRow(ClanMember member, bool divider) {
     final me = member.profileId == _profileId;
-    final placed = member.matchesPlayed >= 2 && member.skillRating != null;
+    final placed = member.ratingVisible;
     final meta = [
       if (member.username != null) '@${member.username}',
       placed ? divisionFromRating(member.skillRating!).label : 'Placement',
+      if (member.provisional) 'Provisional',
     ].join(' · ');
     return Container(
       decoration: BoxDecoration(

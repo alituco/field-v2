@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import '../ranking/rating_division.dart';
+import '../ranking/player_rating_visibility.dart';
 
 export '../ranking/rating_division.dart';
 
@@ -32,7 +33,7 @@ class ClanPattern {
   final String description;
 }
 
-class ClanMember {
+class ClanMember with PublicPlayerRating {
   const ClanMember({
     required this.profileId,
     required this.displayName,
@@ -43,6 +44,7 @@ class ClanMember {
     this.avatarUrl,
     this.skillRating,
     this.matchesPlayed = 0,
+    this.visibility,
   });
 
   final String profileId;
@@ -52,8 +54,12 @@ class ClanMember {
   final DateTime? joinedAt;
   final String? username;
   final String? avatarUrl;
+  @override
   final int? skillRating;
+  @override
   final int matchesPlayed;
+  @override
+  final PlayerRatingVisibility? visibility;
 
   bool get isOwner => role == 'owner';
 
@@ -91,7 +97,8 @@ class ClanMember {
       avatarUrl: (profile['avatar_url'] as String?)?.trim().isNotEmpty == true
           ? (profile['avatar_url'] as String).trim()
           : null,
-      skillRating: (json['skill_rating'] as num?)?.toInt(),
+      skillRating: publicRatingNumber(json, 'skill_rating'),
+      visibility: PlayerRatingVisibility.fromJson(json),
       matchesPlayed: _asInt(json['matches_played']),
     );
   }

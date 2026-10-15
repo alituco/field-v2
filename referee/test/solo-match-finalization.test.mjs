@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import vm from "node:vm";
 import { canRefereePerformOperationalAction } from "../src/lib/match-operational-lock.ts";
 import { finalizeSoloMatch } from "../src/lib/solo-match-finalization.ts";
+import { runSeasonZeroAction, SEASON_ZERO_POLICY } from "../src/lib/season-zero-actions.ts";
+import { parseRefereeVerifiedInjuryInput } from "../src/lib/match-action-input.ts";
 
 const gameId = "10000000-0000-4000-8000-000000000001";
 const success = (status = "FINAL", id = gameId) => ({ data: { id, status }, error: null });
@@ -121,10 +123,25 @@ test("malformed or wrong-game responses never count as a successful completion",
 });
 
 function finishRoute({ actor = { profileId: "referee-1", role: "referee" }, denied = false,
-  operationalState = "NORMAL", results = [success()], states = [], onDelay = () => {} } = {}) {
+  operationalState = "NORMAL", ratingPolicy = "LEGACY", body = { action: "finish" }, results = [success()], states = [], onDelay = () => {} } = {}) {
   const calls = [];
   const db = {
     rpc: async (name, params) => {
+      if (name === "referee_record_verified_injury") {
+        assert.equal(params.match_id_to_use, gameId);
+        assert.equal(params.actor_referee_id, actor.profileId);
+        assert.equal(params.replacement_available_to_use, false);
+        calls.push("financial-injury-evidence");
+        return { data: { injury_id: "injury" }, error: null };
+      }
+      if (ratingPolicy === SEASON_ZERO_POLICY) {
+        assert.equal(params.game_id_to_use, gameId);
+        assert.equal(params.actor_referee_id, actor.profileId);
+        if (name === "get_season_zero_match_state") return { data: { game_id: gameId, revision: 2 }, error: null };
+        assert.equal(name, "referee_finish_season_zero_match");
+        calls.push("v2-complete");
+        return results.shift();
+      }
       assert.equal(name, "referee_complete_open_queue_game");
       assert.equal(params.game_id_to_complete, gameId);
       calls.push("complete");
@@ -137,9 +154,9 @@ function finishRoute({ actor = { profileId: "referee-1", role: "referee" }, deni
       return { select: (columns) => ({ eq: (key, value) => {
         assert.equal(key, "id"); assert.equal(value, gameId);
         return { single: async () => {
-          if (columns === "operational_state") {
+          if (columns === "operational_state,rating_policy_id") {
             calls.push("initial-review-guard");
-            return { data: { operational_state: operationalState }, error: null };
+            return { data: { operational_state: operationalState, rating_policy_id: ratingPolicy }, error: null };
           }
           assert.equal(columns, "id,status,operational_state");
           calls.push("recovery-read");
@@ -157,8 +174,9 @@ function finishRoute({ actor = { profileId: "referee-1", role: "referee" }, deni
       calls.push("access-guard");
       if (denied) throw new Error("Game access denied");
     } },
-    "@/lib/match-action-input": {},
+    "@/lib/match-action-input": { parseRefereeVerifiedInjuryInput },
     "@/lib/match-duration": {},
+    "@/lib/season-zero-actions": { runSeasonZeroAction, SEASON_ZERO_POLICY },
     "@/lib/match-operational-lock": { canRefereePerformOperationalAction },
     "@/lib/referee-session": {
       requireReferee: async () => actor ? { referee: actor, db } : { status: 401 },
@@ -176,7 +194,7 @@ function finishRoute({ actor = { profileId: "referee-1", role: "referee" }, deni
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(compiled, { exports, Error, console, require: (name) => modules[name] });
-  return { calls, run: () => exports.POST({ json: async () => ({ action: "finish" }) }, { params: Promise.resolve({ gameId }) }) };
+  return { calls, run: () => exports.POST({ json: async () => body }, { params: Promise.resolve({ gameId }) }) };
 }
 
 test("finish route retains authentication, game access and admin-review guards before finalization", async () => {
@@ -216,4 +234,34 @@ test("finish route does not stop the broadcast or claim success for a wrong-game
   assert.equal(response.status, 400);
   assert.match(response.body.error, /Could not verify/);
   assert.deepEqual(api.calls, ["access-guard", "initial-review-guard", "complete"]);
+});
+
+test("new-policy finish route uses atomic evidence settlement, then stops its broadcast", async () => {
+  const state = { game_id: gameId, revision: 3, lifecycle: "FINAL", settlement_status: "RATED" };
+  const api = finishRoute({ ratingPolicy: SEASON_ZERO_POLICY, results: [{ data: state, error: null }] });
+  const response = await api.run();
+  assert.equal(response.status, 200);
+  assert.equal(response.body.seasonZeroState.game_id, gameId);
+  assert.deepEqual(api.calls, ["access-guard", "initial-review-guard", "v2-complete", "broadcast-stop"]);
+});
+
+test("new-policy finish never falls back to legacy or stops broadcast for bad acknowledgement", async () => {
+  for (const result of [timeout, success(), { data: { game_id: "other", revision: 3, lifecycle: "FINAL", settlement_status: "RATED" }, error: null }]) {
+    const api = finishRoute({ ratingPolicy: SEASON_ZERO_POLICY, results: [result] });
+    assert.equal((await api.run()).status, 400);
+    assert.deepEqual(api.calls, ["access-guard", "initial-review-guard", "v2-complete"]);
+  }
+});
+
+test("new-policy injury refund evidence stays available without writing SR participation or allowing reserves", async () => {
+  const body = { action: "record_verified_injury", profileId: gameId, unableToContinue: true,
+    replacementAvailable: false, matchContinued: true, note: "Verified injury evidence for refund policy." };
+  const api = finishRoute({ ratingPolicy: SEASON_ZERO_POLICY, body });
+  assert.equal((await api.run()).status, 200);
+  assert.deepEqual(api.calls, ["access-guard", "initial-review-guard", "financial-injury-evidence"]);
+  const reserve = finishRoute({ ratingPolicy: SEASON_ZERO_POLICY, body: { ...body, replacementAvailable: true } });
+  const rejected = await reserve.run();
+  assert.equal(rejected.status, 400);
+  assert.match(rejected.body.error, /does not allow reserve replacements/);
+  assert.deepEqual(reserve.calls, ["access-guard", "initial-review-guard"]);
 });

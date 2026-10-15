@@ -16,9 +16,20 @@ import 'fieldrush_account.dart';
 import 'fieldrush_auth_theme.dart';
 import 'fieldrush_phone_field.dart';
 import 'fieldrush_recovery_screen.dart';
+import 'fieldrush_skill_assessment_step.dart';
 import 'fieldrush_welcome_painter.dart';
 
-enum _Step { welcome, phone, code, name, username, birthday, email, review }
+enum _Step {
+  welcome,
+  phone,
+  code,
+  name,
+  username,
+  birthday,
+  email,
+  skillAssessment,
+  review,
+}
 
 class FieldrushAuthScreen extends StatefulWidget {
   const FieldrushAuthScreen({
@@ -65,6 +76,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   bool _awaitingAccount = false;
   bool _openingApp = false;
   AccountDraft? _beforeEdit;
+  SkillAssessment? _skillAssessment;
   Timer? _cooldownTimer;
   DateTime? _resendAt;
   int _secondsLeft = 0;
@@ -121,6 +133,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _lastName.text = draft.lastName;
     _username.text = draft.username;
     _email.text = draft.email;
+    _skillAssessment = draft.skillAssessment;
     _month.text = draft.dateOfBirth?.month.toString().padLeft(2, '0') ?? '';
     _day.text = draft.dateOfBirth?.day.toString().padLeft(2, '0') ?? '';
     _year.text = draft.dateOfBirth?.year.toString() ?? '';
@@ -155,6 +168,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       _step = _Step.birthday;
     } else if (account.draft.email.isEmpty) {
       _step = _Step.email;
+    } else if (account.skillAssessmentRequired &&
+        account.draft.skillAssessment == null) {
+      _step = _Step.skillAssessment;
     } else {
       _step = _Step.review;
     }
@@ -180,7 +196,15 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     username: _username.text.trim().toLowerCase(),
     dateOfBirth: _birthday,
     email: _email.text.trim(),
+    skillAssessment: _skillAssessment,
   );
+
+  bool get _needsSkillAssessment => _account?.skillAssessmentRequired == true;
+
+  int get _setupStepCount => _needsSkillAssessment ? 8 : 7;
+
+  int get _setupStepNumber =>
+      _step == _Step.review ? _setupStepCount : _step.index;
 
   void _go(_Step step) {
     FocusScope.of(context).unfocus();
@@ -209,7 +233,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       _Step.username => _Step.name,
       _Step.birthday => _Step.username,
       _Step.email => _Step.birthday,
-      _Step.review => _Step.email,
+      _Step.skillAssessment => _Step.email,
+      _Step.review =>
+        _needsSkillAssessment ? _Step.skillAssessment : _Step.email,
     });
   }
 
@@ -415,6 +441,10 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         if (!isFieldrushEmail(_email.text)) {
           error = 'Enter a valid email address.';
         }
+      case _Step.skillAssessment:
+        if (_skillAssessment == null) {
+          error = 'Choose your current level, or select Not sure.';
+        }
       default:
         return;
     }
@@ -444,7 +474,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
               _Step.name => _Step.username,
               _Step.username => _Step.birthday,
               _Step.birthday => _Step.email,
-              _Step.email => _Step.review,
+              _Step.email =>
+                _needsSkillAssessment ? _Step.skillAssessment : _Step.review,
+              _Step.skillAssessment => _Step.review,
               _ => _Step.review,
             };
       _editingReview = false;
@@ -454,6 +486,10 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   }
 
   Future<void> _complete() async {
+    if (_needsSkillAssessment && _skillAssessment == null) {
+      _go(_Step.skillAssessment);
+      return;
+    }
     if (!_consent) {
       setState(
         () => _error =
@@ -504,6 +540,26 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                 )
               : _step == _Step.welcome
               ? _welcome(context)
+              : _step == _Step.skillAssessment
+              ? FieldrushSkillAssessmentStep(
+                  selected: _skillAssessment,
+                  onSelected: (value) => setState(() {
+                    _skillAssessment = value;
+                    _error = null;
+                  }),
+                  onBack: _back,
+                  onSkip: () {
+                    setState(() => _skillAssessment = SkillAssessment.notSure);
+                    unawaited(_saveStep());
+                  },
+                  onContinue: _saveStep,
+                  stepNumber: _setupStepNumber,
+                  stepCount: _setupStepCount,
+                  busy: _busy,
+                  error: _error,
+                  notice: _notice,
+                  controller: _scroll,
+                )
               : _flow(context),
         ),
       ),
@@ -659,44 +715,51 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  child: IntrinsicHeight(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
-                      child: AutofillGroup(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _progress(),
-                            const SizedBox(height: 42),
-                            Text(
-                              _title,
-                              style: const TextStyle(
-                                fontFamily: 'Outfit',
-                                fontSize: 44,
-                                height: 0.98,
-                                letterSpacing: -1.76,
-                                fontWeight: FontWeight.w800,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
+                    child: AutofillGroup(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _progress(),
+                              const SizedBox(height: 42),
+                              Text(
+                                _title,
+                                style: const TextStyle(
+                                  fontFamily: 'Outfit',
+                                  fontSize: 44,
+                                  height: 0.98,
+                                  letterSpacing: -1.76,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              _subtitle,
-                              style: const TextStyle(
-                                color: FieldrushAuthTheme.muted,
-                                fontSize: 13,
-                                height: 1.5,
-                                fontWeight: FontWeight.w600,
+                              const SizedBox(height: 14),
+                              Text(
+                                _subtitle,
+                                style: const TextStyle(
+                                  color: FieldrushAuthTheme.muted,
+                                  fontSize: 13,
+                                  height: 1.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 28),
-                            ..._fields(context),
-                            if (_error != null) _message(_error!, error: true),
-                            if (_notice != null) _message(_notice!),
-                            const SizedBox(height: 28),
-                            const Spacer(),
-                            ..._actions(context),
-                          ],
-                        ),
+                              const SizedBox(height: 28),
+                              ..._fields(context),
+                              if (_error != null)
+                                _message(_error!, error: true),
+                              if (_notice != null) _message(_notice!),
+                              const SizedBox(height: 28),
+                            ],
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: _actions(context),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -716,6 +779,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _Step.username => 'Pick a\nusername',
     _Step.birthday => 'When’s your\nbirthday?',
     _Step.email => 'And your\nemail?',
+    _Step.skillAssessment => 'What’s your\nlevel?',
     _Step.review => 'Look\nright?',
     _Step.welcome => 'Fieldrush',
   };
@@ -731,6 +795,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _Step.birthday =>
       'Only you can see this. Fieldrush is for players 18 and older.',
     _Step.email => 'For receipts and game reminders. You can verify it later.',
+    _Step.skillAssessment => 'So your first games are fair.',
     _Step.review => 'Tap Edit to change anything.',
     _Step.welcome => '',
   };
@@ -753,16 +818,16 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       const SizedBox(width: 14),
       Expanded(
         child: Semantics(
-          label: 'Account setup, step ${_step.index} of 7',
+          label: 'Account setup, step $_setupStepNumber of $_setupStepCount',
           child: Row(
             children: List.generate(
-              7,
+              _setupStepCount,
               (index) => Expanded(
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   height: 4,
                   decoration: BoxDecoration(
-                    color: index < _step.index
+                    color: index < _setupStepNumber
                         ? FieldrushAuthTheme.forest
                         : FieldrushAuthTheme.border,
                     borderRadius: BorderRadius.circular(2),
@@ -964,6 +1029,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         ),
       ),
     ],
+    _Step.skillAssessment => [], // Dedicated reference layout above.
     _Step.review => [
       const Divider(color: FieldrushAuthTheme.ink, thickness: 2.5),
       _reviewRow(
@@ -991,6 +1057,12 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
             _account?.emailVerified == true &&
             _email.text.trim() == _account?.draft.email,
       ),
+      if (_needsSkillAssessment)
+        _reviewRow(
+          'STARTING LEVEL',
+          _skillAssessment?.label ?? 'Not set',
+          _Step.skillAssessment,
+        ),
       const SizedBox(height: 16),
       CheckboxListTile(
         key: const Key('fieldrush-accept-policies'),

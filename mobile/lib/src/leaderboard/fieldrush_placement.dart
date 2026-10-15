@@ -1,5 +1,6 @@
 import 'fieldrush_rating_tracks.dart';
 import 'leaderboard.dart';
+import '../ranking/player_rating_visibility.dart';
 
 /// Public placement progress deliberately contains no unrevealed skill rating.
 class FieldrushPlacementPlayer {
@@ -9,10 +10,15 @@ class FieldrushPlacementPlayer {
     required this.username,
     required this.matchesPlayed,
     this.avatarUrl,
+    this.visibility,
   });
   final String profileId, displayName, username;
   final int matchesPlayed;
   final String? avatarUrl;
+  final PlayerRatingVisibility? visibility;
+  int get lifetimeCountedMatches =>
+      visibility?.lifetimeCountedMatches ?? matchesPlayed;
+  bool get isPlacement => visibility?.ratingVisible != true;
 
   factory FieldrushPlacementPlayer.fromJson(Map<String, dynamic> json) =>
       FieldrushPlacementPlayer(
@@ -21,6 +27,7 @@ class FieldrushPlacementPlayer {
         username: json['username'] as String? ?? '',
         matchesPlayed: (json['matches_played'] as num?)?.toInt() ?? 0,
         avatarUrl: json['avatar_url'] as String?,
+        visibility: PlayerRatingVisibility.fromJson(json),
       );
 }
 

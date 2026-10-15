@@ -1,5 +1,6 @@
 import '../clans/clan.dart';
 import '../open_queue/open_queue.dart';
+import '../ranking/player_rating_visibility.dart';
 import 'package:timezone/timezone.dart' as tz;
 
 class PlayerProfile {
@@ -163,7 +164,7 @@ String? _playedPositionCode(String? value) =>
       _ => null,
     };
 
-class ProfilePlayerRating {
+class ProfilePlayerRating with PublicPlayerRating {
   const ProfilePlayerRating({
     required this.skillRating,
     required this.matchesPlayed,
@@ -175,14 +176,19 @@ class ProfilePlayerRating {
     required this.events,
     this.ratingsResetAt,
     this.ratingsResetSequence,
+    this.visibility,
   });
 
-  final int skillRating;
+  @override
+  final int? skillRating;
+  @override
   final int matchesPlayed;
   final int wins;
   final int losses;
   final int draws;
-  final int lastChange;
+  final int? lastChange;
+  @override
+  final PlayerRatingVisibility? visibility;
   final String region;
   final List<ProfileRatingEvent> events;
   final DateTime? ratingsResetAt;
@@ -205,13 +211,19 @@ class ProfilePlayerRating {
 
   factory ProfilePlayerRating.fromJson(Map<String, dynamic> json) {
     final rawEvents = json['events'];
+    final visibility = PlayerRatingVisibility.fromJson(json);
     return ProfilePlayerRating(
-      skillRating: _asInt(json['skill_rating'], fallback: 1200),
+      skillRating: publicRatingNumber(
+        json,
+        'skill_rating',
+        legacyFallback: 1200,
+      ),
       matchesPlayed: _asInt(json['matches_played']),
       wins: _asInt(json['wins']),
       losses: _asInt(json['losses']),
       draws: _asInt(json['draws']),
-      lastChange: _asInt(json['last_change']),
+      lastChange: publicRatingNumber(json, 'last_change', legacyFallback: 0),
+      visibility: visibility,
       region: (json['region'] as String? ?? 'phoenix').trim().toLowerCase(),
       ratingsResetAt: DateTime.tryParse(
         json['ratings_reset_at']?.toString() ?? '',
@@ -222,9 +234,11 @@ class ProfilePlayerRating {
           : [
               for (final rawEvent in rawEvents)
                 if (rawEvent is Map)
-                  ProfileRatingEvent.fromJson(
-                    Map<String, dynamic>.from(rawEvent),
-                  ),
+                  ProfileRatingEvent.fromJson({
+                    ...Map<String, dynamic>.from(rawEvent),
+                    if (visibility?.ratingVisible == false)
+                      'rating_visible': false,
+                  }),
             ],
     );
   }
@@ -253,6 +267,10 @@ class ProfileRatingEvent {
     this.marginBonusApplied,
     this.appliedSequence,
     this.ratingTrack,
+    this.ratingStatus,
+    this.ratingExplanation,
+    this.countedAsPlayed,
+    this.actualPlayedSeconds,
   });
 
   final String id;
@@ -262,9 +280,23 @@ class ProfileRatingEvent {
   final String opponentLabel;
   final String side;
   final String result;
-  final int ratingBefore;
-  final int ratingChange;
-  final int ratingAfter;
+  final int? ratingBefore;
+  final int? ratingChange;
+  final int? ratingAfter;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+  final bool? countedAsPlayed;
+  final int? actualPlayedSeconds;
+
+  String? get publicRatingExplanation =>
+      publicRatingAppearanceExplanation(ratingExplanation, countedAsPlayed);
+
+  bool get hasPublicRating =>
+      permitsPublicRatingResult(ratingStatus) &&
+      ratingBefore != null &&
+      ratingChange != null &&
+      ratingAfter != null &&
+      (countedAsPlayed != false || ratingChange != 0);
   final int? ratingAtMatchStart;
   final double? teamAverageRating;
   final double? opponentAverageRating;
@@ -282,6 +314,12 @@ class ProfileRatingEvent {
   String get sourceLabel => isSolo ? 'SOLO' : 'CLAN';
 
   factory ProfileRatingEvent.fromJson(Map<String, dynamic> json) {
+    final status = json['rating_status'] as String?;
+    final numeric = permitsPublicRatingResult(status)
+        ? json
+        : {...json, 'rating_visible': false};
+    final numericVisible =
+        PlayerRatingVisibility.fromJson(numeric)?.ratingVisible != false;
     return ProfileRatingEvent(
       id: (json['event_id'] ?? json['id'] ?? '').toString(),
       sourceType: (json['source_type'] ?? 'CLAN_FIXTURE')
@@ -292,21 +330,31 @@ class ProfileRatingEvent {
       opponentLabel: (json['opponent_label'] as String? ?? 'Match').trim(),
       side: (json['side'] as String? ?? '').trim().toUpperCase(),
       result: (json['result'] as String? ?? '').trim().toUpperCase(),
-      ratingBefore: _asInt(json['rating_before']),
-      ratingChange: _asInt(json['rating_change']),
-      ratingAfter: _asInt(json['rating_after']),
-      ratingAtMatchStart: _asNullableInt(json['rating_at_match_start']),
-      teamAverageRating: _asDouble(json['team_average_rating']),
-      opponentAverageRating: _asDouble(json['opponent_average_rating']),
-      expectedScore: _asDouble(json['expected_score']),
+      ratingBefore: publicRatingNumber(numeric, 'rating_before'),
+      ratingChange: publicRatingNumber(numeric, 'rating_change'),
+      ratingAfter: publicRatingNumber(numeric, 'rating_after'),
+      ratingAtMatchStart: publicRatingNumber(numeric, 'rating_at_match_start'),
+      ratingStatus: status,
+      ratingExplanation: json['rating_explanation'] as String?,
+      countedAsPlayed: json['counted_as_played'] as bool?,
+      actualPlayedSeconds: _asNullableInt(json['actual_played_seconds']),
+      teamAverageRating: numericVisible
+          ? _asDouble(json['team_average_rating'])
+          : null,
+      opponentAverageRating: numericVisible
+          ? _asDouble(json['opponent_average_rating'])
+          : null,
+      expectedScore: numericVisible ? _asDouble(json['expected_score']) : null,
       calculationVersion: switch (json['calculation_version']) {
         null => null,
         final value => value.toString(),
       },
       scoreMargin: _asNullableInt(json['score_margin']),
-      marginMultiplier: _asDouble(json['margin_multiplier']),
-      baseRatingChange: _asNullableInt(json['base_rating_change']),
-      marginBonusApplied: _asNullableInt(json['margin_bonus_applied']),
+      marginMultiplier: numericVisible
+          ? _asDouble(json['margin_multiplier'])
+          : null,
+      baseRatingChange: publicRatingNumber(numeric, 'base_rating_change'),
+      marginBonusApplied: publicRatingNumber(numeric, 'margin_bonus_applied'),
       appliedSequence: _asNullableInt(json['applied_sequence']),
       ratingTrack: json['rating_track'] as String?,
     );

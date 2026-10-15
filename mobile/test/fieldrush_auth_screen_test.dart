@@ -169,6 +169,7 @@ void main() {
     await _tap(tester, 'fieldrush-continue');
 
     expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+    expect(find.text('What’s your\nlevel?'), findsNothing);
     expect(find.text('Look\nright?'), findsNothing);
     expect(find.byKey(const Key('fieldrush-accept-policies')), findsNothing);
     expect(repo.completedCount, 0);
@@ -249,6 +250,17 @@ void main() {
       'jordan@example.com',
     );
     await _tap(tester, 'fieldrush-continue');
+    expect(find.text('What’s your\nlevel?'), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('fieldrush-continue')))
+          .onPressed,
+      isNull,
+    );
+    expect(repo.completedCount, 0);
+    await _tap(tester, 'fieldrush-skill-intermediate');
+    await _tap(tester, 'fieldrush-continue');
+    expect(repo.savedDrafts.last.skillAssessment, SkillAssessment.intermediate);
     expect(find.text('Look\nright?'), findsOneWidget);
     await _tap(tester, 'fieldrush-continue');
     expect(repo.completedCount, 0);
@@ -256,6 +268,7 @@ void main() {
     await _tap(tester, 'fieldrush-accept-policies');
     await _tap(tester, 'fieldrush-continue');
     expect(repo.completedCount, 1);
+    expect(repo.account.draft.skillAssessment, SkillAssessment.intermediate);
     expect(find.text('Look\nright?'), findsNothing);
     expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
     expect(find.text('Let’s go'), findsNothing);
@@ -263,6 +276,110 @@ void main() {
     expect(completed, 1);
     await _dispose(tester);
   });
+
+  testWidgets(
+    'new account resumes at assessment while legacy account skips it',
+    (tester) async {
+      final repo = _AccountRepository();
+      await _pump(
+        tester,
+        repo,
+        account: FieldrushAccount(
+          phone: '+16025550148',
+          phoneVerified: true,
+          draft: _completeDraft,
+          skillAssessmentRequired: true,
+        ),
+      );
+      expect(find.text('What’s your\nlevel?'), findsOneWidget);
+      expect(find.text('Highly competitive'), findsOneWidget);
+      expect(find.text('So your first games are fair.'), findsOneWidget);
+      expect(find.byKey(const Key('fieldrush-skill-not_sure')), findsNothing);
+      await _tap(tester, 'fieldrush-skill-skip');
+      expect(repo.savedDrafts.single.skillAssessment, SkillAssessment.notSure);
+      expect(find.text('Look\nright?'), findsOneWidget);
+      await _dispose(tester);
+
+      await _pump(
+        tester,
+        repo,
+        account: FieldrushAccount(
+          phone: '+16025550148',
+          phoneVerified: true,
+          draft: _completeDraft,
+          ratingInitialized: true,
+        ),
+      );
+      expect(find.text('Look\nright?'), findsOneWidget);
+      expect(find.text('STARTING LEVEL'), findsNothing);
+      expect(find.text('What’s your\nlevel?'), findsNothing);
+      await _dispose(tester);
+    },
+  );
+
+  testWidgets('assessment edit can be cancelled or saved before completion', (
+    tester,
+  ) async {
+    final repo = _AccountRepository();
+    await _pump(
+      tester,
+      repo,
+      account: FieldrushAccount(
+        phone: '+16025550148',
+        phoneVerified: true,
+        draft: _completeDraft.copyWith(skillAssessment: SkillAssessment.casual),
+        skillAssessmentRequired: true,
+      ),
+    );
+    expect(find.text('Look\nright?'), findsOneWidget);
+    expect(find.text('Casual'), findsOneWidget);
+    await _tap(tester, 'fieldrush-edit-skillAssessment');
+    await _tap(tester, 'fieldrush-skill-advanced');
+    await _tap(tester, 'fieldrush-back');
+    expect(find.text('Casual'), findsOneWidget);
+    expect(repo.savedDrafts, isEmpty);
+    await _tap(tester, 'fieldrush-edit-skillAssessment');
+    await _tap(tester, 'fieldrush-skill-highly_competitive');
+    await _tap(tester, 'fieldrush-continue');
+    expect(find.text('Look\nright?'), findsOneWidget);
+    expect(find.text('Highly competitive'), findsOneWidget);
+    expect(
+      repo.savedDrafts.single.skillAssessment,
+      SkillAssessment.highlyCompetitive,
+    );
+    await _dispose(tester);
+  });
+
+  testWidgets(
+    'assessment survives failed save and fits a narrow large-text screen',
+    (tester) async {
+      final repo = _AccountRepository()
+        ..saveError = StateError('Network request failed');
+      await _pump(
+        tester,
+        repo,
+        account: FieldrushAccount(
+          phone: '+16025550148',
+          phoneVerified: true,
+          draft: _completeDraft,
+          skillAssessmentRequired: true,
+        ),
+        size: const Size(320, 568),
+        scale: 1.5,
+      );
+      expect(tester.takeException(), isNull);
+      await _tap(tester, 'fieldrush-skill-beginner');
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.text('What’s your\nlevel?'), findsOneWidget);
+      expect(find.textContaining('offline'), findsOneWidget);
+      expect(repo.savedDrafts, isEmpty);
+      repo.saveError = null;
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.text('Look\nright?'), findsOneWidget);
+      expect(repo.savedDrafts.single.skillAssessment, SkillAssessment.beginner);
+      await _dispose(tester);
+    },
+  );
 
   testWidgets(
     'calendar dates and 18 plus rule are validated before draft writes',
@@ -496,6 +613,7 @@ class _AccountRepository implements FieldrushAccountRepository {
     phone: '+16025550148',
     phoneVerified: true,
     draft: AccountDraft(),
+    skillAssessmentRequired: true,
   );
   final List<String> sentPhones = [];
   final List<String> recoveryPhones = [];

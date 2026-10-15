@@ -32,6 +32,8 @@ void main() {
     bool settle = true,
     double width = 390,
     double textScale = 1,
+    String? ratingProfileId,
+    FixturePlayerRatingUpdate? playerRatingUpdate,
   }) async {
     tester.view.physicalSize = Size(width, 844);
     tester.view.devicePixelRatio = 1;
@@ -50,6 +52,8 @@ void main() {
           repository: repository,
           gameId: 'game',
           onJoin: onJoin,
+          ratingProfileId: ratingProfileId,
+          playerRatingUpdate: playerRatingUpdate,
         ),
       ),
     );
@@ -59,6 +63,39 @@ void main() {
       await tester.pump();
     }
   }
+
+  testWidgets(
+    'held result explains review without promising a numeric SR update',
+    (tester) async {
+      await show(
+        tester,
+        _Repository(
+          _detail(
+            status: 'FINAL',
+            ratingStatus: 'PENDING_REVIEW',
+            ratingExplanation: 'Awaiting confirmed participation.',
+            players: const [
+              OpenQueuePlayer(
+                id: 'me',
+                displayName: 'Alex',
+                role: OpenQueueRole.attacker,
+                team: 'WHITE',
+                played: true,
+                isMe: true,
+                ratingAtMatchStart: 1000,
+                ratingChange: 40,
+              ),
+            ],
+          ),
+        ),
+      );
+      expect(find.text('Awaiting confirmed participation.'), findsOneWidget);
+      expect(find.text('+40 SR'), findsNothing);
+      expect(find.text('1000 → 1040'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('join opens selection flow without making a booking', (
     tester,
@@ -88,6 +125,79 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  for (final sample in [
+    (
+      counted: false,
+      delta: 0,
+      explanation:
+          'No SR change: 8 of the required 10 playing minutes completed.',
+    ),
+    (
+      counted: false,
+      delta: -5,
+      explanation:
+          'Conduct adjustment applied. This appearance is not counted.',
+    ),
+    (
+      counted: true,
+      delta: 0,
+      explanation: 'This counted appearance settled with no SR change.',
+    ),
+  ]) {
+    testWidgets(
+      'settled result counted=${sample.counted} delta=${sample.delta} explains individual eligibility',
+      (tester) async {
+        await show(
+          tester,
+          _Repository(
+            _detail(
+              status: 'FINAL',
+              ratingStatus: 'RATED',
+              ratingExplanation: 'Match-wide calculation completed.',
+              players: [
+                OpenQueuePlayer(
+                  id: 'me',
+                  displayName: 'Alex',
+                  role: OpenQueueRole.attacker,
+                  team: 'WHITE',
+                  played: true,
+                  isMe: true,
+                  ratingAtMatchStart: 1000,
+                  ratingChange: sample.delta,
+                  countedAsPlayed: sample.counted,
+                  actualPlayedSeconds: 480,
+                  ratingExplanation: sample.explanation,
+                ),
+              ],
+            ),
+          ),
+        );
+        expect(find.text(sample.explanation), findsOneWidget);
+        expect(find.text('Match-wide calculation completed.'), findsNothing);
+        expect(
+          find.text('${sample.delta} SR'),
+          sample.counted || sample.delta != 0 ? findsOneWidget : findsNothing,
+        );
+        await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('fieldrush-game-facts')),
+          250,
+          scrollable: find.byType(Scrollable).first,
+        );
+        expect(
+          find.text(
+            sample.counted
+                ? 'Yes · counted appearance'
+                : 'Appearance not counted',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Yes · counts to skill rating'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   testWidgets('full fixture cannot enter checkout', (tester) async {
     final repository = _Repository(_detail(status: 'FULL', count: 14));
     var joins = 0;
@@ -106,6 +216,74 @@ void main() {
     expect(joins, 0);
     await tester.pumpWidget(const SizedBox());
   });
+
+  testWidgets(
+    'profile subject eligibility overrides viewer and stale history award',
+    (tester) async {
+      await show(
+        tester,
+        _Repository(
+          _detail(
+            status: 'FINAL',
+            ratingStatus: 'RATED',
+            players: const [
+              OpenQueuePlayer(
+                id: 'me',
+                displayName: 'Viewer',
+                role: OpenQueueRole.attacker,
+                team: 'WHITE',
+                played: true,
+                isMe: true,
+                countedAsPlayed: true,
+                ratingAtMatchStart: 1000,
+                ratingChange: 10,
+                ratingExplanation: 'The viewer earned a counted appearance.',
+              ),
+              OpenQueuePlayer(
+                id: 'other',
+                displayName: 'Other',
+                role: OpenQueueRole.attacker,
+                team: 'BLACK',
+                played: true,
+                isMe: false,
+                countedAsPlayed: false,
+                actualPlayedSeconds: 480,
+                ratingAtMatchStart: 1000,
+                ratingChange: 0,
+                ratingExplanation:
+                    'Other completed fewer than ten playing minutes.',
+              ),
+            ],
+          ),
+        ),
+        ratingProfileId: 'other',
+        playerRatingUpdate: const FixturePlayerRatingUpdate(
+          ratingBefore: 1000,
+          ratingChange: 25,
+          ratingAfter: 1025,
+        ),
+      );
+      expect(
+        find.text('Other completed fewer than ten playing minutes.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('The viewer earned a counted appearance.'),
+        findsNothing,
+      );
+      expect(find.text('+25 SR'), findsNothing);
+      expect(find.text('+10 SR'), findsNothing);
+      expect(find.text('0 SR'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('fieldrush-game-facts')),
+        250,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('Appearance not counted'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('configured division crests appear beside the game title', (
     tester,
@@ -521,6 +699,8 @@ OpenQueueMatchDetail _detail({
   int? white,
   int? black,
   List<OpenQueuePlayer> players = const [],
+  String? ratingStatus,
+  String? ratingExplanation,
 }) => OpenQueueMatchDetail(
   game: OpenQueueGame(
     id: 'game',
@@ -562,6 +742,8 @@ OpenQueueMatchDetail _detail({
   scorers: const [],
   timeline: const [],
   players: players,
+  ratingStatus: ratingStatus,
+  ratingExplanation: ratingExplanation,
 );
 
 OpenQueueBooking _booking(OpenQueueGame game) => OpenQueueBooking(

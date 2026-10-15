@@ -356,6 +356,7 @@ void main() {
   Future<void> confirmDeletion(WidgetTester tester) async {
     await tester.tap(find.byKey(const Key('fieldrush-delete-account')));
     await tester.pumpAndSettle();
+    expect(find.textContaining('forfeit any remaining'), findsOneWidget);
     await tester.tap(find.byKey(const Key('fieldrush-delete-confirm')));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('fieldrush-reauth-submit')));

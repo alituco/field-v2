@@ -1420,7 +1420,7 @@ class _ScoreboardClan extends StatelessWidget {
               ],
             ),
         ],
-        if (showRating) ...[
+        if (showRating && clan.skillRating != null) ...[
           const SizedBox(height: 5),
           Text(
             '${clan.skillRating} CLAN SR',

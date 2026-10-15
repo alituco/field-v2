@@ -5,6 +5,7 @@ import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/profile/fieldrush_you_widgets.dart';
 import 'package:field/src/profile/profile.dart';
+import 'package:field/src/ranking/player_rating_visibility.dart';
 import 'package:field/src/reliability/reliability.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -12,6 +13,56 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'season minimum does not hide an already revealed player rating',
+    (tester) async {
+      await _pump(
+        tester,
+        _content(
+          rating: _rating(
+            matches: 2,
+            visibility: const PlayerRatingVisibility(
+              lifetimeCountedMatches: 2,
+              seasonCountedMatches: 2,
+              ratingVisible: true,
+              provisional: true,
+              placementMatchesRemaining: 0,
+              minimumRatedGames: 3,
+            ),
+          ),
+        ),
+      );
+      expect(find.text('1199'), findsOneWidget);
+      expect(find.text('Provisional'), findsOneWidget);
+      expect(find.text('1 game to qualify this season'), findsOneWidget);
+      expect(find.text('PLACEMENT'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets('lifetime reveal and provisional survive a new season', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _content(
+        rating: _rating(
+          matches: 0,
+          visibility: const PlayerRatingVisibility(
+            lifetimeCountedMatches: 9,
+            seasonCountedMatches: 0,
+            ratingVisible: true,
+            provisional: true,
+            placementMatchesRemaining: 0,
+          ),
+        ),
+      ),
+    );
+    expect(find.text('1199'), findsOneWidget);
+    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.text('2 games to qualify this season'), findsOneWidget);
+    expect(find.text('PLACEMENT'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('loading rating uses a non-interactive, accessible skeleton', (
     tester,
   ) async {
@@ -95,7 +146,7 @@ void main() {
     expect(find.text('28'), findsOneWidget);
     expect(find.text('PLACEMENT'), findsOneWidget);
     expect(find.text('????'), findsOneWidget);
-    expect(find.text('2 games to reveal your division'), findsOneWidget);
+    expect(find.text('Real rating after 2 games'), findsOneWidget);
     expect(find.text('0 / 2'), findsOneWidget);
     expect(find.text('WON'), findsOneWidget);
     expect(find.text('DRAWN'), findsOneWidget);
@@ -238,7 +289,7 @@ void main() {
       tester,
       _content(rating: _rating(matches: 1), actions: actions, signingOut: true),
     );
-    expect(find.text('1 game to reveal your division'), findsOneWidget);
+    expect(find.text('Real rating after 1 more game'), findsOneWidget);
     expect(find.text('Signing out…'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('you-sign-out')));
     expect(actions, isEmpty);
@@ -410,20 +461,23 @@ PlayerProfile _profile({List<ProfileHighlight> clips = const []}) =>
       ),
     );
 
-PlayerRatingLeaderboardEntry _rating({int matches = 8}) =>
-    PlayerRatingLeaderboardEntry(
-      rank: matches >= 2 ? 38 : 0,
-      profileId: 'player',
-      displayName: 'Jordan A.',
-      username: 'jalvarez',
-      skillRating: 1199,
-      matchesPlayed: matches,
-      wins: matches >= 2 ? 4 : 0,
-      losses: matches >= 2 ? 2 : 0,
-      draws: matches >= 2 ? 2 : 0,
-      lastChange: -13,
-      region: 'phoenix',
-    );
+PlayerRatingLeaderboardEntry _rating({
+  int matches = 8,
+  PlayerRatingVisibility? visibility,
+}) => PlayerRatingLeaderboardEntry(
+  rank: matches >= 2 ? 38 : 0,
+  profileId: 'player',
+  displayName: 'Jordan A.',
+  username: 'jalvarez',
+  skillRating: 1199,
+  matchesPlayed: matches,
+  wins: matches >= 2 ? 4 : 0,
+  losses: matches >= 2 ? 2 : 0,
+  draws: matches >= 2 ? 2 : 0,
+  lastChange: -13,
+  region: 'phoenix',
+  visibility: visibility,
+);
 
 ProfileRatingEvent _event(int day) => ProfileRatingEvent(
   id: '$day',

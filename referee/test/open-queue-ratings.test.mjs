@@ -30,8 +30,13 @@ test("solo SR values preserve valid snapshots and render missing data clearly", 
   assert.equal(nullableSr(1488), 1488);
   assert.equal(nullableSr("1512"), 1512);
   assert.equal(nullableSr(null), null);
-  assert.equal(nullableSr(-1), null);
+  assert.equal(nullableSr(-1), -1);
+  assert.equal(nullableSr("-40"), -40);
+  assert.equal(nullableSr(true), null);
+  assert.equal(nullableSr(" "), null);
+  assert.equal(nullableSr(Infinity), null);
   assert.equal(nullableSr("not-a-rating"), null);
   assert.equal(formatPlayerSr(1499.6), "1,500");
+  assert.equal(formatPlayerSr(-40), "-40");
   assert.equal(formatPlayerSr(null), "—");
 });

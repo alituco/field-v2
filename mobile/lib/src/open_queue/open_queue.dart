@@ -3,6 +3,7 @@ import 'package:timezone/timezone.dart' as tz;
 
 import '../fixtures/fixture.dart';
 import '../ranking/rating_division.dart';
+import '../ranking/player_rating_visibility.dart';
 
 enum OpenQueueRole { goalkeeper, defender, midfielder, attacker }
 
@@ -638,6 +639,8 @@ class OpenQueueMatchDetail {
     this.clock,
     this.broadcast,
     this.videoUrl,
+    this.ratingStatus,
+    this.ratingExplanation,
   });
 
   final OpenQueueGame game;
@@ -647,6 +650,19 @@ class OpenQueueMatchDetail {
   final List<FixtureTimelineEvent> timeline;
   final List<OpenQueuePlayer> players;
   final String? videoUrl;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+
+  String? get viewerRatingStatus =>
+      players.where((p) => p.isMe).firstOrNull?.ratingStatus ?? ratingStatus;
+
+  bool? get viewerCountedAsPlayed =>
+      players.where((p) => p.isMe).firstOrNull?.countedAsPlayed;
+
+  String? get viewerRatingExplanation =>
+      players.where((p) => p.isMe).firstOrNull?.publicRatingExplanation ??
+      ratingExplanation ??
+      publicRatingStatusLabel(viewerRatingStatus);
 
   factory OpenQueueMatchDetail.fromJson(Map<String, dynamic> json) {
     final gameJson = _mapFrom(json['game'] ?? json['open_queue_game']) ?? json;
@@ -689,14 +705,22 @@ class OpenQueueMatchDetail {
       timeline: timeline,
       players: _openQueuePlayers(json['players']),
       videoUrl: _nonEmptyString(json['video_url'] ?? gameJson['video_url']),
+      ratingStatus: _nonEmptyString(
+        json['rating_status'] ?? gameJson['rating_status'],
+      ),
+      ratingExplanation: _nonEmptyString(
+        json['rating_explanation'] ?? gameJson['rating_explanation'],
+      ),
     );
   }
 
   FixturePlayerRatingUpdate? get viewerRatingUpdate {
+    if (!permitsPublicRatingResult(viewerRatingStatus)) return null;
     for (final player in players) {
       if (!player.isMe) continue;
+      if (player.ratingVisible == false) return null;
       final ratingBefore = player.displayedRating;
-      final ratingChange = player.ratingChange;
+      final ratingChange = player.publicRatingChange;
       if (ratingBefore == null || ratingChange == null) return null;
       return FixturePlayerRatingUpdate(
         ratingBefore: ratingBefore,
@@ -774,7 +798,7 @@ FixtureClan _openQueueTeamClan({
     emblem: isWhite ? '⚪' : '⚫',
     themeId: isWhite ? 'mint' : 'shadow',
     patternId: 'solid',
-    skillRating: averageRating ?? 1200,
+    skillRating: averageRating,
   );
 }
 
@@ -791,6 +815,11 @@ class OpenQueuePlayer {
     this.ratingAtTeamAssignment,
     this.ratingAtMatchStart,
     this.ratingChange,
+    this.ratingVisible,
+    this.ratingStatus,
+    this.ratingExplanation,
+    this.countedAsPlayed,
+    this.actualPlayedSeconds,
   });
 
   final String id;
@@ -804,10 +833,27 @@ class OpenQueuePlayer {
   final int? ratingAtTeamAssignment;
   final int? ratingAtMatchStart;
   final int? ratingChange;
+  final bool? ratingVisible;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+  final bool? countedAsPlayed;
+  final int? actualPlayedSeconds;
 
-  int? get displayedRating => ratingAtMatchStart ?? ratingAtTeamAssignment;
+  int? get publicRatingChange =>
+      countedAsPlayed == false && ratingChange == 0 ? null : ratingChange;
+
+  String? get publicRatingExplanation =>
+      publicRatingAppearanceExplanation(ratingExplanation, countedAsPlayed);
+
+  int? get displayedRating => ratingVisible == false
+      ? null
+      : ratingAtMatchStart ?? ratingAtTeamAssignment;
 
   factory OpenQueuePlayer.fromJson(Map<String, dynamic> json) {
+    final status = json['rating_status'] as String?;
+    final numeric = permitsPublicRatingResult(status)
+        ? json
+        : {...json, 'rating_visible': false};
     return OpenQueuePlayer(
       id: json['id'] as String? ?? '',
       displayName: (json['display_name'] as String? ?? 'Player').trim(),
@@ -817,9 +863,17 @@ class OpenQueuePlayer {
       team: _openQueueTeam(json['team']) ?? '',
       played: json['played'] == true,
       isMe: json['is_me'] == true,
-      ratingAtTeamAssignment: _asNullableInt(json['rating_at_team_assignment']),
-      ratingAtMatchStart: _asNullableInt(json['rating_at_match_start']),
-      ratingChange: _asNullableInt(json['rating_change']),
+      ratingAtTeamAssignment: publicRatingNumber(
+        json,
+        'rating_at_team_assignment',
+      ),
+      ratingAtMatchStart: publicRatingNumber(json, 'rating_at_match_start'),
+      ratingChange: publicRatingNumber(numeric, 'rating_change'),
+      ratingVisible: json['rating_visible'] as bool?,
+      ratingStatus: status,
+      ratingExplanation: json['rating_explanation'] as String?,
+      countedAsPlayed: json['counted_as_played'] as bool?,
+      actualPlayedSeconds: _asNullableInt(json['actual_played_seconds']),
     );
   }
 
@@ -833,9 +887,14 @@ class OpenQueuePlayer {
       side: team,
       played: played,
       isMe: isMe,
-      ratingAtTeamAssignment: ratingAtTeamAssignment,
-      ratingAtMatchStart: ratingAtMatchStart,
-      ratingChange: ratingChange,
+      ratingAtTeamAssignment: ratingVisible == false
+          ? null
+          : ratingAtTeamAssignment,
+      ratingAtMatchStart: ratingVisible == false ? null : ratingAtMatchStart,
+      ratingChange:
+          ratingVisible == false || !permitsPublicRatingResult(ratingStatus)
+          ? null
+          : publicRatingChange,
     );
   }
 }

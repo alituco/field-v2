@@ -537,6 +537,9 @@ async function ensureAccount(
       const words = input.displayName.trim().split(/\s+/);
       const lastName = words.pop()!;
       const firstName = words.join(" ");
+      const { data: onboardingAccount, error: onboardingAccountError } =
+        await actor.rpc("get_my_fieldrush_account");
+      if (onboardingAccountError) throw onboardingAccountError;
       const { error: signupError } = await actor.rpc(
         "complete_fieldrush_onboarding",
         {
@@ -546,6 +549,9 @@ async function ensureAccount(
             username: input.username,
             date_of_birth: input.dateOfBirth,
             email: `${input.username}@fieldrush-e2e.example`,
+            ...(onboardingAccount.skill_assessment_required === true
+              ? { skill_assessment: "not_sure" }
+              : {}),
           },
           terms_version: "fieldrush-v1",
           privacy_version: "fieldrush-v1",
@@ -599,6 +605,9 @@ async function ensureBootstrapAccount(): Promise<void> {
           username: account.username || "field_e2e_bootstrap",
           date_of_birth: account.date_of_birth || E2E_DEFAULT_BIRTH_DATE,
           email: account.email || "field_e2e_bootstrap@fieldrush-e2e.example",
+          ...(account.skill_assessment_required === true
+            ? { skill_assessment: "not_sure" }
+            : {}),
         },
         terms_version: "fieldrush-v1",
         privacy_version: "fieldrush-v1",

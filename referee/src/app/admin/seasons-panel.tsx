@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
+import { RatingPolicyPanel } from "./rating-policy-panel";
 import { formatPrize, parsePrizeUsd, type AdminSeason, type AdminSeasonCatalog, type AdminSeasonReward, type RatingTrack, type RewardAction, type SeasonAuditItem, type SeasonTransitionPreview, type SeasonEndPreview } from "@/lib/admin-seasons";
 import styles from "./seasons-panel.module.css";
 
@@ -70,6 +71,7 @@ export function SeasonsPanel({ accessToken, refreshKey }: { accessToken: string;
     </section>
     {error ? <div className="admin-banner danger" role="alert">{error}<button type="button" onClick={() => void load()}>Try again</button></div> : null}
     {notice ? <div className="admin-banner success" role="status">{notice}</div> : null}
+    <RatingPolicyPanel accessToken={accessToken} />
     {loading ? <LoadingSkeleton label="Loading seasons and rewards" /> : catalog ? <>
       {adding ? <SeasonEditor key={`new-season:${duplicating?.id ?? "blank"}`} accessToken={accessToken} season={{ ...nextSeason(catalog.seasons, catalog.seasons.find((item) => item.id === catalog.currentSeasonId) ?? season), ...(duplicating ? { label: `${duplicating.label} copy`.slice(0, 40), minimumRatedGames: duplicating.minimumRatedGames } : {}) }} creating duplicateSource={duplicating ?? undefined} onCancel={() => { setAdding(false); setDuplicating(null); }} onSaved={async (id) => { setAdding(false); setDuplicating(null); setSeasonId(id); await saved("Season draft created. Check the dates and rewards, then schedule its start."); }} /> : null}
       <div className={styles.filters}>

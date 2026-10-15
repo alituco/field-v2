@@ -39,6 +39,8 @@ declare admin_id uuid:=gen_random_uuid(); player uuid:=gen_random_uuid(); oppone
 begin
   for member in select unnest(array[admin_id,player,opponent]) loop
     insert into auth.users(id,phone,phone_confirmed_at) values(member,'1555888'||lpad((case when member=admin_id then 1 when member=player then 2 else 3 end)::text,4,'0'),now());
+    -- This rollback-only season lifecycle fixture models a pre-policy identity.
+    delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=member;
     insert into public.profiles(id,auth_user_id,display_name,username) values(member,member,'Season Test','season_'||left(replace(member::text,'-',''),12)) on conflict(id) do nothing;
     insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(member,'active',now()) on conflict(user_id) do update set status='active',onboarding_completed_at=now();
   end loop;

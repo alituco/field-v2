@@ -26,13 +26,26 @@ const [first, second] = participants;
 const firstClient = await signedInClient(first.phone!);
 const secondClient = await signedInClient(second.phone!);
 
+const { data: season, error: seasonError } = await admin.from(
+  "fieldrush_seasons",
+)
+  .select("starts_on,ends_on").eq("lifecycle", "ACTIVE").single();
+if (seasonError) throw seasonError;
 const { data: ownRatings, error: ownRatingError } = await firstClient.rpc(
-  "get_my_player_rating",
+  "get_fieldrush_player_ratings",
+  {
+    profile_id_to_use: first.id,
+    season_starts_on: season.starts_on,
+    season_ends_on: season.ends_on,
+  },
 );
 if (ownRatingError) throw ownRatingError;
 assert(
-  ownRatings.length === 1 && ownRatings[0].profile_id === first.id,
-  "The current-player rating RPC must return the signed-in player's row.",
+  ownRatings.profile_id === first.id &&
+    ownRatings.ratings.OUTFIELD.skill_rating === null &&
+    ownRatings.ratings.GOALKEEPER.skill_rating === null &&
+    ownRatings.ratings.OUTFIELD.lifetime_counted_matches === 0,
+  "The role-aware rating RPC must return the signed-in player with numeric SR hidden before placement.",
 );
 
 await verifyFinalRoleRace();
