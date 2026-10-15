@@ -1,5 +1,5 @@
 -- Local/disposable database only, after migrations 010 and 011. Every fixture
--- and the temporary trigger toggle below is transaction-scoped and rolled back.
+-- below is transaction-scoped and rolled back; managed Auth DDL is never changed.
 begin;
 set local client_min_messages=warning;
 create function pg_temp.seed_expect(ok boolean,message text)
@@ -19,11 +19,22 @@ end;
 $$;
 
 -- These two represent identities that existed before the enrollment trigger.
-alter table auth.users disable trigger mark_season_zero_initialization_eligible;
+-- Supabase owns auth.users, so postgres cannot toggle its triggers. Leave Auth's
+-- schema intact and remove only these synthetic users' application-owned markers
+-- to reproduce the pre-migration state. All later users exercise the real trigger.
 insert into auth.users(id,phone,phone_confirmed_at)
 values('fb011000-0000-4000-8000-000000000001','15550110001',now()),
   ('fb011000-0000-4000-8000-000000000002','15550110002',now());
-alter table auth.users enable trigger mark_season_zero_initialization_eligible;
+select pg_temp.seed_expect((select count(*)=2
+  from fieldrush_rating_private.season_zero_initialization_eligibility
+  where user_id in ('fb011000-0000-4000-8000-000000000001','fb011000-0000-4000-8000-000000000002')),
+  'real Auth enrollment trigger creates both synthetic markers');
+delete from fieldrush_rating_private.season_zero_initialization_eligibility
+where user_id in ('fb011000-0000-4000-8000-000000000001','fb011000-0000-4000-8000-000000000002');
+select pg_temp.seed_expect(not exists(select 1
+  from fieldrush_rating_private.season_zero_initialization_eligibility
+  where user_id in ('fb011000-0000-4000-8000-000000000001','fb011000-0000-4000-8000-000000000002')),
+  'synthetic legacy identities have no prospective enrollment marker');
 insert into public.profiles(id,auth_user_id,display_name)
 values('fb011000-0000-4000-8000-000000000001','fb011000-0000-4000-8000-000000000001','Legacy Seed'),
   ('fb011000-0000-4000-8000-000000000002','fb011000-0000-4000-8000-000000000002','Legacy Incomplete')
