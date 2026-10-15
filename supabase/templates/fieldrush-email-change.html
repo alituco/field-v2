@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Confirm your Fieldrush email</title>
+  </head>
+  <body style="margin:0;padding:0;background-color:#faf7ef;color:#233222;font-family:Arial,Helvetica,sans-serif;">
+    <div style="display:none;max-height:0;overflow:hidden;">Your Fieldrush email confirmation code expires in 10 minutes.</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#faf7ef;">
+      <tr>
+        <td align="center" style="padding:40px 20px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:520px;">
+            <tr><td style="padding:0 0 24px;font-size:26px;font-weight:800;letter-spacing:-1px;">Fieldrush</td></tr>
+            <tr>
+              <td style="padding:32px 28px;background-color:#ffffff;border:1px solid #e6dfcc;border-radius:24px;">
+                <h1 style="margin:0 0 16px;font-size:28px;line-height:1.2;letter-spacing:-0.7px;">Confirm your email</h1>
+                <p style="margin:0 0 24px;color:#56674f;font-size:16px;line-height:1.6;">Enter this six-digit code in the Fieldrush app to confirm your email address.</p>
+                <div style="padding:20px 12px;text-align:center;background-color:#f3efdf;border-radius:16px;color:#386641;font-size:36px;font-weight:800;letter-spacing:8px;">{{ .Token }}</div>
+                <p style="margin:20px 0;color:#56674f;font-size:14px;line-height:1.6;">This code expires in 10 minutes. Only your new email address needs to be confirmed.</p>
+                <p style="margin:0 0 24px;color:#56674f;font-size:14px;line-height:1.6;">You can also use the secure confirmation link below.</p>
+                <table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background-color:#386641;border-radius:14px;"><a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:16px 24px;color:#ffffff;font-size:16px;font-weight:700;text-decoration:none;">Confirm email securely</a></td></tr></table>
+                <p style="margin:24px 0 0;color:#56674f;font-size:14px;line-height:1.6;">Did not request this? Ignore this email. Never share your code or confirmation link with anyone.</p>
+              </td>
+            </tr>
+            <tr><td style="padding:24px 0;color:#788371;font-size:12px;line-height:1.6;">This is an account-security email from Fieldrush, not a marketing message.</td></tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

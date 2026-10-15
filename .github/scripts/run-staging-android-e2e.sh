@@ -113,6 +113,7 @@ if [[ "$mode" != "run-prebuilt" ]]; then
     --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
     --dart-define=DEV=true
     --dart-define=PROFILE_SWITCHER_ENABLED=true
+    --dart-define=EMAIL_DELIVERY_ENABLED=true
     --dart-define=FIELD_E2E_PAYMENT_BYPASS=true
     --dart-define=E2E_MAIN_PHONE="$E2E_MAIN_PHONE"
     --dart-define=E2E_MAIN_PROFILE_ID="$E2E_MAIN_PROFILE_ID"

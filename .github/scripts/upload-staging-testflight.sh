@@ -209,6 +209,7 @@ flutter build ios \
   --dart-define=STRIPE_PUBLISHABLE_KEY="$STRIPE_PUBLISHABLE_KEY" \
   --dart-define=APPLE_MERCHANT_ID="$APPLE_MERCHANT_ID" \
   --dart-define=DEV=false \
+  --dart-define=EMAIL_DELIVERY_ENABLED=true \
   --dart-define=PROFILE_SWITCHER_ENABLED=true
 
 (

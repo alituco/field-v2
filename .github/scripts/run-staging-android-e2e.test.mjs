@@ -194,6 +194,7 @@ test('build-only remains a configured APK build and never contacts adb', () => {
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0].args.slice(0, 5), ['build', 'apk', '--debug', '--target', journeyTarget]);
   assert.ok(calls[0].args.includes('--dart-define=APP_ENV=staging'));
+  assert.ok(calls[0].args.includes('--dart-define=EMAIL_DELIVERY_ENABLED=true'));
   assert.ok(calls[0].args.includes('--dart-define=E2E_TEST_PASSWORD=non-secret-test-placeholder'));
   assert.ok(result.commands.every(({ command }) => command !== 'adb'));
 });
@@ -209,6 +210,7 @@ test('existing run mode remains a configured Flutter test invocation', () => {
   assert.deepEqual(calls[0].args.slice(0, 2), ['test', journeyTarget]);
   assert.ok(calls[0].args.includes('--reporter'));
   assert.ok(calls[0].args.includes('--dart-define=APP_ENV=staging'));
+  assert.ok(calls[0].args.includes('--dart-define=EMAIL_DELIVERY_ENABLED=true'));
 });
 
 test('unsupported modes fail before any external command', () => {

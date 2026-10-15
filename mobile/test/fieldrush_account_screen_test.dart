@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:field/src/auth/auth_repository.dart';
 import 'package:field/src/auth/fieldrush_account.dart';
 import 'package:field/src/auth/fieldrush_account_screen.dart';
@@ -77,18 +79,19 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('email verification is explicitly unavailable without delivery', (
-    tester,
-  ) async {
-    await showAccount(tester);
-    expect(
-      find.textContaining('Email verification is not available yet.'),
-      findsOneWidget,
-    );
-    expect(find.byKey(const Key('fieldrush-verify-email')), findsNothing);
-    expect(find.text('Shown on ladders as Alex R.'), findsOneWidget);
-    expect(accounts.emailRequests, 0);
-  });
+  testWidgets(
+    'disabled delivery keeps contact email without a dead-end prompt',
+    (tester) async {
+      await showAccount(tester);
+      expect(
+        find.textContaining('Contact email. Sign in with your phone'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('fieldrush-verify-email')), findsNothing);
+      expect(find.text('Shown on ladders as Alex R.'), findsOneWidget);
+      expect(accounts.emailRequests, 0);
+    },
+  );
 
   Future<void> submitEmailCode(WidgetTester tester) async {
     await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
@@ -106,6 +109,239 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  FieldrushAccount googleSnapshot({bool phoneVerified = true}) =>
+      FieldrushAccount(
+        draft: accounts.account.draft,
+        phone: accounts.account.phone,
+        phoneVerified: phoneVerified,
+        emailVerified: true,
+        googleLinked: true,
+        completed: true,
+        status: 'active',
+      );
+
+  Future<void> editEmail(WidgetTester tester, String email) async {
+    await tester.tap(find.byKey(const Key('fieldrush-edit-email')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('fieldrush-email')), email);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('fieldrush-save-account')));
+    await tester.pumpAndSettle();
+  }
+
+  void returnFromInbox(WidgetTester tester) {
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+  }
+
+  testWidgets('unverified email has explicit Verify and Edit buttons', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    await showAccount(tester);
+    expect(find.byKey(const Key('fieldrush-verify-email')), findsOneWidget);
+    await tester.tap(find.byKey(const Key('fieldrush-edit-email-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('fieldrush-email')), findsOneWidget);
+    expect(accounts.emailRequests, 0);
+  });
+
+  testWidgets('changing Google email warns before any account update', (
+    tester,
+  ) async {
+    accounts.account = googleSnapshot();
+    await showAccount(tester);
+    await editEmail(tester, 'new@example.com');
+    expect(find.byType(FieldrushModal), findsOneWidget);
+    expect(find.text('Disconnect Google?'), findsOneWidget);
+    expect(find.textContaining('verified phone number'), findsOneWidget);
+    expect(accounts.updateCalls, 0);
+    await tester.tap(
+      find.byKey(const Key('fieldrush-cancel-google-email-change')),
+    );
+    await tester.pumpAndSettle();
+    expect(accounts.updateCalls, 0);
+    expect(accounts.saved, isNull);
+    expect(accounts.account.googleLinked, isTrue);
+  });
+
+  testWidgets('confirmed email change explicitly disconnects Google', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    accounts.account = googleSnapshot();
+    await showAccount(tester);
+    await editEmail(tester, 'new@example.com');
+    await tester.tap(
+      find.byKey(const Key('fieldrush-confirm-google-email-change')),
+    );
+    await tester.pumpAndSettle();
+    expect(accounts.updateCalls, 1);
+    expect(accounts.disconnectGoogleRequested, isTrue);
+    expect(accounts.saved!.email, 'new@example.com');
+    expect(accounts.account.googleLinked, isFalse);
+    expect(accounts.account.emailVerified, isFalse);
+    expect(
+      find.text(
+        'Email updated and Google disconnected. Verify your new email.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('fieldrush-verify-email')), findsOneWidget);
+  });
+
+  testWidgets('Google email change requires verified phone fallback', (
+    tester,
+  ) async {
+    accounts.account = googleSnapshot(phoneVerified: false);
+    await showAccount(tester);
+    await editEmail(tester, 'new@example.com');
+    expect(accounts.updateCalls, 0);
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(
+      find.textContaining('Verify your phone number before changing an email'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('same Google email with different case does not disconnect', (
+    tester,
+  ) async {
+    accounts.account = googleSnapshot();
+    await showAccount(tester);
+    await editEmail(tester, 'ALEX@EXAMPLE.COM');
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(accounts.updateCalls, 1);
+    expect(accounts.disconnectGoogleRequested, isFalse);
+    expect(accounts.account.googleLinked, isTrue);
+  });
+
+  testWidgets('editing another field keeps Google linked without a warning', (
+    tester,
+  ) async {
+    accounts.account = googleSnapshot();
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-edit-name')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-first-name')),
+      'Alexis',
+    );
+    await tester.tap(find.byKey(const Key('fieldrush-save-account')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(accounts.disconnectGoogleRequested, isFalse);
+    expect(accounts.account.googleLinked, isTrue);
+  });
+
+  testWidgets('Google callback after resume updates the contact email', (
+    tester,
+  ) async {
+    auth.changes = StreamController<AuthState>();
+    addTearDown(() => auth.changes!.close());
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-security-options')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('fieldrush-link-google')));
+    await tester.pumpAndSettle();
+    // Resuming can precede the OAuth callback. Keep listening until linked.
+    returnFromInbox(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('Refresh linked accounts'), findsOneWidget);
+    accounts.account = FieldrushAccount(
+      draft: accounts.account.draft.copyWith(email: 'google@example.com'),
+      phone: accounts.account.phone,
+      phoneVerified: true,
+      googleLinked: true,
+      googleEmail: 'google@example.com',
+      emailVerified: true,
+      completed: true,
+      status: 'active',
+    );
+    auth.changes!.add(AuthState(AuthChangeEvent.userUpdated, null));
+    await tester.pumpAndSettle();
+    expect(find.text('google@example.com'), findsOneWidget);
+    expect(find.text('Refresh linked accounts'), findsNothing);
+    expect(find.text('VERIFIED'), findsNWidgets(2));
+    await tester.tap(find.byKey(const Key('fieldrush-edit-email')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byKey(const Key('fieldrush-email')))
+          .controller!
+          .text,
+      'google@example.com',
+    );
+  });
+
+  testWidgets('stale Google link refreshes before consent is requested', (
+    tester,
+  ) async {
+    await showAccount(tester);
+    accounts.account = googleSnapshot();
+    accounts.saveError = const GoogleEmailChangeConfirmationRequiredException();
+    await editEmail(tester, 'new@example.com');
+    expect(accounts.disconnectGoogleRequested, isFalse);
+    expect(find.textContaining('Google is now linked'), findsOneWidget);
+    accounts.saveError = null;
+    await tester.tap(find.byKey(const Key('fieldrush-save-account')));
+    await tester.pumpAndSettle();
+    expect(find.text('Disconnect Google?'), findsOneWidget);
+    await tester.tap(
+      find.byKey(const Key('fieldrush-cancel-google-email-change')),
+    );
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('partial Google disconnect failure never claims email saved', (
+    tester,
+  ) async {
+    accounts.account = googleSnapshot();
+    await showAccount(tester);
+    accounts.saveError = const GoogleDisconnectedEmailUpdateException();
+    await editEmail(tester, 'new@example.com');
+    await tester.tap(
+      find.byKey(const Key('fieldrush-confirm-google-email-change')),
+    );
+    await tester.pumpAndSettle();
+    expect(accounts.saved, isNull);
+    expect(find.textContaining('Google was disconnected, but'), findsOneWidget);
+    expect(find.text('Account details saved.'), findsNothing);
+    expect(
+      find.text(
+        'Email updated and Google disconnected. Verify your new email.',
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('uncertain unlink status never claims success or saved email', (
+    tester,
+  ) async {
+    accounts.account = googleSnapshot();
+    accounts.saveError = const GoogleEmailChangeStatusUnavailableException();
+    await showAccount(tester);
+    await editEmail(tester, 'new@example.com');
+    await tester.tap(
+      find.byKey(const Key('fieldrush-confirm-google-email-change')),
+    );
+    await tester.pumpAndSettle();
+    expect(accounts.saved, isNull);
+    expect(
+      find.textContaining('could not confirm whether Google was disconnected'),
+      findsOneWidget,
+    );
+    expect(find.text('Account details saved.'), findsNothing);
+  });
+
   FieldrushAccount emailSnapshot({
     required bool verified,
     String email = 'alex@example.com',
@@ -119,19 +355,19 @@ void main() {
   );
 
   testWidgets(
-    'email code acceptance does not claim verification while previous email is pending',
+    'email code acceptance still requires authoritative verification without old-inbox instructions',
     (tester) async {
       accounts.emailEnabled = true;
       await showAccount(tester);
       await submitEmailCode(tester);
       expect(find.text('Email verified.'), findsNothing);
       expect(
-        find.textContaining(
-          'also confirm the message sent to your previous email',
-        ),
+        find.textContaining('Use the code sent to your new email'),
         findsOneWidget,
       );
       expect(find.text('UNVERIFIED'), findsOneWidget);
+      expect(find.textContaining('previous email'), findsNothing);
+      expect(find.textContaining('both inboxes'), findsNothing);
       accounts.account = emailSnapshot(verified: true);
       await tester.tap(
         find.byKey(const Key('fieldrush-refresh-email-verification')),
@@ -184,6 +420,289 @@ void main() {
     expect(find.byType(FieldrushModal), findsOneWidget);
     expect(find.text('Could not confirm email status.'), findsOneWidget);
     expect(find.text('Email verified.'), findsNothing);
+    expect(accounts.emailVerifyCalls, 1);
+    accounts.loadErrorAfterEmailVerification = null;
+    accounts.account = emailSnapshot(verified: true);
+    await tester.tap(
+      find.widgetWithText(FilledButton, 'Check verification status'),
+    );
+    await tester.pumpAndSettle();
+    expect(accounts.emailVerifyCalls, 1);
+    expect(find.text('Email verified.'), findsOneWidget);
+  });
+
+  testWidgets('email sheet is themed and accepts exactly six numeric digits', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(FieldrushModal), findsOneWidget);
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const Key('fieldrush-email-verification-code'));
+    await tester.enterText(input, 'abc12345');
+    await tester.tap(find.widgetWithText(FilledButton, 'Verify email'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter the 6-digit code.'), findsOneWidget);
+    expect(accounts.emailVerifyCalls, 0);
+    await tester.enterText(input, '12345678');
+    expect(tester.widget<TextField>(input).controller!.text, '123456');
+    expect(
+      tester.widget<TextField>(input).autofillHints,
+      contains(AutofillHints.oneTimeCode),
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('email resend waits a minute and restarts its cooldown', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    final resend = find.byKey(const Key('fieldrush-resend-email-code'));
+    expect(tester.widget<TextButton>(resend).onPressed, isNull);
+    expect(accounts.emailRequests, 1);
+    await tester.pump(const Duration(seconds: 60));
+    await tester.pump();
+    expect(find.text('Resend code'), findsOneWidget);
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-email-verification-code')),
+      '123456',
+    );
+    await tester.tap(resend);
+    await tester.pumpAndSettle();
+    expect(accounts.emailRequests, 2);
+    expect(tester.widget<TextButton>(resend).onPressed, isNull);
+    expect(
+      find.text('New code sent. Use the most recent email.'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<TextField>(
+            find.byKey(const Key('fieldrush-email-verification-code')),
+          )
+          .controller!
+          .text,
+      isEmpty,
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('failed send can retry without claiming a code was sent', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    accounts.emailRequestError = const AuthException('Could not send email.');
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    expect(find.text('Could not send email.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('fieldrush-email-verification-code')),
+      findsNothing,
+    );
+    accounts.emailRequestError = null;
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    expect(accounts.emailRequests, 2);
+    expect(
+      find.byKey(const Key('fieldrush-email-verification-code')),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'wrong or expired email code stays unverified with a useful error',
+    (tester) async {
+      accounts.emailEnabled = true;
+      accounts.emailVerificationError = const AuthException(
+        'Token has expired or is invalid',
+        code: 'otp_expired',
+      );
+      await showAccount(tester);
+      await submitEmailCode(tester);
+      expect(
+        find.textContaining('That code is invalid or has expired.'),
+        findsOneWidget,
+      );
+      expect(find.byType(FieldrushModal), findsOneWidget);
+      expect(find.text('Email verified.'), findsNothing);
+      await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+      await tester.pumpAndSettle();
+    },
+  );
+
+  testWidgets('email sending blocks duplicate submits and cancellation', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    accounts.emailSendResponse = Completer<void>();
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pump();
+    expect(accounts.emailRequests, 1);
+    expect(
+      tester
+          .widget<FilledButton>(
+            find.widgetWithText(FilledButton, 'Sending code…'),
+          )
+          .onPressed,
+      isNull,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'Cancel'))
+          .onPressed,
+      isNull,
+    );
+    accounts.emailSendResponse!.complete();
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('verified email matching is case insensitive', (tester) async {
+    accounts.emailEnabled = true;
+    accounts.accountAfterEmailVerification = emailSnapshot(
+      verified: true,
+      email: 'ALEX@EXAMPLE.COM',
+    );
+    await showAccount(tester);
+    await submitEmailCode(tester);
+    expect(find.text('Email verified.'), findsOneWidget);
+  });
+
+  testWidgets(
+    'accepted code with failed Auth status reads retries status only',
+    (tester) async {
+      accounts.emailEnabled = true;
+      accounts.emailVerificationError =
+          const EmailVerificationStatusUnavailableException();
+      await showAccount(tester);
+      await submitEmailCode(tester);
+      expect(find.textContaining('Your code was accepted,'), findsOneWidget);
+      expect(find.text('Email verified.'), findsNothing);
+      expect(accounts.emailVerifyCalls, 1);
+      accounts.account = emailSnapshot(verified: true);
+      await tester.tap(
+        find.widgetWithText(FilledButton, 'Check verification status'),
+      );
+      await tester.pumpAndSettle();
+      expect(accounts.emailVerifyCalls, 1);
+      expect(find.text('Email verified.'), findsOneWidget);
+    },
+  );
+
+  testWidgets('email confirmation link can finish without reusing its code', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    expect(find.text('Already confirmed? Check status'), findsNothing);
+    returnFromInbox(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('Email verified.'), findsNothing);
+    accounts.account = emailSnapshot(verified: true);
+    returnFromInbox(tester);
+    await tester.pumpAndSettle();
+    expect(accounts.emailVerifyCalls, 0);
+    expect(find.text('Email verified.'), findsOneWidget);
+  });
+
+  testWidgets('email verification sheet fits above a small-phone keyboard', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    accounts.accountAfterEmailVerification = emailSnapshot(verified: true);
+    tester.view.physicalSize = const Size(320, 740);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewInsets);
+    await showAccount(tester, size: const Size(320, 740), keyboardInset: 280);
+    final verify = find.byKey(const Key('fieldrush-verify-email'));
+    await tester.scrollUntilVisible(
+      verify,
+      220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(verify);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    final input = find.byKey(const Key('fieldrush-email-verification-code'));
+    await tester.ensureVisible(input);
+    await tester.pumpAndSettle();
+    await tester.enterText(input, '123456');
+    await tester.pumpAndSettle();
+    final button = find.widgetWithText(FilledButton, 'Verify email');
+    await tester.ensureVisible(button);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(tester.getRect(button).bottom, lessThanOrEqualTo(460));
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(accounts.emailVerifyCalls, 1);
+    expect(find.byType(FieldrushModal), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Email verified.'),
+      -220,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Email verified.'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('closing a sent code retains a status check for the email link', (
+    tester,
+  ) async {
+    accounts.emailEnabled = true;
+    await showAccount(tester);
+    await tester.tap(find.byKey(const Key('fieldrush-verify-email')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Send code'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(OutlinedButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const Key('fieldrush-refresh-email-verification')),
+      findsOneWidget,
+    );
+    accounts.account = emailSnapshot(verified: true);
+    returnFromInbox(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('Email verified.'), findsOneWidget);
+    expect(
+      find.byKey(const Key('fieldrush-refresh-email-verification')),
+      findsNothing,
+    );
+    expect(accounts.emailVerifyCalls, 0);
   });
 
   testWidgets('successful signout removes the settings route', (tester) async {
@@ -778,14 +1297,20 @@ class _AccountRepository extends Fake implements FieldrushAccountRepository {
   Object? reauthError;
   Object? phoneVerificationError;
   Object? loadErrorAfterEmailVerification;
+  Object? emailRequestError;
+  Object? emailVerificationError;
+  Completer<void>? emailSendResponse;
   bool emailEnabled = false;
   bool emailCodeSubmitted = false;
   FieldrushAccount? accountAfterEmailVerification;
   int emailRequests = 0;
+  int emailVerifyCalls = 0;
   int linkCalls = 0;
   int reauthSendCalls = 0;
   int reauthVerifyCalls = 0;
   int deleteCalls = 0;
+  int updateCalls = 0;
+  bool disconnectGoogleRequested = false;
 
   @override
   bool get emailDeliveryEnabled => emailEnabled;
@@ -799,13 +1324,22 @@ class _AccountRepository extends Fake implements FieldrushAccountRepository {
   }
 
   @override
-  Future<FieldrushAccount> updateAccount(AccountDraft draft) async {
+  Future<FieldrushAccount> updateAccount(
+    AccountDraft draft, {
+    bool disconnectGoogle = false,
+  }) async {
+    updateCalls++;
+    disconnectGoogleRequested = disconnectGoogle;
     if (saveError != null) throw saveError!;
     saved = draft;
     account = FieldrushAccount(
       draft: draft,
       phone: account.phone,
       phoneVerified: account.phoneVerified,
+      googleLinked: account.googleLinked && !disconnectGoogle,
+      emailVerified:
+          account.emailVerified &&
+          account.draft.email.toLowerCase() == draft.email.toLowerCase(),
       completed: true,
       status: 'active',
     );
@@ -821,10 +1355,14 @@ class _AccountRepository extends Fake implements FieldrushAccountRepository {
   @override
   Future<void> requestEmailVerification(String email) async {
     emailRequests++;
+    if (emailRequestError != null) throw emailRequestError!;
+    await emailSendResponse?.future;
   }
 
   @override
   Future<void> verifyEmailCode(String email, String token) async {
+    emailVerifyCalls++;
+    if (emailVerificationError != null) throw emailVerificationError!;
     emailCodeSubmitted = true;
     account = accountAfterEmailVerification ?? account;
   }
@@ -866,12 +1404,14 @@ class _AuthRepository extends Fake implements AuthRepository {
   int signOutCalls = 0;
   Object? signOutError;
   User? navigationUser;
+  StreamController<AuthState>? changes;
 
   @override
   User? get currentUser => navigationUser;
 
   @override
-  Stream<AuthState> get authStateChanges => const Stream.empty();
+  Stream<AuthState> get authStateChanges =>
+      changes?.stream ?? const Stream.empty();
 
   @override
   Future<void> signOut() async {

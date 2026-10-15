@@ -111,6 +111,7 @@ class FieldrushAccount {
     this.phoneVerified = false,
     this.emailVerified = false,
     this.googleLinked = false,
+    this.googleEmail,
     this.completed = false,
     this.tourCompleted = false,
     this.status = 'onboarding',
@@ -128,6 +129,10 @@ class FieldrushAccount {
   final bool phoneVerified;
   final bool emailVerified;
   final bool googleLinked;
+
+  /// Verified Google identity address, supplied by the server rather than
+  /// client-editable profile metadata. Null when no trusted address is linked.
+  final String? googleEmail;
   final bool completed;
   final bool tourCompleted;
   final String status;
@@ -153,6 +158,7 @@ class FieldrushAccount {
         phoneVerified: json['phone_verified'] == true,
         emailVerified: json['email_verified'] == true,
         googleLinked: json['google_linked'] == true,
+        googleEmail: json['google_email'] as String?,
         completed: json['onboarding_completed'] == true,
         tourCompleted: json['tour_completed'] == true,
         status: json['status'] as String? ?? 'onboarding',
@@ -172,6 +178,39 @@ class UsernameAvailability {
   final String message;
 }
 
+/// Auth accepted the one-time email code, but its follow-up status read could
+/// not complete. Retry a status read, never the already-consumed code. This is
+/// not proof of verification, including for requests created under an older
+/// two-inbox policy. New requests require only the code in the new inbox.
+class EmailVerificationStatusUnavailableException implements Exception {
+  const EmailVerificationStatusUnavailableException();
+}
+
+/// A freshly read Google identity makes this an explicit sign-in-method change,
+/// even if the caller's account screen was loaded before Google was linked.
+class GoogleEmailChangeConfirmationRequiredException implements Exception {
+  const GoogleEmailChangeConfirmationRequiredException();
+}
+
+/// Google may only be disconnected while a confirmed phone identity remains.
+class GoogleEmailChangeRequiresPhoneException implements Exception {
+  const GoogleEmailChangeRequiresPhoneException();
+}
+
+/// Auth confirmed the unlink request, but the subsequent account update could
+/// not be confirmed. Reload the account before offering another action; never
+/// report that both operations rolled back or that the new email was saved.
+class GoogleDisconnectedEmailUpdateException implements Exception {
+  const GoogleDisconnectedEmailUpdateException();
+}
+
+/// The unlink response was lost or unavailable. Refresh canonical Auth/account
+/// state before another attempt; neither "still linked" nor "disconnected" is
+/// established by a transport failure alone.
+class GoogleEmailChangeStatusUnavailableException implements Exception {
+  const GoogleEmailChangeStatusUnavailableException();
+}
+
 abstract class FieldrushAccountRepository {
   bool get emailDeliveryEnabled;
   Future<FieldrushAccount> loadAccount();
@@ -187,7 +226,10 @@ abstract class FieldrushAccountRepository {
   Future<void> verifyReauthenticationCode(String token);
   Future<void> requestEmailVerification(String email);
   Future<void> verifyEmailCode(String email, String token);
-  Future<FieldrushAccount> updateAccount(AccountDraft draft);
+  Future<FieldrushAccount> updateAccount(
+    AccountDraft draft, {
+    bool disconnectGoogle = false,
+  });
   Future<void> markTourCompleted();
   Future<void> deleteAccount();
 }

@@ -543,7 +543,10 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                             ),
                         cityLabel: _cityLabel,
                         emailUnverified:
-                            _account != null && !_account!.emailVerified,
+                            _account != null &&
+                            widget.accountRepository?.emailDeliveryEnabled ==
+                                true &&
+                            !_account!.emailVerified,
                         reliability: _reliability,
                         reliabilityLoading: _loading,
                         reliabilityUnavailable:

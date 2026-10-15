@@ -21,6 +21,40 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('You only offers email verification when delivery is enabled', (
+    tester,
+  ) async {
+    final accounts = _EmailAccounts(enabled: false);
+    await tester.pumpWidget(_app(accounts: accounts));
+    await tester.pumpAndSettle();
+    expect(find.text('VERIFY EMAIL'), findsNothing);
+    accounts.enabled = true;
+    await tester.pumpWidget(_app(accounts: accounts, activationTick: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('VERIFY EMAIL'), findsOneWidget);
+    accounts.verified = true;
+    await tester.pumpWidget(_app(accounts: accounts, activationTick: 2));
+    await tester.pumpAndSettle();
+    expect(find.text('VERIFY EMAIL'), findsNothing);
+  });
+
+  testWidgets(
+    'You clears the verify badge after returning from account settings',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(600, 2600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final accounts = _EmailAccounts(enabled: true);
+      await tester.pumpWidget(
+        _app(accounts: accounts, onEdit: () async => accounts.verified = true),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('VERIFY EMAIL'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('you-account-details')));
+      await tester.pumpAndSettle();
+      expect(find.text('VERIFY EMAIL'), findsNothing);
+    },
+  );
+
   testWidgets('sign-out sheet is themed, cancellable and confirms only once', (
     tester,
   ) async {
@@ -592,6 +626,23 @@ class _UnavailableAccounts implements FieldrushAccountRepository {
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _EmailAccounts extends Fake implements FieldrushAccountRepository {
+  _EmailAccounts({required this.enabled});
+  bool enabled;
+  bool verified = false;
+
+  @override
+  bool get emailDeliveryEnabled => enabled;
+
+  @override
+  Future<FieldrushAccount> loadAccount() async => FieldrushAccount(
+    draft: const AccountDraft(email: 'alex@example.com'),
+    emailVerified: verified,
+    completed: true,
+    status: 'active',
+  );
 }
 
 ProfilePreviousGame _historyGame() => ProfilePreviousGame(
