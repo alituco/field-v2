@@ -49,7 +49,7 @@ jobs:
       release: ${{ steps.plan.outputs.release }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
         with:
           fetch-depth: 0
       - name: Test deployment and workflow contracts before expensive jobs
@@ -74,7 +74,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -114,7 +114,7 @@ jobs:
         working-directory: mobile
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
       - name: Reserve disk space for Android builds
         working-directory: .
         run: bash .github/scripts/prepare-android-runner.sh
@@ -146,6 +146,7 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=true
           --dart-define=PROFILE_SWITCHER_ENABLED=true
+          --dart-define=EMAIL_DELIVERY_ENABLED=true
 
       - name: Build Android production flavor
         run: >-
@@ -157,6 +158,7 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=false
           --dart-define=PROFILE_SWITCHER_ENABLED=false
+          --dart-define=EMAIL_DELIVERY_ENABLED=false
 
   flutter-ios:
     name: Flutter iOS flavor builds
@@ -170,7 +172,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Require Xcode 26 for Stripe SDK builds
         shell: bash
@@ -215,6 +217,7 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=true
           --dart-define=PROFILE_SWITCHER_ENABLED=true
+          --dart-define=EMAIL_DELIVERY_ENABLED=true
 
       - name: Build iOS production release flavor
         run: >-
@@ -227,6 +230,7 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=false
           --dart-define=PROFILE_SWITCHER_ENABLED=false
+          --dart-define=EMAIL_DELIVERY_ENABLED=false
 
   referee:
     name: Referee web checks
@@ -254,10 +258,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -293,10 +297,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -327,7 +331,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
@@ -432,6 +436,10 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_fieldrush_accounts.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_fieldrush_google_email.sql
 
       - name: Verify staff offboarding and atomic account-deletion wallet forfeiture
         shell: bash
@@ -594,7 +602,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Verify staging target
         shell: bash
@@ -672,7 +680,7 @@ jobs:
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       # Jobs do not share installed tools. Auth configuration below still
       # calls the CLI even though deployment now runs on a different runner.
@@ -835,7 +843,7 @@ jobs:
       name: staging
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Flutter for the prebuilt test driver
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -937,10 +945,10 @@ jobs:
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js for referee E2E
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -1115,7 +1123,7 @@ jobs:
       contents: read
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       # This gate has no staging secrets or protected environment. It cannot
       # require another deployment approval just to report an earlier failure.
@@ -1203,7 +1211,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Require Xcode 26
         shell: bash
@@ -1262,10 +1270,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm
