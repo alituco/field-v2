@@ -176,6 +176,21 @@ test("season lock ordering is checked with two local database connections", () =
   assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
 });
 
+test("privacy RPC volatility and real party context are checked on the full schema before deployment", () => {
+  const source = job("database");
+  const script = "supabase/scripts/verify_rating_privacy_rpc_volatility.sql";
+  const check = stepContaining(source, script);
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf(script) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  const verifier = readFileSync(new URL(`../../${script}`, import.meta.url), "utf8");
+  assert.match(verifier, /^begin;/m);
+  assert.match(verifier, /^rollback;/m);
+  assert.match(verifier, /wrapper\.provolatile=original\.provolatile/);
+  assert.match(verifier, /payload:=public\.get_open_queue_party_context\(game_id\)/);
+});
+
 test("match corrections verify both historical protection and current-period rating replay", () => {
   const source = job("database");
   const script = "supabase/scripts/verify_match_resolution_rating_era.sql";

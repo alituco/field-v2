@@ -36,3 +36,20 @@ test('hosted schema rejects public access to every single-pool API retired by ra
   const guard = hosted.match(/for retired_rpc in([\s\S]+?)end loop;/)?.[1];
   assert.match(guard, /if has_function_privilege\('anon', retired_rpc, 'EXECUTE'\)\s*or has_function_privilege\('authenticated', retired_rpc, 'EXECUTE'\)\s*then\s*raise exception/);
 });
+
+test('hosted schema requires a writable party-context RPC without exposing its unmasked implementation', () => {
+  const guard = hosted.match(/party_context := to_regprocedure\('public\.get_open_queue_party_context\(uuid\)'\);([\s\S]+?)if not exists/);
+  assert.ok(guard, 'Hosted deployment must check the exact mobile party RPC');
+  assert.match(guard[1], /provolatile from pg_proc where oid = party_context\) is distinct from 'v'::"char"/);
+  assert.match(guard[1], /not \(select prosecdef from pg_proc where oid = party_context\)/);
+  assert.match(guard[1], /has_function_privilege\('anon', party_context, 'EXECUTE'\)/);
+  for (const role of ['authenticated', 'service_role']) {
+    assert.ok(guard[1].includes(`not has_function_privilege('${role}', party_context, 'EXECUTE')`));
+  }
+  assert.match(guard[1], /get_open_queue_party_context_before_sr_privacy\(uuid\)/);
+  for (const role of ['anon', 'authenticated', 'service_role']) {
+    assert.ok(guard[1].includes(`or has_function_privilege('${role}', checked_rpc, 'EXECUTE')`));
+  }
+  assert.match(guard[1], /raise exception 'Hosted party context/);
+  assert.match(guard[1], /raise exception 'Hosted unmasked party context/);
+});

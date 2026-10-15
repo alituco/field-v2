@@ -1,4 +1,4 @@
-// Full repository migration replay in isolated PostgreSQL/PGlite, through 021.
+// Full repository migration replay in isolated PostgreSQL/PGlite, through 022.
 // No public application table/function is stubbed. Managed Supabase auth/storage
 // surface and unavailable pg_cron/pg_net/Vault extensions are explicit local
 // contracts below. Cron records jobs without executing them; HTTP always throws.
@@ -14,7 +14,7 @@ const modulePath=process.env.PGLITE_MODULE||'@electric-sql/pglite';
 const {PGlite}=require(modulePath);
 const db=new PGlite();
 const migrationDirectory=new URL('../migrations/',import.meta.url);
-const through=process.env.THROUGH_MIGRATION||'20261014002100';
+const through=process.env.THROUGH_MIGRATION||'20261014002200';
 const runSqlVerifiers=process.env.RUN_SQL_VERIFIERS==='1';
 const managedExtensionSubstitutions=[];
 let applied=0;
