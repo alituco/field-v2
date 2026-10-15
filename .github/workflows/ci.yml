@@ -416,6 +416,14 @@ jobs:
       - name: Show local migration status
         run: supabase migration list --local
 
+      - name: Verify privacy RPC transaction contracts and real party context
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_rating_privacy_rpc_volatility.sql
+
       - name: Verify Fieldrush account security and lifecycle
         shell: bash
         run: |

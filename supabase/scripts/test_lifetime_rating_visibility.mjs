@@ -57,11 +57,11 @@ try {
     create function fieldrush_division_for_rating(integer) returns integer language sql immutable as $$select case when $1>=1100 then 4 else 5 end$$;
     create function fieldrush_rating_private.replace_required(definition text,needle text,replacement text) returns text language plpgsql as $$
       begin if position(needle in definition)=0 then raise exception 'Missing contract'; end if; return replace(definition,needle,replacement); end$$;
-    create function search_fieldrush_players(query_to_use text) returns jsonb language plpgsql as $$begin
+    create function search_fieldrush_players(query_to_use text) returns jsonb language plpgsql stable as $$begin
       -- case when coalesce(s.played,0)>=2 then r.skill_rating end skill_rating
       return case when query_to_use='missing' then '[]'::jsonb
         else '[{"id":"${user}","display_name":"Player","skill_rating":1080,"matches_played":0}]'::jsonb end; end$$;
-    create function list_fieldrush_clan_members(clan_id_to_use uuid) returns jsonb language plpgsql as $$begin
+    create function list_fieldrush_clan_members(clan_id_to_use uuid) returns jsonb language plpgsql stable as $$begin
       -- case when stats.played>=2 then r.skill_rating end
       return case when clan_id_to_use='00000000-0000-4000-8000-000000000000'::uuid then '[]'::jsonb
         else '[{"profile_id":"${user}","skill_rating":1080,"matches_played":0}]'::jsonb end; end$$;
@@ -78,17 +78,54 @@ try {
     ['list_fieldrush_placement_page','scope_to_use text,city_id_to_use text,rating_track_to_use text,season_starts_on date,season_ends_on date,offset_to_use integer default 0,page_size_to_use integer default 4'],
     ['get_open_queue_match_detail','game_id_to_use uuid'],
     ['get_fieldrush_season_rewards','season_id_to_use text,city_id_to_use text,rating_track_to_use text'],
-    ['get_open_queue_party_context','game_id_to_use uuid'],
-  ]) await db.exec(`create function public.${name}(${args}) returns jsonb language sql as $$
+  ]) await db.exec(`create function public.${name}(${args}) returns jsonb language sql stable as $$
       -- where (auth.uid() is null or p.id<>auth.uid())
       -- 'source_id', event.source_id,
       select '${payload}'::jsonb$$; grant execute on function public.${name} to authenticated;`);
+  // The real party endpoint locks the game while resolving reliability terms.
+  // Keep that contract in the fixture instead of stubbing every RPC as a read.
+  await db.exec(`create function public.get_open_queue_party_context(game_id_to_use uuid)
+    returns jsonb language plpgsql volatile as $$begin
+      perform 1 from public.open_queue_games where id=game_id_to_use for update;
+      return '${payload}'::jsonb;
+    end$$; grant execute on function public.get_open_queue_party_context(uuid) to authenticated;`);
   for (const [name,args] of [['list_open_queue_games',''],['list_open_queue_fixture_games',''],['list_open_queue_games_for_market','market text'],['list_open_queue_games_for_city','city text']]) {
     await db.exec(`create function public.${name}(${args}) returns table(id uuid,white_average_sr numeric,black_average_sr numeric,match_average_sr numeric,team_sr_spread numeric)
-      language sql as $$select id,white_average_sr,black_average_sr,match_average_sr,team_sr_spread from open_queue_games$$;`);
+      language sql stable as $$select id,white_average_sr,black_average_sr,match_average_sr,team_sr_spread from open_queue_games$$;`);
   }
   await db.exec(await readFile(new URL('../migrations/20261014001500_lifetime_rating_visibility.sql', import.meta.url), 'utf8'));
   await db.exec(await readFile(new URL('../migrations/20261014002100_preserve_rating_privacy_array_responses.sql', import.meta.url), 'utf8'));
+  // PostgREST chooses the transaction mode for POST RPCs from pg_proc, not from
+  // the HTTP method alone. Direct calls in a writable SQL session missed this.
+  async function partyRpcTransaction() {
+    const volatility = await value(`select provolatile from pg_proc
+      where oid='public.get_open_queue_party_context(uuid)'::regprocedure`);
+    await db.exec(`begin ${volatility === 'v' ? 'read write' : 'read only'}`);
+    try {
+      await db.exec('set local role authenticated');
+      return await value(`select public.get_open_queue_party_context($1)`,[game]);
+    } finally { await db.exec('rollback'); }
+  }
+  await assert.rejects(partyRpcTransaction(), error => error.code === '25006'
+    && /SELECT FOR UPDATE.*read-only transaction/.test(error.message)); checks++;
+  await db.exec(await readFile(new URL('../migrations/20261014002200_restore_party_context_write_transaction.sql', import.meta.url), 'utf8'));
+  const party = await partyRpcTransaction();
+  assert.equal(party.profile_id,user); checks++;
+  assert.equal(party.ratings.OUTFIELD.skill_rating,1080); checks++;
+  assert.equal(party.ratings.GOALKEEPER.skill_rating,null); checks++;
+  await check(`select count(*)::integer from pg_proc original join pg_namespace n on n.oid=original.pronamespace
+    join pg_proc wrapper on wrapper.pronamespace=original.pronamespace
+      and wrapper.proname=replace(original.proname,'_before_sr_privacy','')
+      and wrapper.proargtypes=original.proargtypes
+    where n.nspname='public' and original.proname like '%_before_sr_privacy'
+      and wrapper.provolatile=original.provolatile`,13);
+  for (const role of ['anon','authenticated','service_role']) {
+    await check(`select has_function_privilege($1,'get_open_queue_party_context_before_sr_privacy(uuid)','execute')`,false,[role]);
+  }
+  await check(`select has_function_privilege('anon','get_open_queue_party_context(uuid)','execute')`,false);
+  for (const role of ['authenticated','service_role']) {
+    await check(`select has_function_privilege($1,'get_open_queue_party_context(uuid)','execute')`,true,[role]);
+  }
   await check(`select jsonb_array_length(public.search_fieldrush_players('Player'))`,1);
   await check(`select jsonb_array_length(public.list_fieldrush_clan_members($1))`,1,[game]);
   await check(`select public.search_fieldrush_players('missing')`,[]);

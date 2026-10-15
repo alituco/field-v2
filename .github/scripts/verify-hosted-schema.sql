@@ -7,6 +7,7 @@ declare
   rpc_signature text;
   checked_rpc regprocedure;
   retired_rpc regprocedure;
+  party_context regprocedure;
 begin
   select array_agg(table_name order by table_name)
   into missing_tables
@@ -95,6 +96,29 @@ begin
       raise exception 'Retired rating API % must not be executable by public callers.', retired_rpc;
     end if;
   end loop;
+
+  -- POST RPCs marked STABLE run in a read-only PostgREST transaction. Party
+  -- context resolves reliability terms under row locks, so it must retain the
+  -- VOLATILE contract of its private implementation before the hosted journey.
+  party_context := to_regprocedure('public.get_open_queue_party_context(uuid)');
+  if party_context is null
+    or (select provolatile from pg_proc where oid = party_context) is distinct from 'v'::"char"
+    or not (select prosecdef from pg_proc where oid = party_context)
+    or has_function_privilege('anon', party_context, 'EXECUTE')
+    or not has_function_privilege('authenticated', party_context, 'EXECUTE')
+    or not has_function_privilege('service_role', party_context, 'EXECUTE')
+  then
+    raise exception 'Hosted party context must be a signed-in VOLATILE security-definer RPC.';
+  end if;
+  checked_rpc := to_regprocedure('public.get_open_queue_party_context_before_sr_privacy(uuid)');
+  if checked_rpc is null
+    or (select provolatile from pg_proc where oid = checked_rpc) is distinct from 'v'::"char"
+    or has_function_privilege('anon', checked_rpc, 'EXECUTE')
+    or has_function_privilege('authenticated', checked_rpc, 'EXECUTE')
+    or has_function_privilege('service_role', checked_rpc, 'EXECUTE')
+  then
+    raise exception 'Hosted unmasked party context implementation must remain private and VOLATILE.';
+  end if;
 
   if not exists (
     select 1 from information_schema.columns
