@@ -19,6 +19,7 @@ import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock
 import { soloScheduledDurationSeconds, soloStartDurationSeconds } from "@/lib/match-duration";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 import { finalizeSoloMatch } from "@/lib/solo-match-finalization";
+import { assertSeasonZeroAcknowledgement, loadSeasonZeroState, runSeasonZeroAction, SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
 
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const body = (await request.json()) as ActionBody;
     const { data: operationalGame, error: operationalError } = await db
       .from("open_queue_games")
-      .select("operational_state")
+      .select("operational_state,rating_policy_id")
       .eq("id", gameId)
       .single();
     if (operationalError) {
@@ -124,6 +125,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     let result: Record<string, unknown> = {};
+
+    if (operationalGame.rating_policy_id === SEASON_ZERO_POLICY) {
+      const handled = await runSeasonZeroAction(db, refereeContext.referee.profileId, gameId, body);
+      if (handled) {
+        if (body.action === "finish") {
+          try { await queueOpenQueueBroadcastStop(db, gameId, refereeContext.referee.profileId, 30); }
+          catch (broadcastError) { console.error("Could not queue automatic solo broadcast stop", broadcastError); }
+        }
+        return NextResponse.json({ ok: true, ...handled });
+      }
+    }
 
     switch (body.action) {
       case "start":
@@ -253,6 +265,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       case "record_verified_injury": {
         const injury = parseRefereeVerifiedInjuryInput(body);
+        if (operationalGame.rating_policy_id === SEASON_ZERO_POLICY && injury.replacementAvailable) {
+          throw new Error("This policy does not allow reserve replacements. Record only the injury/refund evidence here and actual playing time separately.");
+        }
         const { data, error } = await db.rpc(
           "referee_record_verified_injury",
           {
@@ -311,7 +326,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       case "stop": {
         const stoppage = parseMatchStoppageInput(body);
-        const { data, error } = await db.rpc("referee_record_match_stoppage", {
+        const isSeasonZero = operationalGame.rating_policy_id === SEASON_ZERO_POLICY;
+        const state = isSeasonZero ? await loadSeasonZeroState(db, refereeContext.referee.profileId, gameId) : null;
+        const { data, error } = await db.rpc(isSeasonZero ? "referee_stop_season_zero_match" : "referee_record_match_stoppage", isSeasonZero ? {
+          actor_referee_id: refereeContext.referee.profileId, game_id_to_use: gameId,
+          request_id_to_use: typeof body.requestId === "string" ? body.requestId : crypto.randomUUID(),
+          expected_revision: body.expectedRevision ?? state?.revision,
+          mode_to_use: stoppage.mode, reason_code_to_use: stoppage.reasonCode, note_to_use: stoppage.note || null,
+        } : {
           actor_referee_id: refereeContext.referee.profileId,
           match_kind_to_use: "SOLO",
           match_id_to_stop: gameId,
@@ -320,7 +342,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
           note_to_use: stoppage.note || null,
         });
         if (error) throw new Error(`Could not stop match: ${error.message}`);
-        result = { stoppageId: String(data), mode: stoppage.mode };
+        if (isSeasonZero) assertSeasonZeroAcknowledgement(data, gameId);
+        result = { stoppageId: isSeasonZero ? data.stoppage_id : String(data), mode: stoppage.mode };
 
         if (stoppage.mode === "ABANDON") {
           try {

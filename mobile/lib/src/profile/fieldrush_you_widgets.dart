@@ -224,9 +224,7 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
     final rating = widget.rating;
     final recordAvailable =
         !widget.ratingLoading && !widget.ratingUnavailable && rating != null;
-    final ranked =
-        recordAvailable &&
-        rating.matchesPlayed >= minimumPlayerLeaderboardMatches;
+    final ranked = recordAvailable && rating.ratingVisible;
     final recent = [...widget.recentResults]
       ..sort((a, b) => b.playedAt.compareTo(a.playedAt));
     final lastFive = recent.take(5).toList().reversed.toList();
@@ -673,9 +671,7 @@ class _RatingCard extends StatelessWidget {
   Widget build(BuildContext context) {
     if (loading) {
       return _RatingCardSkeleton(
-        placement:
-            rating != null &&
-            rating!.matchesPlayed < minimumPlayerLeaderboardMatches,
+        placement: rating != null && !rating!.ratingVisible,
       );
     }
     if (unavailable) {
@@ -711,15 +707,17 @@ class _RatingCard extends StatelessWidget {
       );
     }
     final current = rating!;
-    final placement = current.matchesPlayed < minimumPlayerLeaderboardMatches;
+    final placement = !current.ratingVisible;
     if (placement) {
       return FieldrushPlacementRatingCard(
-        matchesPlayed: current.matchesPlayed,
+        matchesPlayed: 2 - current.placementMatchesRemaining,
         cityLabel:
             ratings?.primaryCityName ??
             (current.region.trim().isNotEmpty ? current.region : ''),
         onTap: onTap,
         actionKey: const ValueKey('you-rating-placement'),
+        predictedRating: ratings?.predictionFor(track)?.skillRating,
+        predictedChange: ratings?.predictionFor(track)?.lastChange,
         keeper: track == RatingTrack.goalkeeper,
         roleTabs: onTrack == null
             ? null
@@ -731,10 +729,10 @@ class _RatingCard extends StatelessWidget {
               ),
       );
     }
-    final division = divisionFromRating(current.skillRating);
+    final division = divisionFromRating(current.skillRating!);
     final palette = _palettes[division.number]!;
     const count = 10;
-    final filled = (division.progressFor(current.skillRating) * 10).round();
+    final filled = (division.progressFor(current.skillRating!) * 10).round();
     final next = division.nextDivisionRating;
     final words = {1: 'ONE', 2: 'TWO', 3: 'THREE', 4: 'FOUR', 5: 'FIVE'};
     final city =
@@ -864,6 +862,14 @@ class _RatingCard extends StatelessWidget {
                                             height: .9,
                                           ),
                                     ),
+                                    if (current.provisional)
+                                      Text(
+                                        'Provisional',
+                                        style: _jakarta(
+                                          10,
+                                          color: palette.accent,
+                                        ),
+                                      ),
                                     Padding(
                                       padding: const EdgeInsets.only(bottom: 3),
                                       child: Text(
@@ -904,9 +910,12 @@ class _RatingCard extends StatelessWidget {
                       const SizedBox(height: 10),
                       _Spread(
                         leading: Text(
-                          next == null
+                          current.seasonCountedMatches <
+                                  current.seasonQualificationGames
+                              ? '${current.gamesNeededToRank} ${current.gamesNeededToRank == 1 ? 'game' : 'games'} to qualify this season'
+                              : next == null
                               ? 'Top division'
-                              : '${next - current.skillRating} SR to Division ${division.number - 1}',
+                              : '${next - current.skillRating!} SR to Division ${division.number - 1}',
                           style: _jakarta(11.5, color: palette.ink),
                         ),
                         trailing: Text(

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
+import { SeasonZeroRatingReviewPanel } from "@/components/season-zero-rating-review-panel";
 import { GameFormationPanel } from "../../../game-formation-panel";
 
 import type {
@@ -130,6 +131,7 @@ export default function AdminGameDetailPage() {
   }
 
   const fixture = detail.fixture;
+  const seasonZero = fixture.matchKind === "SOLO" && fixture.ratingPolicyId === "field-sr-season0-v2";
   const activeReserve = detail.reserves.active[0];
   const resolutionCase = detail.resolutionCase;
   const needsResolution = Boolean(
@@ -152,7 +154,7 @@ export default function AdminGameDetailPage() {
         <ResolutionCaseBanner
           caseData={resolutionCase}
           detail={detail}
-          onResolve={() => setResolveCase(true)}
+          onResolve={seasonZero ? undefined : () => setResolveCase(true)}
           onRetryRefund={setRetryRefund}
         />
       ) : null}
@@ -181,13 +183,14 @@ export default function AdminGameDetailPage() {
       <section className={styles.metrics}>
         <Metric label="Confirmed players" value={confirmedCount(detail)} detail={capacityLabel(detail)} />
         <Metric label="Checked in / played" value={String(detail.participants.actualPlayers.length)} detail="Official match record" />
-        <Metric label="Reserve player" value={`${detail.reserves.active.length} / 1`} detail="One game-wide standby" />
+        {!seasonZero ? <Metric label="Reserve player" value={`${detail.reserves.active.length} / 1`} detail="One game-wide standby" /> : <Metric label="Participation policy" value="Booked players only" detail="No substitutions or replacements" />}
         <Metric label="Reports" value={String(detail.reports.length)} detail={detail.reports.length ? "Needs awareness" : "No match reports"} tone={detail.reports.length ? "warning" : "good"} />
       </section>
 
       <div className={styles.grid}>
         <div className={styles.mainColumn}>
-          <section className={styles.card}>
+          {seasonZero ? <SeasonZeroRatingReviewPanel key={fixture.id} fixture={fixture} accessToken={accessToken} onSaved={async () => { await load(true); }} /> : null}
+          {!seasonZero ? <section className={styles.card}>
             <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the playing squad, or change rating eligibility." />
             <div className={styles.reserveGrid}>
               <ReserveSlot
@@ -208,7 +211,7 @@ export default function AdminGameDetailPage() {
                 ))}
               </details>
             ) : null}
-          </section>
+          </section> : null}
 
           {detail.pricing ? (
             <GamePricingPanel pricing={detail.pricing} onEdit={() => setEditingPrice(true)} />
@@ -258,7 +261,7 @@ export default function AdminGameDetailPage() {
           <section className={styles.card}>
             <SectionHead eyebrow="ADMIN CONTROLS" title="Resolve game issues" detail="Every action requires a reason and is permanently audited." />
             <div className={styles.adminActions}>
-              {needsResolution ? (
+              {needsResolution && !seasonZero ? (
                 <button
                   className={styles.primaryButton}
                   onClick={() => setResolveCase(true)}
@@ -297,7 +300,8 @@ export default function AdminGameDetailPage() {
               </button>
             </div>
             <p className={styles.actionHint}>
-              {needsResolution
+              {seasonZero ? "Use Rating review for Season 0 outcomes and timeline corrections. Payment and refund controls remain separate."
+                : needsResolution
                 ? "Use the no-data review so attendance, refunds, SR and strikes are decided together."
                 : "Admin cancellation gives every payer a full refund, including held reliability deposits. Card and digital wallet payments return to the original payment method."}
             </p>
@@ -343,7 +347,7 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
-      {addingReserve ? (
+      {addingReserve && !seasonZero ? (
         <AddReserveDialog
           accessToken={accessToken}
           detail={detail}
@@ -405,7 +409,7 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
-      {resolveCase && resolutionCase ? (
+      {resolveCase && resolutionCase && !seasonZero ? (
         <ResolveMatchCaseDialog
           accessToken={accessToken}
           caseData={resolutionCase}
@@ -432,7 +436,7 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
-      {removeReserve ? (
+      {removeReserve && !seasonZero ? (
         <RemoveReserveDialog
           accessToken={accessToken}
           detail={detail}
@@ -630,7 +634,7 @@ function ResolutionCaseBanner({
 }: {
   caseData: AdminGameResolutionCase;
   detail: AdminGameDetail;
-  onResolve: () => void;
+  onResolve?: () => void;
   onRetryRefund: (refund: AdminGameResolutionRefund) => void;
 }) {
   const open = ["NO_DATA", "UNDER_REVIEW"].includes(caseData.state);
@@ -691,13 +695,13 @@ function ResolutionCaseBanner({
                   : "This case is closed and retained for audit."}
           </p>
         </div>
-        <button className={styles.resolutionButton} onClick={onResolve} type="button">
+        {onResolve ? <button className={styles.resolutionButton} onClick={onResolve} type="button">
           {open
             ? caseData.currentRevision
               ? "Review or correct"
               : "Resolve match"
             : "Create correction"}
-        </button>
+        </button> : null}
       </div>
       <dl className={styles.resolutionFacts}>
         <div><dt>Reason</dt><dd>{humanize(caseData.reasonCode)}</dd></div>

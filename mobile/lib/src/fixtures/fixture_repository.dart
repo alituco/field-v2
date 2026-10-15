@@ -93,7 +93,11 @@ class SupabaseFixtureRepository
         FixtureReliabilityBookingRepository,
         FixtureReliabilityRosterRepository,
         MatchResolutionRepository {
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseFixtureRepository({SupabaseClient? client})
+    : _injectedClient = client;
+
+  final SupabaseClient? _injectedClient;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
 
   @override
   Future<bool> areClanGamesEnabled() async {
@@ -233,8 +237,6 @@ class SupabaseFixtureRepository
       clan_id,
       side,
       played,
-      rating_at_start,
-      rating_change,
       player:profiles!fixture_player_appearances_profile_id_fkey(
         id,
         display_name,

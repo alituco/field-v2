@@ -3,6 +3,7 @@ import '../ui/field_loading.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import 'profile.dart';
+import '../ranking/player_rating_visibility.dart';
 
 class FieldrushMatchHistoryScreen extends StatefulWidget {
   const FieldrushMatchHistoryScreen({
@@ -182,7 +183,10 @@ class _FieldrushMatchHistoryScreenState
     };
     final isHome = ['HOME', 'WHITE'].contains(game.playerSide.toUpperCase());
     final opponent = isHome ? game.awayName : game.homeName;
-    final delta = event?.ratingChange;
+    final delta = event?.hasPublicRating == true ? event?.ratingChange : null;
+    final explanation =
+        event?.publicRatingExplanation ??
+        publicRatingStatusLabel(event?.ratingStatus);
     final date = game.localPlayedAt;
     final dateLabel = date == null
         ? 'Date unavailable'
@@ -231,6 +235,10 @@ class _FieldrushMatchHistoryScreenState
                     '$dateLabel · ${game.isSolo ? '' : 'Clan · '}$scoreLabel',
                     style: _jakarta(10.5),
                   ),
+                  if (explanation != null) ...[
+                    const SizedBox(height: 5),
+                    Text(explanation, style: _jakarta(10.5)),
+                  ],
                 ],
               ),
             ),

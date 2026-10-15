@@ -15,9 +15,10 @@ export function persistedOpenQueueTeam(value: unknown): OpenQueueTeam | null {
 }
 
 export function nullableSr(value: unknown): number | null {
-  if (value === null || value === undefined || value === "") return null;
+  if ((typeof value !== "number" && typeof value !== "string") ||
+      (typeof value === "string" && value.trim() === "")) return null;
   const rating = Number(value);
-  return Number.isFinite(rating) && rating >= 0 ? rating : null;
+  return Number.isFinite(rating) ? rating : null;
 }
 
 export function formatPlayerSr(value: number | null): string {

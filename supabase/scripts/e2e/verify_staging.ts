@@ -92,6 +92,7 @@ async function verifyProfiles(): Promise<void> {
   if (phase === "prepared") {
     assert(
       signupAccount.onboarding_completed === false &&
+        signupAccount.skill_assessment_required === true &&
         !hasNonEmptyString(signupAccount.first_name) &&
         signupAccount.date_of_birth == null,
       "The prepared signup actor must have a blank server-owned onboarding state.",
@@ -99,6 +100,9 @@ async function verifyProfiles(): Promise<void> {
   } else {
     assert(
       signupAccount.onboarding_completed === true &&
+        signupAccount.skill_assessment === "not_sure" &&
+        signupAccount.rating_initialized === true &&
+        signupAccount.skill_assessment_required === false &&
         signupAccount.phone_verified === true &&
         isEligiblePlayerBirthDate(signupAccount.date_of_birth),
       "The onboarding journey did not persist a verified-phone,18+ server-completed account.",

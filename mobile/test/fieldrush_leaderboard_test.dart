@@ -14,6 +14,7 @@ import 'package:field/src/leaderboard/leaderboard_screen.dart';
 import 'package:field/src/leaderboard/fieldrush_placement.dart';
 import 'package:field/src/leaderboard/fieldrush_rating_tracks.dart';
 import 'package:field/src/leaderboard/fieldrush_season_rewards.dart';
+import 'package:field/src/ranking/player_rating_visibility.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
@@ -26,6 +27,59 @@ import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  testWidgets('season minimum of three keeps a two-game rating revealed', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      rankings: _Rankings(
+        total: 0,
+        matches: 2,
+        visibility: const PlayerRatingVisibility(
+          lifetimeCountedMatches: 2,
+          seasonCountedMatches: 2,
+          ratingVisible: true,
+          provisional: true,
+          placementMatchesRemaining: 0,
+          minimumRatedGames: 3,
+        ),
+      ),
+    );
+    expect(find.textContaining('1234'), findsWidgets);
+    expect(find.text('1 game to qualify this season'), findsOneWidget);
+    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.byKey(const ValueKey('ranks-placement-row')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+  for (final lifetime in [2, 9, 10]) {
+    testWidgets('lifetime $lifetime remains visible with zero season games', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        rankings: _Rankings(
+          total: 0,
+          matches: 0,
+          visibility: PlayerRatingVisibility(
+            lifetimeCountedMatches: lifetime,
+            seasonCountedMatches: 0,
+            ratingVisible: true,
+            provisional: lifetime < 10,
+            placementMatchesRemaining: 0,
+          ),
+        ),
+      );
+      expect(find.textContaining('1234'), findsWidgets);
+      expect(find.text('2 games to qualify this season'), findsOneWidget);
+      expect(find.text('2 games to reveal your division'), findsNothing);
+      expect(find.byKey(const ValueKey('ranks-placement-row')), findsNothing);
+      expect(
+        find.text('Provisional'),
+        lifetime < 10 ? findsOneWidget : findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
   test('published rewards RPC uses exact city, role and season', () async {
     final client = SupabaseClient(
       'https://fieldrush-test.invalid',
@@ -114,7 +168,7 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(find.text('2 games to reveal your division'), findsOneWidget);
+    expect(find.text('Real rating after 2 games'), findsOneWidget);
   });
 
   testWidgets('global ladder never requests or advertises city rewards', (
@@ -277,11 +331,11 @@ void main() {
     for (final count in [0, 1]) {
       await _pump(tester, rankings: _Rankings(matches: count));
       expect(find.text('#?'), findsOneWidget);
-      expect(find.text('in Phoenix · ???? skill rating'), findsOneWidget);
+      expect(find.text('in Phoenix · ???? predicted'), findsOneWidget);
       expect(find.text('Placement · $count of 2 played'), findsOneWidget);
       expect(
         find.text(
-          '${2 - count} ${count == 1 ? 'game' : 'games'} to reveal your division',
+          'Real rating after ${count == 1 ? '1 more game' : '2 games'}',
         ),
         findsOneWidget,
       );
@@ -708,6 +762,7 @@ PlayerRatingLeaderboardEntry _player(
   int ownRank = 15,
   int matches = 8,
   String region = 'phoenix',
+  PlayerRatingVisibility? visibility,
 }) => PlayerRatingLeaderboardEntry(
   rank: matches < 2 ? 0 : rank,
   profileId: rank == ownRank ? 'me' : 'p$rank',
@@ -720,6 +775,7 @@ PlayerRatingLeaderboardEntry _player(
   draws: 1,
   lastChange: 7,
   region: region,
+  visibility: visibility,
 );
 
 class _PlacementRankings extends _Rankings
@@ -806,11 +862,13 @@ class _Rankings extends Fake
     this.region = 'phoenix',
     this.fail = false,
     this.first,
+    this.visibility,
   });
   final int total, ownRank, matches;
   final String region;
   bool fail, ratingFail = false;
   final Completer<PlayerRatingLeaderboardPage>? first;
+  final PlayerRatingVisibility? visibility;
   final requests = <(int, int, String)>[];
 
   @override
@@ -848,7 +906,13 @@ class _Rankings extends Fake
     LeaderboardSeason season,
   ) async {
     if (ratingFail) throw StateError('Rating unavailable');
-    return _player(ownRank, ownRank: ownRank, matches: matches, region: region);
+    return _player(
+      ownRank,
+      ownRank: ownRank,
+      matches: matches,
+      region: region,
+      visibility: visibility,
+    );
   }
 }
 

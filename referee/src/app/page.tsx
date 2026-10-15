@@ -5,6 +5,9 @@ import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
+import { SeasonZeroParticipationPanel } from "@/components/season-zero-participation-panel";
+import { SeasonZeroRebalancePanel } from "@/components/season-zero-rebalance-panel";
+import { SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
 import { normalizePhoneNumber } from "@/lib/phone";
 import { formatPlayerSr, ratingTrackLabel } from "@/lib/open-queue-ratings";
 import { plannedMatchDurationSeconds } from "@/lib/match-duration";
@@ -631,7 +634,7 @@ function GamesView({
               <small>Scorer and assist</small>
             </span>
           </button>
-          <button
+          {activeFixture.ratingPolicyId !== "field-sr-season0-v2" ? <button
             className="match-event-action blue-card"
             disabled={!canRecordEvent || submitting !== null}
             onClick={() => setEventDialog("blue-card")}
@@ -642,7 +645,7 @@ function GamesView({
               <strong>Blue card</strong>
               <small>Start two minutes</small>
             </span>
-          </button>
+          </button> : null}
         </div>
 
         {resolutionLocked ? null : (
@@ -677,6 +680,12 @@ function GamesView({
           />
         </section>
       ) : null}
+
+      {activeFixture.ratingPolicyId === "field-sr-season0-v2" ? <SeasonZeroRebalancePanel
+        key={activeFixture.id} fixture={activeFixture} accessToken={accessToken} submitting={submitting} onSaved={onRefresh} /> : null}
+
+      {activeFixture.ratingPolicyId === "field-sr-season0-v2" ? <SeasonZeroParticipationPanel
+        fixture={activeFixture} accessToken={accessToken} submitting={submitting} onAction={onSafetyAction} /> : null}
 
       <details className="panel referee-disclosure">
         <summary>
@@ -735,6 +744,7 @@ function GamesView({
                 fixture={activeFixture}
                 submitting={submitting}
                 onAction={onSafetyAction}
+                financialOnly={activeFixture.ratingPolicyId === SEASON_ZERO_POLICY}
               />
             </section>
           ) : null}
@@ -1603,6 +1613,7 @@ function TimerPanel({
   canAdminister?: boolean;
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
+  const seasonZero = fixture.ratingPolicyId === SEASON_ZERO_POLICY;
   const now = useNowMs(status === "RUNNING");
   const rawElapsedSeconds = elapsedFromClock(fixture.clock, now);
   const elapsedSeconds = Math.min(rawElapsedSeconds, MAX_MATCH_SECONDS);
@@ -1615,10 +1626,10 @@ function TimerPanel({
     fixture.status === "FINAL" || status === "ENDED" || resolutionLocked;
   const isBeforeStart = !resolutionLocked && status === "NOT_STARTED" &&
     (fixture.matchKind === "SOLO"
-      ? fixture.status === "FULL"
+      ? fixture.status === "FULL" || (seasonZero && fixture.status === "OPEN")
       : fixture.status === "SCHEDULED");
   const soloTeamsPending = fixture.matchKind === "SOLO" &&
-    fixture.status === "FULL" &&
+    (fixture.status === "FULL" || (seasonZero && fixture.status === "OPEN")) &&
     fixture.teamsAssignedAt === null;
   const attendanceEligibleIds = fixture.reliabilityContext &&
       fixture.reliabilityContext.expectedCount > 0
@@ -1690,20 +1701,20 @@ function TimerPanel({
     )
   ).length;
   const hasValidLineup = soloTeamsPending
-    ? canAdminister &&
+    ? !seasonZero && canAdminister &&
       fixture.players.length > 0 &&
       selectedParticipantIds.length === fixture.players.length
-    : selectedHomeCount > 0 && selectedAwayCount > 0;
+    : selectedHomeCount >= (seasonZero ? 5 : 1) && selectedAwayCount >= (seasonZero ? 5 : 1);
   const startBlockedReason = !isBeforeStart
     ? fixture.matchKind === "SOLO"
-      ? "This solo game must be full before it can start."
+      ? seasonZero ? "This game must be open with assigned teams before it can start." : "This solo game must be full before it can start."
       : "This fixture is not ready to start."
-    : soloTeamsPending && !canAdminister
-      ? "White and Black teams unlock three hours before kickoff."
+    : soloTeamsPending && (seasonZero || !canAdminister)
+      ? "Wait for White and Black teams to be assigned before starting."
       : !hasValidLineup
         ? soloTeamsPending && canAdminister
           ? `Check in all ${fixture.players.length} booked players before an early test start.`
-          : "Check in at least one player from each team before starting."
+          : seasonZero ? "Check in and select at least five actual starting players on each team." : "Check in at least one player from each team before starting."
         : null;
 
   function setPlayerSelected(profileId: string, selected: boolean) {
@@ -1846,7 +1857,7 @@ function TimerPanel({
         </p>
       ) : !isClosed && status === "NOT_STARTED" && startBlockedReason ? (
         <p className="timer-start-note">{startBlockedReason}</p>
-      ) : soloTeamsPending && canAdminister ? (
+      ) : soloTeamsPending && canAdminister && !seasonZero ? (
         <p className="timer-start-note admin-override">
           Admin test start: all booked players must be checked in. The early team reveal and completion are audited.
         </p>
@@ -1867,7 +1878,8 @@ function TimerPanel({
           </div>
         </details>
       ) : null}
-      {isClosed && !resolutionLocked && compact ? (
+      {isClosed && seasonZero ? <p className="timer-start-note">Time, participation, and result corrections require an audited organizer review.</p> : null}
+      {isClosed && !resolutionLocked && !seasonZero && compact ? (
         <details className="clock-editor clock-editor-disclosure">
           <summary>
             <span>
@@ -1891,7 +1903,7 @@ function TimerPanel({
             }
           />
         </details>
-      ) : isClosed && !resolutionLocked ? (
+      ) : isClosed && !resolutionLocked && !seasonZero ? (
         <div className="clock-editor">
           <div className="clock-editor-title">Correct match time</div>
           <ClockEditor

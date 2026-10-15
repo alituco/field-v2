@@ -380,6 +380,8 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
             'safety records may need to be retained. Active bookings, payments or '
             'other unsettled activity may need to be resolved first. Deleting an '
             'account does not automatically cancel bookings or issue refunds.\n\n'
+            'You will permanently lose wallet access and forfeit any remaining '
+            'wallet balance. It will not be refunded or carried to a new account.\n\n'
             'You will verify your current phone number before continuing.',
         actions: [
           FilledButton(

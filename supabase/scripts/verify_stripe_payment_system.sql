@@ -110,6 +110,9 @@ begin
   for item in 1..array_length(players,1) loop
     insert into auth.users(id,phone,phone_confirmed_at,raw_user_meta_data)
       values(players[item],'1555'||lpad((floor(random()*10000000))::text,7,'0'),now(),jsonb_build_object('display_name','Payment verification'));
+    -- Rollback-only payment fixtures model already-onboarded, pre-policy users;
+    -- this does not bypass account status, payment, or booking protections.
+    delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=players[item];
     insert into public.profiles(id,display_name) values(players[item],'Payment verification') on conflict(id) do nothing;
     insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at)
       values(players[item],'active',now()) on conflict(user_id) do update set status='active',onboarding_completed_at=now();

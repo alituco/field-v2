@@ -53,9 +53,8 @@ class FieldrushRatingRoleTabs extends StatelessWidget {
                     FieldrushDivisionShield(
                       size: 14,
                       mini: true,
-                      placement:
-                          (ratings?.forTrack(track).matchesPlayed ?? 0) < 2,
-                      division: ratings?.forTrack(track).division.number ?? 5,
+                      placement: ratings?.forTrack(track).ratingVisible != true,
+                      division: ratings?.forTrack(track).division?.number ?? 5,
                     ),
                     const SizedBox(width: 6),
                     Text(

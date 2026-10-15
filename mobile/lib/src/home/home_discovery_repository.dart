@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../ranking/player_rating_visibility.dart';
 
-class HomePlayerResult {
+class HomePlayerResult with PublicPlayerRating {
   const HomePlayerResult({
     required this.id,
     required this.name,
@@ -10,13 +11,18 @@ class HomePlayerResult {
     this.matchesPlayed = 0,
     this.cityName,
     this.isSelf = false,
+    this.visibility,
   });
   final String id;
   final String name;
   final String username;
   final String? avatarUrl;
+  @override
   final int? skillRating;
+  @override
   final int matchesPlayed;
+  @override
+  final PlayerRatingVisibility? visibility;
   final String? cityName;
   final bool isSelf;
 }
@@ -110,7 +116,13 @@ class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
           name: row['display_name'] as String? ?? 'Player',
           username: row['username'] as String? ?? '',
           avatarUrl: _nonEmptyString(row['avatar_url']),
-          skillRating: (row['skill_rating'] as num?)?.toInt(),
+          skillRating: publicRatingNumber(
+            Map<String, dynamic>.from(row as Map),
+            'skill_rating',
+          ),
+          visibility: PlayerRatingVisibility.fromJson(
+            Map<String, dynamic>.from(row),
+          ),
           matchesPlayed: (row['matches_played'] as num?)?.toInt() ?? 0,
           cityName: _nonEmptyString(row['city_name']),
           isSelf: row['is_self'] == true,

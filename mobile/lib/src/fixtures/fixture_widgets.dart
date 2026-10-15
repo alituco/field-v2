@@ -1003,7 +1003,7 @@ class FixtureTeamSummary extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '${clan.tag} · ${clan.skillRating} SR${clan.regionRank == null ? '' : ' · #${clan.regionRank}'}',
+            '${clan.tag}${clan.skillRating == null ? '' : ' · ${clan.skillRating} SR'}${clan.regionRank == null ? '' : ' · #${clan.regionRank}'}',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: alignEnd ? TextAlign.right : TextAlign.left,

@@ -5,5 +5,6 @@ export function readDeletionConfirmation(body: unknown): boolean {
     return false;
   }
   const values = body as Record<string, unknown>;
-  return Object.keys(values).length === 1 && values.confirmation === "DELETE";
+  return Object.keys(values).length === 2 && values.confirmation === "DELETE" &&
+    values.wallet_forfeiture_confirmed === true;
 }

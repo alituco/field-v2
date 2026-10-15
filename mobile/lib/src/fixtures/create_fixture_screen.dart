@@ -2026,7 +2026,7 @@ class _ConfirmationTeam extends StatelessWidget {
         ),
         const SizedBox(height: 5),
         Text(
-          '${clan.tag} · ${clan.rank.label}',
+          '${clan.tag}${clan.rank == null ? '' : ' · ${clan.rank!.label}'}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -2035,15 +2035,17 @@ class _ConfirmationTeam extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          '${clan.skillRating} SR',
-          style: const TextStyle(
-            color: fieldEmerald600,
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
+        if (clan.skillRating != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${clan.skillRating} SR',
+            style: const TextStyle(
+              color: fieldEmerald600,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ),
+        ],
         if (rankLabel != null) ...[
           const SizedBox(height: 3),
           Text(

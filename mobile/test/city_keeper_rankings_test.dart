@@ -32,6 +32,152 @@ import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  testWidgets(
+    'private prediction renders on Home and You while the public profile stays hidden',
+    (tester) async {
+      final snapshot = FieldrushPlayerRatings.fromJson({
+        'primary_city_id': 'phoenix',
+        'primary_city_name': 'Phoenix',
+        'ratings': {
+          'OUTFIELD': {
+            'profile_id': 'me',
+            'skill_rating': null,
+            'rating_visible': false,
+            'lifetime_counted_matches': 1,
+            'matches_played': 1,
+          },
+          'GOALKEEPER': {
+            'profile_id': 'me',
+            'skill_rating': null,
+            'rating_visible': false,
+            'lifetime_counted_matches': 0,
+            'matches_played': 0,
+          },
+        },
+        'placement_predictions': {
+          'OUTFIELD': {
+            'skill_rating': 1040,
+            'lifetime_counted_matches': 1,
+            'last_change': 40,
+          },
+          'GOALKEEPER': {
+            'skill_rating': 1000,
+            'lifetime_counted_matches': 0,
+            'last_change': null,
+          },
+        },
+      });
+      var track = RatingTrack.outfield;
+      await _pump(
+        tester,
+        StatefulBuilder(
+          builder: (context, setState) => FieldrushHomeRating(
+            profile: _profile,
+            ratings: snapshot,
+            rating: snapshot.forTrack(track),
+            track: track,
+            onTrack: (value) => setState(() => track = value),
+            onTap: () {},
+          ),
+        ),
+      );
+      expect(find.text('1040'), findsOneWidget);
+      expect(find.text('PREDICTED'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('rating-track-GOALKEEPER')));
+      await tester.pumpAndSettle();
+      expect(find.text('1000'), findsOneWidget);
+      expect(find.text('1040'), findsNothing);
+      await _pump(tester, _you(snapshot));
+      expect(find.text('1040'), findsOneWidget);
+      expect(find.text('+40 after game 1', findRichText: true), findsOneWidget);
+      await _pump(
+        tester,
+        FieldrushPlayerProfileContent(
+          profile: _profile,
+          ratings: snapshot,
+          track: RatingTrack.outfield,
+          onTrack: (_) {},
+          isFollowing: false,
+          followBusy: false,
+          onBack: () {},
+          onMatchHistory: () {},
+        ),
+      );
+      expect(find.text('1040'), findsNothing);
+      expect(find.text('PREDICTED'), findsNothing);
+      expect(find.text('????'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+  test(
+    'owner placement predictions stay separate from official ratings and independent by role',
+    () {
+      final snapshot = FieldrushPlayerRatings.fromJson({
+        'ratings': {
+          'OUTFIELD': {
+            'profile_id': 'me',
+            'skill_rating': null,
+            'rating_visible': false,
+            'lifetime_counted_matches': 1,
+            'matches_played': 1,
+          },
+          'GOALKEEPER': {
+            'profile_id': 'me',
+            'skill_rating': null,
+            'rating_visible': false,
+            'lifetime_counted_matches': 0,
+            'matches_played': 0,
+          },
+        },
+        'placement_predictions': {
+          'OUTFIELD': {
+            'skill_rating': 1040,
+            'lifetime_counted_matches': 1,
+            'last_change': 40,
+          },
+          'GOALKEEPER': {
+            'skill_rating': 1000,
+            'lifetime_counted_matches': 0,
+            'last_change': null,
+          },
+        },
+      });
+      expect(snapshot.predictionFor(RatingTrack.outfield)?.skillRating, 1040);
+      expect(snapshot.predictionFor(RatingTrack.outfield)?.lastChange, 40);
+      expect(snapshot.predictionFor(RatingTrack.goalkeeper)?.skillRating, 1000);
+      expect(
+        snapshot.predictionFor(RatingTrack.goalkeeper)?.lastChange,
+        isNull,
+      );
+      expect(snapshot.outfield.skillRating, isNull);
+      expect(snapshot.outfield.ratingVisible, isFalse);
+      expect(snapshot.outfield.isRanked, isFalse);
+      expect(snapshot.forScope(RatingTrack.outfield, null).skillRating, isNull);
+    },
+  );
+
+  test(
+    'placement prediction never manufactures a missing rating or accepts completed placement',
+    () {
+      for (final value in [
+        null,
+        {},
+        {'skill_rating': 1000, 'lifetime_counted_matches': 2},
+        {'skill_rating': '1000', 'lifetime_counted_matches': 0},
+        {'skill_rating': true, 'lifetime_counted_matches': 0},
+      ]) {
+        expect(FieldrushPlacementPrediction.fromJson(value), isNull);
+      }
+      expect(
+        FieldrushPlacementPrediction.fromJson({
+          'skill_rating': -12,
+          'lifetime_counted_matches': 1,
+          'last_change': -9,
+        })?.skillRating,
+        -12,
+      );
+    },
+  );
   test(
     'recent role snapshots refresh details without truncating full history',
     () {
@@ -93,7 +239,7 @@ void main() {
           },
         },
       });
-      expect(snapshot.outfield.division.number, 1);
+      expect(snapshot.outfield.division?.number, 1);
       expect(snapshot.goalkeeper.gamesNeededToRank, 1);
       expect(snapshot.forScope(RatingTrack.outfield, null).rank, 7);
       expect(snapshot.forScope(RatingTrack.goalkeeper, null).rank, 0);
@@ -168,7 +314,7 @@ void main() {
       expect(find.text('0 keepers'), findsOneWidget);
       expect(find.text('1 of 2 games in goal'), findsOneWidget);
       expect(
-        find.text('1 game in goal to reveal your division'),
+        find.text('Real rating after 1 more game in goal'),
         findsOneWidget,
       );
       expect(find.text('#?'), findsOneWidget);
@@ -178,7 +324,7 @@ void main() {
       await tester.tap(find.text('Global').last);
       await tester.pumpAndSettle();
       expect(repo.requests.last, (RatingTrack.goalkeeper, null));
-      expect(find.text('Worldwide · ???? keeper skill rating'), findsOneWidget);
+      expect(find.text('Worldwide · ???? predicted'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -206,12 +352,12 @@ void main() {
       expect(find.text('PLACEMENT'), findsOneWidget);
       expect(find.text('1680'), findsNothing);
       expect(
-        find.text('1 game in goal to reveal your division'),
+        find.text('Real rating after 1 more game in goal'),
         findsOneWidget,
       );
       expect(
         tester
-            .widget<Text>(find.text('1 game in goal to reveal your division'))
+            .widget<Text>(find.text('Real rating after 1 more game in goal'))
             .maxLines,
         1,
       );
@@ -299,7 +445,7 @@ void main() {
     expect(find.text('Outfield'), findsOneWidget);
     expect(find.text('Keeper'), findsOneWidget);
     expect(find.text('????'), findsOneWidget);
-    expect(find.text('NOT RANKED YET'), findsOneWidget);
+    expect(find.text('#? ON THE LADDER'), findsOneWidget);
     expect(find.textContaining('IN PHOENIX'), findsNothing);
     expect(tester.takeException(), isNull);
     await _capture(tester, 'you-new-ladders');

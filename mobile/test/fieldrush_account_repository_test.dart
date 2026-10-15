@@ -206,7 +206,10 @@ void main() {
       respond = (_) => _json({'deleted': true});
       await repository.deleteAccount();
       expect(requests.first.url.path, '/functions/v1/fieldrush-delete-account');
-      expect(_body(requests.first), {'confirmation': 'DELETE'});
+      expect(_body(requests.first), {
+        'confirmation': 'DELETE',
+        'wallet_forfeiture_confirmed': true,
+      });
       expect(client.auth.currentUser, isNull);
     },
   );
@@ -258,6 +261,7 @@ void main() {
         username: 'Alex.R',
         dateOfBirth: DateTime(2000, 1, 2),
         email: 'alex@example.com',
+        skillAssessment: SkillAssessment.advanced,
       );
       final account = await repository.completeOnboarding(draft);
       final payload = _body(requests.single);
@@ -277,8 +281,50 @@ void main() {
         'username': 'alex.r',
         'date_of_birth': '2000-01-02',
         'email': 'alex@example.com',
+        'skill_assessment': 'advanced',
       });
       expect(account.completed, isTrue);
+    },
+  );
+
+  test(
+    'draft saves only the assessment key and never a numeric seed',
+    () async {
+      respond = (_) => _json({});
+      for (final assessment in SkillAssessment.values) {
+        await repository.saveDraft(AccountDraft(skillAssessment: assessment));
+        final request = requests.last;
+        expect(
+          request.url.path,
+          '/rest/v1/rpc/save_fieldrush_onboarding_draft',
+        );
+        final draft = _body(request)['draft'] as Map;
+        expect(draft['skill_assessment'], assessment.value);
+        expect(draft.keys, isNot(contains('seed')));
+        expect(draft.keys, isNot(contains('skill_rating')));
+        expect(draft.values.whereType<num>(), isEmpty);
+      }
+    },
+  );
+
+  test(
+    'account updates cannot submit a replacement skill assessment',
+    () async {
+      respond = (_) => _json(_accountJson());
+      await repository.updateAccount(
+        const AccountDraft(
+          firstName: 'Alex',
+          skillAssessment: SkillAssessment.highlyCompetitive,
+        ),
+      );
+      expect(
+        requests.single.url.path,
+        '/rest/v1/rpc/update_my_fieldrush_account',
+      );
+      expect(
+        _body(requests.single)['draft'],
+        isNot(contains('skill_assessment')),
+      );
     },
   );
 

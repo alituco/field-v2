@@ -1,4 +1,5 @@
 import '../ranking/rating_division.dart';
+import '../ranking/player_rating_visibility.dart';
 
 const minimumClanLeaderboardMatches = 4;
 const minimumPlayerLeaderboardMatches = 2;
@@ -35,7 +36,7 @@ class PlayerRatingLeaderboardPage {
   }
 }
 
-class PlayerRatingLeaderboardEntry {
+class PlayerRatingLeaderboardEntry with PublicPlayerRating {
   const PlayerRatingLeaderboardEntry({
     required this.rank,
     required this.profileId,
@@ -49,6 +50,7 @@ class PlayerRatingLeaderboardEntry {
     required this.lastChange,
     required this.region,
     this.avatarUrl,
+    this.visibility,
   });
 
   final int rank;
@@ -56,23 +58,30 @@ class PlayerRatingLeaderboardEntry {
   final String displayName;
   final String username;
   final String? avatarUrl;
-  final int skillRating;
+  @override
+  final int? skillRating;
+  @override
   final int matchesPlayed;
   final int wins;
   final int losses;
   final int draws;
-  final int lastChange;
+  final int? lastChange;
+  @override
+  final PlayerRatingVisibility? visibility;
   final String region;
 
   bool get isRanked =>
-      rank > 0 && matchesPlayed >= minimumPlayerLeaderboardMatches;
+      ratingVisible &&
+      rank > 0 &&
+      seasonCountedMatches >= seasonQualificationGames;
 
-  int get gamesNeededToRank => (minimumPlayerLeaderboardMatches - matchesPlayed)
-      .clamp(0, minimumPlayerLeaderboardMatches);
+  int get gamesNeededToRank => (seasonQualificationGames - seasonCountedMatches)
+      .clamp(0, seasonQualificationGames);
 
-  RatingDivision get division => divisionFromRating(skillRating);
+  RatingDivision? get division =>
+      ratingVisible ? divisionFromRating(skillRating!) : null;
 
-  String get divisionLabel => division.label;
+  String get divisionLabel => division?.label ?? 'Placement';
 
   String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
 
@@ -93,12 +102,17 @@ class PlayerRatingLeaderboardEntry {
       displayName: json['display_name'] as String? ?? 'Player',
       username: json['username'] as String? ?? 'player',
       avatarUrl: json['avatar_url'] as String?,
-      skillRating: _leaderboardInt(json['skill_rating'], fallback: 1200),
+      skillRating: publicRatingNumber(
+        json,
+        'skill_rating',
+        legacyFallback: 1200,
+      ),
       matchesPlayed: _leaderboardInt(json['matches_played']),
       wins: _leaderboardInt(json['wins']),
       losses: _leaderboardInt(json['losses']),
       draws: _leaderboardInt(json['draws']),
-      lastChange: _leaderboardInt(json['last_change']),
+      lastChange: publicRatingNumber(json, 'last_change', legacyFallback: 0),
+      visibility: PlayerRatingVisibility.fromJson(json),
       region: json['region'] as String? ?? 'phoenix',
     );
   }
@@ -131,7 +145,8 @@ class LeaderboardSeason {
   final String startsOn;
   final String endsOn;
 
-  /// Prize qualification is season-specific; placement remains two games.
+  /// Leaderboard and prize qualification are season-specific; lifetime
+  /// placement remains two games.
   final int minimumRatedGames;
 
   /// Visibility only controls the public season picker, not match history.

@@ -6,12 +6,41 @@ import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/profile/fieldrush_player_profile.dart';
 import 'package:field/src/profile/fieldrush_you_widgets.dart';
 import 'package:field/src/profile/profile.dart';
+import 'package:field/src/ranking/player_rating_visibility.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'revealed lifetime rating survives season rollover and shows provisional',
+    (tester) async {
+      await _pump(
+        tester,
+        FieldrushPlayerProfileContent(
+          profile: _profile(
+            matches: 0,
+            visibility: const PlayerRatingVisibility(
+              lifetimeCountedMatches: 2,
+              seasonCountedMatches: 0,
+              ratingVisible: true,
+              provisional: true,
+              placementMatchesRemaining: 0,
+            ),
+          ),
+          isFollowing: false,
+          followBusy: false,
+          onBack: () {},
+        ),
+      );
+      expect(find.text('1199'), findsOneWidget);
+      expect(find.text('Provisional'), findsOneWidget);
+      expect(find.text('PLACEMENT'), findsNothing);
+      expect(find.textContaining('placement games'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
   testWidgets(
     'public profile renders verified values and actionable controls',
     (tester) async {
@@ -342,6 +371,7 @@ PlayerProfile _profile({
   int matches = 8,
   ProfileClan? clan = _clan,
   String? avatarUrl,
+  PlayerRatingVisibility? visibility,
 }) => PlayerProfile(
   id: 'player',
   displayName: 'Jordan A.',
@@ -368,5 +398,6 @@ PlayerProfile _profile({
           lastChange: 10,
           region: 'phoenix',
           events: const [],
+          visibility: visibility,
         ),
 );

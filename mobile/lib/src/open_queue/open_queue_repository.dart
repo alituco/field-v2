@@ -133,10 +133,6 @@ class SupabaseOpenQueueRepository
       capacity,
       white_score,
       black_score,
-      white_average_sr,
-      black_average_sr,
-      match_average_sr,
-      team_sr_spread,
       teams_assigned_at
     )
   ''';

@@ -16,6 +16,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 void main() {
+  testWidgets('unknown team rating renders no fabricated SR', (tester) async {
+    final fixture = Fixture.fromJson({
+      'id': 'unknown-rating',
+      'status': 'SCHEDULED',
+      'home_clan_id': 'home',
+      'away_clan_id': 'away',
+      'home_clan': {'id': 'home', 'name': 'Home', 'skill_rating': null},
+      'away_clan': {'id': 'away', 'name': 'Away', 'skill_rating': null},
+      'match_date': '2099-10-14',
+    });
+    await _pumpDetail(tester, fixture, sourceLabel: 'CLAN');
+    expect(find.text('Home'), findsWidgets);
+    expect(find.text('Away'), findsWidgets);
+    expect(find.textContaining('CLAN SR'), findsNothing);
+    expect(find.textContaining('null'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'historical clan cancellation keeps reason and policy safeguards',
     (tester) async {

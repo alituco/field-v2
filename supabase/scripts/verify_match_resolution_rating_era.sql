@@ -19,6 +19,8 @@ begin
   for i in 1..14 loop
     actor:=gen_random_uuid(); actors:=array_append(actors,actor);
     insert into auth.users(id,phone,phone_confirmed_at) values(actor,'155599920'||lpad(i::text,2,'0'),now());
+    -- This rollback-only correction regression intentionally retains legacy SR.
+    delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=actor;
     insert into public.profiles(id,auth_user_id,display_name,username)
     values(actor,actor,'Rating replay player '||i,'rating_replay_'||i) on conflict(id) do nothing;
     insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at)

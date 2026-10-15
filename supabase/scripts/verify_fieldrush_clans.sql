@@ -6,6 +6,9 @@ $$;
 create temporary table clan_preview_ids(kind text,id uuid);
 insert into clan_preview_ids values('owner',gen_random_uuid()),('member',gen_random_uuid()),('visitor',gen_random_uuid());
 insert into auth.users(id,phone,phone_confirmed_at) select id,case kind when 'owner' then '15559990101' when 'member' then '15559990102' else '15559990103' end,now() from clan_preview_ids;
+-- These rollback-only fixtures represent existing, pre-Season-0 identities.
+-- New-account assessment is exercised by the dedicated initialization suite.
+delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id in(select id from clan_preview_ids);
 insert into public.profiles(id,auth_user_id,display_name,username) select id,id,'Clan Test '||kind,'clan_test_'||kind from clan_preview_ids
 on conflict(id) do update set display_name=excluded.display_name,username=excluded.username;
 insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) select id,'active',now() from clan_preview_ids

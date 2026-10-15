@@ -36,6 +36,8 @@ begin
     if i=1 then player:=keeper; else
       player:=gen_random_uuid(); players:=array_append(players,player);
       insert into auth.users(id,phone,phone_confirmed_at) values(player,'15559991'||lpad(i::text,3,'0'),now());
+      -- This rollback-only regression exercises the unchanged legacy kickoff.
+      delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=player;
       insert into public.profiles(id,auth_user_id,display_name) values(player,player,'Lineup player '||i)
         on conflict(id) do nothing;
       insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(player,'active',now())
@@ -69,6 +71,9 @@ begin
   season_start:=(match_start at time zone 'UTC')::date;
   season_end:=season_start+20;
   insert into auth.users(id,phone,phone_confirmed_at) values(me,'15559990002',now()),(other,'15559990003',now()),(admin_id,'15559990001',now());
+  -- These rollback-only history fixtures represent pre-policy identities.
+  -- Prospective seeding is verified by the dedicated initialization suite.
+  delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id in(me,other,admin_id);
   insert into public.profiles(id,auth_user_id,display_name,username) values(me,me,'Keeper Alpha','keeper_alpha'),(other,other,'Outfield Beta','outfield_beta'),(admin_id,admin_id,'City Admin','city_admin')
     on conflict(id) do update set display_name=excluded.display_name,username=excluded.username;
   insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(me,'active',now()),(other,'active',now()),(admin_id,'active',now())
@@ -84,6 +89,7 @@ begin
   perform pg_temp.expect(jsonb_array_length(public.search_fieldrush_players('keeper_%'))=0,'search treats wildcard characters literally');
   perform pg_temp.expect(not has_function_privilege('anon','public.search_fieldrush_players(text)','EXECUTE'),'anonymous search denied');
   insert into auth.users(id,phone,phone_confirmed_at) values(booker,'15559990004',now());
+  delete from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=booker;
   insert into public.profiles(id,auth_user_id,display_name) values(booker,booker,'Actual booking regression') on conflict(id) do nothing;
   insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(booker,'active',now()) on conflict(user_id) do update set status='active';
   city:=public.admin_save_fieldrush_city(admin_id,'new-york',jsonb_build_object('display_name','New York','state','NY','country_code','US','timezone','America/New_York','active',true));

@@ -1,4 +1,5 @@
 import '../clans/clan.dart';
+import '../ranking/player_rating_visibility.dart';
 
 enum FixtureStatus { open, scheduled, live, finalResult, cancelled }
 
@@ -203,11 +204,12 @@ class FixtureClan {
   final String emblem;
   final String themeId;
   final String patternId;
-  final int skillRating;
+  final int? skillRating;
   final String region;
   final int? regionRank;
 
-  RatingDivision get rank => divisionFromRating(skillRating);
+  RatingDivision? get rank =>
+      skillRating == null ? null : divisionFromRating(skillRating!);
 
   ClanTheme get theme => clanThemeById(themeId);
 
@@ -219,7 +221,7 @@ class FixtureClan {
       emblem: json['emblem'] as String? ?? '⚽',
       themeId: json['theme_id'] as String? ?? 'pitch',
       patternId: json['pattern_id'] as String? ?? 'solid',
-      skillRating: _asInt(json['skill_rating'], fallback: 1500),
+      skillRating: _asNullableInt(json['skill_rating']),
       region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
       regionRank: _asNullableInt(json['region_rank']),
     );
@@ -882,13 +884,19 @@ class Fixture {
     final homeLineup = _fixtureLineupFromJson(
       json['fixture_player_appearances'],
       'HOME',
+      ratingStatus: json['rating_status'] as String?,
     );
     final awayLineup = _fixtureLineupFromJson(
       json['fixture_player_appearances'],
       'AWAY',
+      ratingStatus: json['rating_status'] as String?,
     );
-    final homeAverage = _lineupAverageRating(homeLineup);
-    final awayAverage = _lineupAverageRating(awayLineup);
+    final homeAverage = json.containsKey('home_average_player_rating')
+        ? _asNullableInt(json['home_average_player_rating'])
+        : _lineupAverageRating(homeLineup);
+    final awayAverage = json.containsKey('away_average_player_rating')
+        ? _asNullableInt(json['away_average_player_rating'])
+        : _lineupAverageRating(awayLineup);
     final matchAverage = homeAverage == null || awayAverage == null
         ? null
         : ((homeAverage + awayAverage) / 2).round();
@@ -954,17 +962,16 @@ class Fixture {
           : FixtureBroadcast.fromJson(broadcast),
       scorers: _scorersFromJson(json['fixture_scorers']),
       timeline: _timelineFromJson(json['fixture_events']),
-      homeAveragePlayerRating:
-          _asNullableInt(json['home_average_player_rating']) ?? homeAverage,
-      awayAveragePlayerRating:
-          _asNullableInt(json['away_average_player_rating']) ?? awayAverage,
-      matchAveragePlayerRating:
-          _asNullableInt(json['match_average_player_rating']) ?? matchAverage,
-      teamRatingSpread:
-          _asNullableInt(json['team_rating_spread']) ??
-          (homeAverage == null || awayAverage == null
-              ? null
-              : (homeAverage - awayAverage).abs()),
+      homeAveragePlayerRating: homeAverage,
+      awayAveragePlayerRating: awayAverage,
+      matchAveragePlayerRating: json.containsKey('match_average_player_rating')
+          ? _asNullableInt(json['match_average_player_rating'])
+          : matchAverage,
+      teamRatingSpread: json.containsKey('team_rating_spread')
+          ? _asNullableInt(json['team_rating_spread'])
+          : (homeAverage == null || awayAverage == null
+                ? null
+                : (homeAverage - awayAverage).abs()),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
       homeLineup: homeLineup,
       awayLineup: awayLineup,
@@ -1022,7 +1029,11 @@ Map<String, dynamic> _jsonMap(Object? value) {
   return const {};
 }
 
-List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
+List<FixtureLineupPlayer> _fixtureLineupFromJson(
+  Object? value,
+  String side, {
+  String? ratingStatus,
+}) {
   if (value is! List) return const [];
   final players = <FixtureLineupPlayer>[];
   for (final rawRow in value) {
@@ -1031,6 +1042,12 @@ List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
     if ((row['side'] as String? ?? '').toUpperCase() != side) continue;
     final profile = _nestedMap(row['player']);
     if (profile == null) continue;
+    final numeric =
+        permitsPublicRatingResult(
+          row['rating_status'] as String? ?? ratingStatus,
+        )
+        ? row
+        : {...row, 'rating_visible': false};
     players.add(
       FixtureLineupPlayer(
         id: row['profile_id'] as String? ?? profile['id'] as String? ?? '',
@@ -1041,8 +1058,8 @@ List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
         side: side,
         played: row['played'] as bool? ?? false,
         isMe: row['is_me'] as bool? ?? false,
-        ratingAtMatchStart: _asNullableInt(row['rating_at_start']),
-        ratingChange: _asNullableInt(row['rating_change']),
+        ratingAtMatchStart: publicRatingNumber(row, 'rating_at_start'),
+        ratingChange: publicRatingNumber(numeric, 'rating_change'),
       ),
     );
   }
@@ -1061,7 +1078,8 @@ int? _lineupAverageRating(List<FixtureLineupPlayer> players) {
       .map((player) => player.displayedRating)
       .whereType<int>()
       .toList();
-  if (ratings.isEmpty) return null;
+  // A partial average would look authoritative while excluding hidden players.
+  if (ratings.isEmpty || ratings.length != included.length) return null;
   return (ratings.reduce((total, rating) => total + rating) / ratings.length)
       .round();
 }

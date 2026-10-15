@@ -249,6 +249,8 @@ export type MatchReliabilityContext = {
 };
 
 export type RefereeFixture = {
+  /** Immutable prospective rating policy; absent on legacy fixture responses. */
+  ratingPolicyId?: string;
   matchKind: MatchKind;
   id: string;
   status: FixtureStatus;

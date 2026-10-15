@@ -16,6 +16,7 @@ function makeSeason(values: Partial<AdminSeason> & Pick<AdminSeason, "id" | "lab
 async function mockAdmin(page: Page, failSave = false, liveGames = 0) {
   const writes: Array<{ path: string; body: Record<string, unknown> }> = [];
   const previews: Array<{ path: string; body: Record<string, unknown> }> = [];
+  let policy = { enabled: false, changed_at: "2026-10-14T12:00:00Z", changed_by: actor };
   const catalog: AdminSeasonCatalog = {
     today: "2026-10-13", currentSeasonId: "s1",
     seasons: [
@@ -37,7 +38,11 @@ async function mockAdmin(page: Page, failSave = false, liveGames = 0) {
     let data: unknown = {}; let status = 200;
     if (request.method() !== "GET") {
       const body = request.postDataJSON();
-      if (path.endsWith("/transition/preview")) {
+      if (path.endsWith("/rating-policy")) {
+        writes.push({ path, body });
+        if (failSave) { status = 409; data = { error: "Policy changed in another session. Refresh before saving." }; }
+        else { policy = { ...policy, enabled: body.enabled }; data = { policy }; }
+      } else if (path.endsWith("/transition/preview")) {
         previews.push({ path, body }); const currentSeason = catalog.seasons.find((item) => item.id === body.currentSeasonId)!; const nextSeason = catalog.seasons.find((item) => item.id === body.nextSeasonId)!;
         const end = new Date(`${body.startsOn}T12:00:00Z`); end.setUTCDate(end.getUTCDate() - 1);
         data = { preview: { currentSeason, nextSeason, startsOn: body.startsOn, endsOn: end.toISOString().slice(0, 10), liveGames: liveGames ? [{ id: "live", venue: "Diablo", kind: "SOLO", status: "LIVE" }] : [], unfinishedGames: [{ id: "missing", venue: "Reach 11", kind: "SOLO", status: "NO_DATA" }], affectedFutureGames: [{ id: "future", venue: "Diablo", kind: "SOLO", status: "OPEN" }], canSchedule: liveGames === 0, blockers: liveGames ? ["Finish the live game before scheduling this transition."] : [] } };
@@ -74,7 +79,8 @@ async function mockAdmin(page: Page, failSave = false, liveGames = 0) {
         catalog.seasons = [...catalog.seasons.filter((season) => season.id !== id), updated];
         data = { season: updated };
       }
-    } else if (path.endsWith("/seasons")) data = catalog;
+    } else if (path.endsWith("/rating-policy")) data = { policy };
+    else if (path.endsWith("/seasons")) data = catalog;
     else if (path === "/api/referee/fixtures") data = { me: { profileId: actor, displayName: "Preview Admin", role: "admin" }, fixtures: [] };
     else if (path.endsWith("/assignments")) data = { referees: [], fixtures: [] };
     else if (path.endsWith("/overview")) data = { metrics: {}, attention: [], audit: [] };
@@ -87,6 +93,40 @@ async function mockAdmin(page: Page, failSave = false, liveGames = 0) {
   });
   return { writes, previews, catalog };
 }
+
+test("prospective rating policy requires explicit scope confirmation and an audit reason", async ({ page }) => {
+  const { writes } = await mockAdmin(page);
+  await page.goto("/admin/seasons");
+  const panel = page.getByRole("region", { name: "Solo rating policy" });
+  await expect(panel.getByText("Legacy for new games", { exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Enable Season 0 v2 for future games" }).click();
+  await expect(panel.getByText(/This switch does not control signup/)).toContainText("even while this switch is off");
+  await panel.getByLabel("Rating policy change reason").fill("Referee workflow verified for future games.");
+  await expect(panel.getByRole("button", { name: "Confirm policy change" })).toBeDisabled();
+  await panel.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(writes).toHaveLength(0);
+  await panel.getByRole("button", { name: "Enable Season 0 v2 for future games" }).click();
+  await panel.getByLabel(/I have reviewed the new-game scope/).check();
+  await panel.getByRole("button", { name: "Confirm policy change" }).click();
+  await expect(panel.getByText("Season 0 v2 enabled", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("status")).toHaveText(/Existing games and earned ratings are unchanged/);
+  expect(writes).toEqual([{ path: "/api/referee/admin/rating-policy", body: { enabled: true, confirmed: true, reason: "Referee workflow verified for future games." } }]);
+  await expect(panel.getByRole("button", { name: "Use legacy policy for future games" })).toBeVisible();
+});
+
+test("failed prospective policy write preserves the reason and does not claim activation", async ({ page }) => {
+  const { writes } = await mockAdmin(page, true);
+  await page.goto("/admin/seasons");
+  const panel = page.getByRole("region", { name: "Solo rating policy" });
+  await panel.getByRole("button", { name: "Enable Season 0 v2 for future games" }).click();
+  await panel.getByLabel("Rating policy change reason").fill("Verified the new referee tools.");
+  await panel.getByLabel(/I have reviewed the new-game scope/).check();
+  await panel.getByRole("button", { name: "Confirm policy change" }).click();
+  await expect(panel.getByRole("alert")).toHaveText(/Policy changed in another session/);
+  await expect(panel.getByLabel("Rating policy change reason")).toHaveValue("Verified the new referee tools.");
+  await expect(panel.getByText("Legacy for new games", { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(1);
+});
 
 test("current city rewards save independently and publication locks the advertised amounts", async ({ page }, info) => {
   const { writes } = await mockAdmin(page); await page.goto("/admin/seasons");

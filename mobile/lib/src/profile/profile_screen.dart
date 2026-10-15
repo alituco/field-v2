@@ -21,6 +21,7 @@ import '../open_queue/open_queue.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability_repository.dart';
+import '../ranking/player_rating_visibility.dart';
 import '../reliability/reliability_status_card.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
@@ -270,6 +271,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     gameId: matchId,
                     initialDetail: detail,
                     playerRatingUpdate: playerRatingUpdate,
+                    ratingProfileId: _latestProfile?.id,
                     profileRepository: widget.profileRepository,
                     fixtureRepository: _fixtureRepository,
                   )
@@ -333,6 +335,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ProfilePreviousGame game,
     OpenQueueMatchDetail detail,
   ) {
+    if (!permitsPublicRatingResult(detail.ratingStatus)) return null;
+    final profileId = _latestProfile?.id;
+    final player = detail.players
+        .where((player) => player.id == profileId)
+        .firstOrNull;
+    if (player?.ratingVisible == false ||
+        !permitsPublicRatingResult(player?.ratingStatus)) {
+      return null;
+    }
     final ratingEvents =
         _ratings?.mergeHistory(
           _latestProfile?.playerRating?.events ?? const [],
@@ -344,10 +355,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           event.isSolo != game.isSolo) {
         continue;
       }
+      if (!event.hasPublicRating) return null;
       return FixturePlayerRatingUpdate(
-        ratingBefore: event.ratingBefore,
-        ratingChange: event.ratingChange,
-        ratingAfter: event.ratingAfter,
+        ratingBefore: event.ratingBefore!,
+        ratingChange: event.ratingChange!,
+        ratingAfter: event.ratingAfter!,
         result: event.result.isEmpty ? game.outcome?.label : event.result,
         scoreMargin: event.scoreMargin,
         marginMultiplier: event.marginMultiplier,
@@ -356,12 +368,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    final profileId = _latestProfile?.id;
     if (profileId == null || profileId.isEmpty) return null;
     for (final player in detail.players) {
       if (player.id != profileId) continue;
       final ratingBefore = player.displayedRating;
-      final ratingChange = player.ratingChange;
+      final ratingChange = player.publicRatingChange;
       if (ratingBefore == null || ratingChange == null) return null;
       return FixturePlayerRatingUpdate(
         ratingBefore: ratingBefore,
@@ -1134,15 +1145,17 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = rating.lastChange;
-    final isPlacement = rating.matchesPlayed < minimumPlayerLeaderboardMatches;
-    final division = divisionFromRating(rating.skillRating);
-    final nextRating = division.nextDivisionRating;
+    final isPlacement = !rating.ratingVisible;
+    final division = isPlacement
+        ? null
+        : divisionFromRating(rating.skillRating!);
+    final nextRating = division?.nextDivisionRating;
     final nextDivision = nextRating == null
         ? null
         : divisionFromRating(nextRating);
-    final changeColor = change > 0
+    final changeColor = change != null && change > 0
         ? const Color(0xFF35BD69)
-        : change < 0
+        : change != null && change < 0
         ? const Color(0xFFEF4444)
         : const Color(0xFF9A9AA6);
     return Container(
@@ -1183,7 +1196,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      isPlacement ? 'PLACEMENT' : division.label.toUpperCase(),
+                      isPlacement ? 'PLACEMENT' : division!.label.toUpperCase(),
                       style: const TextStyle(
                         color: Color(0xFFAAAAB4),
                         fontSize: 11,
@@ -1195,8 +1208,8 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                   const SizedBox(height: 9),
                   Text(
                     isPlacement
-                        ? '${rating.matchesPlayed}/$minimumPlayerLeaderboardMatches placement games'
-                        : '${rating.matchesPlayed} rated ${rating.matchesPlayed == 1 ? 'game' : 'games'}',
+                        ? '${2 - rating.placementMatchesRemaining}/$minimumPlayerLeaderboardMatches placement games'
+                        : '${rating.seasonCountedMatches} rated ${rating.seasonCountedMatches == 1 ? 'game' : 'games'}${rating.visibility == null ? '' : ' this season'}',
                     style: const TextStyle(
                       color: Color(0xFF9999A8),
                       fontSize: 11,
@@ -1222,7 +1235,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              if (!isPlacement)
+              if (!isPlacement && change != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 5),
                   child: Text(
@@ -1236,14 +1249,27 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                 ),
             ],
           ),
+          if (rating.provisional)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'Provisional',
+                style: TextStyle(
+                  color: Color(0xFF9999A8),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
           const SizedBox(height: 22),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
               key: const ValueKey('profile-player-rating-progress'),
               value: isPlacement
-                  ? rating.matchesPlayed / minimumPlayerLeaderboardMatches
-                  : division.progressFor(rating.skillRating),
+                  ? (2 - rating.placementMatchesRemaining) /
+                        minimumPlayerLeaderboardMatches
+                  : division!.progressFor(rating.skillRating!),
               minHeight: 7,
               color: const Color(0xFF35BD69),
               backgroundColor: const Color(0xFF292A2E),
@@ -1253,7 +1279,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
           Row(
             children: [
               Text(
-                isPlacement ? 'UNRANKED' : '${division.minimumRating}',
+                isPlacement ? 'UNRANKED' : '${division!.minimumRating}',
                 style: const TextStyle(
                   color: Color(0xFF9999A8),
                   fontSize: 11,

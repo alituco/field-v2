@@ -3,6 +3,53 @@ import 'date_of_birth.dart';
 const fieldrushTermsVersion = 'fieldrush-v1';
 const fieldrushPrivacyVersion = 'fieldrush-v1';
 
+/// An onboarding answer, not a client-selected rating. The server owns the
+/// one-time seed for both rating pools and preserves established ratings.
+enum SkillAssessment {
+  beginner(
+    'beginner',
+    'Beginner',
+    'I’m still learning the basics of passing, controlling the ball, and positioning.',
+  ),
+  casual(
+    'casual',
+    'Casual',
+    'I know the game and can make simple passes and control the ball with space, but I’m less consistent under pressure.',
+  ),
+  intermediate(
+    'intermediate',
+    'Intermediate',
+    'I’m comfortable receiving and passing under pressure, understand my position, and contribute consistently.',
+  ),
+  advanced(
+    'advanced',
+    'Advanced',
+    'I can play at a quick pace, make good decisions under pressure, and hold my own in competitive games.',
+  ),
+  highlyCompetitive(
+    'highly_competitive',
+    'Highly competitive',
+    'I consistently perform well in strong competitive games, with reliable technique, positioning, and decision-making at speed.',
+  ),
+  notSure('not_sure', 'Not sure', 'I’d like my games to help find my level.');
+
+  const SkillAssessment(this.value, this.label, this.description);
+
+  final String value;
+  final String label;
+  final String description;
+
+  static SkillAssessment? fromJson(Object? value) {
+    // Accounts created before self-assessment have no answer. In particular,
+    // this must not force established players through onboarding again.
+    if (value == null) return null;
+    for (final assessment in values) {
+      if (assessment.value == value) return assessment;
+    }
+    throw const FormatException('Unknown skill assessment.');
+  }
+}
+
 class AccountDraft {
   const AccountDraft({
     this.firstName = '',
@@ -10,6 +57,7 @@ class AccountDraft {
     this.username = '',
     this.dateOfBirth,
     this.email = '',
+    this.skillAssessment,
   });
 
   final String firstName;
@@ -17,6 +65,7 @@ class AccountDraft {
   final String username;
   final DateTime? dateOfBirth;
   final String email;
+  final SkillAssessment? skillAssessment;
 
   AccountDraft copyWith({
     String? firstName,
@@ -24,12 +73,14 @@ class AccountDraft {
     String? username,
     DateTime? dateOfBirth,
     String? email,
+    SkillAssessment? skillAssessment,
   }) => AccountDraft(
     firstName: firstName ?? this.firstName,
     lastName: lastName ?? this.lastName,
     username: username ?? this.username,
     dateOfBirth: dateOfBirth ?? this.dateOfBirth,
     email: email ?? this.email,
+    skillAssessment: skillAssessment ?? this.skillAssessment,
   );
 
   Map<String, dynamic> toJson() => {
@@ -40,6 +91,7 @@ class AccountDraft {
         ? null
         : dateOfBirthToIso(dateOfBirth!),
     'email': email.trim(),
+    if (skillAssessment != null) 'skill_assessment': skillAssessment!.value,
   };
 
   factory AccountDraft.fromJson(Map<String, dynamic> json) => AccountDraft(
@@ -48,6 +100,7 @@ class AccountDraft {
     username: json['username'] as String? ?? '',
     dateOfBirth: parseDateOfBirth(json['date_of_birth']),
     email: json['email'] as String? ?? '',
+    skillAssessment: SkillAssessment.fromJson(json['skill_assessment']),
   );
 }
 
@@ -66,6 +119,8 @@ class FieldrushAccount {
     this.homeCityLocked = true,
     this.preferredCityId,
     this.marketTimezone,
+    this.skillAssessmentRequired = false,
+    this.ratingInitialized = false,
   });
 
   final AccountDraft draft;
@@ -83,6 +138,10 @@ class FieldrushAccount {
   final bool homeCityLocked;
   final String? preferredCityId;
   final String? marketTimezone;
+
+  /// Server-owned gate. Legacy accounts must never be prompted to reseed.
+  final bool skillAssessmentRequired;
+  final bool ratingInitialized;
 
   bool get deletionPending =>
       status == 'deletion_pending' || status == 'deleted';
@@ -102,6 +161,8 @@ class FieldrushAccount {
         homeCityLocked: json['home_city_locked'] != false,
         preferredCityId: json['preferred_city_id'] as String?,
         marketTimezone: json['market_timezone'] as String?,
+        skillAssessmentRequired: json['skill_assessment_required'] == true,
+        ratingInitialized: json['rating_initialized'] == true,
       );
 }
 

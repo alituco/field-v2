@@ -394,6 +394,15 @@ Future<void> _completeOnboarding(
   await _continueOnboarding(tester);
   await pumpUntilFound(
     tester,
+    find.byKey(const ValueKey('fieldrush-skill-skip')),
+    reason: 'A newly created player must choose an initial skill assessment.',
+  );
+  await tapAfterScroll(
+    tester,
+    find.byKey(const ValueKey('fieldrush-skill-skip')),
+  );
+  await pumpUntilFound(
+    tester,
     find.byKey(const ValueKey('fieldrush-accept-policies')),
   );
   await tapAfterScroll(
@@ -424,6 +433,9 @@ Future<void> _verifyCompletedAccount(StagingE2EConfig config) async {
   expect(data['phone_verified'], isTrue);
   expect(data['email_verified'], isFalse);
   expect(data['onboarding_completed'], isTrue);
+  expect(data['skill_assessment'], 'not_sure');
+  expect(data['rating_initialized'], isTrue);
+  expect(data['skill_assessment_required'], isFalse);
 
   final profile = await _boundedRemoteStep(
     'verify public name protects the full last name',
