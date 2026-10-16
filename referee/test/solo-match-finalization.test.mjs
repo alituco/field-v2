@@ -7,6 +7,7 @@ import { canRefereePerformOperationalAction } from "../src/lib/match-operational
 import { finalizeSoloMatch } from "../src/lib/solo-match-finalization.ts";
 import { runSeasonZeroAction, SEASON_ZERO_POLICY } from "../src/lib/season-zero-actions.ts";
 import { parseRefereeVerifiedInjuryInput } from "../src/lib/match-action-input.ts";
+import * as soloGoalActions from "../src/lib/solo-goal-actions.ts";
 
 const gameId = "10000000-0000-4000-8000-000000000001";
 const success = (status = "FINAL", id = gameId) => ({ data: { id, status }, error: null });
@@ -177,6 +178,7 @@ function finishRoute({ actor = { profileId: "referee-1", role: "referee" }, deni
     "@/lib/match-action-input": { parseRefereeVerifiedInjuryInput },
     "@/lib/match-duration": {},
     "@/lib/season-zero-actions": { runSeasonZeroAction, SEASON_ZERO_POLICY },
+    "@/lib/solo-goal-actions": soloGoalActions,
     "@/lib/match-operational-lock": { canRefereePerformOperationalAction },
     "@/lib/referee-session": {
       requireReferee: async () => actor ? { referee: actor, db } : { status: 401 },

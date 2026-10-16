@@ -16,6 +16,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
     ),
     String? redirectUrl,
     http.Client? emailVerificationHttpClient,
+    this.beforeSignOut,
   }) : _supabase = client,
        _emailVerificationHttpClient = emailVerificationHttpClient,
        redirectUrl = redirectUrl ?? fieldrushAuthRedirect();
@@ -24,6 +25,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
   final http.Client? _emailVerificationHttpClient;
   SupabaseClient get _client => _supabase ?? Supabase.instance.client;
   final String redirectUrl;
+  final Future<void> Function()? beforeSignOut;
   @override
   final bool emailDeliveryEnabled;
   OtpType? _pendingPhoneType;
@@ -112,6 +114,67 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
       await _client.auth.signInWithOtp(phone: phone, shouldCreateUser: true);
       _pendingPhoneType = OtpType.sms;
     }
+  }
+
+  @override
+  Future<void> switchIncompletePhoneAccount(String phone) async {
+    _requirePhone(phone);
+    final session = _requireEmailSession();
+    final user =
+        (await _client.auth
+                .getUser(session.accessToken)
+                .timeout(const Duration(seconds: 30)))
+            .user;
+    if (user == null) {
+      throw const AuthException('Could not confirm your account. Try again.');
+    }
+    await _requireEmailResponseUser(session.user.id, user.id);
+    final account = await loadAccount();
+    _requireSameEmailUser(session.user.id);
+    final identities = user.identities;
+    final currentPhone = user.phone == null
+        ? ''
+        : '+${user.phone!.replaceAll('+', '')}';
+    if (account.completed ||
+        account.status != 'onboarding' ||
+        account.deletionPending ||
+        account.googleLinked ||
+        !account.phoneVerified ||
+        !_hasConfirmedPhoneIdentity(user) ||
+        identities == null ||
+        identities.any((identity) => identity.provider != 'phone') ||
+        phone == currentPhone ||
+        account.phone != currentPhone) {
+      throw const AuthException(
+        'Could not switch this signup. Refresh your account, or sign out before using another number.',
+      );
+    }
+    // Local scope revokes only this device's session. The previous account,
+    // saved signup details, bookings, wallet and other devices remain intact.
+    await beforeSignOut?.call();
+    _requireSameEmailUser(session.user.id);
+    await _client.auth
+        .signOut(scope: SignOutScope.local)
+        .timeout(const Duration(seconds: 30));
+    if (_client.auth.currentSession != null ||
+        _client.auth.currentUser != null) {
+      throw const AuthException(
+        'Sign out could not be confirmed. No code was requested. Try again.',
+      );
+    }
+    _pendingPhoneType = null;
+    _reauthPhone = null;
+    _reauthUserId = null;
+    await _client.auth
+        .signInWithOtp(phone: phone, shouldCreateUser: true)
+        .timeout(const Duration(seconds: 30));
+    if (_client.auth.currentSession != null ||
+        _client.auth.currentUser != null) {
+      throw const AuthException(
+        'The account changed. Start again before entering a verification code.',
+      );
+    }
+    _pendingPhoneType = OtpType.sms;
   }
 
   @override

@@ -6,6 +6,7 @@ import 'auth/fieldrush_account_gate.dart';
 import 'auth/fieldrush_account_repository.dart';
 import 'config/configuration_screen.dart';
 import 'home/navigation_profile_scope.dart';
+import 'notifications/fieldrush_push.dart';
 
 class FieldApp extends StatelessWidget {
   const FieldApp({
@@ -85,9 +86,14 @@ class FieldApp extends StatelessWidget {
       ),
       home: hasSupabaseConfig
           ? FieldrushAccountGate(
-              authRepository: SupabaseAuthRepository(),
+              authRepository: SupabaseAuthRepository(
+                beforeSignOut: FieldrushPush.instance.prepareForSignOut,
+              ),
               accountRepository:
-                  accountRepository ?? SupabaseFieldrushAccountRepository(),
+                  accountRepository ??
+                  SupabaseFieldrushAccountRepository(
+                    beforeSignOut: FieldrushPush.instance.prepareForSignOut,
+                  ),
               isDev: isDev,
               profileSwitcherEnabled: profileSwitcherEnabled,
             )

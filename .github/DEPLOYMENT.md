@@ -161,6 +161,12 @@ The daily **Staging smoke** repeats the non-mutating hosted check at 05:15 UTC.
 network, and provider settings are managed in each Supabase dashboard; a
 config-only repository change does not push those dashboard settings.
 
+Phone push notifications have a separate, default-off staging setup and device
+qualification gate. Deploying the push worker does not activate it, install a
+Firebase service-account credential or enable the mobile build flag. See
+[notification setup and privacy safeguards](../docs/notifications.md) before
+configuring Firebase/APNs, staging signing profiles, Vault or delivery switches.
+
 ## Production deployment
 
 Production is manual and protected. From

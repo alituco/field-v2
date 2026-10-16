@@ -10,6 +10,7 @@ required_variables=(
   E2E_BOOTSTRAP_PHONE
   E2E_DEV_OTP_CODE
   E2E_TEST_PASSWORD
+  E2E_RUN_ID
   FIELD_ENVIRONMENT
   SUPABASE_ACCESS_TOKEN
   SUPABASE_PROJECT_REF
@@ -44,26 +45,27 @@ if [[ ! "$E2E_DEV_OTP_CODE" =~ ^[0-9]{6}$ ]]; then
   echo "::error::E2E_DEV_OTP_CODE must contain exactly six digits."
   exit 64
 fi
-if [[ "${#E2E_TEST_PASSWORD}" -lt 16 ]]; then
-  echo "::error::E2E_TEST_PASSWORD must be at least 16 characters."
+if [[ ${#E2E_TEST_PASSWORD} -lt 32 || ${#E2E_TEST_PASSWORD} -gt 256 ||
+  ! "$E2E_TEST_PASSWORD" =~ ^[A-Za-z0-9_-]+$ ||
+  ! "$E2E_RUN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+  echo "::error::E2E auth requires a strong per-run capability and a valid run ID."
   exit 64
 fi
 
-readonly dev_users_json='{"+97339009098":"E2E Bootstrap Player","+97338883670":"Dev Player","+97338883671":"Ali Hassan","+97338883672":"Omar Saleh","+97338883673":"Noor Khalid","+97338883674":"Yousef Ahmed","+97338883675":"Sami Nasser","+97338883676":"Salman Abbas","+97338883677":"Rami Darwish","+97338883678":"Hamad Mansour"}'
-
-echo "Configuring the staging-only fixed-code login for this E2E run."
-supabase secrets set \
-  --project-ref "$SUPABASE_PROJECT_REF" \
-  DEV=true \
-  DEV_OTP_ENABLED=true \
-  DEV_OTP_CODE="$E2E_DEV_OTP_CODE" \
-  DEV_OTP_PASSWORD="$E2E_TEST_PASSWORD" \
-  DEV_OTP_USERS_JSON="$dev_users_json" \
-  DEV_SWITCH_PASSWORD="$E2E_TEST_PASSWORD" \
-  DEV_SWITCH_ALLOW_UNAUTHENTICATED=false
-
+umask 077
+secrets_file="$(mktemp)"
+headers_file="$(mktemp)"
 response_file="$(mktemp)"
-trap 'rm -f "$response_file"' EXIT
+trap 'rm -f "$secrets_file" "$headers_file" "$response_file"' EXIT
+valid_until="$(node -e 'process.stdout.write(new Date(Date.now()+90*60*1000).toISOString())')"
+printf 'DEV=true\nDEV_OTP_ENABLED=true\nDEV_OTP_CODE=%s\nDEV_OTP_PASSWORD=%s\nDEV_AUTH_SECRET=%s\nDEV_AUTH_RUN_ID=%s\nDEV_AUTH_VALID_UNTIL=%s\nDEV_OTP_VALID_UNTIL=%s\nDEV_SWITCH_VALID_UNTIL=%s\nDEV_SWITCH_ALLOW_UNAUTHENTICATED=false\n' \
+  "$E2E_DEV_OTP_CODE" "$E2E_TEST_PASSWORD" "$E2E_TEST_PASSWORD" "$E2E_RUN_ID" \
+  "$valid_until" "$valid_until" "$valid_until" >"$secrets_file"
+printf 'apikey: %s\nauthorization: Bearer %s\ncontent-type: application/json\nx-fieldrush-e2e-secret: %s\n' \
+  "$SUPABASE_PUBLISHABLE_KEY" "$SUPABASE_PUBLISHABLE_KEY" "$E2E_TEST_PASSWORD" >"$headers_file"
+echo "Configuring a short-lived, capability-protected staging E2E window."
+supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" --env-file "$secrets_file" >/dev/null
+rm -f "$secrets_file"
 
 for attempt in {1..12}; do
   status="$(
@@ -72,9 +74,7 @@ for attempt in {1..12}; do
       --output "$response_file" \
       --write-out '%{http_code}' \
       --request POST \
-      --header "apikey: $SUPABASE_PUBLISHABLE_KEY" \
-      --header "authorization: Bearer $SUPABASE_PUBLISHABLE_KEY" \
-      --header "content-type: application/json" \
+      --header "@$headers_file" \
       --data "$(
         jq -nc \
           --arg phone "$E2E_BOOTSTRAP_PHONE" \

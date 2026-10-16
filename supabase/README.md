@@ -222,65 +222,43 @@ through the normal rating path.
 Seeded fake follows connect the fake users so the Profile screen's Following
 and Fans counts open populated People lists.
 
-## Fixed-Code Dev Login
+## Local seed login and isolated staging E2E authentication
 
-The Flutter app skips real SMS for the seeded fake phones and sends verification
-to the `dev-phone-login` Edge Function. Configure the function with Supabase
-secrets:
+Loopback-only local seed login still accepts the development code for an
+existing local seed user. It never creates users or resets their passwords.
 
-```sh
-supabase secrets set \
-  DEV_OTP_ENABLED=true \
-  DEV_OTP_CODE=000000 \
-  DEV_OTP_PASSWORD='replace-with-a-strong-dev-password' \
-  DEV_OTP_USERS_JSON='{"+97338883671":"Zara Haddad","+97338883672":"Omar Saleh","+97338883673":"Noor Khalid","+97338883674":"Maya Faris","+97338883675":"Sami Nasser","+97338883676":"Lina Abbas","+97338883677":"Rami Darwish","+97338883678":"Hala Mansour"}'
-```
+Hosted fixed-code login and switching are **not** human account-switching
+features. They reject production and remain unavailable unless a protected CI
+run has configured all of the following:
 
-The existing single-phone dev login still works if these secrets are also set:
+- A service-owned synthetic fixture with matching protected
+  `app_metadata.fieldrush_e2e`, reserved role/phone and current run ID.
+- A generated per-run capability, separate from the public six-digit code,
+  supplied only by test entrypoints in `x-fieldrush-e2e-secret`.
+- A valid explicit UTC expiry, at most two hours away. CI selects 90 minutes.
+- For switching, a valid JWT belonging to another fixture in that same run.
 
-```sh
-supabase secrets set \
-  DEV_OTP_PHONE=+97338883670 \
-  DEV_OTP_NAME='Dev Player'
-```
+The service fixture setup runs before enabling the auth window. Existing real
+players and ordinary staff cannot be tagged or reset by these endpoints.
+Neither endpoint creates users, modifies metadata, resets passwords or mints
+magic links. Historical phone allowlists and unauthenticated recovery flags
+cannot bypass these checks.
 
-Deploy the function after changing secrets or code:
+The serialized staging workflow always closes its auth window after the final
+journey or preparation failure. Owned-fixture cleanup revokes refresh sessions,
+rotates synthetic passwords, clears current-run markers and retires temporary
+staff access. The cleanup action then disables both functions' gates, expires
+their windows and removes capability/password secrets. Supabase access JWTs can
+remain cryptographically valid until expiry; no immediate JWT invalidation is
+claimed. Real account credentials are never part of this cleanup.
 
-```sh
-supabase functions deploy dev-phone-login
-```
-
-To test as a fake user, sign out in the app, enter one of the fake phone
-numbers, and use code `000000`.
-
-Do not enable `DEV_OTP_ENABLED=true` on any production Supabase project.
-
-## Dev User Switching
-
-With `DEV=true` in `mobile/.env.mobile`, the current user's Profile screen
-shows a searchable account switcher. The switch is performed by the
-authenticated `dev-switch-user` Edge Function, so the service-role key never
-ships in Flutter.
-
-Enable and deploy it only on the hosted development project:
-
-```sh
-supabase secrets set DEV=true
-supabase secrets set DEV_SWITCH_ALLOW_UNAUTHENTICATED=true
-supabase functions deploy dev-switch-user --no-verify-jwt
-```
-
-Phone-only users use the existing `DEV_OTP_PASSWORD` secret. You can instead
-set a separate strong password with:
-
-```sh
-supabase secrets set DEV_SWITCH_PASSWORD='replace-with-a-strong-dev-password'
-```
-
-Set `DEV=false` in both Flutter and Supabase, or do not deploy this function,
-for production. Client-side `DEV=true` alone cannot enable impersonation.
-`DEV_SWITCH_ALLOW_UNAUTHENTICATED` exists only to recover revoked fake-user
-sessions and must never be enabled outside the isolated development project.
+If a runner is forcibly terminated before cleanup executes, the HTTP run window
+still expires, but Supabase Auth does not itself give fixture passwords an
+expiry. A leaked test password could remain usable until verified synthetic
+cleanup rotates it. Keep encrypted handoffs/APKs private, and run ownership-
+checked cleanup before reusing accounts from an interrupted run. The next
+service setup also rotates the approved synthetic pool's passwords; it must
+never auto-tag or repair an ordinary account at a reserved test phone.
 
 ## Cloudflare Stream Recording Webhook
 

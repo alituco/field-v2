@@ -23,7 +23,10 @@ runs:
           --file "$RUNNER_TEMP/field-e2e-cleanup-download/field-e2e-handoff.bin" \
           --output-dir "$RUNNER_TEMP/field-e2e-cleanup-restored"
         test -s "$RUNNER_TEMP/field-e2e-cleanup-restored/manifest.json"
+        password="$(cat "$RUNNER_TEMP/field-e2e-cleanup-restored/password.txt")"
+        echo "::add-mask::$password"
         echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-cleanup-restored/manifest.json" >>"$GITHUB_ENV"
+        echo "E2E_TEST_PASSWORD=$password" >>"$GITHUB_ENV"
     - name: Ensure cleanup runtime is available
       if: always()
       uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
@@ -37,3 +40,16 @@ runs:
         test -s "$E2E_MANIFEST_PATH"
         deno run --allow-env --allow-net --allow-read \
           supabase/scripts/e2e/cleanup_staging.ts
+    - name: Ensure E2E auth cleanup CLI is available
+      if: always()
+      uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+      with:
+        version: 2.105.0
+        github-token: ${{ github.token }}
+    - name: Always close the owned staging E2E authentication window
+      if: always()
+      shell: bash
+      run: |
+        set -euo pipefail
+        export E2E_RUN_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        bash .github/scripts/close-staging-e2e-auth.sh

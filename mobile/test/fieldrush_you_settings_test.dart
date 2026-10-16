@@ -19,7 +19,7 @@ void main() {
   };
 
   test(
-    'preferences keep exactly the six supported keys and copy immutably',
+    'preferences keep supported keys and open spots require an explicit opt-in',
     () {
       const original = YouNotificationPreferences();
       final changed = original.copyWith(
@@ -27,10 +27,12 @@ void main() {
         newsAndOffers: true,
       );
       expect(original.gameReminders, isTrue);
+      expect(original.openSpots, isFalse);
       expect(original.newsAndOffers, isFalse);
       expect(changed.enabledCount, 4);
       expect(changed.toJson().keys.toSet(), {
         'game_reminders',
+        'open_spots',
         'clan_callups',
         'party_invites',
         'ladder_moves',
@@ -40,6 +42,12 @@ void main() {
       expect(
         YouNotificationPreferences.fromJson(changed.toJson()).toJson(),
         changed.toJson(),
+      );
+      final oldServer = {...changed.toJson()}..remove('open_spots');
+      expect(YouNotificationPreferences.fromJson(oldServer).openSpots, isFalse);
+      expect(
+        original.withValue(YouNotificationOption.openSpots, true).openSpots,
+        isTrue,
       );
       expect(
         () => YouNotificationPreferences.fromJson({'game_reminders': true}),
@@ -204,7 +212,10 @@ void main() {
       repository.failLoad = false;
       await tester.tap(find.text('Retry'));
       await tester.pumpAndSettle();
-      expect(find.byType(Switch), findsNWidgets(6));
+      expect(
+        find.byType(Switch),
+        findsNWidgets(YouNotificationOption.values.length),
+      );
       expect(find.text('4 on'), findsOneWidget);
     },
   );

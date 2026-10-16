@@ -220,6 +220,10 @@ abstract class FieldrushAccountRepository {
   Future<void> signInWithGoogle();
   Future<void> linkGoogle();
   Future<void> sendPhoneCode(String phone);
+
+  /// Explicitly leaves an unfinished, phone-only signup before requesting an
+  /// SMS login for another number. Never changes or deletes the old account.
+  Future<void> switchIncompletePhoneAccount(String phone);
   Future<void> sendRecoveryCode(String phone);
   Future<void> verifyPhoneCode(String phone, String token);
   Future<void> sendReauthenticationCode();

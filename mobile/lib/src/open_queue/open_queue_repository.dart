@@ -259,10 +259,43 @@ class SupabaseOpenQueueRepository
     required String gameId,
     required OpenQueueRole role,
   }) async {
-    final response = await _client.rpc(
+    Future<dynamic> quote() => _client.rpc(
       'preview_open_queue_booking_cost',
       params: {'game_id_to_book': gameId, 'role_to_book': role.code},
     );
+    dynamic response;
+    try {
+      response = await quote();
+    } on PostgrestException catch (error) {
+      if (error.code != 'P0001' ||
+          error.message !=
+              'Finish or cancel your earlier game checkout before booking another game.') {
+        rethrow;
+      }
+      // SQL cannot contact Stripe. Ask the authenticated server to recover the
+      // caller's earlier lease, never to prepare or collect another payment.
+      final FunctionResponse recovery;
+      try {
+        recovery = await _client.functions
+            .invoke('stripe-payment', body: {'action': 'recover'})
+            .timeout(const Duration(seconds: 30));
+      } catch (_) {
+        throw error; // An unavailable provider never establishes non-payment.
+      }
+      final result = recovery.data;
+      if (result is Map && result['recovered'] == true) {
+        response = await quote(); // Exactly one retry, with every guard intact.
+      } else {
+        final reference = result is Map ? result['review_reference'] : null;
+        if (reference is String &&
+            RegExp(r'^[a-fA-F0-9-]{36}$').hasMatch(reference)) {
+          throw StateError(
+            'Your earlier checkout needs payment review. No new payment was started. Support reference: $reference.',
+          );
+        }
+        rethrow;
+      }
+    }
     final row = switch (response) {
       final Map value => Map<String, dynamic>.from(value),
       final List value when value.isNotEmpty => Map<String, dynamic>.from(

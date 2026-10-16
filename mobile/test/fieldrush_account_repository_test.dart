@@ -14,16 +14,18 @@ void main() {
   late List<http.Request> requests;
   late FutureOr<http.Response> Function(http.Request) respond;
   late http.Client transport;
+  http.Response? logoutResponse;
 
   setUp(() {
     requests = [];
+    logoutResponse = null;
     respond = (request) => throw StateError(
       'Unexpected local mock request: ${request.method} ${request.url.path}',
     );
     transport = MockClient((request) async {
       requests.add(request);
       if (request.url.path == '/auth/v1/logout') {
-        return http.Response('', 204);
+        return logoutResponse ?? http.Response('', 204);
       }
       final response = await respond(request);
       return http.Response.bytes(
@@ -125,6 +127,241 @@ void main() {
       expect(_body(requests[1])['type'], 'phone_change');
       expect(client.auth.currentUser?.id, 'user-a');
       expect(client.auth.currentUser?.phone, '16025550101');
+      expect(
+        requests.any((request) => request.url.path.endsWith('/otp')),
+        isFalse,
+      );
+    },
+  );
+
+  test(
+    'unfinished phone-only signup switches through logout then fresh SMS',
+    () async {
+      await signedIn();
+      final before = client.auth.currentUser!.id;
+      respond = (request) {
+        if (request.url.path == '/auth/v1/user') {
+          return _json(_googleUser(includeGoogle: false));
+        }
+        if (request.url.path.startsWith('/rest/')) {
+          return _json({
+            ..._accountJson(),
+            'onboarding_completed': false,
+            'status': 'onboarding',
+          });
+        }
+        if (request.url.path == '/auth/v1/verify') {
+          return _json(_session(id: 'new-user', phone: '16025550101'));
+        }
+        return _json({});
+      };
+      await repository.switchIncompletePhoneAccount('+16025550101');
+      expect(client.auth.currentUser, isNull);
+      expect(
+        requests.map((request) => '${request.method} ${request.url.path}'),
+        [
+          'GET /auth/v1/user',
+          'POST /rest/v1/rpc/get_my_fieldrush_account',
+          'POST /auth/v1/logout',
+          'POST /auth/v1/otp',
+        ],
+      );
+      expect(requests[2].url.queryParameters['scope'], 'local');
+      expect(_body(requests.last)['phone'], '+16025550101');
+      expect(_body(requests.last)['create_user'], isTrue);
+      expect(requests.any((request) => request.method == 'PUT'), isFalse);
+      await repository.verifyPhoneCode('+16025550101', '123456');
+      expect(_body(requests.last)['type'], 'sms');
+      expect(client.auth.currentUser?.id, 'new-user');
+      expect(client.auth.currentUser?.id, isNot(before));
+      expect(requests.any((request) => request.method == 'DELETE'), isFalse);
+    },
+  );
+
+  for (final reason in [
+    'completed',
+    'google-linked',
+    'restricted',
+    'same-number',
+  ]) {
+    test(
+      'signup switch refuses $reason without signing out or editing phone',
+      () async {
+        await signedIn();
+        respond = (request) => request.url.path == '/auth/v1/user'
+            ? _json(_googleUser(includeGoogle: reason == 'google-linked'))
+            : _json({
+                ..._accountJson(),
+                'onboarding_completed': reason == 'completed',
+                'google_linked': reason == 'google-linked',
+                'status': reason == 'restricted' ? 'suspended' : 'onboarding',
+              });
+        await expectLater(
+          repository.switchIncompletePhoneAccount(
+            reason == 'same-number' ? '+14807469696' : '+16025550101',
+          ),
+          throwsA(isA<AuthException>()),
+        );
+        expect(client.auth.currentUser?.id, 'user-a');
+        expect(
+          requests.any((request) => request.url.path.endsWith('/logout')),
+          isFalse,
+        );
+        expect(requests.any((request) => request.method == 'PUT'), isFalse);
+      },
+    );
+  }
+
+  test(
+    'signup state lookup failure does not log out or send another code',
+    () async {
+      await signedIn();
+      respond = (request) => request.url.path == '/auth/v1/user'
+          ? _json(_googleUser(includeGoogle: false))
+          : _json({'message': 'Unavailable', 'code': 'XX000'}, status: 500);
+      await expectLater(
+        repository.switchIncompletePhoneAccount('+16025550101'),
+        throwsA(isA<PostgrestException>()),
+      );
+      expect(client.auth.currentUser?.id, 'user-a');
+      expect(requests.length, 2);
+    },
+  );
+
+  test('failed logout cannot report a new SMS request', () async {
+    await signedIn();
+    logoutResponse = _json({'msg': 'Unavailable'}, status: 500);
+    respond = (request) => request.url.path == '/auth/v1/user'
+        ? _json(_googleUser(includeGoogle: false))
+        : _json({
+            ..._accountJson(),
+            'onboarding_completed': false,
+            'status': 'onboarding',
+          });
+    await expectLater(
+      repository.switchIncompletePhoneAccount('+16025550101'),
+      throwsA(isA<AuthException>()),
+    );
+    expect(
+      requests.any((request) => request.url.path.endsWith('/otp')),
+      isFalse,
+    );
+    expect(requests.any((request) => request.method == 'PUT'), isFalse);
+    expect(client.auth.currentUser, isNull);
+  });
+
+  test(
+    'new SMS failure after logout leaves the old account signed out, unchanged',
+    () async {
+      await signedIn();
+      respond = (request) {
+        if (request.url.path == '/auth/v1/user') {
+          return _json(_googleUser(includeGoogle: false));
+        }
+        if (request.url.path.startsWith('/rest/')) {
+          return _json({
+            ..._accountJson(),
+            'onboarding_completed': false,
+            'status': 'onboarding',
+          });
+        }
+        return _json({'msg': 'SMS unavailable'}, status: 503);
+      };
+      await expectLater(
+        repository.switchIncompletePhoneAccount('+16025550101'),
+        throwsA(isA<AuthException>()),
+      );
+      expect(client.auth.currentUser, isNull);
+      expect(requests.any((request) => request.method == 'PUT'), isFalse);
+      expect(requests.any((request) => request.method == 'DELETE'), isFalse);
+    },
+  );
+
+  test('account switch during signup lookup preserves the new user', () async {
+    await signedIn();
+    respond = (request) async {
+      if (request.url.path == '/auth/v1/user') {
+        return _json(_googleUser(includeGoogle: false));
+      }
+      await signedIn(id: 'other-user');
+      return _json({
+        ..._accountJson(),
+        'onboarding_completed': false,
+        'status': 'onboarding',
+      });
+    };
+    await expectLater(
+      repository.switchIncompletePhoneAccount('+16025550101'),
+      throwsA(isA<AuthException>()),
+    );
+    expect(client.auth.currentUser?.id, 'other-user');
+    expect(
+      requests.any((request) => request.url.path.endsWith('/logout')),
+      isFalse,
+    );
+  });
+
+  test(
+    'device cleanup runs before leaving an unfinished phone account',
+    () async {
+      await signedIn();
+      var prepared = false;
+      repository = SupabaseFieldrushAccountRepository(
+        client: client,
+        beforeSignOut: () async {
+          expect(client.auth.currentUser?.id, 'user-a');
+          expect(
+            requests.any((request) => request.url.path.endsWith('/logout')),
+            isFalse,
+          );
+          prepared = true;
+        },
+      );
+      respond = (request) {
+        if (request.url.path == '/auth/v1/user') {
+          return _json(_googleUser(includeGoogle: false));
+        }
+        if (request.url.path.startsWith('/rest/')) {
+          return _json({
+            ..._accountJson(),
+            'onboarding_completed': false,
+            'status': 'onboarding',
+          });
+        }
+        expect(prepared, isTrue);
+        return _json({});
+      };
+      await repository.switchIncompletePhoneAccount('+16025550101');
+      expect(prepared, isTrue);
+      expect(client.auth.currentUser, isNull);
+    },
+  );
+
+  test(
+    'failed device cleanup blocks the switch without changing the old account',
+    () async {
+      await signedIn();
+      repository = SupabaseFieldrushAccountRepository(
+        client: client,
+        beforeSignOut: () async =>
+            throw const AuthException('Device cleanup failed.'),
+      );
+      respond = (request) => request.url.path == '/auth/v1/user'
+          ? _json(_googleUser(includeGoogle: false))
+          : _json({
+              ..._accountJson(),
+              'onboarding_completed': false,
+              'status': 'onboarding',
+            });
+      await expectLater(
+        repository.switchIncompletePhoneAccount('+16025550101'),
+        throwsA(isA<AuthException>()),
+      );
+      expect(client.auth.currentUser?.id, 'user-a');
+      expect(
+        requests.any((request) => request.url.path.endsWith('/logout')),
+        isFalse,
+      );
       expect(
         requests.any((request) => request.url.path.endsWith('/otp')),
         isFalse,

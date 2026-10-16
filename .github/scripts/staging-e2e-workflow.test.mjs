@@ -139,6 +139,56 @@ test("checkout preflight regression tests run with the mandatory Deno suite", ()
   assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true/);
 });
 
+test("staff provisioning preserves identity in isolated and full-schema security checks", () => {
+  const source = job("database");
+  const isolated = stepContaining(source, "node supabase/scripts/test_staff_provisioning.mjs");
+  assert.match(isolated, /set -euo pipefail/);
+  assert.match(isolated, /PGLITE_MODULE=/);
+  assert.ok(source.indexOf("test_staff_provisioning.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  const full = stepContaining(source, "<supabase/scripts/verify_safe_staff_provisioning.sql");
+  assert.match(full, /ON_ERROR_STOP=1/);
+  assert.match(full, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);
+  assert.ok(source.indexOf("verify_safe_staff_provisioning.sql") > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  for (const check of [isolated, full]) assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+});
+
+test("push delivery has mandatory isolated, provider-stub and full-schema checks", () => {
+  const source = job("database");
+  for (const script of ["test_notification_push_delivery.mjs", "test_notification_events.mjs", "test_push_dispatch_schedule.mjs"]) {
+    const check = stepContaining(source, `node supabase/scripts/${script}`);
+    assert.match(check, /PGLITE_MODULE=/);
+    assert.match(check, /set -euo pipefail/);
+    assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  }
+  const provider = stepContaining(source, "name: Check Edge Functions and database verifier");
+  assert.match(provider, /deno test[\s\S]*supabase\/functions\/fieldrush-push-dispatch\/handler_test\.ts/);
+  const chain = stepContaining(source, "THROUGH_MIGRATION=20261016000400");
+  assert.match(chain, /node supabase\/scripts\/test_season_zero_migration_chain\.mjs/);
+  const full = stepContaining(source, "<supabase/scripts/verify_notification_push_security.sql");
+  assert.match(full, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);
+  assert.match(full, /ON_ERROR_STOP=1/);
+  assert.ok(source.indexOf("verify_notification_push_security.sql") > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  const deployment = readFileSync(new URL("./deploy-supabase.sh", import.meta.url), "utf8");
+  assert.match(deployment, /deploy_function fieldrush-push-dispatch --no-verify-jwt/);
+  assert.doesNotMatch(deployment, /PUSH_DELIVERY_ENABLED=true|configure_push_dispatch\(/);
+});
+
+test("audited containment has mandatory goal, clan, replacement and recovery regressions", () => {
+  const source = job("database");
+  for (const file of ["verify_atomic_solo_goals.sql", "verify_clan_write_containment.sql", "verify_replacement_notifications.sql"]) {
+    const check = stepContaining(source, `<supabase/scripts/${file}`);
+    assert.match(check, /set -euo pipefail/);
+    assert.match(check, /ON_ERROR_STOP=1/);
+    assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+    assert.ok(source.indexOf(file) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  }
+  const isolated = stepContaining(source, "node supabase/scripts/test_stripe_checkout_recovery.mjs");
+  assert.match(isolated, /PGLITE_MODULE=/);
+  const provider = stepContaining(source, "name: Check Edge Functions and database verifier");
+  assert.match(provider, /deno test[\s\S]*_shared\/stripe_recovery_test\.ts/);
+  assert.match(provider, /deno test[\s\S]*_shared\/dev_auth_test\.ts/);
+});
+
 test("city and keeper behavior is verified against the fully replayed schema", () => {
   const source = job("database");
   const script = "supabase/scripts/verify_fieldrush_city_keeper_rankings.sql";

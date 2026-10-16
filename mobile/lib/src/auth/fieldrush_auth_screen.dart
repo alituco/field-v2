@@ -10,6 +10,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../core/user_facing_error.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
 import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'fieldrush_account.dart';
@@ -38,12 +39,14 @@ class FieldrushAuthScreen extends StatefulWidget {
     required this.accountRepository,
     required this.onOnboardingCompleted,
     this.account,
+    this.onPhoneAccountSwitching,
   });
 
   final AuthRepository authRepository;
   final FieldrushAccountRepository accountRepository;
   final VoidCallback onOnboardingCompleted;
   final FieldrushAccount? account;
+  final ValueChanged<bool>? onPhoneAccountSwitching;
 
   @override
   State<FieldrushAuthScreen> createState() => _FieldrushAuthScreenState();
@@ -75,6 +78,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   bool _editingReview = false;
   bool _awaitingAccount = false;
   bool _openingApp = false;
+  bool _switchConfirmationOpen = false;
   AccountDraft? _beforeEdit;
   SkillAssessment? _skillAssessment;
   Timer? _cooldownTimer;
@@ -278,6 +282,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   }
 
   Future<void> _sendCode({bool resend = false}) async {
+    if (_busy || _switchConfirmationOpen) return;
     final phone = resend
         ? _pendingPhone
         : normalizeFieldrushPhone(_phone.text, country: _country);
@@ -285,9 +290,27 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       setState(() => _error = 'Enter a valid phone number and country code.');
       return;
     }
+    // OTP can succeed before its account read does. Do not let a failed read
+    // turn the next number into a phone-change request on that signed-in user.
+    if (_account == null && widget.authRepository.currentUser != null) {
+      final enteredPhone = _phone.text;
+      final enteredCountry = _country;
+      await _run(_loadSignedInAccount);
+      if (!mounted || _account == null || _openingApp) return;
+      _phone.text = enteredPhone;
+      _country = enteredCountry;
+      _go(_Step.phone);
+    }
     if (_account?.phoneVerified == true && phone == _account?.phone) {
       _go(_editingReview ? _Step.review : _Step.name);
       _editingReview = false;
+      return;
+    }
+    if (_account?.phoneVerified == true &&
+        _account?.completed == false &&
+        _account?.googleLinked == false &&
+        phone != _account?.phone) {
+      await _switchPhoneAccount(phone);
       return;
     }
     if (_secondsLeft > 0 && phone == _pendingPhone) {
@@ -305,9 +328,90 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     });
   }
 
+  Future<void> _switchPhoneAccount(String phone) async {
+    _switchConfirmationOpen = true;
+    final bool? confirmed;
+    try {
+      confirmed = await showFieldrushModal<bool>(
+        context: context,
+        builder: (context) => FieldrushModal(
+          title: 'Use a different account?',
+          description:
+              'You’ll sign out of this unfinished signup before we send a code '
+              'to $phone. Your existing account won’t be deleted.',
+          actions: [
+            FilledButton(
+              key: const Key('fieldrush-confirm-phone-account-switch'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Sign out and continue'),
+            ),
+            OutlinedButton(
+              key: const Key('fieldrush-cancel-phone-account-switch'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Keep this account'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _switchConfirmationOpen = false;
+    }
+    if (!mounted || confirmed != true) return;
+    await _run(() async {
+      widget.onPhoneAccountSwitching?.call(true);
+      try {
+        await widget.accountRepository.switchIncompletePhoneAccount(phone);
+        if (!mounted) return;
+        if (widget.authRepository.currentUser != null ||
+            widget.authRepository.currentSession != null) {
+          throw const AuthException(
+            'Sign out could not be confirmed. Start again before entering a code.',
+          );
+        }
+        _clearPreviousSignup();
+        _pendingPhone = phone;
+        _startCooldown();
+        _go(_Step.code);
+      } catch (_) {
+        if (mounted &&
+            widget.authRepository.currentUser == null &&
+            widget.authRepository.currentSession == null) {
+          // Supabase clears local state before revoking the session. A failed
+          // sign-out/send must not leave the old account's signup draft shown.
+          _clearPreviousSignup();
+          _go(_Step.phone);
+        }
+        rethrow;
+      } finally {
+        widget.onPhoneAccountSwitching?.call(false);
+      }
+    });
+  }
+
+  void _clearPreviousSignup() {
+    _account = null;
+    _pendingPhone = null;
+    _code.clear();
+    _cooldownTimer?.cancel();
+    _resendAt = null;
+    _secondsLeft = 0;
+    _awaitingAccount = false;
+    _editingReview = false;
+    _beforeEdit = null;
+    _consent = false;
+    _login = true;
+    _openingApp = false;
+    _fillDraft(const AccountDraft());
+  }
+
   Future<void> _loadSignedInAccount() async {
+    final expectedId = widget.authRepository.currentUser?.id;
     final account = await widget.accountRepository.loadAccount();
     if (!mounted) return;
+    if (expectedId != null &&
+        widget.authRepository.currentUser?.id != expectedId) {
+      throw const AuthException('The account changed. Please start again.');
+    }
     final editing = _editingReview;
     final draft = _draft;
     setState(() {

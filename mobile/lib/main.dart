@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -5,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'src/app.dart';
 import 'src/auth/fieldrush_account.dart';
 import 'src/config/app_config.dart';
+import 'src/notifications/fieldrush_push.dart';
 
 Future<void> main() => runFieldApp();
 
@@ -21,6 +24,12 @@ Future<void> runFieldApp({
     await Supabase.initialize(
       url: config.supabaseUrl,
       publishableKey: config.supabasePublishableKey,
+    );
+    unawaited(
+      FieldrushPush.instance.initialize(
+        Supabase.instance.client,
+        FieldrushPushConfiguration.fromEnvironment(),
+      ),
     );
   }
 

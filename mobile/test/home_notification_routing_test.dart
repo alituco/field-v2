@@ -9,6 +9,7 @@ import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/home/dashboard_home.dart';
+import 'package:field/src/home/activity_revision.dart';
 import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/home/home_discovery_repository.dart';
 import 'package:field/src/home/home_discovery_screen.dart';
@@ -427,6 +428,150 @@ void main() {
     expect(opened, isTrue);
     expect(find.byKey(const ValueKey('activity-unread-dot')), findsOneWidget);
     receipt.complete();
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('returning from a resolved party invite refreshes Activity', (
+    tester,
+  ) async {
+    final repository = _ActivityDiscovery()
+      ..feed = [
+        _notice(
+          'OPEN_QUEUE_PARTY_MEMBERSHIP',
+          'membership',
+          data: {'game_id': 'game'},
+        ),
+      ];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async => repository.feed = [],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('home-notification-notification')),
+    );
+    await tester.pumpAndSettle();
+    expect(repository.loads, greaterThanOrEqualTo(2));
+    expect(
+      find.byKey(const ValueKey('home-notification-notification')),
+      findsNothing,
+    );
+    expect(find.text("You're all caught up."), findsOneWidget);
+  });
+
+  testWidgets('server read and dismiss changes refresh an open Activity page', (
+    tester,
+  ) async {
+    final repository = _ActivityDiscovery();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    repository.persistedReads.add('first');
+    repository.changes.add(null);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('activity-unread-dot')), findsOneWidget);
+    repository.dismissed.add('second');
+    repository.changes.add(null);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('home-notification-second')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('activity-unread-dot')), findsNothing);
+  });
+
+  testWidgets(
+    'push invalidation refreshes Activity without trusting push data',
+    (tester) async {
+      final repository = _ActivityDiscovery();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: HomeDiscoveryScreen(
+            repository: repository,
+            onPlayer: (_) async {},
+            onNotification: (_) async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      repository.feed = [];
+      notifyFieldrushActivityChanged();
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pumpAndSettle();
+      expect(find.text("You're all caught up."), findsOneWidget);
+    },
+  );
+
+  testWidgets('a failed dismissal never resurrects a resolved invitation', (
+    tester,
+  ) async {
+    final receipt = Completer<void>();
+    final repository = _ActivityDiscovery(dismissReceipt: receipt);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('home-notification-resolve-first')),
+    );
+    await tester.pump();
+    repository.feed = [];
+    repository.changes.add(null);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    receipt.completeError(StateError('lost receipt response'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('home-notification-first')), findsNothing);
+    expect(find.text("You're all caught up."), findsOneWidget);
+  });
+
+  testWidgets('opening Activity twice cannot push duplicate destinations', (
+    tester,
+  ) async {
+    final destination = Completer<void>();
+    final repository = _ActivityDiscovery();
+    var opens = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HomeDiscoveryScreen(
+          repository: repository,
+          onPlayer: (_) async {},
+          onNotification: (_) async {
+            opens++;
+            await destination.future;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final item = find.byKey(const ValueKey('home-notification-first'));
+    await tester.tap(item);
+    await tester.pump();
+    await tester.tap(item);
+    await tester.pump();
+    expect(opens, 1);
+    expect(repository.read, ['first']);
+    destination.complete();
     await tester.pumpAndSettle();
   });
 
@@ -971,28 +1116,45 @@ class _Fixtures extends Fake implements FixtureRepository {
   }
 }
 
-class _ActivityDiscovery extends Fake implements HomeDiscoveryRepository {
-  _ActivityDiscovery({this.dismissReceipt, this.readReceipt});
+class _ActivityDiscovery extends Fake
+    implements HomeDiscoveryRepository, HomeActivityChanges {
+  _ActivityDiscovery({this.dismissReceipt, this.readReceipt}) {
+    addTearDown(changes.close);
+  }
   final Completer<void>? dismissReceipt;
   final Completer<void>? readReceipt;
   final failedReads = <String>{};
   final read = <String>[];
   final dismissed = <String>[];
+  final persistedReads = <String>{};
+  final changes = StreamController<void>.broadcast();
+  List<HomeNotification>? feed;
+  int loads = 0;
   @override
-  Future<List<HomeNotification>> notifications() async => [
-    for (final id in ['first', 'second'])
-      HomeNotification(
-        id: id,
-        title: 'Marcus K.',
-        body: 'started following you.',
-        createdAt: DateTime.now().subtract(const Duration(hours: 2)),
-      ),
-  ];
+  Stream<void> watchActivityChanges() => changes.stream;
+  @override
+  Future<List<HomeNotification>> notifications() async {
+    loads++;
+    return feed ??
+        [
+          for (final id in ['first', 'second'])
+            if (!dismissed.contains(id))
+              HomeNotification(
+                id: id,
+                title: 'Marcus K.',
+                body: 'started following you.',
+                createdAt: DateTime.now().subtract(const Duration(hours: 2)),
+                readAt: persistedReads.contains(id) ? DateTime.now() : null,
+              ),
+        ];
+  }
+
   @override
   Future<void> markRead(String id) async {
     read.add(id);
     if (readReceipt != null) await readReceipt!.future;
     if (failedReads.contains(id)) throw Exception('Read failed');
+    persistedReads.add(id);
   }
 
   @override

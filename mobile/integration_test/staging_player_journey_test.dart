@@ -247,7 +247,12 @@ Future<void> _switchToProfile(
     'request session for $label',
     client.functions.invoke(
       'dev-switch-user',
-      headers: {'Authorization': 'Bearer ${currentSession.accessToken}'},
+      headers: {
+        'Authorization': 'Bearer ${currentSession.accessToken}',
+        'x-fieldrush-e2e-secret': const String.fromEnvironment(
+          'E2E_TEST_PASSWORD',
+        ),
+      },
       body: {'profile_id': profileId},
     ),
   );

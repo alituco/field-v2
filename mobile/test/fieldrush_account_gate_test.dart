@@ -267,6 +267,130 @@ void main() {
   });
 
   testWidgets(
+    'intentional incomplete signup switch preserves the new-number OTP screen',
+    (tester) async {
+      accounts.account = const FieldrushAccount(
+        draft: AccountDraft(firstName: 'Original draft'),
+        phone: '+14807469696',
+        phoneVerified: true,
+      );
+      final smsRequested = Completer<void>();
+      accounts.onSwitch = () async {
+        await auth.signOut();
+        await smsRequested.future;
+      };
+      await showGate(tester);
+      final oldScreen = tester.element(find.byType(FieldrushAuthScreen));
+      await tester.tap(find.byKey(const Key('fieldrush-back')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('fieldrush-phone')),
+        '6025550101',
+      );
+      await tester.ensureVisible(find.byKey(const Key('fieldrush-continue')));
+      await tester.tap(find.byKey(const Key('fieldrush-continue')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('fieldrush-confirm-phone-account-switch')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(auth.currentUser, isNull);
+      expect(tester.element(find.byType(FieldrushAuthScreen)), same(oldScreen));
+      expect(find.byKey(const Key('fieldrush-create-account')), findsNothing);
+      smsRequested.complete();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('fieldrush-code')), findsOneWidget);
+      expect(accounts.sentPhones, ['+16025550101']);
+      expect(tester.element(find.byType(FieldrushAuthScreen)), same(oldScreen));
+
+      accounts.account = const FieldrushAccount(
+        draft: AccountDraft(),
+        phone: '+16025550101',
+        phoneVerified: true,
+      );
+      accounts.onVerified = () => auth.signIn(userId: 'player-b');
+      await verifyLoginCode(tester);
+      await tester.pumpAndSettle();
+      expect(auth.currentUser?.id, 'player-b');
+      expect(find.text('What’s your\nname?'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('fieldrush-first-name')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(accounts.draftSaves, 0);
+      expect(accounts.completionCalls, 0);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'external sign-in during signup switch remounts before old draft can survive',
+    (tester) async {
+      accounts.account = const FieldrushAccount(
+        draft: AccountDraft(firstName: 'Original private draft'),
+        phone: '+14807469696',
+        phoneVerified: true,
+      );
+      final pendingSms = Completer<void>();
+      accounts.onSwitch = () async {
+        await auth.signOut();
+        await pendingSms.future;
+        throw const AuthException('The account changed. Start again.');
+      };
+      await showGate(tester);
+      final oldScreen = tester.element(find.byType(FieldrushAuthScreen));
+      await tester.tap(find.byKey(const Key('fieldrush-back')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('fieldrush-phone')),
+        '6025550101',
+      );
+      await tester.ensureVisible(find.byKey(const Key('fieldrush-continue')));
+      await tester.tap(find.byKey(const Key('fieldrush-continue')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('fieldrush-confirm-phone-account-switch')),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(auth.currentUser, isNull);
+      expect(tester.element(find.byType(FieldrushAuthScreen)), same(oldScreen));
+
+      accounts.account = const FieldrushAccount(
+        draft: AccountDraft(firstName: 'New owner'),
+        phone: '+16025550199',
+        phoneVerified: true,
+      );
+      auth.signIn(userId: 'external-user');
+      await tester.pumpAndSettle();
+      expect(
+        tester.element(find.byType(FieldrushAuthScreen)),
+        isNot(same(oldScreen)),
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('fieldrush-first-name')))
+            .controller!
+            .text,
+        'New owner',
+      );
+      pendingSms.complete();
+      await tester.pumpAndSettle();
+      expect(auth.currentUser?.id, 'external-user');
+      expect(find.byKey(const Key('fieldrush-code')), findsNothing);
+      expect(find.text('The account changed. Start again.'), findsNothing);
+      expect(accounts.sentPhones, isEmpty);
+      expect(accounts.draftSaves, 0);
+      expect(accounts.completionCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'initial account load failure stays closed and retry can recover',
     (tester) async {
       accounts.error = const AuthException('Account service unavailable.');
@@ -404,8 +528,8 @@ class _Auth extends Fake implements AuthRepository {
   User? get currentUser => session?.user;
   @override
   Stream<AuthState> get authStateChanges => events.stream;
-  void signIn() {
-    session = _session();
+  void signIn({String userId = 'player-a'}) {
+    session = _session(userId: userId);
     events.add(AuthState(AuthChangeEvent.signedIn, session));
   }
 
@@ -421,6 +545,7 @@ class _Accounts extends Fake implements FieldrushAccountRepository {
   Object? error;
   Future<FieldrushAccount> Function()? nextLoad;
   VoidCallback? onVerified;
+  Future<void> Function()? onSwitch;
   final sentPhones = <String>[];
   final recoveryPhones = <String>[];
   final verifiedCodes = <String>[];
@@ -437,6 +562,12 @@ class _Accounts extends Fake implements FieldrushAccountRepository {
 
   @override
   Future<void> sendPhoneCode(String phone) async {
+    sentPhones.add(phone);
+  }
+
+  @override
+  Future<void> switchIncompletePhoneAccount(String phone) async {
+    await onSwitch?.call();
     sentPhones.add(phone);
   }
 

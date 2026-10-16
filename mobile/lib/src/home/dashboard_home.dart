@@ -30,6 +30,7 @@ import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import 'fieldrush_home_widgets.dart';
+import 'activity_revision.dart';
 import 'home_discovery_repository.dart';
 import 'home_discovery_screen.dart';
 import 'navigation_profile_scope.dart';
@@ -89,6 +90,7 @@ class _DashboardHomeState extends State<DashboardHome> {
   bool _loading = true;
   String? _error;
   int _loadVersion = 0;
+  bool _activityOpen = false;
   StreamSubscription<void>? _partySubscription;
   FieldrushCity _city = FieldrushCity.phoenix;
 
@@ -98,6 +100,11 @@ class _DashboardHomeState extends State<DashboardHome> {
     _ratingTrack = widget.ratingTrackController?.value ?? RatingTrack.outfield;
     widget.ratingTrackController?.addListener(_syncRatingTrack);
     fieldrushCityRevision.addListener(_load);
+    fieldrushActivityRevision.addListener(_load);
+    fieldrushActivityOpenRequested.addListener(_openRequestedActivity);
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _openRequestedActivity(),
+    );
     _load();
     final repo = widget.openQueueRepository;
     if (repo is OpenQueuePartyNotificationRepository) {
@@ -123,6 +130,8 @@ class _DashboardHomeState extends State<DashboardHome> {
   @override
   void dispose() {
     widget.ratingTrackController?.removeListener(_syncRatingTrack);
+    fieldrushActivityRevision.removeListener(_load);
+    fieldrushActivityOpenRequested.removeListener(_openRequestedActivity);
     _partySubscription?.cancel();
     fieldrushCityRevision.removeListener(_load);
     super.dispose();
@@ -523,31 +532,42 @@ class _DashboardHomeState extends State<DashboardHome> {
     }
   }
 
+  void _openRequestedActivity() {
+    if (!mounted || !fieldrushActivityOpenRequested.value) return;
+    clearFieldrushActivityOpenRequest();
+    if (!_activityOpen) unawaited(_discovery());
+  }
+
   Future<void> _discovery({bool search = false}) async {
     final repo = widget.discoveryRepository;
-    if (repo == null) return;
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => HomeDiscoveryScreen(
-          repository: repo,
-          search: search,
-          onPlayer: (id) async {
-            await Navigator.of(context).push<void>(
-              MaterialPageRoute(
-                builder: (_) => ProfileScreen(
-                  profileId: id,
-                  profileRepository: widget.profileRepository,
-                  clanRepository: widget.clanRepository,
-                  fixtureRepository: widget.fixtureRepository,
-                  openQueueRepository: widget.openQueueRepository,
+    if (repo == null || (!search && _activityOpen)) return;
+    if (!search) _activityOpen = true;
+    try {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => HomeDiscoveryScreen(
+            repository: repo,
+            search: search,
+            onPlayer: (id) async {
+              await Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (_) => ProfileScreen(
+                    profileId: id,
+                    profileRepository: widget.profileRepository,
+                    clanRepository: widget.clanRepository,
+                    fixtureRepository: widget.fixtureRepository,
+                    openQueueRepository: widget.openQueueRepository,
+                  ),
                 ),
-              ),
-            );
-          },
-          onNotification: _openNotification,
+              );
+            },
+            onNotification: _openNotification,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      if (!search) _activityOpen = false;
+    }
     if (mounted) await _load();
   }
 
