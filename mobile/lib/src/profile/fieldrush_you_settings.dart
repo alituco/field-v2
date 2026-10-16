@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../reliability/reliability.dart';
+import '../notifications/fieldrush_push.dart';
+import '../home/activity_revision.dart';
 import '../ui/field_loading.dart';
 
 enum YouNotificationOption {
@@ -10,6 +12,11 @@ enum YouNotificationOption {
     'game_reminders',
     'Game reminders',
     'A reminder before your next game.',
+  ),
+  openSpots(
+    'open_spots',
+    'Open solo spots',
+    'Available positions in your city that you can book.',
   ),
   clanCallups(
     'clan_callups',
@@ -46,6 +53,7 @@ enum YouNotificationOption {
 class YouNotificationPreferences {
   const YouNotificationPreferences({
     this.gameReminders = true,
+    this.openSpots = false,
     this.clanCallups = true,
     this.partyInvites = true,
     this.ladderMoves = true,
@@ -54,6 +62,7 @@ class YouNotificationPreferences {
   });
 
   final bool gameReminders;
+  final bool openSpots;
   final bool clanCallups;
   final bool partyInvites;
   final bool ladderMoves;
@@ -66,6 +75,7 @@ class YouNotificationPreferences {
 
   YouNotificationPreferences copyWith({
     bool? gameReminders,
+    bool? openSpots,
     bool? clanCallups,
     bool? partyInvites,
     bool? ladderMoves,
@@ -73,6 +83,7 @@ class YouNotificationPreferences {
     bool? newsAndOffers,
   }) => YouNotificationPreferences(
     gameReminders: gameReminders ?? this.gameReminders,
+    openSpots: openSpots ?? this.openSpots,
     clanCallups: clanCallups ?? this.clanCallups,
     partyInvites: partyInvites ?? this.partyInvites,
     ladderMoves: ladderMoves ?? this.ladderMoves,
@@ -87,6 +98,7 @@ class YouNotificationPreferences {
 
   Map<String, bool> toJson() => {
     'game_reminders': gameReminders,
+    'open_spots': openSpots,
     'clan_callups': clanCallups,
     'party_invites': partyInvites,
     'ladder_moves': ladderMoves,
@@ -107,6 +119,7 @@ class YouNotificationPreferences {
 
     return YouNotificationPreferences(
       gameReminders: read('game_reminders'),
+      openSpots: json.containsKey('open_spots') ? read('open_spots') : false,
       clanCallups: read('clan_callups'),
       partyInvites: read('party_invites'),
       ladderMoves: read('ladder_moves'),
@@ -272,6 +285,7 @@ class _YouNotificationsScreenState extends State<YouNotificationsScreen> {
         _preferences = saved;
         _saving = false;
       });
+      notifyFieldrushActivityChanged();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -307,6 +321,54 @@ class _YouNotificationsScreenState extends State<YouNotificationsScreen> {
                   _failedSave == null ? _load() : _save(_failedSave!),
             ),
           if (preferences != null) ...[
+            AnimatedBuilder(
+              animation: FieldrushPush.instance,
+              builder: (context, _) {
+                final push = FieldrushPush.instance;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 16),
+                  child: _WhiteCard(
+                    child: Padding(
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ON THIS PHONE',
+                            style: _body(11, weight: FontWeight.w800),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(push.status, style: _body(12)),
+                          if (push.canRefreshSetup)
+                            TextButton(
+                              onPressed: push.refreshSetup,
+                              child: const Text(
+                                'Check phone notification setup',
+                              ),
+                            ),
+                          if (push.canEnable || push.phoneEnabled) ...[
+                            const SizedBox(height: 10),
+                            TextButton(
+                              key: const Key('you-enable-phone-notifications'),
+                              onPressed: push.busy
+                                  ? null
+                                  : () => push.phoneEnabled
+                                        ? push.disableOnThisPhone()
+                                        : push.enableOnThisPhone(),
+                              child: Text(
+                                push.phoneEnabled
+                                    ? 'Turn off on this phone'
+                                    : 'Enable on this phone',
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
             _WhiteCard(
               child: Column(
                 children: [
@@ -372,7 +434,7 @@ class _YouNotificationsScreenState extends State<YouNotificationsScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4),
               child: Text(
-                'These choices are saved to your account. Phone notification permissions are managed in your device settings.',
+                'These choices apply to Activity and registered phones. Booking, payment, safety, support and account notices stay on. Device permissions are managed in your phone settings.',
                 style: _body(11.5),
               ),
             ),

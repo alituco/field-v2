@@ -12,12 +12,14 @@ import { normalizePhoneNumber } from "@/lib/phone";
 import { formatPlayerSr, ratingTrackLabel } from "@/lib/open-queue-ratings";
 import { plannedMatchDurationSeconds } from "@/lib/match-duration";
 import { refereeMatchKey } from "@/lib/referee-assigned-matches";
+import { acknowledgeSoloGoalRequest, pendingSoloGoalRequest, prepareSoloGoalRequest, rejectSoloGoalRequest } from "@/lib/solo-goal-actions";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   BlueCard,
   BroadcastControlResponse,
   FixtureClock,
   FixtureEvent,
+  Goal,
   ModerationRiskSignal,
   Player,
   ReliabilityAttendancePlayer,
@@ -53,6 +55,7 @@ export default function RefereePage() {
   const [assistPlayerId, setAssistPlayerId] = useState("");
   const [cardClanId, setCardClanId] = useState("");
   const [cardPlayerId, setCardPlayerId] = useState("");
+  const [pendingGoal, setPendingGoal] = useState<FixtureActionBody | null>(null);
   const loadedSession = useRef(false);
 
   const activeFixture =
@@ -126,6 +129,13 @@ export default function RefereePage() {
   useEffect(() => {
     if (accessToken) void loadGames();
   }, [accessToken, loadGames]);
+
+  const refreshPendingGoal = useCallback(() => {
+    if (!me || !activeFixture || activeFixture.matchKind !== "SOLO") { setPendingGoal(null); return; }
+    try { setPendingGoal(pendingSoloGoalRequest(me.profileId, activeFixture.id, window.sessionStorage) as FixtureActionBody | null); }
+    catch { setError("The saved goal request could not be read. Ask an organizer to verify this match before recording another goal."); }
+  }, [me, activeFixture]);
+  useEffect(refreshPendingGoal, [refreshPendingGoal]);
 
   useEffect(() => {
     if (!activeFixture) return;
@@ -221,6 +231,9 @@ export default function RefereePage() {
     setError(null);
 
     try {
+      const soloGoal = matchKind === "SOLO" && (body.action === "goal" || body.action === "remove_goal");
+      if (soloGoal && !me?.profileId) throw new Error("Refresh your referee session before recording a goal.");
+      const requestBody = soloGoal ? prepareSoloGoalRequest(me!.profileId, fixtureId, body, window.sessionStorage) : body;
       const actionUrl = matchKind === "SOLO"
         ? `/api/referee/open-queue-games/${fixtureId}/action`
         : `/api/referee/fixtures/${fixtureId}/action`;
@@ -230,10 +243,12 @@ export default function RefereePage() {
           "Content-Type": "application/json",
           ...authHeaders(),
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(requestBody),
       });
-      const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { error?: string; goalOperationRejected?: boolean };
+      if (soloGoal && payload.goalOperationRejected === true) rejectSoloGoalRequest(me!.profileId, fixtureId, window.sessionStorage);
       if (!response.ok) throw new Error(payload.error ?? "Action failed.");
+      if (soloGoal) acknowledgeSoloGoalRequest(me!.profileId, fixtureId, requestBody, payload, window.sessionStorage);
       await loadGames();
       return true;
     } catch (actionError) {
@@ -243,6 +258,7 @@ export default function RefereePage() {
       return false;
     } finally {
       setSubmitting(null);
+      refreshPendingGoal();
     }
   }
 
@@ -342,6 +358,9 @@ export default function RefereePage() {
         </header>
 
         {error ? <div className="error">{error}</div> : null}
+        {pendingGoal ? <div className="notice" role="status">A previous goal action is not yet confirmed. Retry it safely before making another goal change.
+          <button className="ghost-button compact-button" disabled={submitting !== null} type="button" onClick={() => void runSafetyAction(pendingGoal)}>Retry saved goal action</button>
+        </div> : null}
 
         <GamesView
           accessToken={accessToken}
@@ -437,9 +456,12 @@ function GamesView({
     null,
   );
   const [view, setView] = useState<RefereeMatchView>("match");
+  const [goalToRemove, setGoalToRemove] = useState<Goal | null>(null);
+  const [goalRemovalReason, setGoalRemovalReason] = useState("");
 
   useEffect(() => {
     setEventDialog(null);
+    setGoalToRemove(null);
     setView("match");
   }, [activeFixture?.id, activeFixture?.matchKind, activeFixture?.operationalState]);
 
@@ -710,6 +732,15 @@ function GamesView({
             </button>
           </div>
           <EventList fixture={activeFixture} />
+          {activeFixture.matchKind === "SOLO" && activeFixture.status === "LIVE" && !resolutionLocked && activeFixture.clock?.status === "RUNNING" && activeFixture.goals.length > 0 ? (
+            <div className="event-list" aria-label="Recorded goals">
+              <strong>Official goals · undo a recording mistake</strong>
+              {activeFixture.goals.map(goal => <div className="event-card" key={goal.id}>
+                <div><div className="event-title">{playerName(activeFixture, goal.profileId)}</div><div className="event-subtitle">{teamName(activeFixture, goal.clanId)} · {goal.minute} min</div></div>
+                <button className="ghost-button compact-button" disabled={submitting !== null} type="button" onClick={() => { setGoalToRemove(goal); setGoalRemovalReason(""); }}>Undo goal</button>
+              </div>)}
+            </div>
+          ) : null}
         </div>
       </details>
 
@@ -793,10 +824,18 @@ function GamesView({
         }}
         onCardPlayer={onCardPlayer}
         onSubmit={async (body) => {
-          await onRunAction(body);
-          setEventDialog(null);
+          if (await onSafetyAction(body)) setEventDialog(null);
         }}
       />
+      {goalToRemove ? <div className="safety-modal-backdrop"><section className="safety-modal" role="dialog" aria-modal="true" aria-labelledby="remove-goal-title">
+        <span className="safety-modal-eyebrow">Correct the live score</span><h2 id="remove-goal-title">Remove this goal?</h2>
+        <p className="safety-modal-intro">{playerName(activeFixture, goalToRemove.profileId)} · {teamName(activeFixture, goalToRemove.clanId)}. The official score and scorer totals will update together. The original event and this correction remain in the audit history.</p>
+        <label>Reason<input className="input" maxLength={500} disabled={submitting !== null} value={goalRemovalReason} onChange={event => setGoalRemovalReason(event.target.value)} placeholder="For example, recorded twice by mistake" /></label>
+        <div className="safety-modal-actions"><button className="ghost-button" disabled={submitting !== null} type="button" onClick={() => setGoalToRemove(null)}>Keep goal</button>
+          <button className="danger-button" disabled={submitting !== null || goalRemovalReason.trim().length < 5} type="button" onClick={async () => {
+            if (await onSafetyAction({ action: "remove_goal", goalId: goalToRemove.id, note: goalRemovalReason })) setGoalToRemove(null);
+          }}>{submitting === "remove_goal" ? "Removing…" : "Remove goal"}</button></div>
+      </section></div> : null}
     </div>
   );
 }

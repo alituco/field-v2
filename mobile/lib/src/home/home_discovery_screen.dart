@@ -12,6 +12,7 @@ import '../clans/clan_repository.dart';
 import '../clans/fieldrush_clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/fixture_repository.dart';
+import 'activity_revision.dart';
 import 'home_discovery_repository.dart';
 
 class HomeDiscoveryScreen extends StatefulWidget {
@@ -37,7 +38,8 @@ class HomeDiscoveryScreen extends StatefulWidget {
   State<HomeDiscoveryScreen> createState() => _HomeDiscoveryScreenState();
 }
 
-class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
+class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
+    with WidgetsBindingObserver {
   final _query = TextEditingController();
   Timer? _debounce;
   int _request = 0;
@@ -54,20 +56,54 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
   final _dismissErrors = <String, String>{};
   bool _markingAllRead = false;
   String? _readError;
+  final _pendingReads = <String, Future<bool>>{};
+  final _latestActivity = <String, HomeNotification>{};
+  StreamSubscription<void>? _activitySubscription;
+  Timer? _activityRefresh;
+  String? _openingNotificationId;
 
   @override
   void initState() {
     super.initState();
     _searchClans = widget.initialClans;
     _clanRepository = widget.clanRepository ?? SupabaseClanRepository();
+    if (!widget.search) {
+      WidgetsBinding.instance.addObserver(this);
+      fieldrushActivityRevision.addListener(_scheduleActivityRefresh);
+      final repository = widget.repository;
+      if (repository is HomeActivityChanges) {
+        _activitySubscription = (repository as HomeActivityChanges)
+            .watchActivityChanges()
+            .listen((_) => _scheduleActivityRefresh(), onError: (_) {});
+      }
+    }
     if (!widget.search || _searchClans) _load();
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _activityRefresh?.cancel();
+    _activitySubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    fieldrushActivityRevision.removeListener(_scheduleActivityRefresh);
     _query.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!widget.search && state == AppLifecycleState.resumed) {
+      _scheduleActivityRefresh();
+    }
+  }
+
+  void _scheduleActivityRefresh() {
+    if (!mounted || widget.search) return;
+    _activityRefresh?.cancel();
+    _activityRefresh = Timer(const Duration(milliseconds: 150), () {
+      if (mounted) _load();
+    });
   }
 
   void _search(String query) {
@@ -113,11 +149,14 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
       } else {
         final notifications = await widget.repository.notifications();
         if (!mounted || request != _request) return;
-        setState(
-          () => _notifications = notifications
+        setState(() {
+          _latestActivity
+            ..clear()
+            ..addEntries(notifications.map((item) => MapEntry(item.id, item)));
+          _notifications = notifications
               .where((item) => !_dismissed.contains(item.id))
-              .toList(),
-        );
+              .toList();
+        });
       }
     } catch (error) {
       if (mounted && request == _request) {
@@ -134,19 +173,59 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
   }
 
   Future<void> _open(HomeNotification item) async {
+    if (_openingNotificationId != null) return;
+    setState(() => _openingNotificationId = item.id);
     if (item.readAt == null && !_read.contains(item.id)) {
       setState(() => _read.add(item.id));
       unawaited(_saveRead(item.id));
     }
-    await widget.onNotification(item);
+    String? openError;
+    try {
+      await widget.onNotification(item);
+    } catch (error) {
+      openError = userFacingError(
+        error,
+        fallback: 'Could not open this activity. Try again.',
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _openingNotificationId = null);
+        // Accepting/declining an invitation resolves it on the server. Do not
+        // leave the old invitation row visible when its detail route closes.
+        await _load();
+        if (mounted && openError != null) {
+          setState(() => _error = openError);
+        }
+      }
+    }
   }
 
-  Future<void> _saveRead(String id) async {
+  Future<bool> _saveRead(String id, {bool notify = true}) async {
+    final existing = _pendingReads[id];
+    if (existing != null) return existing;
+    final request = _persistRead(id, notify: notify);
+    _pendingReads[id] = request;
+    try {
+      return await request;
+    } finally {
+      if (identical(_pendingReads[id], request)) _pendingReads.remove(id);
+    }
+  }
+
+  Future<bool> _persistRead(String id, {required bool notify}) async {
     try {
       await widget.repository.markRead(id);
+      if (notify) notifyFieldrushActivityChanged();
+      return true;
     } catch (_) {
       // A read receipt must not prevent opening the relevant game.
-      if (mounted) setState(() => _read.remove(id));
+      if (mounted && _latestActivity[id]?.readAt == null) {
+        setState(() {
+          _read.remove(id);
+          _readError = 'Could not mark this activity as read. Try again.';
+        });
+      }
+      return false;
     }
   }
 
@@ -160,12 +239,15 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
     });
     try {
       await widget.repository.dismiss(item.id);
+      notifyFieldrushActivityChanged();
     } catch (error) {
       if (!mounted) return;
       setState(() {
         _dismissed.remove(item.id);
-        if (!_notifications.any((notice) => notice.id == item.id)) {
-          _notifications.add(item);
+        final latest = _latestActivity[item.id];
+        if (latest != null &&
+            !_notifications.any((notice) => notice.id == item.id)) {
+          _notifications.add(latest);
           _notifications.sort((a, b) => b.createdAt.compareTo(a.createdAt));
         }
         _dismissErrors[item.id] = userFacingError(
@@ -192,7 +274,7 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
     await Future.wait(
       unread.map((item) async {
         try {
-          await widget.repository.markRead(item.id);
+          if (!await _saveRead(item.id, notify: false)) failed.add(item.id);
         } catch (_) {
           failed.add(item.id);
         }
@@ -206,6 +288,7 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
         _readError = 'Could not mark all activity as read. Try again.';
       }
     });
+    notifyFieldrushActivityChanged();
   }
 
   @override
@@ -850,7 +933,7 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen> {
           Expanded(
             child: InkWell(
               key: ValueKey('home-notification-${item.id}'),
-              onTap: () => _open(item),
+              onTap: _openingNotificationId == null ? () => _open(item) : null,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [

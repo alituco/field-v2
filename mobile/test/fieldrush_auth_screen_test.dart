@@ -119,6 +119,135 @@ void main() {
     await _dispose(tester);
   });
 
+  testWidgets(
+    'different number in unfinished phone signup needs explicit switch consent',
+    (tester) async {
+      final auth = _AuthRepository()..session = _phoneSession();
+      final repo = _AccountRepository()
+        ..account = const FieldrushAccount(
+          draft: AccountDraft(firstName: 'Old draft'),
+          phone: '+16025550148',
+          phoneVerified: true,
+        )
+        ..onSwitch = auth.signOut;
+      await _pump(tester, repo, account: repo.account, auth: auth);
+      await _tap(tester, 'fieldrush-back');
+      await tester.enterText(
+        find.byKey(const Key('fieldrush-phone')),
+        '6025550101',
+      );
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.text('Use a different account?'), findsOneWidget);
+      expect(repo.sentPhones, isEmpty);
+      expect(repo.switchedPhones, isEmpty);
+      await _tap(tester, 'fieldrush-cancel-phone-account-switch');
+      expect(auth.currentUser?.id, 'old-user');
+      expect(repo.switchedPhones, isEmpty);
+
+      await _tap(tester, 'fieldrush-continue');
+      await _tap(tester, 'fieldrush-confirm-phone-account-switch');
+      expect(auth.currentUser, isNull);
+      expect(repo.switchedPhones, ['+16025550101']);
+      expect(repo.sentPhones, ['+16025550101']);
+      expect(find.byKey(const Key('fieldrush-code')), findsOneWidget);
+      repo.account = const FieldrushAccount(
+        draft: AccountDraft(),
+        phone: '+16025550101',
+        phoneVerified: true,
+      );
+      await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.text('What’s your\nname?'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('fieldrush-first-name')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(repo.savedDrafts, isEmpty);
+      await _dispose(tester);
+    },
+  );
+
+  testWidgets('failed signup switch never reports a sent code', (tester) async {
+    final auth = _AuthRepository()..session = _phoneSession();
+    final repo = _AccountRepository()
+      ..switchError = const AuthException('Could not sign out.')
+      ..onSwitch = auth.signOut;
+    await _pump(tester, repo, account: repo.account, auth: auth);
+    await _tap(tester, 'fieldrush-back');
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-phone')),
+      '6025550101',
+    );
+    await _tap(tester, 'fieldrush-continue');
+    await _tap(tester, 'fieldrush-confirm-phone-account-switch');
+    expect(find.text('Could not sign out.'), findsOneWidget);
+    expect(find.byKey(const Key('fieldrush-code')), findsNothing);
+    expect(repo.sentPhones, isEmpty);
+    expect(auth.currentUser, isNull);
+    await _tap(tester, 'fieldrush-continue');
+    expect(repo.switchedPhones.length, 1);
+    expect(repo.sentPhones, ['+16025550101']);
+    expect(find.byKey(const Key('fieldrush-code')), findsOneWidget);
+    await _dispose(tester);
+  });
+
+  testWidgets(
+    'account-read failure before switching cannot fall through to phone change',
+    (tester) async {
+      final auth = _AuthRepository();
+      final repo = _AccountRepository()..loadFailures = 2;
+      await _pump(tester, repo, auth: auth);
+      await _phone(tester);
+      auth.session = _phoneSession();
+      await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+      await _tap(tester, 'fieldrush-continue');
+      await tester.tap(find.text('Change number'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('fieldrush-phone')),
+        '6025550101',
+      );
+      await _tap(tester, 'fieldrush-continue');
+      expect(repo.sentPhones, ['+16025550148']);
+      expect(repo.switchedPhones, isEmpty);
+      expect(find.byKey(const Key('fieldrush-code')), findsNothing);
+      expect(
+        find.text('That took too long. Check your connection and try again.'),
+        findsOneWidget,
+      );
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.text('Use a different account?'), findsOneWidget);
+      expect(repo.sentPhones, ['+16025550148']);
+      await _tap(tester, 'fieldrush-cancel-phone-account-switch');
+      await _dispose(tester);
+    },
+  );
+
+  testWidgets('Google-first phone attachment does not switch accounts', (
+    tester,
+  ) async {
+    final auth = _AuthRepository()..session = _phoneSession();
+    final repo = _AccountRepository()
+      ..account = const FieldrushAccount(
+        draft: AccountDraft(email: 'google@example.com'),
+        googleLinked: true,
+      );
+    await _pump(tester, repo, account: repo.account, auth: auth);
+    await tester.enterText(
+      find.byKey(const Key('fieldrush-phone')),
+      '6025550101',
+    );
+    await _tap(tester, 'fieldrush-continue');
+    expect(repo.sentPhones, ['+16025550101']);
+    expect(repo.switchedPhones, isEmpty);
+    expect(find.text('Use a different account?'), findsNothing);
+    expect(auth.currentUser?.id, 'old-user');
+    await _dispose(tester);
+  });
+
   testWidgets('phone login with a new number continues into signup after OTP', (
     tester,
   ) async {
@@ -536,11 +665,25 @@ final _completeDraft = AccountDraft(
   email: 'jordan@example.com',
 );
 
+Session _phoneSession() => Session(
+  accessToken: 'local-widget-test-token',
+  tokenType: 'bearer',
+  user: User(
+    id: 'old-user',
+    appMetadata: const {},
+    userMetadata: const {},
+    aud: 'authenticated',
+    createdAt: '2026-10-15T00:00:00Z',
+    phone: '16025550148',
+  ),
+);
+
 Future<void> _pump(
   WidgetTester tester,
   _AccountRepository repo, {
   FieldrushAccount? account,
   VoidCallback? onCompleted,
+  _AuthRepository? auth,
   Size size = const Size(390, 844),
   double scale = 1,
 }) async {
@@ -558,7 +701,7 @@ Future<void> _pump(
         child: child!,
       ),
       home: FieldrushAuthScreen(
-        authRepository: _AuthRepository(),
+        authRepository: auth ?? _AuthRepository(),
         accountRepository: repo,
         account: account,
         onOnboardingCompleted: onCompleted ?? () {},
@@ -602,8 +745,13 @@ Future<void> _dispose(WidgetTester tester) async {
 }
 
 class _AuthRepository implements AuthRepository {
+  Session? session;
   @override
-  Future<void> signOut() async {}
+  Session? get currentSession => session;
+  @override
+  User? get currentUser => session?.user;
+  @override
+  Future<void> signOut() async => session = null;
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
@@ -626,6 +774,9 @@ class _AccountRepository implements FieldrushAccountRepository {
   Object? sendError;
   Object? recoveryError;
   Object? saveError;
+  Object? switchError;
+  Future<void> Function()? onSwitch;
+  final List<String> switchedPhones = [];
   String? blockedUsername;
 
   @override
@@ -672,6 +823,14 @@ class _AccountRepository implements FieldrushAccountRepository {
   @override
   Future<void> sendPhoneCode(String phone) async {
     if (sendError != null) throw sendError!;
+    sentPhones.add(phone);
+  }
+
+  @override
+  Future<void> switchIncompletePhoneAccount(String phone) async {
+    switchedPhones.add(phone);
+    await onSwitch?.call();
+    if (switchError != null) throw switchError!;
     sentPhones.add(phone);
   }
 

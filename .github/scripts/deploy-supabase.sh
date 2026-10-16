@@ -185,6 +185,11 @@ if [[ "$target" == "staging" ]]; then
   # additionally disabled until FIELDRUSH_ACCOUNT_DELETION_ENABLED is set.
   deploy_function fieldrush-delete-account --no-verify-jwt
 
+  # Default-off until Firebase/APNs, signing capabilities and a separate guarded
+  # worker configuration are ready. Deployment never enables push or reads its
+  # service-account key into logs/CLI arguments.
+  deploy_function fieldrush-push-dispatch --no-verify-jwt
+
   # Cloudflare authenticates its webhook with Webhook-Signature, so this
   # endpoint cannot require a Supabase user JWT.
   deploy_function cloudflare-stream-webhook --no-verify-jwt

@@ -83,6 +83,7 @@ export async function installAdminSession(
     {
       apikey: publishableKey,
       authorization: `Bearer ${publishableKey}`,
+      "x-fieldrush-e2e-secret": requiredEnv("E2E_TEST_PASSWORD"),
     },
     "create the staging bootstrap session",
   );
@@ -101,6 +102,7 @@ export async function installAdminSession(
     {
       apikey: publishableKey,
       authorization: `Bearer ${bootstrapAccessToken}`,
+      "x-fieldrush-e2e-secret": requiredEnv("E2E_TEST_PASSWORD"),
     },
     "switch to the isolated staging admin",
   );

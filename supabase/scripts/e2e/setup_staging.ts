@@ -1,5 +1,8 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
-import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
+import {
+  isAuthOnlyOnboardingFixture,
+  isProtectedBootstrapFixture,
+} from "../../functions/dev-switch-user/fixture.ts";
 import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
 import { bookedRoleRatingBaselines } from "./rating_tracks.ts";
 
@@ -424,10 +427,14 @@ async function ensureAccount(
   };
 
   if (user) {
-    if (user.user_metadata?.field_e2e !== true) {
+    if (
+      user.app_metadata?.fieldrush_e2e !== true ||
+      user.app_metadata?.fieldrush_e2e_role !==
+        (input.clearAuthOnboarding ? "onboarding" : input.role)
+    ) {
       throw new Error(
         `Refusing to reuse ${input.phone}: the existing auth user is not ` +
-          "owned by Field E2E.",
+          "owned by Field E2E through protected service metadata.",
       );
     }
     const { data: existingProfile, error: existingProfileError } = await client
@@ -580,14 +587,23 @@ async function ensureAccount(
 async function ensureBootstrapAccount(): Promise<void> {
   const target = authUsersByPhone.get(config.bootstrapPhone.replace(/\D/g, ""));
   if (
-    !target || target.app_metadata?.fieldrush_e2e !== true ||
-    target.app_metadata?.fieldrush_e2e_role !== "bootstrap"
+    !target || !isProtectedBootstrapFixture(target)
   ) {
     throw new Error(
       "The configured bootstrap account needs administrator-verified protected app_metadata " +
         "fieldrush_e2e=true and fieldrush_e2e_role=bootstrap. Refusing to onboard an unmarked staging user.",
     );
   }
+  // Only the protected, reserved synthetic bootstrap is refreshed. Public dev
+  // endpoints never create accounts, tag ordinary users or reset passwords.
+  await updateAuthUser(config.supabaseUrl, config.serviceRoleKey, target.id, {
+    password: config.testPassword,
+    app_metadata: {
+      ...target.app_metadata,
+      fieldrush_e2e_run_id: config.runId,
+      fieldrush_e2e_revoked_run_id: null,
+    },
+  });
   const actor = await createE2EUserClient(
     config.supabaseUrl,
     config.bootstrapPhone,

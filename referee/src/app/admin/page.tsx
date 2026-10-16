@@ -706,7 +706,7 @@ export default function AdminPage() {
           sendOtp: true,
         }),
       });
-      setNotice(result.warning ?? `Referee account created for ${input.displayName}.`);
+      setNotice(result.warning ?? `Referee access is ready for ${input.displayName}. Existing sign-in and player details are unchanged.`);
       await Promise.all([loadGames(), loadStaff()]);
       return true;
     } catch (createError) {
@@ -730,7 +730,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ ...input, sendOtp: true }),
       });
-      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} account created and a login code was requested.`);
+      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} access is ready and a login code was requested. Existing sign-in and player details are unchanged.`);
       await Promise.all([loadStaff(), loadGames()]);
       return true;
     } catch (createError) {
@@ -2231,10 +2231,11 @@ function GamesSection({
                 <p className="admin-detail-hint">Live assignments are locked to avoid an accidental handoff.</p>
               ) : null}
               <details className="admin-add-referee">
-                <summary>+ Add a new referee</summary>
+                <summary>+ Add referee access</summary>
                 <form onSubmit={submitNewReferee}>
                   <input
                     placeholder="Full name"
+                    maxLength={50}
                     required
                     value={newRefereeName}
                     onChange={(event) => setNewRefereeName(event.target.value)}
@@ -2251,8 +2252,9 @@ function GamesSection({
                     disabled={submitting !== null}
                     type="submit"
                   >
-                    {submitting === "create-referee" ? "Creating…" : "Create and send login"}
+                    {submitting === "create-referee" ? "Adding access…" : "Add access and send login"}
                   </button>
+                  <p className="admin-detail-hint">Existing players keep their name, username, Google link and sign-in credentials. This only adds staff access.</p>
                 </form>
               </details>
             </div>
@@ -3271,15 +3273,17 @@ function StaffSection({
         <span className="admin-eyebrow">Controlled access</span>
         <h2>Add an admin or referee</h2>
         <p>
-          Register their phone number, create their Field account, and send the
-          first one-time login code in one step.
+          Add staff access to their phone account and send a one-time login code.
+          Existing players keep their sign-in credentials, linked Google account,
+          name, username and account details. A new phone sign-in is created only
+          when no account already uses the number.
         </p>
         <form onSubmit={(event) => void submit(event)}>
           <label>
-            <span>Full name</span>
+            <span>Staff display name</span>
             <input
               autoComplete="name"
-              maxLength={80}
+              maxLength={50}
               onChange={(event) => setDisplayName(event.target.value)}
               placeholder="Mohamed Ali"
               required
@@ -3296,7 +3300,7 @@ function StaffSection({
               required
               value={phone}
             />
-            <small>This exact number becomes their login identity.</small>
+            <small>Uses this exact phone account. This does not reset its password or change its Google link.</small>
           </label>
           <fieldset>
             <legend>Access level</legend>
@@ -3326,7 +3330,7 @@ function StaffSection({
             disabled={submitting !== null || displayName.trim().length < 2 || phone.trim().length < 8}
             type="submit"
           >
-            {submitting === "create-staff" ? "Creating account…" : `Create ${role} account`}
+            {submitting === "create-staff" ? "Adding access…" : `Add ${role} access`}
           </button>
         </form>
       </section>
@@ -3337,7 +3341,7 @@ function StaffSection({
           <b>{staff.filter((member) => member.isActive).length} active</b>
         </header>
         {staff.length === 0 ? (
-          <AdminEmpty icon="referee" title="No staff accounts found" detail="Create the first referee or administrator." />
+          <AdminEmpty icon="referee" title="No staff accounts found" detail="Add referee or administrator access to a phone account." />
         ) : (
           <div className="admin-staff-list">
             {staff.map((member) => (
@@ -3791,6 +3795,9 @@ function GameActionDialog({
       <p className="admin-modal-lead">
         {dialog.fixture.homeClan.tag} vs {dialog.fixture.awayClan.tag} · {formatAdminDate(dialog.fixture.matchDate)}
       </p>
+      {!isCancel && dialog.fixture.matchKind === "SOLO" && dialog.fixture.ratingPolicyId !== "field-sr-season0-v2" ? (
+        <div className="admin-modal-warning">Legacy rating awards are fixed. Once SR has been awarded, a score correction must keep the same result and rating margin multiplier. Changing either requires a separately reviewed rating migration; it cannot silently retain the old SR. Use live “Undo goal” before finalizing a recording mistake.</div>
+      ) : null}
       {isCancel ? (
         <div className="admin-modal-warning">
           Scheduled participants will be notified. Solo-game payments follow the admin cancellation refund policy.

@@ -53,6 +53,7 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
   bool _initialLoading = false;
   int _request = 0;
   int _screenGeneration = 0;
+  bool _switchingPhoneAccount = false;
 
   @override
   void initState() {
@@ -74,15 +75,19 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
             _status = null;
             _error = null;
             _initialLoading = false;
-            _screenGeneration++;
+            // A deliberate unfinished-signup switch owns its current OTP
+            // screen until sign-out and the new SMS request have both ended.
+            if (!_switchingPhoneAccount) _screenGeneration++;
           });
           return;
         }
         final changed = id != _userId;
         if (changed) {
           setState(() {
-            // Keep the signed-out OTP screen mounted while its verify call ends.
-            if (_userId != null) _screenGeneration++;
+            // Ordinary SMS verification may finish on the signed-out screen.
+            // A session arriving DURING an unfinished-signup switch is not
+            // that flow: discard the previous user's still-mounted draft.
+            if (_userId != null || _switchingPhoneAccount) _screenGeneration++;
             _userId = id;
             _account = null;
             _status = null;
@@ -246,6 +251,9 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
       authRepository: widget.authRepository,
       accountRepository: widget.accountRepository,
       account: account,
+      onPhoneAccountSwitching: (switching) {
+        if (mounted) setState(() => _switchingPhoneAccount = switching);
+      },
       onOnboardingCompleted: () => unawaited(_refresh()),
     );
   }

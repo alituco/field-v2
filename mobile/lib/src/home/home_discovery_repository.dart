@@ -90,7 +90,12 @@ abstract interface class HomeDiscoveryRepository {
   Future<void> dismiss(String notificationId);
 }
 
-class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
+abstract interface class HomeActivityChanges {
+  Stream<void> watchActivityChanges();
+}
+
+class SupabaseHomeDiscoveryRepository
+    implements HomeDiscoveryRepository, HomeActivityChanges {
   SupabaseHomeDiscoveryRepository({SupabaseClient? client})
     : _injectedClient = client;
 
@@ -161,5 +166,16 @@ class SupabaseHomeDiscoveryRepository implements HomeDiscoveryRepository {
       'dismiss_my_home_notification',
       params: {'notification_id_to_use': notificationId},
     );
+  }
+
+  @override
+  Stream<void> watchActivityChanges() {
+    final userId = _client.auth.currentUser?.id;
+    if (userId == null) return const Stream<void>.empty();
+    return _client
+        .from('notifications')
+        .stream(primaryKey: ['id'])
+        .eq('recipient_profile_id', userId)
+        .map((_) {});
   }
 }

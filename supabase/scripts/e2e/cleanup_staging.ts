@@ -1,5 +1,6 @@
 import {
   createAdminClient,
+  createE2EUserClient,
   isTerminalGameStatus,
   listAuthUsers,
   loadManifestConfig,
@@ -8,6 +9,7 @@ import {
   updateAuthUser,
 } from "./_shared.ts";
 import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
+import { isCurrentRunFixture } from "../../functions/_shared/dev_auth.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -48,7 +50,10 @@ await bestEffort(
 await bestEffort("remove E2E referee assignment", removeRefereeAssignment);
 await bestEffort("dismiss E2E moderation reports", dismissReports);
 await bestEffort("close E2E support requests", closeSupportTickets);
-await bestEffort("verify isolated account ownership", restoreAccountBaselines);
+await bestEffort(
+  "revoke owned E2E sessions and credentials",
+  restoreAccountBaselines,
+);
 
 if (errors.length > 0) {
   throw new Error(
@@ -233,6 +238,19 @@ async function restoreAccountBaselines(): Promise<void> {
     if (users.length < 1000) break;
   }
 
+  const bootstrap = [...authUsersById.values()].find((user) =>
+    user.phone?.replace(/\D/g, "") ===
+      manifest.login.bootstrapPhone.replace(/\D/g, "")
+  );
+  if (bootstrap) {
+    accounts.push({
+      profileId: bootstrap.id,
+      phone: bootstrap.phone!,
+      displayName: "E2E bootstrap",
+      username: "field_e2e_bootstrap",
+    });
+  }
+
   for (const account of accounts) {
     const existing = authUsersById.get(account.profileId);
     if (!existing) {
@@ -241,31 +259,67 @@ async function restoreAccountBaselines(): Promise<void> {
       );
     }
 
-    if (existing.user_metadata?.field_e2e !== true) {
+    if (
+      existing.app_metadata?.fieldrush_e2e_revoked_run_id === manifest.runId &&
+      existing.app_metadata?.fieldrush_e2e_run_id == null
+    ) continue;
+    if (
+      !isCurrentRunFixture(existing, manifest.runId, Date.now()) ||
+      existing.phone?.replace(/\D/g, "") !== account.phone.replace(/\D/g, "")
+    ) {
       throw new Error(
         `refusing to change unmarked account ${account.profileId}`,
       );
     }
-    // Never reset the server-owned signup state or rewrite private DOB into
-    // public profiles. The dedicated onboarding actor is recreated next setup.
-    await updateAuthUser(
-      config.supabaseUrl,
-      config.serviceRoleKey,
-      account.profileId,
-      {
-        user_metadata: {
-          ...existing.user_metadata,
-          field_e2e: true,
-          field_e2e_role: account.profileId ===
-              manifest.accounts.admin.profileId
-            ? "admin"
-            : "player",
+    await bestEffort(`close owned fixture ${account.profileId}`, async () => {
+      // Revoke refresh sessions before rotating the per-run fixture password.
+      // A prior JWT is never saved in a manifest or copied into another run.
+      let logoutFailed = false;
+      try {
+        const actor = await createE2EUserClient(
+          config.supabaseUrl,
+          account.phone,
+        );
+        const { data: sessionData } = await actor.auth.getSession();
+        const token = sessionData.session?.access_token;
+        const { error } = token
+          ? await admin.auth.admin.signOut(token, "global")
+          : {
+            error: new Error("Synthetic E2E logout session was unavailable"),
+          };
+        logoutFailed = error != null;
+      } catch {
+        // Still close protected ownership, password and staff access below.
+        logoutFailed = true;
+      }
+      const password = Array.from(
+        crypto.getRandomValues(new Uint8Array(32)),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      await updateAuthUser(
+        config.supabaseUrl,
+        config.serviceRoleKey,
+        account.profileId,
+        {
+          password,
+          app_metadata: {
+            ...existing.app_metadata,
+            fieldrush_e2e_run_id: null,
+            fieldrush_e2e_revoked_run_id: manifest.runId,
+          },
         },
-      },
-    ).catch((error) => {
-      throw new Error(
-        `restore auth baseline ${account.profileId}: ${String(error)}`,
       );
+      if (account.profileId === manifest.accounts.admin.profileId) {
+        const { error } = await admin.from("referee_profiles").update({
+          is_active: false,
+        }).eq("profile_id", account.profileId);
+        if (error) {
+          throw new Error("Could not retire isolated E2E staff access");
+        }
+      }
+      if (logoutFailed) {
+        throw new Error("Could not confirm isolated E2E session revocation");
+      }
     });
   }
 }

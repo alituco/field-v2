@@ -355,9 +355,12 @@ jobs:
           deno check supabase/functions/*/index.ts "${script_files[@]}"
           deno test \
             supabase/functions/_shared/stripe_checkout_test.ts \
+            supabase/functions/_shared/stripe_recovery_test.ts \
             supabase/functions/_shared/staging_guard_test.ts \
+            supabase/functions/_shared/dev_auth_test.ts \
             supabase/functions/fieldrush-delete-account/request_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
+            supabase/functions/fieldrush-push-dispatch/handler_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts \
             supabase/scripts/e2e/rating_tracks_test.ts \
@@ -393,6 +396,25 @@ jobs:
             node supabase/scripts/test_game_formations.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_solo_rebooking.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_staff_provisioning.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_notification_push_delivery.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_notification_events.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_push_dispatch_schedule.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_stripe_checkout_recovery.mjs
+
+      - name: Replay the account and push migration chain without provider access
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          THROUGH_MIGRATION=20261016000400 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_reliability_policy_system.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
 
       - name: Verify prospective Season 0 rating math, evidence, replay, privacy, and transfers
         shell: bash
@@ -440,6 +462,29 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_fieldrush_google_email.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_safe_staff_provisioning.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_notification_push_security.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_notification_events.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_clan_write_containment.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_replacement_notifications.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_atomic_solo_goals.sql
 
       - name: Verify staff offboarding and atomic account-deletion wallet forfeiture
         shell: bash
@@ -733,11 +778,6 @@ jobs:
             "$GITHUB_WORKSPACE/mobile/build/e2e-artifacts" \
             "$GITHUB_WORKSPACE/referee/e2e-artifacts"
 
-      - name: Configure and verify staging E2E authentication
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: .github/scripts/configure-staging-e2e-auth.sh
-
       - name: Install player E2E dependencies
         working-directory: mobile
         run: flutter pub get
@@ -751,6 +791,11 @@ jobs:
           --allow-net
           --allow-write
           supabase/scripts/e2e/setup_staging.ts
+
+      - name: Configure and verify staging E2E authentication
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: .github/scripts/configure-staging-e2e-auth.sh
 
       - name: Export non-secret E2E fixture identifiers
         shell: bash
@@ -827,8 +872,10 @@ jobs:
         shell: bash
         env:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
+          trap 'bash .github/scripts/close-staging-e2e-auth.sh' EXIT
           if [[ -n "${E2E_MANIFEST_PATH:-}" && -s "$E2E_MANIFEST_PATH" ]]; then
             deno run --allow-env --allow-net --allow-read \
               supabase/scripts/e2e/cleanup_staging.ts
@@ -924,6 +971,8 @@ jobs:
           handoff-artifact-id: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
         env:
           STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
           SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           FIELD_ENVIRONMENT: staging
@@ -1112,6 +1161,8 @@ jobs:
         env:
           STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
 
   deploy-staging:
     name: Required checks and staging release gate

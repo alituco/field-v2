@@ -1,6 +1,10 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
 import { isExactFieldStagingSupabaseUrl } from "./staging_guard.ts";
 import {
+  CheckoutRecoveryRequired,
+  recoverOrphanStripeIntent,
+} from "./stripe_recovery.ts";
+import {
   assertStagingE2EActor,
   assertStagingE2EGame,
   canonicalJson,
@@ -119,6 +123,8 @@ export async function handlePayment(request: Request): Promise<Response> {
         return json(await confirmCheckout(ctx, uuid(body.intent_id)));
       case "cancel":
         return json(await cancelCheckout(ctx, uuid(body.intent_id)));
+      case "recover":
+        return json(await recoverEarlierCheckout(ctx));
       case "complete_staging_e2e":
         return json(await stagingE2ECheckout(ctx, body));
       default:
@@ -202,9 +208,7 @@ async function ensureStripeIntent(
   // Stripe may prune idempotency keys after 24 hours. An unresolved create
   // older than this must be investigated, never blindly recreated.
   if (Date.now() - Date.parse(intent.created_at) > 23 * 60 * 60 * 1000) {
-    throw new PaymentError(
-      "An earlier payment attempt needs review. Please contact support.",
-    );
+    return await recoverOrphanStripeIntent(ctx, intent);
   }
   const payment = await ctx.stripe.paymentIntents.create({
     amount: stripeAmountMinor(intent.amount_fils, intent.currency),
@@ -493,6 +497,51 @@ async function cancelCheckout(ctx: Context, id: string) {
   }
   const payment = await cancelAtProvider(ctx, intent);
   return await reconcileAndRefund(ctx, intent, payment);
+}
+
+/** Authenticated self-service recovery: inspect only this user's oldest lease,
+ * never create a new PaymentIntent and never cancel an unexpired checkout. */
+export async function recoverEarlierCheckout(ctx: Context) {
+  const { data, error } = await ctx.admin.from("payment_intents").select("*")
+    .eq("profile_id", ctx.userId).eq("provider", "STRIPE")
+    .eq("purpose", "SOLO_BOOKING").in("status", ["PENDING", "CAPTURED"])
+    .order("created_at").limit(1).maybeSingle();
+  if (error) throw error;
+  if (!data) return { recovered: true };
+  const intent = data as PaymentIntent;
+  if (
+    intent.status === "PENDING" && Date.parse(intent.expires_at) > Date.now()
+  ) {
+    return { recovered: false };
+  }
+  if (
+    !intent.provider_intent_id &&
+    Date.now() - Date.parse(intent.created_at) <= 23 * 60 * 60 * 1000
+  ) return { recovered: false };
+  try {
+    const payment = await ensureStripeIntent(ctx, intent);
+    const result = await reconcileAndRefund(
+      ctx,
+      intent,
+      intent.status === "PENDING" &&
+        Date.parse(intent.expires_at) <= Date.now() &&
+        !["succeeded", "processing", "requires_capture"].includes(
+          payment.status,
+        )
+        ? await cancelAtProvider(ctx, intent)
+        : payment,
+    );
+    return {
+      recovered: ["CANCELLED", "FINALIZED", "REFUNDED"].includes(
+        String(result.status),
+      ),
+    };
+  } catch (error) {
+    if (error instanceof CheckoutRecoveryRequired) {
+      return { recovered: false, review_reference: error.reviewReference };
+    }
+    throw error;
+  }
 }
 
 async function reconcileAndRefund(
@@ -822,7 +871,7 @@ export async function handleReconcile(request: Request): Promise<Response> {
       "PENDING",
       "CAPTURED",
       "REQUIRES_REFUND",
-    ]).order("updated_at").limit(3);
+    ]).order("updated_at").limit(10);
     if (intentsError) throw intentsError;
     for (const row of intents ?? []) {
       if (Date.now() >= ctx.deadlineMs!) break;

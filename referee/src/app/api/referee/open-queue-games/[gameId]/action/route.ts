@@ -19,6 +19,7 @@ import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock
 import { soloScheduledDurationSeconds, soloStartDurationSeconds } from "@/lib/match-duration";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
 import { finalizeSoloMatch } from "@/lib/solo-match-finalization";
+import { mutateSoloGoal, SoloGoalActionError } from "@/lib/solo-goal-actions";
 import { assertSeasonZeroAcknowledgement, loadSeasonZeroState, runSeasonZeroAction, SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
@@ -30,6 +31,7 @@ type ActionBody = {
     | "resume"
     | "set_time"
     | "goal"
+    | "remove_goal"
     | "blue_card"
     | "expire_blue_card"
     | "finish"
@@ -85,7 +87,6 @@ type ClockRow = {
 const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const requestReceivedAt = new Date().toISOString();
   const refereeContext = await requireReferee(request);
   if (!isRefereeContext(refereeContext)) return refereeContext;
   const { gameId } = await context.params;
@@ -158,7 +159,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
         await setGameTime(db, gameId, body.elapsedSeconds);
         break;
       case "goal":
-        await recordGoal(db, gameId, body, requestReceivedAt);
+      case "remove_goal":
+        result = await mutateSoloGoal(db, refereeContext.referee.profileId, gameId, body);
         break;
       case "blue_card":
         await recordBlueCard(db, gameId, body);
@@ -418,7 +420,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Action failed." },
+      { error: error instanceof Error ? error.message : "Action failed.",
+        ...(error instanceof SoloGoalActionError && error.definitivelyRejected ? { goalOperationRejected: true } : {}) },
       { status: 400 },
     );
   }
@@ -532,49 +535,6 @@ async function resumeGame(db: SupabaseClient, gameId: string) {
     "Could not resume solo game clock",
   );
   await insertEvent(db, gameId, "MATCH_RESUMED", minute, second);
-}
-
-async function recordGoal(
-  db: SupabaseClient,
-  gameId: string,
-  body: ActionBody,
-  occurredAt: string,
-) {
-  await loadLiveGame(db, gameId);
-  const team = requireTeam(body.clanId);
-  const profileId = requireString(body.profileId, "Choose the scorer.");
-  const assistProfileId = body.assistProfileId || null;
-  await assertPlayerOnTeam(db, gameId, team, profileId);
-  if (assistProfileId) await assertPlayerOnTeam(db, gameId, team, assistProfileId);
-
-  const elapsed = await currentElapsed(db, gameId);
-  const split = splitElapsed(elapsed);
-  const minute = clamp(split.minute === 0 ? 1 : split.minute, 1, 240);
-
-  await assertNoError(
-    db.from("open_queue_goals").insert({
-      game_id: gameId,
-      team,
-      profile_id: profileId,
-      assist_profile_id: assistProfileId,
-      minute,
-    }),
-    "Could not record goal",
-  );
-  await insertEvent(
-    db,
-    gameId,
-    "GOAL",
-    minute,
-    split.second,
-    team,
-    profileId,
-    assistProfileId,
-    null,
-    "",
-    occurredAt,
-  );
-  await syncScore(db, gameId);
 }
 
 async function recordBlueCard(db: SupabaseClient, gameId: string, body: ActionBody) {
@@ -700,22 +660,6 @@ async function setGameTime(
     null,
     null,
     `Match time corrected to ${formatElapsed(elapsed)}`,
-  );
-}
-
-async function syncScore(db: SupabaseClient, gameId: string) {
-  const { data, error } = await db.from("open_queue_goals")
-    .select("team")
-    .eq("game_id", gameId);
-  if (error) throw new Error(`Could not recalculate score: ${error.message}`);
-  const whiteScore = (data ?? []).filter((goal) => goal.team === "WHITE").length;
-  const blackScore = (data ?? []).filter((goal) => goal.team === "BLACK").length;
-  await assertNoError(
-    db.from("open_queue_games").update({
-      white_score: whiteScore,
-      black_score: blackScore,
-    }).eq("id", gameId),
-    "Could not update final score",
   );
 }
 

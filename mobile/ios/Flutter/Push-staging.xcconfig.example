@@ -1,0 +1,7 @@
+// Opt-in override only after the staging App ID has Push Notifications enabled
+// and its provisioning profile has been regenerated with Apple Pay AND push.
+// TestFlight/App Store provisioning uses production APNs, even for this staging
+// app. A development device profile instead needs development APNs.
+CODE_SIGN_ENTITLEMENTS = Runner/Runner-staging-push.entitlements
+INFOPLIST_FILE = Runner/Info-staging-push.plist
+FIELDRUSH_APNS_ENVIRONMENT = production

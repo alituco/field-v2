@@ -16,6 +16,11 @@ abstract class AuthRepository {
 }
 
 class SupabaseAuthRepository implements AuthRepository {
+  SupabaseAuthRepository({this.beforeSignOut});
+
+  /// Device-token cleanup supplied by the app, while the current JWT is usable.
+  final Future<void> Function()? beforeSignOut;
+
   static const _appEnvironment = String.fromEnvironment('APP_ENV');
   static const _devOtpPhones = {
     '+97338883670',
@@ -194,7 +199,14 @@ class SupabaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> signOut() {
-    return _client.auth.signOut();
+  Future<void> signOut() async {
+    final userId = currentUser?.id;
+    if (userId != null) {
+      await beforeSignOut?.call();
+      if (currentUser?.id != userId) {
+        throw const AuthException('The account changed. Please try again.');
+      }
+    }
+    await _client.auth.signOut();
   }
 }

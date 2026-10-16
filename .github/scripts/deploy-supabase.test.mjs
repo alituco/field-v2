@@ -95,7 +95,7 @@ if (command === 'node') {
 } else if (args[0] === 'functions' && args[1] === 'deploy') {
   const name = args[2];
   const names = ['stripe-payment', 'stripe-payment-webhook', 'stripe-payment-reconcile', 'fieldrush-delete-account',
-    'cloudflare-stream-webhook', 'profile-goal-clip', 'dev-phone-login', 'dev-switch-user'];
+    'fieldrush-push-dispatch', 'cloudflare-stream-webhook', 'profile-goal-clip', 'dev-phone-login', 'dev-switch-user'];
   if (!names.includes(name)) reject('Unexpected function deployment');
   expect(['functions', 'deploy', name, '--project-ref', ref, ...(name === 'profile-goal-clip' ? [] : ['--no-verify-jwt']), '--yes']);
   fail('deploy:' + name);
@@ -230,6 +230,10 @@ for (const [label, present] of [
       assert.ok(unrelatedSecrets.every(name => state.secrets.includes(name)));
       assert.ok(retiredSecrets.every(name => !state.secrets.includes(name)));
       assert.ok(state.functions.includes('keep-function'));
+      assert.ok(state.functions.includes('fieldrush-push-dispatch'));
+      assert.ok(!state.secrets.includes('PUSH_DELIVERY_ENABLED'));
+      assert.ok(!state.secrets.includes('FIREBASE_SERVICE_ACCOUNT_JSON'));
+      assert.ok(!state.secrets.includes('PUSH_WORKER_SECRET'));
       assert.ok(!state.functions.includes('tap-payment') && !state.functions.includes('tap-payment-webhook'));
       const stripeDeployed = result.calls.findIndex(({ args }) => args[0] === 'functions' && args[1] === 'deploy' && args[2] === 'stripe-payment-reconcile');
       const configured = result.calls.findIndex(({ command }) => command === 'node');
@@ -238,6 +242,14 @@ for (const [label, present] of [
     }
   });
 }
+
+test('a push worker deployment failure is not hidden or reported as success', (t) => {
+  const result = deployment(t, { failure: 'deploy:fieldrush-push-dispatch' }).run();
+  assert.equal(result.status, 42, result.output);
+  assert.match(result.stderr, /Mock remote failure: deploy:fieldrush-push-dispatch/);
+  assert.doesNotMatch(result.output, /deployment completed/);
+  assert.equal(result.calls.some(({ args }) => args.includes('configure_push_dispatch')), false);
+});
 
 for (const inventoryOverride of ['not-json', '', 'null', '{}', '[{}]', '[{"name":null}]', '[{"name":42}]', '[{"name":""}]', '{"type":"success","data":{"secrets":[]}}', '[]\n[]']) {
   test(`rejects malformed secret inventory ${JSON.stringify(inventoryOverride)}`, (t) => {

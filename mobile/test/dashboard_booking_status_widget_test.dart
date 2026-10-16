@@ -3,8 +3,10 @@ import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/home/dashboard_home.dart';
+import 'package:field/src/home/activity_revision.dart';
 import 'package:field/src/home/fieldrush_home_widgets.dart';
 import 'package:field/src/home/home_discovery_repository.dart';
+import 'package:field/src/home/home_discovery_screen.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
@@ -22,6 +24,36 @@ import 'package:flutter_test/flutter_test.dart';
 import '../integration_test/helpers/staging_test_helpers.dart';
 
 void main() {
+  setUp(clearFieldrushActivityOpenRequest);
+  tearDown(clearFieldrushActivityOpenRequest);
+
+  testWidgets('a cold push tap opens canonical Activity after Home mounts', (
+    tester,
+  ) async {
+    requestFieldrushActivityOpen();
+    await _pump(tester, _Queue(), discovery: _Discovery());
+    expect(find.byType(HomeDiscoveryScreen), findsOneWidget);
+    expect(find.text('Activity'), findsOneWidget);
+    expect(fieldrushActivityOpenRequested.value, isFalse);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('push taps do not stack duplicate Activity screens', (
+    tester,
+  ) async {
+    await _pump(tester, _Queue(), discovery: _Discovery());
+    requestFieldrushActivityOpen();
+    await tester.pumpAndSettle();
+    requestFieldrushActivityOpen();
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeDiscoveryScreen), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeDiscoveryScreen), findsNothing);
+    expect(find.byType(DashboardHome), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'Home Take a spot opens the game and Join goes straight to position checkout',
     (tester) async {

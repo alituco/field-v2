@@ -109,9 +109,9 @@ export function loadSetupConfig(operation: string): E2EConfig {
   const manifestPath = requireEnv("E2E_MANIFEST_PATH");
   const testPassword = requireEnv("E2E_TEST_PASSWORD");
 
-  if (testPassword.length < 16) {
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(testPassword)) {
     throw new Error(
-      "E2E_TEST_PASSWORD must be a generated value of at least 16 characters.",
+      "E2E_TEST_PASSWORD must be a generated 32–256 character run capability.",
     );
   }
 

@@ -429,3 +429,8 @@ verify_jwt = false
 # an authenticated RPC enforcing recent reauthentication and deletion blockers.
 [functions.fieldrush-delete-account]
 verify_jwt = false
+
+# Protected scheduler only: the handler checks its own constant-time worker
+# bearer secret and exact staging/local environment; a user JWT is not accepted.
+[functions.fieldrush-push-dispatch]
+verify_jwt = false

@@ -44,120 +44,70 @@ export async function POST(request: NextRequest) {
   if (adminError) return adminError;
 
   try {
-    const body = (await request.json()) as {
-      displayName?: string;
-      phone?: string;
-      role?: "admin" | "referee";
-      password?: string;
-      sendOtp?: boolean;
-    };
-    const displayName = requireText(body.displayName, "Enter a name.");
-    const phone = normalizePhoneNumber(requireText(body.phone, "Enter a phone."));
-    const role = body.role === "admin" ? "admin" : "referee";
-    const password = body.password && body.password.length >= 6
-      ? body.password
-      : crypto.randomUUID();
-
-    const userId = await upsertAuthUser(context.db, {
-      phone,
-      displayName,
-      password,
+    const body = parseStaffInput(await request.json());
+    const { displayName, phone, role } = body;
+    const { userId, accountCreated } = await resolveAuthUser(context.db, phone, displayName);
+    // The database rechecks the administrator, exact Auth identity/phone and
+    // deletion state under locks. It never overwrites an existing player row.
+    const { data, error } = await context.db.rpc("admin_grant_fieldrush_staff", {
+      actor_admin_id: context.referee.profileId,
+      target_profile_id: userId,
+      expected_phone: phone,
+      display_name_to_use: displayName,
+      role_to_use: role,
     });
-
-    await upsertProfile(context.db, { userId, phone, displayName, role });
+    if (error) throw error;
+    const staff = serializeGrantedStaff(data, userId, phone, role);
 
     let loginWarning: string | null = null;
     if (body.sendOtp !== false) {
-      const { error } = await createSupabasePublic().auth.signInWithOtp({
-        phone,
-      });
-      if (error) loginWarning = `Account created, but the first login code could not be sent: ${error.message}`;
+      try {
+        const { error } = await createSupabasePublic().auth.signInWithOtp({
+          phone,
+          options: { shouldCreateUser: false },
+        });
+        if (error) throw error;
+      } catch {
+        loginWarning = "Staff access is ready, but the login code could not be sent. Ask them to sign in with their existing phone number.";
+      }
     }
 
     return NextResponse.json({
       ok: true,
       profileId: userId,
-      staff: { profileId: userId, displayName, phone, role, isActive: true },
+      staff,
+      accountCreated,
+      alreadyActive: data.already_active === true,
       warning: loginWarning,
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Could not create this staff account." },
+      { error: staffProvisioningError(error) },
       { status: 400 },
     );
   }
 }
 
-async function upsertAuthUser(
+async function resolveAuthUser(
   db: ReturnType<typeof import("@/lib/supabase-admin").createSupabaseAdmin>,
-  input: { phone: string; displayName: string; password: string },
+  phone: string,
+  displayName: string,
 ) {
-  const existingUser = await findUserByPhone(db, input.phone);
-
-  if (existingUser) {
-    const { error } = await db.auth.admin.updateUserById(existingUser.id, {
-      phone: input.phone,
-      password: input.password,
-      phone_confirm: true,
-      user_metadata: {
-        ...(existingUser.user_metadata ?? {}),
-        display_name: input.displayName,
-        name: input.displayName,
-      },
-    });
-
-    if (error) throw error;
-    return existingUser.id;
-  }
+  const existingUser = await findUserByPhone(db, phone);
+  if (existingUser) return { userId: existingUser.id, accountCreated: false };
 
   const { data, error } = await db.auth.admin.createUser({
-    phone: input.phone,
-    password: input.password,
-    phone_confirm: true,
-    user_metadata: {
-      display_name: input.displayName,
-      name: input.displayName,
-    },
+    phone,
+    phone_confirm: false,
+    user_metadata: { display_name: displayName, name: displayName },
   });
-
-  if (error) throw error;
-  if (!data.user) throw new Error("Could not create auth user.");
-  return data.user.id;
-}
-
-async function upsertProfile(
-  db: ReturnType<typeof import("@/lib/supabase-admin").createSupabaseAdmin>,
-  input: {
-    userId: string;
-    phone: string;
-    displayName: string;
-    role: "admin" | "referee";
-  },
-) {
-  const { error: profileError } = await db.from("profiles").upsert(
-    {
-      id: input.userId,
-      phone: input.phone,
-      display_name: input.displayName,
-      username: null,
-    },
-    { onConflict: "id" },
-  );
-
-  if (profileError) throw profileError;
-
-  const { error: refereeError } = await db.from("referee_profiles").upsert(
-    {
-      profile_id: input.userId,
-      phone: input.phone,
-      display_name: input.displayName,
-      role: input.role,
-      is_active: true,
-    },
-    { onConflict: "profile_id" },
-  );
-
-  if (refereeError) throw refereeError;
+  if (!error && data.user) return { userId: data.user.id, accountCreated: true };
+  // Another request may have created the phone identity after our lookup, or
+  // Auth may have committed before a response failed. Re-read; never reset,
+  // delete, merge, or update that account as a recovery strategy.
+  const concurrentUser = await findUserByPhone(db, phone);
+  if (concurrentUser) return { userId: concurrentUser.id, accountCreated: false };
+  throw new StaffProvisioningError("Could not create the phone sign-in. No staff access was granted. Try again.");
 }
 
 async function findUserByPhone(
@@ -182,11 +132,45 @@ async function findUserByPhone(
     if (data.users.length < 1000) return null;
   }
 
-  return null;
+  throw new StaffProvisioningError("The account directory could not be searched completely. No account was changed. Contact support.");
 }
 
-function requireText(value: string | undefined, message: string) {
-  const trimmed = value?.trim();
-  if (!trimmed) throw new Error(message);
+function requireText(value: unknown, message: string) {
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (!trimmed) throw new StaffProvisioningError(message);
   return trimmed;
 }
+
+function parseStaffInput(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new StaffProvisioningError("Provide valid staff details.");
+  const body = value as Record<string, unknown>;
+  if ("password" in body || "resetPassword" in body) throw new StaffProvisioningError("Adding staff never changes a password. Password resets require a separate recovery flow.");
+  if (Object.keys(body).some((key) => !["displayName", "phone", "role", "sendOtp"].includes(key))) throw new StaffProvisioningError("Unknown staff field.");
+  const displayName = requireText(body.displayName, "Enter a name.");
+  if (displayName.length < 2 || displayName.length > 50 || /[\u0000-\u001f\u007f]/.test(displayName)) throw new StaffProvisioningError("Use a staff name of 2 to 50 characters.");
+  const phone = normalizePhoneNumber(requireText(body.phone, "Enter a phone."));
+  if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new StaffProvisioningError("Enter a valid international phone number.");
+  if (body.role !== undefined && body.role !== "admin" && body.role !== "referee") throw new StaffProvisioningError("Choose admin or referee access.");
+  if (body.sendOtp !== undefined && typeof body.sendOtp !== "boolean") throw new StaffProvisioningError("Choose whether to send a login code.");
+  return { displayName, phone, role: body.role === "admin" ? "admin" as const : "referee" as const, sendOtp: body.sendOtp };
+}
+
+function serializeGrantedStaff(value: unknown, userId: string, phone: string, role: string) {
+  const result = value as { staff?: Record<string, unknown> } | null;
+  const staff = result?.staff;
+  if (!staff || staff.profile_id !== userId || staff.phone !== phone || staff.role !== role || staff.is_active !== true || typeof staff.display_name !== "string") {
+    throw new StaffProvisioningError("Staff access could not be confirmed. Refresh the staff directory before trying again.");
+  }
+  return { profileId: userId, displayName: staff.display_name, phone, role, isActive: true };
+}
+
+function staffProvisioningError(error: unknown) {
+  if (error instanceof StaffProvisioningError) return error.message;
+  const code = (error as { code?: unknown } | null)?.code;
+  if (code === "42501") return "Active administrator access is required. Refresh and sign in again.";
+  if (code === "22023") return "Staff access was not changed. Check the phone number, account status and any existing staff role.";
+  if (code === "PGRST202" || code === "42883") return "Staff provisioning is unavailable until the latest database migration is deployed.";
+  return "Staff access could not be confirmed. Refresh the staff directory before trying again. Existing sign-in and player details were not changed.";
+}
+
+class StaffProvisioningError extends Error {}

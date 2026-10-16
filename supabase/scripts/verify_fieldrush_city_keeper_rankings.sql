@@ -284,9 +284,22 @@ begin
   perform pg_temp.expect((public.get_fieldrush_player_ratings(me,season_start,season_end)#>>'{ratings,GOALKEEPER,skill_rating}')::integer=before_sr,'no-show correction does not hide preserved canonical SR');
 
   -- Correct the actual solo result through the same RPC used by the admin UI.
-  perform public.admin_override_match_score(admin_id,'SOLO',g1,0,3,'Regression: correct the recorded winning side.');
-  perform pg_temp.expect((select result='LOSS' from public.player_rating_events where source_id=g1 and profile_id=me),'score correction updates the role event');
-  perform pg_temp.expect((select wins=3 and losses=1 from public.fieldrush_player_rating_tracks where profile_id=me and rating_track='GOALKEEPER'),'score correction updates Keeper W/L counters');
+  if to_regprocedure('fieldrush_rating_private.assert_legacy_score_correction_safe(text,uuid,integer,integer)') is not null then
+    -- New deployments contain legacy result changes rather than publishing a
+    -- different winner with the old, permanently fixed SR award.
+    begin
+      perform public.admin_override_match_score(admin_id,'SOLO',g1,0,3,'Regression: correct the recorded winning side.');
+      raise exception 'Expected legacy result correction containment.';
+    exception when sqlstate '22023' then
+      perform pg_temp.expect(sqlerrm like '%reviewed rating migration%','legacy result change explains the required audited migration');
+    end;
+    perform pg_temp.expect((select result='WIN' from public.player_rating_events where source_id=g1 and profile_id=me),'blocked correction leaves role event unchanged');
+    perform pg_temp.expect((select wins=4 and losses=0 from public.fieldrush_player_rating_tracks where profile_id=me and rating_track='GOALKEEPER'),'blocked correction leaves Keeper W/L unchanged');
+  else
+    perform public.admin_override_match_score(admin_id,'SOLO',g1,0,3,'Regression: correct the recorded winning side.');
+    perform pg_temp.expect((select result='LOSS' from public.player_rating_events where source_id=g1 and profile_id=me),'score correction updates the role event');
+    perform pg_temp.expect((select wins=3 and losses=1 from public.fieldrush_player_rating_tracks where profile_id=me and rating_track='GOALKEEPER'),'score correction updates Keeper W/L counters');
+  end if;
   perform pg_temp.expect((select wins=3 and losses=0 from public.fieldrush_player_rating_tracks where profile_id=me and rating_track='OUTFIELD'),'Keeper correction leaves Outfield counters alone');
   perform pg_temp.expect((select skill_rating=before_sr from public.fieldrush_player_rating_tracks where profile_id=me and rating_track='GOALKEEPER'),'score correction preserves applied Keeper SR');
   perform set_config('field.match_resolution_control_plane','on',true);
