@@ -163,6 +163,7 @@ test("push delivery has mandatory isolated, provider-stub and full-schema checks
   const provider = stepContaining(source, "name: Check Edge Functions and database verifier");
   assert.match(provider, /deno test[\s\S]*supabase\/functions\/fieldrush-push-dispatch\/handler_test\.ts/);
   const chain = stepContaining(source, "THROUGH_MIGRATION=20261016000400");
+  assert.match(chain, /REPLAY_SQL_FILE=supabase\/scripts\/verify_reliability_policy_system\.sql/);
   assert.match(chain, /node supabase\/scripts\/test_season_zero_migration_chain\.mjs/);
   const full = stepContaining(source, "<supabase/scripts/verify_notification_push_security.sql");
   assert.match(full, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);

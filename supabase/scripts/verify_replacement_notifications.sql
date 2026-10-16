@@ -13,7 +13,7 @@ end$$;
 do $$
 declare people uuid[]:='{}'; p uuid; i integer; game uuid; other_game uuid; source uuid;
   preferences jsonb:='{"game_reminders":true,"clan_callups":true,"party_invites":true,"ladder_moves":true,"replays_ready":false,"news_and_offers":false}';
-  notification uuid; installation uuid:=gen_random_uuid(); claim uuid:=gen_random_uuid(); payload jsonb;
+  notification uuid; installation uuid:=gen_random_uuid(); claim uuid:=gen_random_uuid(); payload jsonb; play_action uuid;
 begin
   for i in 1..10 loop
     p:=gen_random_uuid(); people:=array_append(people,p);
@@ -43,6 +43,16 @@ begin
   perform pg_temp.spot_assert((select count(*)=1 from fieldrush_private.replacement_notification_jobs where source_booking_id=source),'cancellation enqueues one job');
   perform pg_temp.spot_assert(not exists(select 1 from public.notifications where type='OPEN_QUEUE_REPLACEMENT_AVAILABLE'),'no fanout occurs inside cancellation');
   perform pg_temp.spot_assert(fieldrush_private.replacement_recipient_eligible(people[2],game,source),'same-city eligible opt-in qualifies');
+  insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
+    values(people[1],'Spot fixture admin','+15558617001','admin',true);
+  insert into public.moderation_actions(subject_type,subject_profile_id,action_type,restriction_scope,
+    reason_code,user_message,starts_at,ends_at,issued_by)
+  values('PLAYER',people[2],'SUSPENSION','PLAY','VERIFICATION','Disposable alert restriction.',
+    now()-interval '1 minute',now()+interval '1 day',people[1]) returning id into play_action;
+  perform pg_temp.spot_assert(public.profile_has_active_play_restriction(people[2]),'test actually establishes an active play restriction');
+  perform pg_temp.spot_assert(not fieldrush_private.replacement_recipient_eligible(people[2],game,source),'play-restricted recipient is excluded');
+  update public.moderation_actions set revoked_at=clock_timestamp(),revoked_by=people[1],revocation_reason='Disposable fixture.' where id=play_action;
+  perform pg_temp.spot_assert(fieldrush_private.replacement_recipient_eligible(people[2],game,source),'revoked play restriction no longer blocks');
   foreach i in array array[1,3,4,5,6,7,8,9] loop
     perform pg_temp.spot_assert(not fieldrush_private.replacement_recipient_eligible(people[i],game,source),'ineligible recipient excluded: '||i);
   end loop;
@@ -72,6 +82,14 @@ begin
   perform public.claim_push_deliveries(10,claim);
   select public.get_push_delivery_payload(id,claim) into payload from fieldrush_private.push_deliveries where notification_id=notification;
   perform pg_temp.spot_assert(payload is not null,'eligible phone payload available to claimed worker');
+  insert into public.moderation_actions(subject_type,subject_profile_id,action_type,restriction_scope,
+    reason_code,user_message,starts_at,ends_at,issued_by)
+  values('PLAYER',people[2],'SUSPENSION','PLAY','VERIFICATION','Disposable dispatch restriction.',
+    now()-interval '1 minute',now()+interval '1 day',people[1]) returning id into play_action;
+  perform pg_temp.spot_assert(not fieldrush_private.notification_source_is_current(notification),'new play restriction invalidates queued offer');
+  select public.get_push_delivery_payload(id,claim) into payload from fieldrush_private.push_deliveries where notification_id=notification;
+  perform pg_temp.spot_assert(payload is null,'new play restriction suppresses phone delivery after claim');
+  update public.moderation_actions set revoked_at=clock_timestamp(),revoked_by=people[1],revocation_reason='Disposable fixture.' where id=play_action;
   perform public.update_my_notification_preferences(preferences||'{"open_spots":false}');
   perform pg_temp.spot_assert(not fieldrush_private.notification_source_is_current(notification),'later opt-out invalidates source');
   perform public.update_my_notification_preferences(preferences||'{"open_spots":true}');

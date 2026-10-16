@@ -412,7 +412,9 @@ jobs:
         run: |
           set -euo pipefail
           export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
-          THROUGH_MIGRATION=20261016000400 node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261016000400 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_reliability_policy_system.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
 
       - name: Verify prospective Season 0 rating math, evidence, replay, privacy, and transfers
         shell: bash

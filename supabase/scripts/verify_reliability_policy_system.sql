@@ -6,6 +6,7 @@ declare
   supported_config jsonb;
   function_text text;
   result_signature text;
+  helper_signature text;
   published_count integer;
 begin
   select policy.config into seeded_config
@@ -297,10 +298,55 @@ begin
   select pg_get_functiondef(
     'public.cancel_open_queue_booking_policy(uuid)'::regprocedure
   ) into function_text;
-  if position('replacement_marketplace_open' in function_text) = 0
-    or position('profile_has_active_play_restriction' in function_text) = 0
-  then
-    raise exception 'Replacement promotion ignores its cutoff or play restrictions.';
+  if position('replacement_marketplace_open' in function_text) = 0 then
+    raise exception 'Replacement promotion ignores its marketplace cutoff.';
+  end if;
+  if to_regprocedure('fieldrush_private.enqueue_replacement_offer(uuid,uuid)') is not null then
+    -- The cancellation now commits one job instead of scanning every profile
+    -- while holding the game lock. Follow the entire protected pipeline rather
+    -- than requiring its recipient checks to remain in the old inline body.
+    if position('fieldrush_private.enqueue_replacement_offer(game_to_reopen.id,booking_to_cancel.id)' in function_text)=0
+      or position('insert into public.notifications' in lower(function_text))>0 then
+      raise exception 'Cancellation bypasses the bounded replacement queue.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.enqueue_replacement_offer(uuid,uuid)'::regprocedure) into function_text;
+    if position('replacement_source_booking_id=source_to_use' in function_text)=0
+      or position('replacement_offer_expires_at>clock_timestamp()' in function_text)=0 then
+      raise exception 'Replacement queue does not bind its live source and expiry.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.process_replacement_notifications()'::regprocedure) into function_text;
+    if position('fieldrush_private.replacement_recipient_eligible' in function_text)=0
+      or position('limit 4' in lower(function_text))=0 or position('limit 100' in lower(function_text))=0
+      or position('open_spots_enabled_at<=job.created_at' in function_text)=0 then
+      raise exception 'Replacement worker lacks bounded eligible opt-in fanout.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.replacement_recipient_eligible(uuid,uuid,uuid)'::regprocedure) into function_text;
+    if position('profile_has_active_play_restriction' in function_text)=0
+      or position('profile_has_active_reliability_booking_restriction' in function_text)=0
+      or position('is_fieldrush_account_active' in function_text)=0
+      or position('settings.open_spots' in function_text)=0
+      or position('a.preferred_city_id=city.id' in function_text)=0
+      or position('replacement_offer_expires_at>clock_timestamp()' in function_text)=0 then
+      raise exception 'Replacement recipient eligibility ignores restrictions, consent, city or expiry.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.notification_source_is_current(uuid)'::regprocedure) into function_text;
+    if position('fieldrush_private.replacement_recipient_eligible' in function_text)=0
+      or position('settings.open_spots_enabled_at<=job.created_at' in function_text)=0 then
+      raise exception 'Replacement dispatch does not recheck current eligibility and original consent.';
+    end if;
+    foreach helper_signature in array array[
+      'fieldrush_private.enqueue_replacement_offer(uuid,uuid)',
+      'fieldrush_private.process_replacement_notifications()',
+      'fieldrush_private.replacement_recipient_eligible(uuid,uuid,uuid)',
+      'fieldrush_private.notification_source_is_current(uuid)'
+    ] loop
+      if exists(select 1 from unnest(array['anon','authenticated','service_role']) caller_role
+        where has_function_privilege(caller_role,helper_signature,'EXECUTE')) then
+        raise exception 'Replacement helper is directly client-callable: %.',helper_signature;
+      end if;
+    end loop;
+  elsif position('profile_has_active_play_restriction' in function_text)=0 then
+    raise exception 'Legacy replacement promotion ignores play restrictions.';
   end if;
 
   select pg_get_functiondef(
