@@ -234,6 +234,7 @@ class StripeFieldrushEmbeddedPaymentSession
   }
 
   void _respondToConfirmation() {
+    if (!_acceptNativeEvents || !identical(_owner, this)) return;
     if (_callbackResponded) return;
     _callbackResponded = true;
     final attempt = _attempt;

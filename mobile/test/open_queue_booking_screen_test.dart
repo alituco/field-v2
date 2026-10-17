@@ -285,6 +285,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('private SR does not hide kit or invent a zero team spread', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: _FakeOpenQueueRepository(),
+          booking: _booking(assigned: true, hideRatings: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('WEAR WHITE'), findsOneWidget);
+    expect(find.text('WHITE TEAM'), findsOneWidget);
+    final info = find.text('Teams assigned. Check your team and kit below.');
+    await _bringAboveFloatingNav(tester, info);
+    expect(info, findsOneWidget);
+    expect(find.textContaining('0 SR apart'), findsNothing);
+    expect(find.text('1210 AVG PLAYER RATING'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('confirmed booking renders the server policy kit cutoff', (
     tester,
   ) async {
@@ -858,6 +884,7 @@ Future<void> _bringAboveFloatingNav(WidgetTester tester, Finder target) async {
 
 OpenQueueBooking _booking({
   bool assigned = false,
+  bool hideRatings = false,
   bool staleAssignment = false,
   bool fullBeforeCutoff = false,
   String assignedTeam = openQueueWhiteTeamId,
@@ -885,10 +912,10 @@ OpenQueueBooking _booking({
       OpenQueueRole.midfielder: 0,
       OpenQueueRole.attacker: 0,
     },
-    whiteAverageSr: hasAssignmentMetadata ? 1211 : null,
-    blackAverageSr: hasAssignmentMetadata ? 1209 : null,
-    matchAverageSr: hasAssignmentMetadata ? 1210 : null,
-    teamSrSpread: hasAssignmentMetadata ? 2 : null,
+    whiteAverageSr: hasAssignmentMetadata && !hideRatings ? 1211 : null,
+    blackAverageSr: hasAssignmentMetadata && !hideRatings ? 1209 : null,
+    matchAverageSr: hasAssignmentMetadata && !hideRatings ? 1210 : null,
+    teamSrSpread: hasAssignmentMetadata && !hideRatings ? 2 : null,
     teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
     teamAssignmentAt: startsAt.subtract(
       Duration(minutes: assignmentLeadMinutes),

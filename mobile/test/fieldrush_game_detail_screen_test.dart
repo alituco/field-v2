@@ -217,6 +217,56 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  testWidgets('assigned pregame teams remain visible with all SR private', (
+    tester,
+  ) async {
+    final detail = _detail(
+      status: 'FULL',
+      count: 14,
+      teamAssignmentAt: DateTime.utc(2000),
+      teamsAssignedAt: DateTime.utc(2000),
+      players: const [
+        OpenQueuePlayer(
+          id: 'white-player',
+          displayName: 'White Player',
+          role: OpenQueueRole.attacker,
+          team: openQueueWhiteTeamId,
+          played: false,
+          isMe: false,
+          ratingVisible: false,
+        ),
+        OpenQueuePlayer(
+          id: 'black-player',
+          displayName: 'Black Player',
+          role: OpenQueueRole.goalkeeper,
+          team: openQueueBlackTeamId,
+          played: false,
+          isMe: false,
+          ratingVisible: false,
+        ),
+      ],
+    );
+    await show(tester, _Repository(detail));
+    await tester.scrollUntilVisible(
+      find.text('TEAMS'),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('WHITE'), findsOneWidget);
+    expect(find.text('BLACK'), findsOneWidget);
+    expect(
+      find.text(
+        'Wear your assigned team colour. Tap See all for the full roster.',
+      ),
+      findsOneWidget,
+    );
+    expect(detail.game.whiteAverageSr, isNull);
+    expect(detail.game.blackAverageSr, isNull);
+    expect(detail.game.matchAverageSr, isNull);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'profile subject eligibility overrides viewer and stale history award',
     (tester) async {
@@ -696,6 +746,7 @@ OpenQueueMatchDetail _detail({
   int highestDivision = 1,
   int lowestDivision = 5,
   DateTime? teamAssignmentAt,
+  DateTime? teamsAssignedAt,
   int? white,
   int? black,
   List<OpenQueuePlayer> players = const [],
@@ -723,6 +774,7 @@ OpenQueueMatchDetail _detail({
     highestDivision: highestDivision,
     lowestDivision: lowestDivision,
     teamAssignmentAt: teamAssignmentAt,
+    teamsAssignedAt: teamsAssignedAt,
     ageLabel: '18+',
     capacity: 14,
     confirmedCount: count,

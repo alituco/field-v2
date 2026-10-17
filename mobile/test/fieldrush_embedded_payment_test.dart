@@ -269,6 +269,39 @@ void main() {
   });
 
   test(
+    'a retired selector cannot answer callbacks for its replacement',
+    () async {
+      final retiredView = await ready();
+      await session.close();
+      session.dispose();
+      controller = _FakeController();
+      session = StripeFieldrushEmbeddedPaymentSession(
+        amountFils: 13000,
+        currency: 'USD',
+        controller: controller,
+        configureNativePayments: () async {},
+        intentCreationCallback: (response) async => responses.add(response),
+      );
+      final replacementView = await ready();
+
+      retiredView.intentConfiguration.confirmHandler!(_paymentMethod, false);
+      await Future<void>.delayed(Duration.zero);
+      expect(responses, isEmpty);
+      expect(session.isReady, isTrue);
+
+      controller.onConfirm = () async {
+        replacementView.intentConfiguration.confirmHandler!(
+          _paymentMethod,
+          false,
+        );
+        return {'status': 'completed'};
+      };
+      await session.collectPayment(request());
+      expect(responses.single.clientSecret, 'pi_test_secret_test');
+    },
+  );
+
+  test(
     'callback transport error resolves ambiguity even if native is waiting',
     () async {
       await session.close();

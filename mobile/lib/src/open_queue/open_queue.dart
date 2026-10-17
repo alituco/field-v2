@@ -393,12 +393,12 @@ class OpenQueueGame {
   String get partyLockLeadLabel => openQueueLeadTimeLabel(partyLockLeadMinutes);
 
   bool get hasActiveTeamAssignment {
+    // Assignment is an operational fact, not a rating-visibility decision.
+    // Calibration can hide every aggregate SR without undoing the teams.
     return isUpcomingMatchConfirmed &&
+        capacity > 0 &&
         isTeamAssignmentDue &&
-        teamsAssignedAt != null &&
-        whiteAverageSr != null &&
-        blackAverageSr != null &&
-        matchAverageSr != null;
+        teamsAssignedAt != null;
   }
 
   bool get hasMyBooking => myBookingId != null;

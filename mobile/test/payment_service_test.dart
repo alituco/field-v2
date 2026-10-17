@@ -27,6 +27,228 @@ Map<String, dynamic> _completed() => {
 void main() {
   tearDown(() => debugDefaultTargetPlatformOverride = null);
 
+  Map<String, dynamic> collectable() => {
+    ..._prepared(),
+    'status': 'COLLECTABLE',
+    'verified_unpaid': true,
+    'provider_status': 'requires_payment_method',
+  };
+  test(
+    'a lost prepare response resumes existing checkout without requiring a local intent ID',
+    () async {
+      final actions = <String>[];
+      var resumeCalls = 0;
+      var collections = 0;
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          if (body['action'] == 'prepare') {
+            throw const PaymentPendingException();
+          }
+          if (body['action'] == 'resume') {
+            expect(body.containsKey('intent_id'), isFalse);
+            return ++resumeCalls == 1
+                ? {'status': 'PENDING', 'provider_status': 'UNKNOWN'}
+                : collectable();
+          }
+          return _completed();
+        },
+        paymentCollector: (request) async {
+          expect(request.intentId, 'attempt-1');
+          expect(request.verifiedUnpaidResume, isTrue);
+          collections++;
+        },
+      );
+      await expectLater(
+        service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+        throwsA(isA<PaymentPendingException>()),
+      );
+      await expectLater(
+        service.pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: _payload,
+          resumeOnly: true,
+        ),
+        throwsA(isA<PaymentPendingException>()),
+      );
+      expect(collections, 0);
+      final result = await service.pay(
+        purpose: PaymentPurpose.soloBooking,
+        payload: _payload,
+        resumeOnly: true,
+      );
+      expect(result.resourceId, 'booking-1');
+      expect(collections, 1);
+      expect(actions, ['prepare', 'resume', 'resume', 'confirm']);
+    },
+  );
+  for (final malformed in [
+    {'intent_id': null},
+    {'client_secret': null},
+    {'stripe_payment_intent_id': null},
+    {'amount_fils': '13000'},
+    {'amount_fils': -1},
+    {'currency': null},
+    {'currency': 'BHD'},
+  ]) {
+    test(
+      'a malformed resume remains indeterminate before collection: $malformed',
+      () async {
+        final service = PaymentService(
+          functionInvoker: (_) async => {...collectable(), ...malformed},
+          paymentCollector: (_) async =>
+              fail('A malformed response cannot collect'),
+        );
+        await expectLater(
+          service.pay(
+            purpose: PaymentPurpose.soloBooking,
+            payload: _payload,
+            resumeOnly: true,
+          ),
+          throwsA(isA<PaymentPendingException>()),
+        );
+      },
+    );
+  }
+  for (final terminal in [
+    'FINALIZED',
+    'CANCELLED',
+    'REFUNDED',
+    'REQUIRES_REFUND',
+    'FAILED',
+    'EXPIRED',
+  ]) {
+    test(
+      'unidentified terminal resume cannot release an ambiguous attempt: $terminal',
+      () async {
+        final service = PaymentService(
+          functionInvoker: (_) async => {'status': terminal},
+          paymentCollector: (_) async =>
+              fail('Unidentified terminal response cannot collect'),
+        );
+        await expectLater(
+          service.pay(
+            purpose: PaymentPurpose.soloBooking,
+            payload: _payload,
+            resumeOnly: true,
+          ),
+          throwsA(isA<PaymentPendingException>()),
+        );
+      },
+    );
+  }
+  test(
+    'exact unpaid resume rechecks and collects the same intent without prepare',
+    () async {
+      final actions = <String>[];
+      PaymentCollectionRequest? collected;
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          expect(body['intent_id'], 'attempt-1');
+          return body['action'] == 'resume' ? collectable() : _completed();
+        },
+        paymentCollector: (request) async => collected = request,
+      );
+      final result = await service.pay(
+        purpose: PaymentPurpose.soloBooking,
+        payload: _payload,
+        resumeIntentId: 'attempt-1',
+      );
+      expect(result.resourceId, 'booking-1');
+      expect(actions, ['resume', 'confirm']);
+      expect(collected?.intentId, 'attempt-1');
+      expect(collected?.stripePaymentIntentId, 'pi_1');
+      expect(collected?.verifiedUnpaidResume, isTrue);
+    },
+  );
+  test(
+    'selector replacement pauses without confirming or preparing a second payment',
+    () async {
+      final actions = <String>[];
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          return collectable();
+        },
+        paymentCollector: (_) async =>
+            throw const PaymentSelectionRequiredException(),
+      );
+      await expectLater(
+        service.pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: _payload,
+          resumeIntentId: 'attempt-1',
+        ),
+        throwsA(isA<PaymentSelectionRequiredException>()),
+      );
+      expect(actions, ['resume']);
+    },
+  );
+  for (final response in [
+    {..._prepared(), 'status': 'PENDING'},
+    {..._prepared(), 'status': 'PROCESSING'},
+    {...collectable(), 'intent_id': 'foreign-attempt'},
+    {...collectable(), 'verified_unpaid': false},
+    {...collectable(), 'provider_status': 'succeeded'},
+  ]) {
+    test(
+      'unverified or non-collectable resume never collects: ${response['status']}/${response['intent_id']}/${response['provider_status']}',
+      () async {
+        final actions = <String>[];
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            actions.add(body['action'] as String);
+            return response;
+          },
+          paymentCollector: (_) async =>
+              fail('Must not collect ambiguous/captured/foreign payment'),
+        );
+        await expectLater(
+          service.pay(
+            purpose: PaymentPurpose.soloBooking,
+            payload: _payload,
+            resumeIntentId: 'attempt-1',
+          ),
+          throwsA(isA<PaymentPendingException>()),
+        );
+        expect(actions, ['resume']);
+      },
+    );
+  }
+  test('a finalized exact-intent resume does not collect again', () async {
+    final service = PaymentService(
+      functionInvoker: (_) async => _completed(),
+      paymentCollector: (_) async => fail('Already captured'),
+    );
+    expect(
+      (await service.pay(
+        purpose: PaymentPurpose.soloBooking,
+        payload: _payload,
+        resumeIntentId: 'attempt-1',
+      )).resourceId,
+      'booking-1',
+    );
+  });
+  test(
+    'resume transport/auth failures remain pending rather than unlocking retry',
+    () async {
+      final service = PaymentService(
+        functionInvoker: (_) async =>
+            throw const PaymentException('Session expired'),
+        paymentCollector: (_) async => fail('Unverified'),
+      );
+      await expectLater(
+        service.pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: _payload,
+          resumeIntentId: 'attempt-1',
+        ),
+        throwsA(isA<PaymentPendingException>()),
+      );
+    },
+  );
+
   test('Android wallet matches the build environment and USD checkout', () {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     final wallet = PaymentService.nativeSheetConfiguration.googlePay;

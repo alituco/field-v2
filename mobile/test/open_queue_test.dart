@@ -304,6 +304,45 @@ void main() {
     expect(booking.kitInstruction, isNull);
   });
 
+  for (final team in [openQueueWhiteTeamId, openQueueBlackTeamId]) {
+    test('assigned $team kit does not depend on public SR aggregates', () {
+      final booking = _privacyMaskedAssignment(team: team);
+
+      expect(booking.game.hasActiveTeamAssignment, isTrue);
+      expect(booking.assignedTeam, team);
+      expect(booking.kitInstruction, 'WEAR $team');
+      expect(booking.game.whiteAverageSr, isNull);
+      expect(booking.game.blackAverageSr, isNull);
+      expect(booking.game.matchAverageSr, isNull);
+      expect(booking.game.teamSrSpread, isNull);
+    });
+  }
+
+  test('privacy-independent assignment retains canonical readiness guards', () {
+    for (final overrides in <Map<String, Object?>>[
+      {'status': 'OPEN'},
+      {'confirmed_count': 13},
+      {'capacity': 0, 'confirmed_count': 0},
+      {'teams_assigned_at': null},
+      {'team_assignment_at': '2099-01-01T00:00:00Z'},
+      {'white_score': 1, 'black_score': 0},
+      {'status': 'CANCELLED'},
+    ]) {
+      final booking = _privacyMaskedAssignment(gameOverrides: overrides);
+      expect(
+        booking.game.hasActiveTeamAssignment,
+        isFalse,
+        reason: '$overrides',
+      );
+      expect(booking.assignedTeam, isNull, reason: '$overrides');
+      expect(booking.kitInstruction, isNull, reason: '$overrides');
+    }
+    final invalidTeam = _privacyMaskedAssignment(team: 'GREEN');
+    expect(invalidTeam.game.hasActiveTeamAssignment, isTrue);
+    expect(invalidTeam.assignedTeam, isNull);
+    expect(invalidTeam.kitInstruction, isNull);
+  });
+
   test('played or scored games are never upcoming reservations', () {
     final startsAt = DateTime.now().add(const Duration(days: 10));
     OpenQueueGame game({required String status, int? whiteScore}) {
@@ -524,3 +563,36 @@ void main() {
     );
   });
 }
+
+OpenQueueBooking _privacyMaskedAssignment({
+  String team = openQueueWhiteTeamId,
+  Map<String, Object?> gameOverrides = const {},
+}) => OpenQueueBooking.fromJson({
+  'id': 'booking',
+  'game_id': 'game',
+  'profile_id': 'profile',
+  'role': 'ATT',
+  'status': 'CONFIRMED',
+  'team': team,
+  'amount_paid_fils': 8000,
+  'booked_at': '2026-10-15T12:00:00Z',
+  'game': {
+    'id': 'game',
+    'status': 'FULL',
+    'venue': 'Reach 11 Fields',
+    'starts_at': '2099-01-01T01:00:00Z',
+    'ends_at': '2099-01-01T02:00:00Z',
+    'timezone': 'America/Phoenix',
+    'currency': 'USD',
+    'price_fils': 8000,
+    'capacity': 14,
+    'confirmed_count': 14,
+    'teams_assigned_at': '2000-01-01T00:00:00Z',
+    'team_assignment_at': '2000-01-01T00:00:00Z',
+    'white_average_sr': null,
+    'black_average_sr': null,
+    'match_average_sr': null,
+    'team_sr_spread': null,
+    ...gameOverrides,
+  },
+});

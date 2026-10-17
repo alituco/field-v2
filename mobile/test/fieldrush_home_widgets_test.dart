@@ -358,6 +358,32 @@ void main() {
     expect(find.text('Kit assignment updating'), findsOneWidget);
   });
 
+  for (final team in [openQueueWhiteTeamId, openQueueBlackTeamId]) {
+    testWidgets('Home retains $team kit with privacy-masked ratings', (
+      tester,
+    ) async {
+      final game = _game(
+        status: 'FULL',
+        confirmed: 14,
+        assigned: true,
+        hideRatings: true,
+      );
+      await _pump(
+        tester,
+        FieldrushSoloHero(
+          booking: _booking(game, team: team),
+          onTap: () {},
+        ),
+      );
+      expect(find.text('WEAR $team'), findsOneWidget);
+      expect(find.text('Kit assignment updating'), findsNothing);
+      expect(game.whiteAverageSr, isNull);
+      expect(game.blackAverageSr, isNull);
+      expect(game.matchAverageSr, isNull);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'also booked displays the game local date and opens its callback',
     (tester) async {
@@ -776,6 +802,7 @@ OpenQueueGame _game({
   int defenderSpots = 6,
   String? myBookingId,
   bool assigned = false,
+  bool hideRatings = false,
   int highestDivision = 1,
   int lowestDivision = 5,
 }) => OpenQueueGame(
@@ -803,9 +830,9 @@ OpenQueueGame _game({
   teamsAssignedAt: assigned ? DateTime.utc(2000) : null,
   teamAssignmentAt: assigned ? DateTime.utc(2000) : DateTime.utc(2099, 6, 5),
   teamAssignmentLeadMinutes: 180,
-  whiteAverageSr: assigned ? 1200 : null,
-  blackAverageSr: assigned ? 1210 : null,
-  matchAverageSr: assigned ? 1205 : null,
+  whiteAverageSr: assigned && !hideRatings ? 1200 : null,
+  blackAverageSr: assigned && !hideRatings ? 1210 : null,
+  matchAverageSr: assigned && !hideRatings ? 1205 : null,
 );
 OpenQueueBooking _booking(OpenQueueGame game, {String? team}) =>
     OpenQueueBooking(

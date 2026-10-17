@@ -153,7 +153,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         await pauseGame(db, gameId);
         break;
       case "resume":
-        await resumeGame(db, gameId);
+        await resumeGame(db, gameId, refereeContext.referee.profileId);
         break;
       case "set_time":
         await setGameTime(db, gameId, body.elapsedSeconds);
@@ -524,17 +524,18 @@ async function pauseGame(db: SupabaseClient, gameId: string) {
   await insertEvent(db, gameId, "MATCH_PAUSED", minute, second);
 }
 
-async function resumeGame(db: SupabaseClient, gameId: string) {
-  await loadLiveGame(db, gameId);
-  const { minute, second } = splitElapsed(await currentElapsed(db, gameId));
-  await assertNoError(
-    db.from("open_queue_clock_states").update({
-      status: "RUNNING",
-      started_at: new Date().toISOString(),
-    }).eq("game_id", gameId),
-    "Could not resume solo game clock",
-  );
-  await insertEvent(db, gameId, "MATCH_RESUMED", minute, second);
+async function resumeGame(db: SupabaseClient, gameId: string, actorRefereeId: string) {
+  const { data, error } = await db.rpc("referee_resume_legacy_solo_game", {
+    actor_referee_id: actorRefereeId,
+    game_id_to_use: gameId,
+  });
+  if (error) throw new Error(`Could not resume solo game clock: ${error.message}`);
+  if (!data || data.game_id !== gameId || data.status !== "RUNNING" ||
+      typeof data.started_at !== "string" || !Number.isFinite(Date.parse(data.started_at)) ||
+      !Number.isInteger(data.accumulated_seconds) || data.accumulated_seconds < 0 ||
+      data.accumulated_seconds > MAX_MATCH_SECONDS || typeof data.already_running !== "boolean") {
+    throw new Error("Could not verify the resumed match clock. Refresh before trying again.");
+  }
 }
 
 async function recordBlueCard(db: SupabaseClient, gameId: string, body: ActionBody) {

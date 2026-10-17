@@ -120,6 +120,13 @@ After explicit staging activation approval:
    alert, badge or sound.
 
 The one-minute dispatcher does nothing until both private enable flags are on.
+Its bounded ten-device batch reserves eight slots for urgent operational alerts
+(including reminders and open spots), one for routine optional updates, and one
+for marketing. Unused capacity is filled in priority order. A news publication
+cannot hold a due reminder behind its entire audience, and lower lanes retain
+capacity during sustained urgent traffic. Priority is derived from the stored
+notification type, not supplied by clients. Source expiry caps each delivery's
+deadline; expired/exhausted rows consume no delivery slots.
 The five-minute event sweep can still populate ordinary in-app Activity with
 push disabled. Queue claims are leased, recipient/device binding is checked
 again immediately before dispatch, transient failures back off, and only an

@@ -46,11 +46,18 @@ class PaymentService {
   Future<PaymentResult> pay({
     required PaymentPurpose purpose,
     required Map<String, dynamic> payload,
+    String? resumeIntentId,
+    bool resumeOnly = false,
   }) {
     final actor = _client?.auth.currentUser?.id ?? 'current-user';
     final key = '$actor:${purpose.code}:${jsonEncode(_sorted(payload))}';
     return _pending.putIfAbsent(key, () {
-      return _pay(purpose: purpose, payload: payload).whenComplete(() {
+      return _pay(
+        purpose: purpose,
+        payload: payload,
+        resumeIntentId: resumeIntentId,
+        resumeOnly: resumeOnly,
+      ).whenComplete(() {
         _pending.remove(key);
       });
     });
@@ -78,6 +85,8 @@ class PaymentService {
   Future<PaymentResult> _pay({
     required PaymentPurpose purpose,
     required Map<String, dynamic> payload,
+    String? resumeIntentId,
+    bool resumeOnly = false,
   }) async {
     if (_stagingE2EPaymentBypass) {
       if (_environment != 'staging' && _environment != 'local') {
@@ -92,35 +101,101 @@ class PaymentService {
       return _finalized(response);
     }
 
-    final preparation = await _invoke({
-      'action': 'prepare',
-      'purpose': purpose.code,
-      'payload': payload,
-    });
+    final resuming = resumeOnly || resumeIntentId != null;
+    final Map<String, dynamic> preparation;
+    try {
+      preparation = await _invoke({
+        'action': resuming ? 'resume' : 'prepare',
+        if (resumeIntentId != null) 'intent_id': resumeIntentId,
+        'purpose': purpose.code,
+        'payload': payload,
+      });
+    } on PaymentException {
+      if (resuming) throw const PaymentPendingException();
+      rethrow;
+    }
+    if (resumeIntentId != null && preparation['intent_id'] != resumeIntentId) {
+      throw const PaymentPendingException();
+    }
     final status = _status(preparation);
-    if (status == 'FINALIZED') return _finalized(preparation);
+    if (resuming) {
+      // A terminal label without the checkout identity is not authority to
+      // release an ambiguous attempt and permit another preparation.
+      if (['FAILED', 'EXPIRED'].contains(status)) {
+        throw const PaymentPendingException();
+      }
+      if ([
+        'FINALIZED',
+        'CANCELLED',
+        'REFUNDED',
+        'REQUIRES_REFUND',
+        'COLLECTABLE',
+      ].contains(status)) {
+        try {
+          _requiredString(preparation['intent_id']);
+        } on PaymentException {
+          throw const PaymentPendingException();
+        }
+      }
+    }
+    if (status == 'FINALIZED') {
+      try {
+        return _finalized(preparation);
+      } on PaymentException {
+        if (resuming) throw const PaymentPendingException();
+        rethrow;
+      }
+    }
     _throwTerminal(preparation);
-    final intentId = _requiredString(preparation['intent_id']);
 
     // A retry after payment or a delayed webhook must resume verification,
     // rather than request another payment from the customer.
-    if (status != 'PENDING') return _confirm(intentId);
-    final clientSecret = _requiredString(preparation['client_secret']);
+    if (resuming) {
+      if (status != 'COLLECTABLE' ||
+          preparation['verified_unpaid'] != true ||
+          ![
+            'requires_payment_method',
+            'requires_confirmation',
+          ].contains(preparation['provider_status'])) {
+        throw const PaymentPendingException();
+      }
+    } else if (status != 'PENDING') {
+      return _confirm(_requiredString(preparation['intent_id']));
+    }
+    final String intentId;
+    final String clientSecret;
+    try {
+      intentId = _requiredString(preparation['intent_id']);
+      clientSecret = _requiredString(preparation['client_secret']);
+    } on PaymentException {
+      if (resuming) throw const PaymentPendingException();
+      rethrow;
+    }
     try {
       final collector = _paymentCollector;
       if (collector != null) {
-        final amount = preparation['amount_fils'];
-        final currency = preparation['currency'];
-        if (amount is! int || currency is! String) {
-          throw const PaymentException('Checkout returned an invalid total.');
-        }
-        await collector(
-          PaymentCollectionRequest(
+        final PaymentCollectionRequest collection;
+        try {
+          final amount = preparation['amount_fils'];
+          final currency = preparation['currency'];
+          if (amount is! int || currency is! String) {
+            throw const PaymentException('Checkout returned an invalid total.');
+          }
+          collection = PaymentCollectionRequest(
             clientSecret: clientSecret,
             amountFils: amount,
             currency: currency,
-          ),
-        );
+            intentId: intentId,
+            stripePaymentIntentId: _requiredString(
+              preparation['stripe_payment_intent_id'],
+            ),
+            verifiedUnpaidResume: resuming,
+          );
+        } on PaymentException {
+          if (resuming) throw const PaymentPendingException();
+          rethrow;
+        }
+        await collector(collection);
       } else {
         if (!_hasInjectedPresenter) _validateConfiguration();
         await _sheetPresenter(clientSecret);
@@ -414,13 +489,19 @@ class PaymentCollectionRequest {
     required String clientSecret,
     required int amountFils,
     required String currency,
+    String? intentId,
+    String? stripePaymentIntentId,
+    bool verifiedUnpaidResume = false,
   }) {
     final normalizedCurrency = currency.trim().toUpperCase();
     if (clientSecret.trim().isEmpty ||
         normalizedCurrency != 'USD' ||
         amountFils <= 0 ||
         amountFils % 10 != 0 ||
-        amountFils ~/ 10 > 99999999) {
+        amountFils ~/ 10 > 99999999 ||
+        (verifiedUnpaidResume &&
+            ((intentId?.isEmpty ?? true) ||
+                (stripePaymentIntentId?.isEmpty ?? true)))) {
       throw const PaymentException('Checkout returned an invalid total.');
     }
     return PaymentCollectionRequest._(
@@ -428,6 +509,9 @@ class PaymentCollectionRequest {
       amountFils: amountFils,
       currency: normalizedCurrency,
       amountMinor: amountFils ~/ 10,
+      intentId: intentId,
+      stripePaymentIntentId: stripePaymentIntentId,
+      verifiedUnpaidResume: verifiedUnpaidResume,
     );
   }
 
@@ -436,12 +520,18 @@ class PaymentCollectionRequest {
     required this.amountFils,
     required this.currency,
     required this.amountMinor,
+    this.intentId,
+    this.stripePaymentIntentId,
+    this.verifiedUnpaidResume = false,
   });
 
   final String clientSecret;
   final int amountFils;
   final String currency;
   final int amountMinor;
+  final String? intentId;
+  final String? stripePaymentIntentId;
+  final bool verifiedUnpaidResume;
 }
 
 enum PaymentPurpose {
@@ -519,5 +609,12 @@ class PaymentPendingException extends PaymentException {
     : super(
         'We are still checking this payment. Check your bookings shortly. '
         'Trying again will check the same payment before asking you to pay.',
+      );
+}
+
+class PaymentSelectionRequiredException extends PaymentException {
+  const PaymentSelectionRequiredException()
+    : super(
+        'Your earlier payment is unpaid. Choose a payment method to continue with the same checkout.',
       );
 }

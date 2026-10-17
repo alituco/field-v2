@@ -121,6 +121,8 @@ export async function handlePayment(request: Request): Promise<Response> {
         return json(await prepareCheckout(ctx, body));
       case "confirm":
         return json(await confirmCheckout(ctx, uuid(body.intent_id)));
+      case "resume":
+        return json(await resumeExistingCheckout(ctx, body));
       case "cancel":
         return json(await cancelCheckout(ctx, uuid(body.intent_id)));
       case "recover":
@@ -485,6 +487,132 @@ async function confirmCheckout(ctx: Context, id: string) {
   }
   await ensureStripeIntent(ctx, intent);
   return await reconcileAndRefund(ctx, intent);
+}
+
+/** Inspect only the owner's exact existing checkout. Unlike prepare, this path
+ * must never create/recreate a provider intent, even after expiry or a lost ACK. */
+export async function resumeExistingCheckout(
+  ctx: Context,
+  body: Record<string, unknown>,
+) {
+  const { purpose, payload } = normalizedCheckout(body);
+  const intent = body.intent_id == null
+    ? await matchingIntent(ctx, purpose, payload, [
+      "PENDING",
+      "CAPTURED",
+      "REQUIRES_REFUND",
+    ])
+    : await loadIntent(ctx.admin, uuid(body.intent_id), ctx.userId);
+  if (!intent) return { status: "PENDING", provider_status: "UNKNOWN" };
+  if (
+    intent.provider !== "STRIPE" || intent.purpose !== purpose ||
+    canonicalJson(intent.payload) !== canonicalJson(payload)
+  ) {
+    throw new PaymentError(
+      "The checkout reference does not match this booking.",
+      409,
+    );
+  }
+  if (intent.status === "FINALIZED" || intent.status === "REFUNDED") {
+    return intentResponse(intent);
+  }
+  if (intent.status === "REQUIRES_REFUND") {
+    const { data: refunds, error } = await ctx.admin.from("payment_refunds")
+      .select("status").eq("intent_id", intent.id);
+    if (error) throw error;
+    const statuses = (refunds ?? []).map((refund) => refund.status);
+    return {
+      ...intentResponse(intent),
+      refund_status: statuses.includes("FAILED")
+        ? "FAILED"
+        : statuses.includes("PROCESSING")
+        ? "PROCESSING"
+        : "PENDING",
+    };
+  }
+  if (!intent.provider_intent_id) {
+    return {
+      ...intentResponse(intent),
+      status: "PENDING",
+      provider_status: "UNKNOWN",
+    };
+  }
+  const payment = await ctx.stripe.paymentIntents.retrieve(
+    intent.provider_intent_id,
+    { expand: ["latest_charge"] },
+  );
+  verifyStripePayment(payment, intent, ctx.livemode);
+  if (
+    ["succeeded", "processing", "requires_capture"].includes(payment.status)
+  ) {
+    return await reconcileAndRefund(ctx, intent, payment);
+  }
+  if (payment.status === "canceled") {
+    return await reconcileAndRefund(ctx, intent, payment);
+  }
+  const expiresAt = Date.parse(intent.expires_at);
+  if (
+    !Number.isFinite(expiresAt) || expiresAt <= Date.now() ||
+    intent.status !== "PENDING"
+  ) {
+    // Retire only this provider-confirmed unpaid attempt. Never call prepare
+    // here: another payment needs a new, explicit review/Pay interaction.
+    return await reconcileAndRefund(
+      ctx,
+      intent,
+      await cancelAtProvider(ctx, intent),
+    );
+  }
+  if (
+    ["requires_payment_method", "requires_confirmation"].includes(
+      payment.status,
+    ) && payment.amount_received === 0 && payment.client_secret
+  ) {
+    let authoritativeQuote: Record<string, unknown>;
+    try {
+      // Unpaid intents do not reserve a position. Recheck availability and
+      // eligibility without changing the valid frozen solo checkout terms.
+      authoritativeQuote = await quote(ctx.user, purpose, payload);
+    } catch (error) {
+      if (!(error instanceof PaymentError)) throw error;
+      return await reconcileAndRefund(
+        ctx,
+        intent,
+        await cancelAtProvider(ctx, intent),
+      );
+    }
+    const checkoutQuote =
+      canReuseSoloCheckoutQuote(intent, purpose, payload, authoritativeQuote)
+        ? intent.quote_snapshot
+        : authoritativeQuote;
+    if (
+      checkoutQuote.total_fils !== intent.amount_fils ||
+      checkoutQuote.currency !== intent.currency ||
+      canonicalJson(checkoutQuote) !== canonicalJson(intent.quote_snapshot)
+    ) {
+      return await reconcileAndRefund(
+        ctx,
+        intent,
+        await cancelAtProvider(ctx, intent),
+      );
+    }
+    return {
+      status: "COLLECTABLE",
+      verified_unpaid: true,
+      intent_id: intent.id,
+      stripe_payment_intent_id: payment.id,
+      client_secret: payment.client_secret,
+      amount_fils: intent.amount_fils,
+      currency: intent.currency,
+      provider_status: payment.status,
+      expires_at: intent.expires_at,
+    };
+  }
+  return {
+    ...intentResponse(intent),
+    status: "PENDING",
+    provider_status: payment.status,
+  };
 }
 
 async function cancelCheckout(ctx: Context, id: string) {
@@ -864,17 +992,28 @@ export async function handleReconcile(request: Request): Promise<Response> {
         );
       }
     }
-    // Poll local unsettled attempts as a fallback if webhook delivery is lost.
+    // Poll local unsettled checkouts if webhook delivery is lost. Refund cases
+    // belong to the refund queue above, including cases held for manual review.
     const { data: intents, error: intentsError } = await ctx.admin.from(
       "payment_intents",
     ).select("*").eq("provider", "STRIPE").in("status", [
       "PENDING",
       "CAPTURED",
-      "REQUIRES_REFUND",
-    ]).order("updated_at").limit(10);
+    ]).order("updated_at").order("id").limit(10);
     if (intentsError) throw intentsError;
     for (const row of intents ?? []) {
       if (Date.now() >= ctx.deadlineMs!) break;
+      // Rotate before provider I/O so successful no-ops, errors, and exhausted
+      // time budgets all yield to newer attempts on the next bounded pass.
+      // The guarded UPDATE takes the row lock without changing financial state;
+      // a concurrently settled/refund-owned attempt is no longer pollable.
+      const { data: scheduled, error: scheduleError } = await ctx.admin.from(
+        "payment_intents",
+      ).update({ updated_at: new Date().toISOString() }).eq("id", row.id)
+        .eq("provider", "STRIPE").in("status", ["PENDING", "CAPTURED"])
+        .select("id");
+      if (scheduleError) throw scheduleError;
+      if (!scheduled?.length) continue;
       try {
         const intent = row as PaymentIntent;
         const payment = await ensureStripeIntent(ctx, intent);
@@ -895,11 +1034,6 @@ export async function handleReconcile(request: Request): Promise<Response> {
           intentId: row.id,
           category: errorCategory(error),
         });
-        // A permanently blocked old attempt must not starve newer attempts
-        // from the next bounded reconciliation batch.
-        const { error: touchError } = await ctx.admin.from("payment_intents")
-          .update({ updated_at: new Date().toISOString() }).eq("id", row.id);
-        if (touchError) throw touchError;
       }
     }
     return json({ reconciled, refunds });
