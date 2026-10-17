@@ -128,6 +128,14 @@ function finishRoute({ actor = { profileId: "referee-1", role: "referee" }, deni
   const calls = [];
   const db = {
     rpc: async (name, params) => {
+      if (name === "referee_resume_legacy_solo_game") {
+        assert.equal(params.game_id_to_use, gameId);
+        assert.equal(params.actor_referee_id, actor.profileId);
+        calls.push("atomic-legacy-resume");
+        const result = results.shift();
+        assert.notEqual(result, undefined, "Unexpected extra resume call");
+        return result;
+      }
       if (name === "referee_record_verified_injury") {
         assert.equal(params.match_id_to_use, gameId);
         assert.equal(params.actor_referee_id, actor.profileId);
@@ -209,6 +217,43 @@ test("finish route retains authentication, game access and admin-review guards b
   const locked = finishRoute({ operationalState: "UNDER_REVIEW" });
   assert.equal((await locked.run()).status, 409);
   assert.deepEqual(locked.calls, ["access-guard", "initial-review-guard"]);
+});
+
+test("legacy resume route delegates once to atomic state transition instead of resetting the clock", async () => {
+  for (const already_running of [false, true]) {
+    const api = finishRoute({ body: { action: "resume" }, results: [{ data: {
+      game_id: gameId, status: "RUNNING", started_at: "2026-10-16T20:00:00.000Z",
+      accumulated_seconds: 900, already_running,
+    }, error: null }] });
+    const response = await api.run();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.deepEqual(api.calls, ["access-guard", "initial-review-guard", "atomic-legacy-resume"]);
+  }
+});
+
+test("legacy resume rejects bad acknowledgements and never reports unknown state as success", async () => {
+  const valid = { game_id: gameId, status: "RUNNING", started_at: "2026-10-16T20:00:00.000Z", accumulated_seconds: 900, already_running: false };
+  for (const data of [null, {}, { ...valid, game_id: "other" }, { ...valid, status: "PAUSED" },
+    { ...valid, started_at: "invalid" }, { ...valid, accumulated_seconds: -1 },
+    { ...valid, accumulated_seconds: 10801 }, { ...valid, already_running: undefined }]) {
+    const api = finishRoute({ body: { action: "resume" }, results: [{ data, error: null }] });
+    const response = await api.run();
+    assert.equal(response.status, 400);
+    assert.match(response.body.error, /verify the resumed/);
+    assert.deepEqual(api.calls, ["access-guard", "initial-review-guard", "atomic-legacy-resume"]);
+  }
+});
+
+test("legacy resume retains access/review guards and exposes an RPC failure without fallback writes", async () => {
+  const blocked = finishRoute({ operationalState: "UNDER_REVIEW", body: { action: "resume" } });
+  assert.equal((await blocked.run()).status, 409);
+  assert.deepEqual(blocked.calls, ["access-guard", "initial-review-guard"]);
+  const failed = finishRoute({ body: { action: "resume" }, results: [{ data: null, error: { message: "The clock is not paused." } }] });
+  const response = await failed.run();
+  assert.equal(response.status, 400);
+  assert.match(response.body.error, /not paused/);
+  assert.deepEqual(failed.calls, ["access-guard", "initial-review-guard", "atomic-legacy-resume"]);
 });
 
 test("finish route recovers a confirmed timeout and stops the broadcast only after verified completion", async () => {

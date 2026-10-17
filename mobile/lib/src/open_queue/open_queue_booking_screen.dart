@@ -421,8 +421,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     final String teamInfoMessage;
     if (assignedTeam != null) {
       teamLabel = '$assignedTeam TEAM';
-      teamInfoMessage =
-          'Teams assigned. The two team averages are only ${game.teamSrSpread ?? 0} SR apart.';
+      teamInfoMessage = game.teamSrSpread == null
+          ? 'Teams assigned. Check your team and kit below.'
+          : 'Teams assigned. The two team averages are only ${game.teamSrSpread} SR apart.';
     } else if (isConfirmed && isTeamAssignmentDue) {
       teamLabel = 'Assignment updating';
       teamInfoMessage =

@@ -95,6 +95,62 @@ void main() {
       expect(result, hasLength(1));
       expect(result.single.id, 'valid-booking');
     });
+
+    test('retains own reservation outside the first 40 discovery games', () {
+      final bookedGame = _game(
+        id: 'booked-later',
+        startsAt: now.add(const Duration(days: 20)),
+      );
+      final result = hydrateUpcomingOpenQueueBookings(
+        now: now,
+        bookings: [_booking(id: 'own-booking', game: bookedGame)],
+        games: [
+          for (var index = 0; index < 40; index++)
+            _game(
+              id: 'other-city-$index',
+              startsAt: now.add(Duration(hours: index + 1)),
+            ),
+        ],
+      );
+      expect(result.single.id, 'own-booking');
+      expect(result.single.game, same(bookedGame));
+    });
+
+    test('empty discovery retains only valid joined upcoming games', () {
+      final future = _game(
+        id: 'future',
+        startsAt: now.add(const Duration(days: 1)),
+      );
+      final past = _game(
+        id: 'past',
+        startsAt: now.subtract(const Duration(days: 1)),
+      );
+      final result = hydrateUpcomingOpenQueueBookings(
+        now: now,
+        bookings: [
+          _booking(id: 'future', game: future),
+          _booking(id: 'past', game: past),
+          _booking(id: 'cancelled', game: future, status: 'CANCELLED'),
+        ],
+        games: const [],
+      );
+      expect(result.map((b) => b.id), ['future']);
+    });
+
+    test('explicit canonical cancellation wins over joined snapshot', () {
+      final booked = _game(
+        id: 'game',
+        startsAt: now.add(const Duration(days: 1)),
+      );
+      final result = hydrateUpcomingOpenQueueBookings(
+        now: now,
+        bookings: [_booking(id: 'booking', game: booked)],
+        games: [
+          _game(id: booked.id, startsAt: booked.startsAt, status: 'CANCELLED'),
+        ],
+      );
+      expect(result, isEmpty);
+    });
   });
 
   test('a game at or before the cutoff is not an upcoming reservation', () {

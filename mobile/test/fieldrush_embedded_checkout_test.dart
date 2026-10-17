@@ -705,6 +705,146 @@ void main() {
     expect(result.booking!.status, 'CONFIRMED');
   });
 
+  testWidgets(
+    'verified unpaid recovery rebuilds the broken selector and recollects the same intent',
+    (tester) async {
+      final repository = _Repository();
+      final sessions = _Sessions();
+      final result = await _openCheckout(tester, repository, sessions);
+      final interrupted = sessions.current;
+      interrupted
+        ..interruptOnCollection = true
+        ..select();
+      await tester.pump();
+      await _tapPay(tester);
+      final quotes = repository.quoteCalls;
+      expect(interrupted.isReady, isFalse);
+      expect(
+        tester
+            .widget<TextButton>(
+              find.byKey(const ValueKey('retry-payment-options')),
+            )
+            .onPressed,
+        isNull,
+      );
+
+      await _tapPay(tester);
+      expect(sessions.created, hasLength(2));
+      expect(interrupted.closed, isTrue);
+      expect(sessions.current.collectCalls, 0);
+      expect(_payButton(tester).onPressed, isNull);
+      expect(
+        find.textContaining('Your earlier payment is unpaid'),
+        findsOneWidget,
+      );
+
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      expect(repository.resumeIntents, [
+        'embedded-attempt',
+        'embedded-attempt',
+      ]);
+      expect(repository.quoteCalls, quotes);
+      expect(interrupted.collectCalls, 1);
+      expect(sessions.current.collectCalls, 1);
+      expect(sessions.current.lastRequest?.intentId, 'embedded-attempt');
+      expect(
+        sessions.current.lastRequest?.clientSecret,
+        interrupted.lastRequest?.clientSecret,
+      );
+      expect(result.booking?.status, 'CONFIRMED');
+    },
+  );
+
+  for (final state in [
+    'UNKNOWN',
+    'PROCESSING',
+    'FINALIZED',
+    'REQUIRES_REFUND',
+  ]) {
+    testWidgets(
+      '$state recovery never rebuilds or recollects an interrupted session',
+      (tester) async {
+        final repository = _Repository();
+        final sessions = _Sessions();
+        final result = await _openCheckout(tester, repository, sessions);
+        final interrupted = sessions.current;
+        interrupted
+          ..interruptOnCollection = true
+          ..select();
+        await tester.pump();
+        await _tapPay(tester);
+        repository.resumeState = state;
+        await _tapPay(tester);
+        expect(sessions.created, hasLength(1));
+        expect(interrupted.collectCalls, 1);
+        expect(repository.resumeIntents, ['embedded-attempt']);
+        if (state == 'FINALIZED') {
+          expect(result.booking?.status, 'CONFIRMED');
+        } else if (state == 'REQUIRES_REFUND') {
+          expect(find.text('Refund processing'), findsOneWidget);
+        } else {
+          expect(result.completed, isFalse);
+          expect(
+            tester
+                .widget<TextButton>(
+                  find.byKey(const ValueKey('retry-payment-options')),
+                )
+                .onPressed,
+            isNull,
+          );
+        }
+      },
+    );
+  }
+
+  testWidgets(
+    'a disposed checkout cannot collect from a delayed earlier callback',
+    (tester) async {
+      final repository = _Repository()
+        ..beforeCollectionBarrier = Completer<void>();
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      _payButton(tester).onPressed!();
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox());
+      repository.beforeCollectionBarrier!.complete();
+      await tester.pumpAndSettle();
+      expect(sessions.current.collectCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a lost prepare acknowledgement resumes read-only even without an intent ID',
+    (tester) async {
+      final repository = _Repository()
+        ..beforeCollectionError = const PaymentPendingException();
+      final sessions = _Sessions();
+      final result = await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      expect(sessions.current.collectCalls, 0);
+      repository
+        ..beforeCollectionError = null
+        ..resumeState = 'UNKNOWN';
+      await _tapPay(tester);
+      expect(repository.resumeRequests, [null]);
+      expect(sessions.current.collectCalls, 0);
+      expect(result.completed, isFalse);
+      repository.resumeState = 'COLLECTABLE';
+      await _tapPay(tester);
+      expect(repository.resumeRequests, [null, null]);
+      expect(sessions.current.lastRequest?.verifiedUnpaidResume, isTrue);
+      expect(sessions.current.collectCalls, 1);
+      expect(result.booking?.status, 'CONFIRMED');
+    },
+  );
+
   testWidgets('pending recovery can return an already verified booking', (
     tester,
   ) async {
@@ -1114,6 +1254,7 @@ class _FakeSession extends FieldrushEmbeddedPaymentSession {
   String? _loadingError;
   Object? collectionError;
   bool consumeOnCollection = false;
+  bool interruptOnCollection = false;
   PaymentCollectionRequest? lastRequest;
   Completer<void>? closeBarrier;
   Future<void>? _closing;
@@ -1192,6 +1333,14 @@ class _FakeSession extends FieldrushEmbeddedPaymentSession {
   Future<void> collectPayment(PaymentCollectionRequest request) async {
     collectCalls++;
     lastRequest = request;
+    if (interruptOnCollection) {
+      _ready = false;
+      _selected = false;
+      _loadingError =
+          'Payment connection interrupted. Reload payment methods to check this payment.';
+      notifyListeners();
+      throw const PaymentPendingException();
+    }
     if (collectionError != null) throw collectionError!;
     if (consumeOnCollection) {
       _ready = false;
@@ -1236,6 +1385,10 @@ class _Repository
   VoidCallback? beforeCollect;
   Object? afterCollectionError;
   Object? beforeCollectionError;
+  String resumeState = 'COLLECTABLE';
+  final resumeIntents = <String>[];
+  final resumeRequests = <String?>[];
+  Completer<void>? beforeCollectionBarrier;
   final refundChecks = <String>[];
   PaymentRefundState refundResponse = _refund();
   Object? refundCheckError;
@@ -1270,11 +1423,25 @@ class _Repository
     required OpenQueueGame game,
     required OpenQueueRole role,
     required PaymentCollector collectPayment,
+    String? resumeIntentId,
+    bool resumeOnly = false,
   }) async {
     embeddedBookCalls++;
     bookedRoles.add(role);
+    if (resumeOnly || resumeIntentId != null) {
+      resumeRequests.add(resumeIntentId);
+      if (resumeIntentId != null) resumeIntents.add(resumeIntentId);
+      if (resumeState == 'UNKNOWN' || resumeState == 'PROCESSING') {
+        throw const PaymentPendingException();
+      }
+      if (resumeState == 'FINALIZED') return _booking(game);
+      if (resumeState == 'REQUIRES_REFUND') {
+        throw PaymentRefundException(_refund());
+      }
+    }
     if (beforeCollectionError != null) throw beforeCollectionError!;
     beforeCollect?.call();
+    await beforeCollectionBarrier?.future;
     final amountFils = preparedAmountFils ?? price;
     if (collectOnBook && amountFils > 0) {
       await collectPayment(
@@ -1282,6 +1449,9 @@ class _Repository
           clientSecret: 'pi_embedded_test_secret_not_real',
           amountFils: amountFils,
           currency: 'USD',
+          intentId: 'embedded-attempt',
+          stripePaymentIntentId: 'pi_embedded_test',
+          verifiedUnpaidResume: resumeOnly || resumeIntentId != null,
         ),
       );
     }

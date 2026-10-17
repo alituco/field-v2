@@ -162,7 +162,7 @@ test("push delivery has mandatory isolated, provider-stub and full-schema checks
   }
   const provider = stepContaining(source, "name: Check Edge Functions and database verifier");
   assert.match(provider, /deno test[\s\S]*supabase\/functions\/fieldrush-push-dispatch\/handler_test\.ts/);
-  const chain = stepContaining(source, "THROUGH_MIGRATION=20261016000400");
+  const chain = stepContaining(source, "THROUGH_MIGRATION=20261016000600");
   assert.match(chain, /REPLAY_SQL_FILE=supabase\/scripts\/verify_reliability_policy_system\.sql/);
   assert.match(chain, /node supabase\/scripts\/test_season_zero_migration_chain\.mjs/);
   const full = stepContaining(source, "<supabase/scripts/verify_notification_push_security.sql");
@@ -176,17 +176,19 @@ test("push delivery has mandatory isolated, provider-stub and full-schema checks
 
 test("audited containment has mandatory goal, clan, replacement and recovery regressions", () => {
   const source = job("database");
-  for (const file of ["verify_atomic_solo_goals.sql", "verify_clan_write_containment.sql", "verify_replacement_notifications.sql"]) {
+  for (const file of ["verify_atomic_solo_goals.sql", "verify_clan_write_containment.sql", "verify_replacement_notifications.sql", "verify_push_priority.sql", "verify_legacy_solo_resume.sql"]) {
     const check = stepContaining(source, `<supabase/scripts/${file}`);
     assert.match(check, /set -euo pipefail/);
     assert.match(check, /ON_ERROR_STOP=1/);
     assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
-    assert.ok(source.indexOf(file) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+    assert.ok(source.indexOf(`<supabase/scripts/${file}`) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
   }
   const isolated = stepContaining(source, "node supabase/scripts/test_stripe_checkout_recovery.mjs");
   assert.match(isolated, /PGLITE_MODULE=/);
   const provider = stepContaining(source, "name: Check Edge Functions and database verifier");
   assert.match(provider, /deno test[\s\S]*_shared\/stripe_recovery_test\.ts/);
+  assert.match(provider, /deno test[\s\S]*_shared\/stripe_reconcile_test\.ts/);
+  assert.match(provider, /deno test[\s\S]*_shared\/stripe_resume_test\.ts/);
   assert.match(provider, /deno test[\s\S]*_shared\/dev_auth_test\.ts/);
 });
 

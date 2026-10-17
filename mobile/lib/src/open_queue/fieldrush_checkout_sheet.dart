@@ -65,10 +65,15 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   String? _error;
   bool _resumePayment = false;
   bool _paymentSubmitted = false;
+  bool _verifiedUnpaid = false;
+  String? _paymentIntentId;
+  String? _stripePaymentIntentId;
+  String? _paymentClientSecret;
   FieldrushEmbeddedPaymentSession? _paymentSession;
   bool _allowPop = false;
   bool _closing = false;
   int _loadGeneration = 0;
+  int _paymentGeneration = 0;
   PaymentRefundState? _refund;
   Timer? _refundTimer;
   int _refundPollsRemaining = 0;
@@ -98,7 +103,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       _preview != null &&
       (!_embedded ||
           _preview!.totalFils == 0 ||
-          _resumePayment ||
+          (_resumePayment && !_verifiedUnpaid) ||
           (_paymentSession?.isReady == true &&
               _paymentSession?.hasSelection == true));
 
@@ -155,6 +160,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   @override
   void dispose() {
     _loadGeneration++;
+    _paymentGeneration++;
     _refundTimer?.cancel();
     _paymentSession?.removeListener(_paymentChanged);
     _paymentSession?.dispose();
@@ -203,7 +209,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         _processing ||
         _closing ||
         _loading ||
-        _resumePayment ||
+        (_resumePayment && !_verifiedUnpaid) ||
         _paymentSubmitted ||
         _refund != null) {
       return;
@@ -227,6 +233,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     if (_closing || (_processing && booking == null)) return;
     _closing = true;
     _loadGeneration++;
+    _paymentGeneration++;
     _refundTimer?.cancel();
     await _paymentSession?.close();
     if (!mounted) return;
@@ -326,9 +333,17 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     final shown = _preview;
     final role = _role;
     if (!_canPay || shown == null || role == null) return;
+    final resuming = _resumePayment;
+    final paymentGeneration = ++_paymentGeneration;
     setState(() {
       _processing = true;
       _error = null;
+      _verifiedUnpaid = false;
+      if (!resuming) {
+        _paymentIntentId = null;
+        _stripePaymentIntentId = null;
+        _paymentClientSecret = null;
+      }
     });
     try {
       if (_resumePayment) {
@@ -361,21 +376,64 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                 .bookGameWithCollector(
                   game: _game,
                   role: role,
+                  resumeIntentId: resuming ? _paymentIntentId : null,
+                  resumeOnly: resuming,
                   collectPayment: (request) async {
+                    if (!mounted ||
+                        _closing ||
+                        paymentGeneration != _paymentGeneration) {
+                      throw const PaymentPendingException();
+                    }
                     // Check again against the authoritative prepared intent.
                     // A price race must never confirm an unseen amount.
                     if (request.amountFils != shown.totalFils ||
                         request.currency != shown.currency) {
                       throw const PaymentQuoteChangedException();
                     }
-                    final session = _paymentSession;
+                    if (_paymentIntentId != null &&
+                        (request.intentId != _paymentIntentId ||
+                            request.stripePaymentIntentId !=
+                                _stripePaymentIntentId ||
+                            request.clientSecret != _paymentClientSecret)) {
+                      throw const PaymentPendingException();
+                    }
+                    _paymentIntentId ??= request.intentId;
+                    _stripePaymentIntentId ??= request.stripePaymentIntentId;
+                    _paymentClientSecret ??= request.clientSecret;
+                    var session = _paymentSession;
+                    if (request.verifiedUnpaidResume) {
+                      _verifiedUnpaid = true;
+                      if (session == null || !session.isReady) {
+                        // Only a fresh exact-intent server inspection can
+                        // authorize replacing an indeterminate native selector.
+                        await _replacePaymentSession(shown, ++_loadGeneration);
+                        session = _paymentSession;
+                      }
+                      if (!mounted ||
+                          _closing ||
+                          paymentGeneration != _paymentGeneration) {
+                        throw const PaymentPendingException();
+                      }
+                      if (session?.hasSelection != true) {
+                        // Initialization does not collect money. Let the user
+                        // explicitly choose again, then recheck before confirm.
+                        throw const PaymentSelectionRequiredException();
+                      }
+                    }
                     if (session == null ||
                         !session.isReady ||
                         !session.hasSelection) {
                       throw const PaymentPendingException();
                     }
                     await session.collectPayment(request);
-                    if (mounted) setState(() => _paymentSubmitted = true);
+                    if (mounted &&
+                        !_closing &&
+                        paymentGeneration == _paymentGeneration) {
+                      setState(() {
+                        _paymentSubmitted = true;
+                        _verifiedUnpaid = false;
+                      });
+                    }
                   },
                 )
           : await repository.bookGame(
@@ -405,9 +463,15 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
           // Preserve the original error and the idempotent retry path if the
           // booking lookup is also temporarily unavailable.
         }
+        if (error is PaymentCancelledException) {
+          // Production collectors surface cancellation only after the server
+          // confirms it for the existing attempt, including a native race.
+          _paymentSubmitted = false;
+        }
         if (!_paymentSubmitted &&
             error is PaymentException &&
             error is! PaymentPendingException &&
+            error is! PaymentSelectionRequiredException &&
             error is! PaymentRefundException) {
           _resumePayment = false;
         }
@@ -582,7 +646,10 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
             TextButton(
               key: const ValueKey('retry-payment-options'),
               onPressed:
-                  _processing || _loading || _resumePayment || _paymentSubmitted
+                  _processing ||
+                      _loading ||
+                      (_resumePayment && !_verifiedUnpaid) ||
+                      _paymentSubmitted
                   ? null
                   : _retryPaymentSelection,
               child: const Text('Retry payment options'),

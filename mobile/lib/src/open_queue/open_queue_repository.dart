@@ -36,6 +36,8 @@ abstract interface class OpenQueueEmbeddedCheckoutRepository {
     required OpenQueueGame game,
     required OpenQueueRole role,
     required PaymentCollector collectPayment,
+    String? resumeIntentId,
+    bool resumeOnly = false,
   });
 }
 
@@ -320,12 +322,18 @@ class SupabaseOpenQueueRepository
     final rows = response as List<dynamic>;
     final bookings = [
       for (final row in rows)
-        OpenQueueBooking.fromJson(Map<String, dynamic>.from(row as Map)),
+        _bookingFromJoinedGame(Map<String, dynamic>.from(row as Map)),
     ];
-
-    return hydrateUpcomingOpenQueueBookings(
+    // Discovery is paginated across markets. Its absence cannot establish that
+    // an authenticated player's own confirmed reservation no longer exists.
+    final upcoming = hydrateUpcomingOpenQueueBookings(
       bookings: bookings,
-      games: await listGames(),
+      games: const [],
+    );
+    final enriched = await Future.wait(upcoming.map(_hydrateBookingGame));
+    return hydrateUpcomingOpenQueueBookings(
+      bookings: enriched,
+      games: const [],
     );
   }
 
@@ -349,11 +357,10 @@ class SupabaseOpenQueueRepository
         .maybeSingle();
     if (response == null) return null;
 
-    final booking = OpenQueueBooking.fromJson(
-      Map<String, dynamic>.from(response),
-    );
+    final booking = _bookingFromJoinedGame(Map<String, dynamic>.from(response));
     if (!booking.game.isUpcomingReservation) return null;
-    return _hydrateBookingGame(booking);
+    final hydrated = await _hydrateBookingGame(booking);
+    return hydrated.game.isUpcomingReservation ? hydrated : null;
   }
 
   @override
@@ -368,7 +375,15 @@ class SupabaseOpenQueueRepository
     required OpenQueueGame game,
     required OpenQueueRole role,
     required PaymentCollector collectPayment,
-  }) => _bookGame(game: game, role: role, collectPayment: collectPayment);
+    String? resumeIntentId,
+    bool resumeOnly = false,
+  }) => _bookGame(
+    game: game,
+    role: role,
+    collectPayment: collectPayment,
+    resumeIntentId: resumeIntentId,
+    resumeOnly: resumeOnly,
+  );
 
   @override
   Future<PaymentRefundState> checkRefundStatus(String intentId) =>
@@ -378,6 +393,8 @@ class SupabaseOpenQueueRepository
     required OpenQueueGame game,
     required OpenQueueRole role,
     PaymentCollector? collectPayment,
+    String? resumeIntentId,
+    bool resumeOnly = false,
   }) async {
     final payment =
         await PaymentService(
@@ -386,6 +403,8 @@ class SupabaseOpenQueueRepository
         ).pay(
           purpose: PaymentPurpose.soloBooking,
           payload: {'game_id': game.id, 'role': role.code},
+          resumeIntentId: resumeIntentId,
+          resumeOnly: resumeOnly,
         );
     if (payment.resourceType != 'OPEN_QUEUE_BOOKING') {
       throw const PaymentPendingException();
@@ -457,11 +476,39 @@ class SupabaseOpenQueueRepository
   }
 
   Future<OpenQueueBooking> _hydrateBookingGame(OpenQueueBooking booking) async {
-    final games = await listGames();
-    for (final game in games) {
-      if (game.id == booking.gameId) return booking.copyWith(game: game);
+    try {
+      // This endpoint applies rating privacy and is not discovery-limited.
+      final detail = await getMatchDetail(booking.gameId);
+      if (detail.game.id == booking.gameId) {
+        return booking.copyWith(game: detail.game);
+      }
+    } catch (_) {
+      // The joined row still proves the reservation and its saved price,
+      // currency and location. Missing optional detail must not erase it or
+      // invent roster totals, assignment readiness or private rating values.
     }
     return booking;
+  }
+
+  OpenQueueBooking _bookingFromJoinedGame(Map<String, dynamic> row) {
+    final rawGame = row['game'] ?? row['open_queue_games'];
+    final joined = rawGame is List && rawGame.length == 1
+        ? rawGame.single
+        : rawGame;
+    if (joined is! Map ||
+        row['game_id'] is! String ||
+        joined['id'] != row['game_id']) {
+      throw StateError('Your booked game is unavailable. Please try again.');
+    }
+    final game = Map<String, dynamic>.from(joined);
+    game['currency'] = _requiredCurrency(game['currency']);
+    final price = game['price_fils'];
+    if (price is! int || price < 0) {
+      throw StateError(
+        'The booked game price is unavailable. Please try again.',
+      );
+    }
+    return OpenQueueBooking.fromJson({...row, 'game': game});
   }
 }
 
@@ -471,10 +518,7 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
   DateTime? now,
 }) {
   final cutoff = now ?? DateTime.now();
-  final activeGames = <String, OpenQueueGame>{
-    for (final game in games)
-      if (game.isUpcomingReservationAt(cutoff)) game.id: game,
-  };
+  final gamesById = {for (final game in games) game.id: game};
   final seenBookingIds = <String>{};
   final hydrated = <OpenQueueBooking>[];
   for (final booking in bookings) {
@@ -482,8 +526,10 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
         !seenBookingIds.add(booking.id)) {
       continue;
     }
-    final game = activeGames[booking.gameId];
-    if (game == null) continue;
+    final game = gamesById[booking.gameId] ?? booking.game;
+    if (game.id != booking.gameId || !game.isUpcomingReservationAt(cutoff)) {
+      continue;
+    }
     hydrated.add(booking.copyWith(game: game));
   }
   hydrated.sort((left, right) {
