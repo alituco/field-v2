@@ -55,6 +55,7 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     this.positionLabel,
     this.onMatchHistory,
     this.onClip,
+    this.onAllClips,
     this.recentResults = const [],
     this.trailingChildren = const [],
     this.ratings,
@@ -73,6 +74,7 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
   final String? positionLabel;
   final VoidCallback? onMatchHistory;
   final ValueChanged<ProfileHighlight>? onClip;
+  final VoidCallback? onAllClips;
   final List<ProfileGameOutcome?> recentResults;
   final List<Widget> trailingChildren;
   final FieldrushPlayerRatings? ratings;
@@ -167,6 +169,7 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
           key: const ValueKey('player-clips'),
           highlights: profile.highlights,
           onClip: onClip!,
+          onAllClips: onAllClips,
           clipKeyPrefix: 'player',
         ),
       if (onReport != null)

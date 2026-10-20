@@ -58,7 +58,29 @@ abstract class ProfileRepository {
   Future<int> recordHighlightView(String highlightId);
 }
 
-class SupabaseProfileRepository implements ProfileRepository {
+abstract interface class ProfileClipRecommendationsRepository {
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  });
+}
+
+extension ProfileClipRecommendationsAccess on ProfileRepository {
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  }) async {
+    final repository = this;
+    if (repository is ProfileClipRecommendationsRepository) {
+      return (repository as ProfileClipRecommendationsRepository)
+          .getClipRecommendations(highlightId: highlightId, limit: limit);
+    }
+    return const [];
+  }
+}
+
+class SupabaseProfileRepository
+    implements ProfileRepository, ProfileClipRecommendationsRepository {
   SupabaseProfileRepository({SupabaseClient? client})
     : _injectedClient = client;
 
@@ -205,6 +227,44 @@ class SupabaseProfileRepository implements ProfileRepository {
       if (value is num) return value.toInt();
     }
     throw StateError('The clip view could not be recorded.');
+  }
+
+  @override
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  }) async {
+    final id = highlightId.trim();
+    if (id.isEmpty) throw ArgumentError('A clip is required.');
+    if (limit < 1 || limit > 20) {
+      throw ArgumentError.value(limit, 'limit', 'Use a limit from 1 to 20.');
+    }
+    final response = await _client.rpc(
+      'get_profile_clip_recommendations',
+      params: {'highlight_id_to_use': id, 'limit_to_use': limit},
+    );
+    if (response is! List) {
+      throw StateError('The next clips could not be loaded.');
+    }
+    final recommendations = [
+      for (final row in response)
+        if (row is Map)
+          ProfileClipRecommendation.fromJson(Map<String, dynamic>.from(row))
+        else
+          throw StateError('The next clips returned an invalid response.'),
+    ];
+    // Keep the display boundary private even if an older server returns an
+    // overbroad recommendation response during a coordinated rollout.
+    return recommendations
+        .where(
+          (recommendation) =>
+              recommendation.highlight.id != id &&
+              recommendation.highlight.hasPlayableVideo &&
+              (recommendation.highlight.isPublic ||
+                  recommendation.profileId == currentUserId),
+        )
+        .take(limit)
+        .toList(growable: false);
   }
 
   ProfileHighlight _highlightFromFunctionResponse(Object? data) {
@@ -618,7 +678,7 @@ class SupabaseProfileRepository implements ProfileRepository {
     final response = await _client
         .from('profile_highlights')
         .select(
-          'id, title, thumbnail_url, video_url, duration, views, clan_tag, '
+          'id, profile_id, title, thumbnail_url, video_url, duration, views, clan_tag, '
           'download_url, source_type, source_match_id, source_event_id, '
           'is_public, provider_video_id, processing_status, processing_error, created_at',
         )

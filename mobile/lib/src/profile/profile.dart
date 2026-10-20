@@ -723,6 +723,7 @@ class ProfileHighlight {
     this.status = ProfileHighlightStatus.ready,
     this.errorMessage,
     this.createdAt,
+    this.profileId,
   });
 
   final String id;
@@ -741,6 +742,7 @@ class ProfileHighlight {
   final ProfileHighlightStatus status;
   final String? errorMessage;
   final DateTime? createdAt;
+  final String? profileId;
 
   bool get isReady => status == ProfileHighlightStatus.ready;
 
@@ -773,6 +775,7 @@ class ProfileHighlight {
         json['processing_error'] ?? json['error_message'],
       ),
       createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      profileId: _nonEmptyString(json['profile_id']),
     );
   }
 
@@ -794,6 +797,45 @@ class ProfileHighlight {
       status: status,
       errorMessage: errorMessage,
       createdAt: createdAt,
+      profileId: profileId,
+    );
+  }
+}
+
+class ProfileClipRecommendation {
+  const ProfileClipRecommendation({
+    required this.highlight,
+    required this.profileId,
+    required this.username,
+    required this.displayName,
+    this.avatarUrl,
+  });
+
+  final ProfileHighlight highlight;
+  final String profileId;
+  final String username;
+  final String displayName;
+  final String? avatarUrl;
+
+  factory ProfileClipRecommendation.fromJson(Map<String, dynamic> json) {
+    final highlight = json['highlight'];
+    final profileId = _nonEmptyString(json['profile_id']);
+    if (highlight is! Map ||
+        profileId == null ||
+        _nonEmptyString(highlight['id']) == null ||
+        (_nonEmptyString(highlight['profile_id']) != null &&
+            highlight['profile_id'] != profileId)) {
+      throw const FormatException('The clip recommendation is incomplete.');
+    }
+    return ProfileClipRecommendation(
+      highlight: ProfileHighlight.fromJson({
+        ...Map<String, dynamic>.from(highlight),
+        'profile_id': profileId,
+      }),
+      profileId: profileId,
+      username: _nonEmptyString(json['username']) ?? '',
+      displayName: _nonEmptyString(json['display_name']) ?? '',
+      avatarUrl: _nonEmptyString(json['avatar_url']),
     );
   }
 }

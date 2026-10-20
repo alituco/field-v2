@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'date_of_birth.dart';
+import 'staging_account_switch.dart';
 
 abstract class AuthRepository {
   Session? get currentSession;
@@ -157,6 +158,10 @@ class SupabaseAuthRepository implements AuthRepository {
     if (targetProfileId == currentUser?.id) return;
 
     try {
+      if (_appEnvironment == 'staging') {
+        await StagingAccountSwitch.switchTo(_client, targetProfileId);
+        return;
+      }
       final session = currentSession;
       final response = await _client.functions.invoke(
         'dev-switch-user',

@@ -68,7 +68,7 @@ void main() {
     String? switchedTo;
     await _open(tester, onSwitchUser: (id) async => switchedTo = id);
     expect(find.byType(FieldrushModal), findsOneWidget);
-    expect(find.text('Development only'.toUpperCase()), findsOneWidget);
+    expect(find.text('Staging admin only'.toUpperCase()), findsOneWidget);
     expect(
       tester.widget<Text>(find.text('Swap profile')).style!.fontFamily,
       'Outfit',

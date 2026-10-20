@@ -26,6 +26,11 @@ import {
 import type { MatchResolutionType } from "@/lib/match-action-input";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { refundRetryNotice } from "@/lib/payment-refunds";
+import {
+  canFillGameWithBots,
+  isStagingGameBotsEnabled,
+  validateStagingBotFillReply,
+} from "@/lib/staging-game-bots";
 import type {
   BroadcastControlResponse,
   FixtureEvent,
@@ -55,12 +60,36 @@ export default function AdminGameDetailPage() {
   const [assignReferee, setAssignReferee] = useState(false);
   const [cancelGame, setCancelGame] = useState(false);
   const [editingPrice, setEditingPrice] = useState(false);
+  const [confirmLockTeams, setConfirmLockTeams] = useState(false);
+  const [lockingTeams, setLockingTeams] = useState(false);
+  const [confirmFillBots, setConfirmFillBots] = useState(false);
+  const [fillingBots, setFillingBots] = useState(false);
   const [resolveCase, setResolveCase] = useState(false);
   const [retryRefund, setRetryRefund] =
     useState<AdminGameResolutionRefund | null>(null);
+  const mounted = useRef(true);
+  const pageKey = `${matchKind}:${gameId}`;
+  const pageIdentity = `${pageKey}:${accessToken ?? ""}`;
+  const currentPageIdentity = useRef(pageIdentity);
+  currentPageIdentity.current = pageIdentity;
+  const botFillRequest = useRef<{ pageKey: string; requestId: string } | null>(null);
 
-  const load = useCallback(async (quiet = false) => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    setConfirmFillBots(false);
+    setFillingBots(false);
+    if (botFillRequest.current?.pageKey !== pageKey) botFillRequest.current = null;
+  }, [pageKey, accessToken]);
+
+  const load = useCallback(async (quiet = false, expectedPageIdentity?: string) => {
     if (!accessToken || !gameId || !["SOLO", "CLAN"].includes(matchKind)) return;
+    const canApply = () => mounted.current &&
+      (expectedPageIdentity === undefined || currentPageIdentity.current === expectedPageIdentity);
+    if (!canApply()) return;
     if (!quiet) setLoading(true);
     setError(null);
     try {
@@ -68,12 +97,13 @@ export default function AdminGameDetailPage() {
         `/api/referee/admin/games/${matchKind.toLowerCase()}/${gameId}`,
         { headers: auth(accessToken), cache: "no-store" },
       );
+      if (!canApply()) return;
       setDetail(payload.detail);
       return payload.detail;
     } catch (loadError) {
-      setError(message(loadError, "Could not load this game."));
+      if (canApply()) setError(message(loadError, "Could not load this game."));
     } finally {
-      setLoading(false);
+      if (canApply()) setLoading(false);
     }
   }, [accessToken, gameId, matchKind]);
 
@@ -106,6 +136,48 @@ export default function AdminGameDetailPage() {
       }));
     } catch (recordingError) {
       setError(message(recordingError, "Could not load the match recording."));
+    }
+  }
+
+  async function fillWithBots() {
+    if (!accessToken || !detail || detail.fixture.id !== gameId ||
+      detail.fixture.matchKind !== matchKind || fillingBots || lockingTeams ||
+      !isStagingGameBotsEnabled() || !canFillGameWithBots(detail.fixture)) return;
+    if (!confirmFillBots) {
+      setConfirmLockTeams(false);
+      setConfirmFillBots(true);
+      return;
+    }
+    const expectedPage = currentPageIdentity.current;
+    const targetGameId = detail.fixture.id;
+    const request = botFillRequest.current?.pageKey === pageKey
+      ? botFillRequest.current
+      : { pageKey, requestId: crypto.randomUUID() };
+    botFillRequest.current = request;
+    const canApply = () => mounted.current && currentPageIdentity.current === expectedPage;
+    setFillingBots(true);
+    setError(null);
+    try {
+      const payload = await fetchJson<unknown>(
+        `/api/referee/admin/games/solo/${targetGameId}/fill-bots`,
+        {
+          method: "POST",
+          headers: { ...auth(accessToken), "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: request.requestId, confirmation: "FILL_WITH_BOTS" }),
+        },
+      );
+      const result = validateStagingBotFillReply(payload, { gameId: targetGameId, requestId: request.requestId });
+      if (!canApply()) return;
+      botFillRequest.current = null;
+      setConfirmFillBots(false);
+      setNotice(result.createdBots > 0
+        ? `Added ${result.createdBots} staging bots. ${result.confirmedCount} / ${result.capacity} places are booked. Use Lock teams when you’re ready.`
+        : "This game is already full. No bots were added.");
+      await load(true, expectedPage);
+    } catch (fillError) {
+      if (canApply()) setError(message(fillError, "Could not fill this game with bots."));
+    } finally {
+      if (canApply()) setFillingBots(false);
     }
   }
 
@@ -223,6 +295,46 @@ export default function AdminGameDetailPage() {
 
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />
+            {fixture.matchKind === "SOLO" && ["OPEN", "FULL"].includes(fixture.status) ? <div>
+              <p className={styles.actionHint}>Lock a full roster into balanced White and Black teams, preserving parties and the saved formation. This releases team assignments and closes outstanding party invitations; it does not start the match or check players in.</p>
+              {confirmLockTeams ? <p>Assign and release both teams now?</p> : null}
+              <button type="button" className={styles.primaryButton}
+                disabled={lockingTeams || fillingBots || fixture.status !== "FULL" || Boolean(fixture.teamsAssignedAt)}
+                onClick={async () => {
+                  setConfirmFillBots(false);
+                  if (!confirmLockTeams) { setConfirmLockTeams(true); return; }
+                  setLockingTeams(true);
+                  setError(null);
+                  try {
+                    await fetchJson(`/api/referee/admin/games/solo/${fixture.id}/lock-teams`, {
+                      method: "POST", headers: auth(accessToken),
+                    });
+                    setConfirmLockTeams(false);
+                    setNotice("Teams locked. White and Black squads are ready; the match has not started.");
+                    await load(true);
+                  } catch (lockError) { setError(message(lockError, "Could not lock teams.")); }
+                  finally { setLockingTeams(false); }
+                }}>
+                {lockingTeams ? "Locking teams…" : fixture.teamsAssignedAt ? "Teams locked" : confirmLockTeams ? "Confirm lock teams" : "Lock teams"}
+              </button>
+              {confirmLockTeams ? <button type="button" className={styles.cancelButton} disabled={lockingTeams} onClick={() => setConfirmLockTeams(false)}>Cancel</button> : null}
+              {fixture.status !== "FULL" ? <p className={styles.actionHint}>Available when all places are booked.</p> : null}
+            </div> : null}
+            {fixture.id === gameId && fixture.matchKind === matchKind &&
+              isStagingGameBotsEnabled() && canFillGameWithBots(fixture) ? (
+              <div role="group" aria-label="Staging game tools">
+                {confirmFillBots ? (
+                  <p className={styles.actionHint}>Fill the remaining positions with clearly labeled staging bots? Existing players stay booked. No one is charged, checked in, or assigned to a team, and the match will not start.</p>
+                ) : <p className={styles.actionHint}>Staging only · Add test players to the remaining positions.</p>}
+                <button type="button" className={styles.cancelButton}
+                  disabled={fillingBots || lockingTeams}
+                  onClick={() => void fillWithBots()}>
+                  {fillingBots ? "Adding bots…" : confirmFillBots ? "Confirm fill with bots" : "Fill game with bots"}
+                </button>
+                {confirmFillBots ? <button type="button" className={styles.cancelButton}
+                  disabled={fillingBots} onClick={() => setConfirmFillBots(false)}>Cancel bot fill</button> : null}
+              </div>
+            ) : null}
             <ParticipantGroups detail={detail} onPlayerAction={setPlayerAction} />
           </section>
 

@@ -6,6 +6,7 @@ import 'package:field/src/clans/clan_detail_screen.dart';
 import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
+import 'package:field/src/fixtures/fieldrush_match_replay_screen.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/profile/goal_clip_downloader.dart';
 import 'package:field/src/profile/profile.dart';
@@ -16,6 +17,206 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 void main() {
+  testWidgets('completed fixture Stream Play opens the focused replay route', (
+    tester,
+  ) async {
+    final originalPlatform = VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+    addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+    final fixture = _fixture(
+      status: FixtureStatus.finalResult,
+      broadcast: const FixtureBroadcast(
+        status: 'REPLAY_READY',
+        replayHlsUrl: 'https://example.com/full-replay.m3u8',
+      ),
+    );
+    await _pumpDetail(tester, fixture, sourceLabel: 'CLAN');
+    final detail = tester.widget<FixtureDetailScreen>(
+      find.byType(FixtureDetailScreen),
+    );
+    await _scrollToBroadcast(tester, 'WATCH MATCH');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Full Game'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byTooltip('Play'));
+    await tester.tap(find.byTooltip('Play'));
+    await tester.pumpAndSettle();
+    final replay = tester.widget<FieldrushMatchReplayScreen>(
+      find.byType(FieldrushMatchReplayScreen),
+    );
+    expect(replay.fixture.id, fixture.id);
+    expect(replay.fixture.fullGamePlaybackUrl, fixture.fullGamePlaybackUrl);
+    expect(replay.fixtureRepository, same(detail.fixtureRepository));
+    expect(replay.sourceLabel, 'CLAN');
+    expect((await replay.refreshFixture!()).id, fixture.id);
+    expect(find.byType(FieldrushMatchWatchScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('focused editor watch Play cannot recursively open a replay', (
+    tester,
+  ) async {
+    final originalPlatform = VideoPlayerPlatform.instance;
+    VideoPlayerPlatform.instance = _FakeVideoPlayerPlatform();
+    addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+    final fixture = _fixture(
+      status: FixtureStatus.finalResult,
+      broadcast: const FixtureBroadcast(
+        status: 'REPLAY_READY',
+        replayHlsUrl: 'https://example.com/full-replay.m3u8',
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FieldrushMatchWatchScreen(
+          fixture: fixture,
+          fixtureRepository: _FakeFixtureRepository(fixture),
+          profileRepository: _FakeProfileRepository('viewer'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Play'));
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushMatchReplayScreen), findsNothing);
+    expect(find.byType(FieldrushMatchWatchScreen), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('focused watch keeps live controller through fullscreen refresh', (
+    tester,
+  ) async {
+    final originalPlatform = VideoPlayerPlatform.instance;
+    final platform = _FakeVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = platform;
+    addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+    final fixture = _fixture(
+      status: FixtureStatus.live,
+      broadcast: const FixtureBroadcast(
+        status: 'LIVE',
+        hlsUrl: 'https://example.com/live.m3u8',
+      ),
+    );
+    final refreshed = _fixture(
+      status: FixtureStatus.live,
+      broadcast: const FixtureBroadcast(
+        status: 'LIVE',
+        hlsUrl: 'https://example.com/reconnected.m3u8',
+      ),
+    );
+    var refreshCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FieldrushMatchWatchScreen(
+          fixture: fixture,
+          fixtureRepository: _FakeFixtureRepository(fixture),
+          profileRepository: _FakeProfileRepository('viewer'),
+          refreshFixture: () async {
+            refreshCalls++;
+            return refreshed;
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Fullscreen'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pump();
+    expect(refreshCalls, 1);
+    expect(platform.disposeCalls, 0);
+    expect(platform._nextPlayerId, 1);
+    expect(
+      find.byKey(const ValueKey('fullscreen-video-player')),
+      findsOneWidget,
+    );
+    expect(find.byTooltip('Mute').hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('fullscreen-exit')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fullscreen-video-player')), findsNothing);
+    // Native player disposal cancels a stream outside the fake animation clock.
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+    await tester.pumpAndSettle();
+    expect(platform.disposeCalls, 1);
+    expect(platform._nextPlayerId, 2);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets(
+    'clip editor serializes slow seeks and discards stale preview actions',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final originalPlatform = VideoPlayerPlatform.instance;
+      final platform = _FakeVideoPlayerPlatform();
+      VideoPlayerPlatform.instance = platform;
+      addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
+      final fixture = _fixture(
+        status: FixtureStatus.finalResult,
+        broadcast: const FixtureBroadcast(
+          status: 'REPLAY_READY',
+          replayHlsUrl: 'https://example.com/replay.m3u8',
+        ),
+      );
+      const originalPosition = Duration(minutes: 12, seconds: 34);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FieldrushMatchWatchScreen(
+            fixture: fixture,
+            fixtureRepository: _FakeFixtureRepository(fixture),
+            profileRepository: _FakeProfileRepository('viewer'),
+            openClipEditor: true,
+            initialPosition: originalPosition,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Create match clip'), findsOneWidget);
+      expect(platform.seekPositions.last, originalPosition);
+
+      final blockedSeek = Completer<void>();
+      platform.nextSeekBlock = blockedSeek;
+      final playhead = tester.widget<Slider>(
+        find.byKey(const ValueKey('custom-clip-playhead')),
+      );
+      playhead.onChangeStart!(750);
+      playhead.onChanged!(750);
+      playhead.onChangeEnd!(750);
+      await tester.pump();
+      expect(platform.activeSeeks, 1);
+      // This preview must not restart playback after the user trims again.
+      final preview = find.byKey(
+        const ValueKey('custom-clip-preview-selection'),
+      );
+      await tester.ensureVisible(preview);
+      await tester.tap(preview);
+      await tester.pump();
+      playhead.onChanged!(760);
+      playhead.onChangeEnd!(760);
+      await tester.pump();
+      expect(platform.activeSeeks, 1);
+      blockedSeek.complete();
+      await tester.pumpAndSettle();
+      expect(platform.maxActiveSeeks, 1);
+      expect(platform.seekPositions.last, const Duration(seconds: 760));
+      expect(platform.playCalls, 0);
+      await tester.tap(find.byKey(const ValueKey('custom-clip-cancel')));
+      await tester.pumpAndSettle();
+      expect(platform.seekPositions.last, originalPosition);
+      expect(platform.disposeCalls, 0);
+      expect(find.byType(FixtureDetailScreen), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    },
+  );
+
   testWidgets('unknown team rating renders no fabricated SR', (tester) async {
     final fixture = Fixture.fromJson({
       'id': 'unknown-rating',
@@ -783,7 +984,7 @@ void main() {
       await tester.tap(find.text('Create a clip'));
       await tester.pumpAndSettle();
 
-      expect(find.text('CREATE A MATCH CLIP'), findsOneWidget);
+      expect(find.text('Create match clip'), findsOneWidget);
       expect(find.textContaining('trim both ends'), findsOneWidget);
       expect(
         find.byKey(const ValueKey('custom-clip-video-preview')),
@@ -1111,8 +1312,11 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
-      expect(find.text("Goal 1 · 8'"), findsOneWidget);
-      expect(find.text("Goal 2 · 18'"), findsOneWidget);
+      expect(find.text('MATCH GOALS'), findsOneWidget);
+      expect(find.text("8'"), findsWidgets);
+      expect(find.text("18'"), findsWidgets);
+      expect(find.byKey(const ValueKey('highlight-goal-0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('highlight-goal-1')), findsOneWidget);
       expect(find.text('Previous'), findsNothing);
       expect(find.text('Restart'), findsNothing);
       expect(find.text('Next'), findsNothing);
@@ -1197,7 +1401,7 @@ void main() {
       expect(find.byKey(const ValueKey('fullscreen-exit')), findsOneWidget);
       expect(_fullscreenControlsOpacity(tester), 1);
 
-      await tester.tap(find.byTooltip('Forward 10 seconds'));
+      await tester.tap(find.byKey(const ValueKey('fullscreen-skip-forward')));
       await tester.pump();
       await tester.pump();
       expect(videoPlatform.seekPositions.last, const Duration(minutes: 18));
@@ -1214,7 +1418,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 180));
       expect(_fullscreenControlsOpacity(tester), 1);
 
-      await tester.tap(find.byTooltip('Exit fullscreen'));
+      await tester.tap(find.byKey(const ValueKey('fullscreen-exit')));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
 
@@ -1595,6 +1799,9 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
   int playCalls = 0;
   int pauseCalls = 0;
   int disposeCalls = 0;
+  Completer<void>? nextSeekBlock;
+  int activeSeeks = 0;
+  int maxActiveSeeks = 0;
 
   void setPosition(Duration position) {
     for (final playerId in _positions.keys) {
@@ -1663,8 +1870,14 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
 
   @override
   Future<void> seekTo(int playerId, Duration position) async {
+    activeSeeks++;
+    if (activeSeeks > maxActiveSeeks) maxActiveSeeks = activeSeeks;
+    final blocker = nextSeekBlock;
+    nextSeekBlock = null;
+    if (blocker != null) await blocker.future;
     _positions[playerId] = position;
     seekPositions.add(position);
+    activeSeeks--;
   }
 
   @override

@@ -178,6 +178,7 @@ class FieldrushYouContent extends StatefulWidget {
     this.isSigningOut = false,
     this.onSupport,
     this.onSwitchUser,
+    this.onAllClips,
   });
 
   final PlayerProfile profile;
@@ -203,6 +204,7 @@ class FieldrushYouContent extends StatefulWidget {
   final VoidCallback onRanks;
   final VoidCallback onMatchHistory;
   final ValueChanged<ProfileHighlight> onClip;
+  final VoidCallback? onAllClips;
   final VoidCallback onReliability;
   final VoidCallback onNotifications;
   final VoidCallback onWallet;
@@ -369,6 +371,7 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
         FieldrushProfileClips(
           highlights: widget.profile.highlights,
           onClip: widget.onClip,
+          onAllClips: widget.onAllClips,
           emptyMessage: 'Open the replay of a finished match and tap Clip.',
         ),
         Padding(
@@ -1187,11 +1190,13 @@ class FieldrushProfileClips extends StatelessWidget {
     super.key,
     required this.highlights,
     required this.onClip,
+    this.onAllClips,
     this.emptyMessage = 'No clips yet.',
     this.clipKeyPrefix = 'you',
   });
   final List<ProfileHighlight> highlights;
   final ValueChanged<ProfileHighlight> onClip;
+  final VoidCallback? onAllClips;
   final String emptyMessage;
   final String clipKeyPrefix;
 
@@ -1203,8 +1208,21 @@ class FieldrushProfileClips extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
         child: Row(
           children: [
-            Expanded(child: Text('CLIPS', style: _sectionStyle)),
-            Text('${highlights.length}', style: _jakarta(11, color: _muted)),
+            Expanded(
+              child: Text('CLIPS (${highlights.length})', style: _sectionStyle),
+            ),
+            if (onAllClips != null) ...[
+              const SizedBox(width: 10),
+              TextButton(
+                key: ValueKey('$clipKeyPrefix-view-all-clips'),
+                onPressed: onAllClips,
+                style: TextButton.styleFrom(
+                  foregroundColor: _green,
+                  textStyle: _jakarta(11, color: _green),
+                ),
+                child: const Text('View all clips'),
+              ),
+            ],
           ],
         ),
       ),

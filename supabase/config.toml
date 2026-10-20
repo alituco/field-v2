@@ -434,3 +434,5 @@ verify_jwt = false
 # bearer secret and exact staging/local environment; a user JWT is not accepted.
 [functions.fieldrush-push-dispatch]
 verify_jwt = false
+[functions.staging-admin-session]
+verify_jwt = false

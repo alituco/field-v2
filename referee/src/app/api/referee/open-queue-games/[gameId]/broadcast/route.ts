@@ -32,7 +32,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const broadcast = shouldSync
       ? await syncOpenQueueBroadcastFromCloudflare(refereeContext.db, gameId)
       : current;
-    const device = await getBroadcastDevice(refereeContext.db);
+    const device = await getBroadcastDevice(refereeContext.db, "SOLO", gameId);
     return NextResponse.json({ broadcast, device });
   } catch (error) {
     return NextResponse.json(
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         refereeContext.referee.profileId,
       );
     } else if (body.action === "start") {
-      const device = await getBroadcastDevice(refereeContext.db);
+      const device = await getBroadcastDevice(refereeContext.db, "SOLO", gameId);
       if (!device || device.status === "OFFLINE" || !device.obsConnected) {
         throw new Error("Camera laptop is offline. Open the Field broadcaster first.");
       }
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         refereeContext.referee.profileId,
       );
     } else if (body.action === "stop") {
-      const device = await getBroadcastDevice(refereeContext.db);
+      const device = await getBroadcastDevice(refereeContext.db, "SOLO", gameId);
       if (
         device?.obsStreaming &&
         (device.currentOpenQueueGameId !== gameId || device.currentFixtureId)
@@ -96,7 +96,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     const [broadcast, device] = await Promise.all([
       getOpenQueueBroadcast(refereeContext.db, gameId),
-      getBroadcastDevice(refereeContext.db),
+      getBroadcastDevice(refereeContext.db, "SOLO", gameId),
     ]);
     return NextResponse.json({ broadcast, device });
   } catch (error) {
