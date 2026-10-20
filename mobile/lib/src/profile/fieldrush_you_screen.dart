@@ -28,6 +28,7 @@ import 'fieldrush_you_settings.dart';
 import 'fieldrush_you_widgets.dart';
 import 'profile.dart';
 import 'profile_clip_screen.dart';
+import 'profile_clips_screen.dart';
 import 'profile_connections_screen.dart';
 import 'profile_repository.dart';
 import 'profile_screen.dart';
@@ -264,6 +265,28 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
           highlight: clip,
           profileRepository: widget.profileRepository,
           canManage: true,
+          ownerLabel: _profile == null ? null : '@${_profile!.username}',
+          ownerAvatarUrl: _profile?.avatarUrl,
+          ownerInitials: _profile?.initials,
+          fixtureRepository: widget.fixtureRepository,
+          openQueueRepository: widget.openQueueRepository,
+        ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Future<void> _openAllClips() async {
+    final profile = _profile;
+    if (profile == null) return;
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ProfileClipsScreen(
+          profile: profile,
+          repository: widget.profileRepository,
+          canManage: true,
+          fixtureRepository: widget.fixtureRepository,
+          openQueueRepository: widget.openQueueRepository,
         ),
       ),
     );
@@ -566,6 +589,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                         onRanks: widget.onOpenRanks,
                         onMatchHistory: _openHistory,
                         onClip: _openClip,
+                        onAllClips: _openAllClips,
                         onReliability: _openReliability,
                         onNotifications: _openNotifications,
                         onWallet: _openWallet,

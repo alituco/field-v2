@@ -82,7 +82,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
       eyebrow: 'Swap profile',
       title: 'Continue as ${profile.displayName}?',
       message:
-          'The app will reload this user’s profile, bookings, and clan access.',
+          'Open this staging account for up to 15 minutes. Actions affect its staging data. Restart the app or choose your admin profile to return.',
       detail: profile.username.isEmpty
           ? profile.displayName
           : '@${profile.username}',
@@ -113,7 +113,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
     return FieldrushModal(
       key: const ValueKey('dev-user-switcher-sheet'),
       title: 'Swap profile',
-      eyebrow: 'Development only',
+      eyebrow: 'Staging admin only',
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,

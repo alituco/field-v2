@@ -62,6 +62,10 @@ export type BroadcastDeviceState = {
   currentOpenQueueGameId?: string | null;
   lastSeenAt: string | null;
   errorMessage: string | null;
+  expiresAt?: string;
+  revokedAt?: string | null;
+  reservationActive?: boolean;
+  testCleanupPending?: boolean;
 };
 
 export type BroadcastControlResponse = {

@@ -79,7 +79,7 @@ if [[ "$target" == "production" ]]; then
   # Remove known development backdoors before touching the production schema.
   # The exact project-ref guard above makes this cleanup target-specific.
   function_list="$(production_function_list)"
-  for forbidden_function in dev-phone-login dev-switch-user; do
+  for forbidden_function in dev-phone-login dev-switch-user staging-admin-session; do
     if jq -e --arg name "$forbidden_function" \
       '.[] | select(.name == $name)' >/dev/null <<<"$function_list"; then
       echo "Removing forbidden ${forbidden_function} function from production."
@@ -91,7 +91,7 @@ if [[ "$target" == "production" ]]; then
 
   function_list="$(production_function_list)"
   if jq -e \
-    '.[] | select(.name == "dev-phone-login" or .name == "dev-switch-user")' \
+    '.[] | select(.name == "dev-phone-login" or .name == "dev-switch-user" or .name == "staging-admin-session")' \
     >/dev/null <<<"$function_list"; then
     echo "A staging-only authentication function still exists in production." >&2
     exit 1
@@ -201,6 +201,7 @@ if [[ "$target" == "staging" ]]; then
   # checks are the authentication boundary.
   deploy_function dev-phone-login --no-verify-jwt
   deploy_function dev-switch-user --no-verify-jwt
+  deploy_function staging-admin-session --no-verify-jwt
 elif [[ "${DEPLOY_RECORDING_FUNCTIONS:-false}" == "true" ]]; then
   # Production recording stays opt-in until its separate Cloudflare secrets
   # and webhook routing have been configured.
@@ -212,7 +213,7 @@ fi
 
 if [[ "$target" == "production" ]]; then
   function_list="$(production_function_list)"
-  if jq -e '.[] | select(.name == "dev-phone-login" or .name == "dev-switch-user")' \
+  if jq -e '.[] | select(.name == "dev-phone-login" or .name == "dev-switch-user" or .name == "staging-admin-session")' \
     >/dev/null <<<"$function_list"; then
     echo "A staging-only authentication function exists in production." >&2
     exit 1

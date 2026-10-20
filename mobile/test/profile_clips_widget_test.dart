@@ -7,13 +7,161 @@ import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/profile/goal_clip_downloader.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_clip_screen.dart';
+import 'package:field/src/profile/profile_clips_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
+import 'package:field/src/ui/fieldrush_video_player.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 void main() {
+  testWidgets(
+    'clip gallery opens the cream watch page with video and actions',
+    (tester) async {
+      _configurePhoneViewport(tester);
+      final video = _installFakeVideoPlatform();
+      final profile = _emptyProfile.copyWith(highlights: [_readyClip]);
+      final repository = _FakeProfileRepository(profile: profile);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProfileClipsScreen(
+            profile: profile,
+            repository: repository,
+            canManage: true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final grid = tester.widget<SliverGrid>(find.byType(SliverGrid));
+      expect(
+        (grid.gridDelegate as SliverGridDelegateWithFixedCrossAxisCount)
+            .crossAxisCount,
+        2,
+      );
+      expect(find.text('7 views'), findsOneWidget);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('profile-grid-clip-clip-one')))
+            .width,
+        greaterThan(180),
+      );
+      expect(video.createdPlayers, 0);
+      expect(repository.recordViewCalls, 0);
+      await tester.tap(
+        find.byKey(const ValueKey('profile-grid-clip-clip-one')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(ProfileClipScreen), findsOneWidget);
+      expect(find.text('@player.one'), findsOneWidget);
+      expect(find.byTooltip('Pause'), findsOneWidget);
+      expect(find.byTooltip('Fullscreen'), findsOneWidget);
+      expect(video.createdPlayers, 1);
+      expect(repository.recordViewCalls, 1);
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('profile-clip-post-media')))
+            .height,
+        closeTo(390 * 9 / 16 + 48, 1),
+      );
+      expect(find.text('Private'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('profile-clips-gallery')),
+        findsOneWidget,
+      );
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'public clip gallery excludes private clips; owner gallery includes them',
+    (tester) async {
+      final profile = _emptyProfile.copyWith(
+        highlights: [_readyClip.copyWith(isPublic: false)],
+      );
+      final repository = _FakeProfileRepository(profile: profile);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProfileClipsScreen(
+            profile: profile,
+            repository: repository,
+            canManage: false,
+          ),
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('profile-grid-clip-clip-one')),
+        findsNothing,
+      );
+      expect(find.text('No clips yet.'), findsOneWidget);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProfileClipsScreen(
+            profile: profile,
+            repository: repository,
+            canManage: true,
+          ),
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('profile-grid-clip-clip-one')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'Up next pauses this clip, opens its creator, and removes watched recommendations',
+    (tester) async {
+      _installFakeVideoPlatform();
+      const nextClip = ProfileHighlight(
+        id: 'next-clip',
+        title: 'Another finish',
+        thumbnailUrl: '',
+        duration: '0:30',
+        views: 15,
+        videoUrl: 'https://cdn.example.com/next.m3u8',
+      );
+      final repository = _FakeProfileRepository(
+        profile: _emptyProfile,
+        recommendations: const [
+          ProfileClipRecommendation(
+            highlight: nextClip,
+            profileId: 'another-player',
+            username: 'next.player',
+            displayName: 'Next Player',
+          ),
+        ],
+      );
+      await _pumpClip(
+        tester,
+        repository: repository,
+        downloader: _FakeGoalClipDownloader(),
+      );
+      expect(find.text('UP NEXT'), findsOneWidget);
+      final controller = tester
+          .widget<FieldrushVideoPlayer>(find.byType(FieldrushVideoPlayer))
+          .controller;
+      final next = find.byKey(const ValueKey('up-next-clip-next-clip'));
+      await tester.ensureVisible(next);
+      await tester.tap(next);
+      await tester.pumpAndSettle();
+      expect(controller.value.isPlaying, isFalse);
+      expect(find.text('@next.player'), findsOneWidget);
+      expect(find.byKey(const ValueKey('profile-clip-options')), findsNothing);
+      expect(repository.recordedHighlightIds, ['clip-one', 'next-clip']);
+      await tester.tap(find.byTooltip('Back'));
+      await tester.pumpAndSettle();
+      expect(next, findsNothing);
+      expect(controller.value.isPlaying, isFalse);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   testWidgets('current profile keeps an inviting empty CLIPS section', (
     tester,
   ) async {
@@ -44,6 +192,10 @@ void main() {
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+    await tester.tap(find.text('View all clips'));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfileClipsScreen), findsOneWidget);
+    expect(find.text('No clips yet.'), findsOneWidget);
   });
 
   testWidgets('playing a ready clip records one view across pause and replay', (
@@ -61,28 +213,71 @@ void main() {
       downloader: _FakeGoalClipDownloader(),
     );
 
-    final playIcon = find.byIcon(Icons.play_arrow_rounded);
-    expect(playIcon, findsOneWidget);
+    expect(find.byTooltip('Pause'), findsOneWidget);
+    expect(repository.recordViewCalls, 1);
     final initialPlayCalls = videoPlatform.playCalls;
     final initialPauseCalls = videoPlatform.pauseCalls;
 
-    await tester.tap(playIcon);
+    await tester.tap(find.byTooltip('Pause'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Play'));
     await tester.pump();
     expect(videoPlatform.playCalls, initialPlayCalls + 1);
     expect(repository.recordViewCalls, 1);
     expect(repository.recordedHighlightIds, ['clip-one']);
     expect(find.text('8 views'), findsOneWidget);
 
-    final video = find.byType(AspectRatio).first;
-    await tester.tap(video);
+    await tester.tap(find.byTooltip('Pause'));
     await tester.pump();
-    expect(videoPlatform.pauseCalls, initialPauseCalls + 1);
+    expect(videoPlatform.pauseCalls, initialPauseCalls + 2);
 
-    await tester.tap(video);
+    await tester.tap(find.byTooltip('Play'));
     await tester.pump();
     expect(videoPlatform.playCalls, initialPlayCalls + 2);
     expect(repository.recordViewCalls, 1);
     expect(find.text('8 views'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a profile clip keeps its player and view count in fullscreen', (
+    tester,
+  ) async {
+    final videoPlatform = _installFakeVideoPlatform();
+    final repository = _FakeProfileRepository(profile: _emptyProfile);
+    await _pumpClip(
+      tester,
+      repository: repository,
+      downloader: _FakeGoalClipDownloader(),
+    );
+
+    final controller = tester
+        .widget<FieldrushVideoPlayer>(find.byType(FieldrushVideoPlayer))
+        .controller;
+    await controller.seekTo(const Duration(seconds: 12));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Fullscreen'));
+    await tester.pumpAndSettle();
+
+    expect(videoPlatform.createdPlayers, 1);
+    expect(controller.value.position, const Duration(seconds: 12));
+    expect(find.byTooltip('Pause'), findsOneWidget);
+    expect(repository.recordViewCalls, 1);
+
+    await tester.tap(find.byKey(const ValueKey('fullscreen-exit')));
+    await tester.pumpAndSettle();
+    expect(find.byType(ProfileClipScreen), findsOneWidget);
+    expect(
+      tester
+          .widget<FieldrushVideoPlayer>(find.byType(FieldrushVideoPlayer))
+          .controller,
+      same(controller),
+    );
+    expect(controller.value.isPlaying, isTrue);
+    expect(repository.recordViewCalls, 1);
+    expect(videoPlatform.createdPlayers, 1);
+    await controller.pause();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
 
@@ -108,7 +303,10 @@ void main() {
     );
     expect(tester.widget<Text>(find.text('Clip')).style?.fontFamily, 'Outfit');
     expect(
-      tester.widget<Text>(find.text('Top corner finish')).style?.fontFamily,
+      tester
+          .widget<Text>(find.text('Top corner finish').last)
+          .style
+          ?.fontFamily,
       'Outfit',
     );
 
@@ -138,8 +336,10 @@ void main() {
 
     expect(
       find.byKey(const ValueKey('clip-visibility-selector')),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.byKey(const ValueKey('delete-profile-clip')), findsNothing);
+    expect(find.byType(FieldrushVideoPlayer), findsOneWidget);
     await _scrollClipControlIntoView(
       tester,
       find.byKey(const ValueKey('clip-visibility-selector')),
@@ -160,6 +360,35 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'opening options before initialization prevents covered autoplay',
+    (tester) async {
+      final video = _installFakeVideoPlatform(holdInitialization: true);
+      final repository = _FakeProfileRepository(profile: _emptyProfile);
+      await _pumpClip(
+        tester,
+        repository: repository,
+        downloader: _FakeGoalClipDownloader(),
+      );
+      await tester.tap(find.byKey(const ValueKey('profile-clip-options')));
+      await tester.pumpAndSettle();
+      video.completeInitialization();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(video.playCalls, 0);
+      expect(repository.recordViewCalls, 0);
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+      expect(find.byTooltip('Play'), findsOneWidget);
+      await tester.tap(find.byTooltip('Play'));
+      await tester.pump();
+      expect(video.playCalls, 1);
+      expect(repository.recordViewCalls, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('a failed visibility change keeps the previous clip state', (
     tester,
@@ -219,7 +448,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
       await tester.pumpAndSettle();
       expect(repository.deletedHighlightIds, isEmpty);
-      expect(find.byKey(const ValueKey('delete-profile-clip')), findsOneWidget);
+      expect(find.byKey(const ValueKey('delete-profile-clip')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('profile-clip-options')),
+        findsOneWidget,
+      );
     },
   );
 
@@ -270,6 +503,7 @@ void main() {
       find.text('We could not delete this clip. Try again.'),
       findsOneWidget,
     );
+    await _scrollClipControlIntoView(tester, deleteButton);
     expect(tester.widget<OutlinedButton>(deleteButton).onPressed, isNotNull);
     expect(tester.takeException(), isNull);
   });
@@ -408,6 +642,10 @@ Future<void> _scrollClipControlIntoView(
   WidgetTester tester,
   Finder control,
 ) async {
+  if (control.evaluate().isEmpty) {
+    await tester.tap(find.byKey(const ValueKey('profile-clip-options')));
+    await tester.pumpAndSettle();
+  }
   await tester.scrollUntilVisible(
     control,
     180,
@@ -416,9 +654,13 @@ Future<void> _scrollClipControlIntoView(
   await tester.pumpAndSettle();
 }
 
-_FakeVideoPlayerPlatform _installFakeVideoPlatform() {
+_FakeVideoPlayerPlatform _installFakeVideoPlatform({
+  bool holdInitialization = false,
+}) {
   final originalPlatform = VideoPlayerPlatform.instance;
-  final platform = _FakeVideoPlayerPlatform();
+  final platform = _FakeVideoPlayerPlatform(
+    holdInitialization: holdInitialization,
+  );
   VideoPlayerPlatform.instance = platform;
   addTearDown(() => VideoPlayerPlatform.instance = originalPlatform);
   return platform;
@@ -511,18 +753,21 @@ Fixture _ownedGoalFixture() {
   );
 }
 
-class _FakeProfileRepository implements ProfileRepository {
+class _FakeProfileRepository
+    implements ProfileRepository, ProfileClipRecommendationsRepository {
   _FakeProfileRepository({
     required this.profile,
     this.recordedViews = 1,
     this.visibilityError,
     this.deleteError,
+    this.recommendations = const [],
   });
 
   final PlayerProfile profile;
   final int recordedViews;
   final Object? visibilityError;
   final Object? deleteError;
+  final List<ProfileClipRecommendation> recommendations;
   int recordViewCalls = 0;
   final List<String> recordedHighlightIds = [];
   final List<ProfileGoalClipRequest> createdRequests = [];
@@ -537,6 +782,19 @@ class _FakeProfileRepository implements ProfileRepository {
 
   @override
   Future<PlayerProfile> getProfile(String profileId) async => profile;
+
+  @override
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  }) async => recommendations
+      .where(
+        (next) =>
+            next.highlight.id != highlightId &&
+            !recordedHighlightIds.contains(next.highlight.id),
+      )
+      .take(limit)
+      .toList();
 
   @override
   Future<int> recordHighlightView(String highlightId) async {
@@ -609,11 +867,14 @@ class _FakeGoalClipDownloader implements GoalClipDownloader {
 }
 
 class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
+  _FakeVideoPlayerPlatform({this.holdInitialization = false});
+  final bool holdInitialization;
   final Map<int, StreamController<VideoEvent>> _events = {};
   final Map<int, Duration> _positions = {};
   int _nextPlayerId = 0;
   int playCalls = 0;
   int pauseCalls = 0;
+  int get createdPlayers => _nextPlayerId;
 
   @override
   Future<void> init() async {}
@@ -624,14 +885,20 @@ class _FakeVideoPlayerPlatform extends VideoPlayerPlatform {
     final events = StreamController<VideoEvent>();
     _events[playerId] = events;
     _positions[playerId] = Duration.zero;
-    events.add(
-      VideoEvent(
-        eventType: VideoEventType.initialized,
-        size: const Size(1920, 1080),
-        duration: const Duration(seconds: 30),
-      ),
-    );
+    if (!holdInitialization) events.add(_initializedEvent());
     return playerId;
+  }
+
+  VideoEvent _initializedEvent() => VideoEvent(
+    eventType: VideoEventType.initialized,
+    size: const Size(1920, 1080),
+    duration: const Duration(seconds: 30),
+  );
+
+  void completeInitialization() {
+    for (final events in _events.values) {
+      events.add(_initializedEvent());
+    }
   }
 
   @override

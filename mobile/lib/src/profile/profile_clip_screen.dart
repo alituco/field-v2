@@ -3,13 +3,19 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
+import '../ui/fieldrush_video_player.dart';
+import '../ui/fieldrush_modal.dart';
 import 'package:video_player/video_player.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
+import '../fixtures/fixture.dart';
+import '../fixtures/fixture_repository.dart';
+import '../open_queue/open_queue_repository.dart';
 import 'goal_clip_downloader.dart';
 import 'profile.dart';
+import 'profile_clip_actions.dart';
 import 'profile_repository.dart';
 
 class ProfileClipScreen extends StatefulWidget {
@@ -19,12 +25,22 @@ class ProfileClipScreen extends StatefulWidget {
     required this.profileRepository,
     required this.canManage,
     this.downloader,
+    this.ownerLabel,
+    this.ownerAvatarUrl,
+    this.ownerInitials,
+    this.fixtureRepository,
+    this.openQueueRepository,
   });
 
   final ProfileHighlight highlight;
   final ProfileRepository profileRepository;
   final bool canManage;
   final GoalClipDownloader? downloader;
+  final String? ownerLabel;
+  final String? ownerAvatarUrl;
+  final String? ownerInitials;
+  final FixtureRepository? fixtureRepository;
+  final OpenQueueRepository? openQueueRepository;
 
   @override
   State<ProfileClipScreen> createState() => _ProfileClipScreenState();
@@ -46,10 +62,19 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   bool _isDeleting = false;
   double? _downloadProgress;
   int _loadGeneration = 0;
+  List<ProfileClipRecommendation> _recommendations = const [];
+  bool _loadingRecommendations = true;
+  bool _recommendationsFailed = false;
+  Fixture? _sourceFixture;
+  bool _openingNext = false;
+  bool _openingFullMatch = false;
+  bool _playbackSuspended = false;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_loadRecommendations());
+    unawaited(_loadSourceMatch());
     if (_highlight.isProcessing) {
       _startStatusPolling();
       unawaited(_refreshHighlight());
@@ -58,12 +83,97 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     }
   }
 
+  Future<void> _loadRecommendations() async {
+    try {
+      final clips = await widget.profileRepository.getClipRecommendations(
+        highlightId: _highlight.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _recommendations = clips;
+        _loadingRecommendations = false;
+        _recommendationsFailed = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loadingRecommendations = false;
+        _recommendationsFailed = true;
+      });
+    }
+  }
+
+  Future<void> _loadSourceMatch() async {
+    try {
+      final fixture = await loadProfileClipFixture(
+        _highlight,
+        fixtureRepository: widget.fixtureRepository,
+        openQueueRepository: widget.openQueueRepository,
+      );
+      if (mounted) setState(() => _sourceFixture = fixture);
+    } catch (_) {
+      // The clip remains watchable when its original match cannot be loaded.
+    }
+  }
+
+  Future<void> _openNext(ProfileClipRecommendation next) async {
+    if (_openingNext) return;
+    _openingNext = true;
+    _playbackSuspended = true;
+    try {
+      await _controller?.pause();
+      if (!mounted) return;
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => ProfileClipScreen(
+            highlight: next.highlight,
+            profileRepository: widget.profileRepository,
+            canManage: next.profileId == widget.profileRepository.currentUserId,
+            ownerLabel: next.username.isEmpty
+                ? next.displayName
+                : '@${next.username}',
+            ownerAvatarUrl: next.avatarUrl,
+            ownerInitials: _initials(next.displayName),
+            fixtureRepository: widget.fixtureRepository,
+            openQueueRepository: widget.openQueueRepository,
+            downloader: widget.downloader,
+          ),
+        ),
+      );
+      if (mounted) await _loadRecommendations();
+    } finally {
+      _openingNext = false;
+      _playbackSuspended = false;
+    }
+  }
+
+  Future<void> _openFullMatch() async {
+    if (_openingFullMatch) return;
+    _playbackSuspended = true;
+    setState(() => _openingFullMatch = true);
+    try {
+      await _controller?.pause();
+      if (!mounted) return;
+      await openProfileClipFullMatch(
+        context,
+        highlight: _highlight,
+        initialFixture: _sourceFixture,
+        fixtureRepository: widget.fixtureRepository,
+        openQueueRepository: widget.openQueueRepository,
+        profileRepository: widget.profileRepository,
+        goalClipDownloader: widget.downloader,
+      );
+    } finally {
+      _playbackSuspended = false;
+      if (mounted) setState(() => _openingFullMatch = false);
+    }
+  }
+
   @override
   void dispose() {
     _loadGeneration += 1;
     _statusTimer?.cancel();
     final controller = _controller;
-    controller?.removeListener(_handleVideoTick);
     unawaited(controller?.dispose());
     super.dispose();
   }
@@ -114,7 +224,6 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
 
     final generation = ++_loadGeneration;
     final previous = _controller;
-    previous?.removeListener(_handleVideoTick);
     _controller = null;
     _loadedVideoUrl = null;
     if (previous != null) await previous.dispose();
@@ -132,12 +241,22 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
         await next.dispose();
         return;
       }
-      next.addListener(_handleVideoTick);
       setState(() {
         _controller = next;
         _loadedVideoUrl = videoUrl;
         _isLoadingVideo = false;
       });
+      // The user explicitly opened this post. Start just this clip; the gallery
+      // itself never creates players or records views for unseen tiles.
+      try {
+        if (_playbackSuspended) return;
+        await next.play();
+        if (mounted && generation == _loadGeneration) {
+          unawaited(_recordViewOnce());
+        }
+      } catch (_) {
+        // If autoplay is unavailable, keep the ready player and its Play action.
+      }
     } catch (_) {
       await next.dispose();
       if (!mounted || generation != _loadGeneration) return;
@@ -148,11 +267,8 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     }
   }
 
-  void _handleVideoTick() {
-    if (mounted) setState(() {});
-  }
-
   Future<void> _togglePlayback() async {
+    if (_playbackSuspended) return;
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     if (controller.value.isPlaying) {
@@ -182,13 +298,6 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     } catch (_) {
       // Playback should never be interrupted because analytics could not save.
     }
-  }
-
-  Future<void> _seek(double milliseconds) async {
-    final controller = _controller;
-    if (controller == null || !controller.value.isInitialized) return;
-    await controller.seekTo(Duration(milliseconds: milliseconds.round()));
-    if (mounted) setState(() {});
   }
 
   Future<void> _downloadClip() async {
@@ -314,6 +423,70 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     }
   }
 
+  Future<void> _shareClip() async {
+    _playbackSuspended = true;
+    try {
+      await _controller?.pause();
+      if (mounted) await shareProfileClip(context, _highlight);
+    } finally {
+      _playbackSuspended = false;
+    }
+  }
+
+  Future<void> _showOptions() async {
+    _playbackSuspended = true;
+    try {
+      await _controller?.pause();
+      if (mounted) await _presentOptions();
+    } finally {
+      _playbackSuspended = false;
+    }
+  }
+
+  Future<void> _presentOptions() async {
+    final shouldDelete = await showFieldrushModal<bool>(
+      context: context,
+      builder: (modalContext) => StatefulBuilder(
+        builder: (context, updateModal) => FieldrushModal(
+          title: 'Clip options',
+          content: _ClipVisibilityCard(
+            isPublic: _highlight.isPublic,
+            isLoading: _isUpdatingVisibility,
+            onChanged: (value) async {
+              final update = _setVisibility(value);
+              updateModal(() {});
+              await update;
+              if (context.mounted) updateModal(() {});
+            },
+          ),
+          actions: [
+            OutlinedButton.icon(
+              key: const ValueKey('delete-profile-clip'),
+              onPressed: _isUpdatingVisibility
+                  ? null
+                  : () => Navigator.of(modalContext).pop(true),
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('Delete clip'),
+              style: FieldrushModal.secondaryButtonStyle().copyWith(
+                foregroundColor: const WidgetStatePropertyAll(
+                  FieldrushAuthTheme.danger,
+                ),
+              ),
+            ),
+            OutlinedButton(
+              onPressed: _isUpdatingVisibility
+                  ? null
+                  : () => Navigator.of(modalContext).pop(false),
+              style: FieldrushModal.secondaryButtonStyle(),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (shouldDelete == true && mounted) await _deleteClip();
+  }
+
   @override
   Widget build(BuildContext context) {
     final isMutating = _isUpdatingVisibility || _isDeleting;
@@ -321,15 +494,15 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       data: FieldrushAuthTheme.theme(context),
       child: PopScope(
         canPop: !isMutating,
-        onPopInvokedWithResult: (didPop, result) {
-          if (!didPop) return;
-        },
         child: Scaffold(
           key: const ValueKey('fieldrush-profile-clip-screen'),
           backgroundColor: FieldrushAuthTheme.cream,
           appBar: AppBar(
             backgroundColor: FieldrushAuthTheme.cream,
             surfaceTintColor: Colors.transparent,
+            foregroundColor: FieldrushAuthTheme.ink,
+            titleSpacing: 0,
+            leadingWidth: 52,
             leading: IconButton(
               tooltip: 'Back',
               onPressed: isMutating
@@ -337,269 +510,212 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                   : () => Navigator.of(context).pop(_highlight),
               icon: const Icon(Icons.chevron_left_rounded),
             ),
-            title: const Text(
-              'Clip',
-              style: TextStyle(
-                fontFamily: 'Outfit',
-                color: FieldrushAuthTheme.ink,
-                fontSize: 22,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            centerTitle: true,
-          ),
-          body: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 18, 16, 32),
-            children: [
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: FieldrushAuthTheme.border),
-                  boxShadow: [
-                    BoxShadow(
-                      color: FieldrushAuthTheme.ink.withValues(alpha: 0.04),
-                      blurRadius: 24,
-                      offset: const Offset(0, 8),
-                    ),
-                  ],
+            title: Row(
+              children: [
+                _ClipOwnerAvatar(
+                  avatarUrl: widget.ownerAvatarUrl,
+                  initials:
+                      widget.ownerInitials ??
+                      _initials(
+                        widget.ownerLabel?.replaceFirst('@', '') ?? 'Clip',
+                      ),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildVideo(),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 17, 18, 18),
-                      child: Column(
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.ownerLabel ?? 'Clip',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'Outfit',
+                      color: FieldrushAuthTheme.ink,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            centerTitle: false,
+            actions: [
+              if (widget.canManage)
+                IconButton(
+                  key: const ValueKey('profile-clip-options'),
+                  tooltip: 'Clip options',
+                  onPressed: isMutating ? null : _showOptions,
+                  icon: const Icon(
+                    Icons.more_horiz_rounded,
+                    color: FieldrushAuthTheme.ink,
+                  ),
+                ),
+              const SizedBox(width: 8),
+            ],
+          ),
+          body: SafeArea(
+            top: false,
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 32),
+              children: [
+                KeyedSubtree(
+                  key: const ValueKey('profile-clip-post-media'),
+                  child: _buildVideo(),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 15, 20, 0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _highlight.title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'Outfit',
+                          color: FieldrushAuthTheme.ink,
+                          fontSize: 25,
+                          height: 1.15,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Text(
+                        _clipMetadata(_highlight),
+                        style: const TextStyle(
+                          color: FieldrushAuthTheme.muted,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            _highlight.title,
-                            style: const TextStyle(
-                              fontFamily: 'Outfit',
-                              color: FieldrushAuthTheme.ink,
-                              fontSize: 24,
-                              height: 1.15,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          _ClipAction(
+                            key: const ValueKey('download-goal-clip'),
+                            icon: Icons.download_rounded,
+                            label: _isDownloading
+                                ? _downloadLabel(_downloadProgress)
+                                : 'Save',
+                            onPressed:
+                                _highlight.hasPlayableVideo && !_isDownloading
+                                ? _downloadClip
+                                : null,
                           ),
-                          const SizedBox(height: 10),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.remove_red_eye_outlined,
-                                color: FieldrushAuthTheme.muted,
-                                size: 17,
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                '${_highlight.views} ${_highlight.views == 1 ? 'view' : 'views'}',
-                                style: const TextStyle(
-                                  color: FieldrushAuthTheme.muted,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              if (_highlight.clanTag case final tag?) ...[
-                                const SizedBox(width: 9),
-                                const Text(
-                                  '·',
-                                  style: TextStyle(
-                                    color: FieldrushAuthTheme.border,
-                                  ),
-                                ),
-                                const SizedBox(width: 9),
-                                Text(
-                                  tag,
-                                  style: const TextStyle(
-                                    color: FieldrushAuthTheme.muted,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 0.5,
-                                  ),
-                                ),
-                              ],
-                            ],
+                          const SizedBox(width: 16),
+                          _ClipAction(
+                            key: const ValueKey('share-profile-clip'),
+                            icon: Icons.ios_share_rounded,
+                            label: 'Share',
+                            onPressed: _highlight.hasPlayableVideo
+                                ? _shareClip
+                                : null,
                           ),
-                          if (widget.canManage) ...[
-                            const SizedBox(height: 18),
-                            _ClipVisibilityCard(
-                              isPublic: _highlight.isPublic,
-                              isLoading: _isUpdatingVisibility,
-                              onChanged: (value) =>
-                                  unawaited(_setVisibility(value)),
-                            ),
-                          ],
-                          const SizedBox(height: 18),
-                          SizedBox(
-                            width: double.infinity,
-                            height: 50,
-                            child: FilledButton.icon(
-                              key: const ValueKey('download-goal-clip'),
-                              onPressed:
-                                  _highlight.hasPlayableVideo && !_isDownloading
-                                  ? _downloadClip
-                                  : null,
-                              icon: const Icon(Icons.download_rounded),
-                              label: Text(
-                                _isDownloading
-                                    ? _downloadLabel(_downloadProgress)
-                                    : 'Save to Photos',
-                              ),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: FieldrushAuthTheme.forest,
-                                foregroundColor: Colors.white,
-                                textStyle: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                            ),
+                          const SizedBox(width: 16),
+                          _ClipAction(
+                            key: const ValueKey('profile-clip-full-match'),
+                            icon: Icons.smart_display_outlined,
+                            label: _openingFullMatch
+                                ? 'Opening…'
+                                : 'Full match',
+                            onPressed:
+                                _highlight.sourceType != null &&
+                                    _highlight.sourceMatchId != null &&
+                                    !_openingFullMatch
+                                ? _openFullMatch
+                                : null,
                           ),
-                          if (widget.canManage) ...[
-                            const SizedBox(height: 10),
-                            SizedBox(
-                              width: double.infinity,
-                              height: 48,
-                              child: OutlinedButton.icon(
-                                key: const ValueKey('delete-profile-clip'),
-                                onPressed: _isDeleting || _isUpdatingVisibility
-                                    ? null
-                                    : () => unawaited(_deleteClip()),
-                                icon: const Icon(Icons.delete_outline_rounded),
-                                label: Text(
-                                  _isDeleting
-                                      ? 'Deleting clip...'
-                                      : 'Delete clip',
-                                ),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: FieldrushAuthTheme.danger,
-                                  side: const BorderSide(
-                                    color: FieldrushAuthTheme.border,
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 24),
+                      const Divider(
+                        height: 1,
+                        color: FieldrushAuthTheme.border,
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'UP NEXT',
+                        style: TextStyle(
+                          color: FieldrushAuthTheme.muted,
+                          fontSize: 12,
+                          letterSpacing: 1.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 17),
+                      ..._buildUpNext(),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
+  List<Widget> _buildUpNext() {
+    final fixture = _sourceFixture;
+    final hasReplay = fixture?.fullGamePlaybackUrl != null;
+    return [
+      if (_loadingRecommendations)
+        const Padding(
+          padding: EdgeInsets.symmetric(vertical: 16),
+          child: FieldLoadingIndicator(label: 'Loading clips'),
+        )
+      else if (_recommendationsFailed)
+        TextButton.icon(
+          onPressed: () {
+            setState(() => _loadingRecommendations = true);
+            unawaited(_loadRecommendations());
+          },
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Try loading clips again'),
+        )
+      else if (_recommendations.isEmpty && !hasReplay)
+        const Text(
+          'You’re all caught up.',
+          style: TextStyle(color: FieldrushAuthTheme.muted, fontSize: 13),
+        ),
+      for (final next in _recommendations)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 13),
+          child: _ClipNextRow(
+            key: ValueKey('up-next-clip-${next.highlight.id}'),
+            title: next.highlight.title,
+            subtitle: _clipMetadata(next.highlight),
+            thumbnailUrl: next.highlight.thumbnailUrl,
+            duration: next.highlight.duration,
+            onTap: () => _openNext(next),
+          ),
+        ),
+      if (hasReplay)
+        _ClipNextRow(
+          key: const ValueKey('up-next-full-match'),
+          title: 'Full match replay',
+          subtitle:
+              '${fixture!.homeClan.name} ${fixture.homeScore ?? 0}–${fixture.awayScore ?? 0} ${fixture.awayClan?.name ?? 'Away'} · ${_clipDate(fixture.matchDate)}',
+          thumbnailUrl: _replayThumbnail(
+            fixture,
+            fallback: _highlight.thumbnailUrl,
+          ),
+          duration: _replayDuration(fixture),
+          onTap: _openFullMatch,
+        ),
+    ];
+  }
+
   Widget _buildVideo() {
     final controller = _controller;
     if (controller != null && controller.value.isInitialized) {
-      final duration = controller.value.duration;
-      final position = controller.value.position;
-      final max = duration.inMilliseconds <= 0
-          ? 1.0
-          : duration.inMilliseconds.toDouble();
-      final value = position.inMilliseconds.clamp(0, max.toInt()).toDouble();
-      return AspectRatio(
-        aspectRatio: controller.value.aspectRatio > 0
-            ? controller.value.aspectRatio
-            : 16 / 9,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            ColoredBox(color: Colors.black, child: VideoPlayer(controller)),
-            Material(
-              color: Colors.transparent,
-              child: InkWell(
-                onTap: _togglePlayback,
-                child: Center(
-                  child: AnimatedOpacity(
-                    opacity: controller.value.isPlaying ? 0 : 1,
-                    duration: const Duration(milliseconds: 160),
-                    child: Container(
-                      width: 62,
-                      height: 62,
-                      decoration: BoxDecoration(
-                        color: FieldrushAuthTheme.forest.withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.22),
-                        ),
-                      ),
-                      child: const Icon(
-                        Icons.play_arrow_rounded,
-                        color: Colors.white,
-                        size: 38,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Positioned(
-              left: 9,
-              right: 9,
-              bottom: 6,
-              child: Row(
-                children: [
-                  Text(
-                    _formatDuration(position),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  Expanded(
-                    child: SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
-                        trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 6,
-                        ),
-                        overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 14,
-                        ),
-                        activeTrackColor: const Color(0xFFC7DD9B),
-                        inactiveTrackColor: Colors.white38,
-                        thumbColor: Colors.white,
-                      ),
-                      child: Slider(
-                        key: const ValueKey('profile-clip-seek'),
-                        min: 0,
-                        max: max,
-                        value: value,
-                        onChanged: _seek,
-                      ),
-                    ),
-                  ),
-                  Text(
-                    _formatDuration(duration),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+      return FieldrushVideoPlayer(
+        controller: controller,
+        controlsBelowVideo: true,
+        isLive: false,
+        label: _highlight.title,
+        seekKey: const ValueKey('profile-clip-seek'),
+        onTogglePlayback: _togglePlayback,
+        onPlaybackStarted: () => unawaited(_recordViewOnce()),
       );
     }
 
@@ -619,17 +735,19 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
             ColoredBox(color: Colors.black.withValues(alpha: 0.42)),
             Center(
               child: _highlight.isProcessing || _isLoadingVideo
-                  ? const Column(
+                  ? Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        FieldLoadingIndicator(
+                        const FieldLoadingIndicator(
                           label: 'Loading video',
                           color: Colors.white38,
                         ),
-                        SizedBox(height: 12),
+                        const SizedBox(height: 12),
                         Text(
-                          'Preparing your goal clip...',
-                          style: TextStyle(
+                          _highlight.isProcessing
+                              ? 'Preparing your goal clip...'
+                              : 'Loading your clip...',
+                          style: const TextStyle(
                             color: Colors.white,
                             fontSize: 14,
                             fontWeight: FontWeight.w800,
@@ -662,6 +780,17 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
                             ),
                           ),
                         ),
+                        if (_playerError != null) ...[
+                          const SizedBox(height: 8),
+                          TextButton.icon(
+                            onPressed: () => unawaited(_syncVideoPlayer()),
+                            icon: const Icon(Icons.refresh_rounded, size: 18),
+                            label: const Text('Try again'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
             ),
@@ -670,6 +799,262 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       ),
     );
   }
+}
+
+String _initials(String name) {
+  final words = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((part) => part.isNotEmpty);
+  return words.isEmpty
+      ? '?'
+      : words.take(2).map((part) => part.substring(0, 1).toUpperCase()).join();
+}
+
+String _clipDate(DateTime date) {
+  const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final local = date.toLocal();
+  return '${weekdays[local.weekday - 1]}, ${months[local.month - 1]} ${local.day}';
+}
+
+String _clipMetadata(ProfileHighlight clip) =>
+    '${clip.views} ${clip.views == 1 ? 'view' : 'views'}${clip.createdAt == null ? '' : ' · ${_clipDate(clip.createdAt!)}'}';
+
+String _replayDuration(Fixture fixture) {
+  final broadcast = fixture.broadcast;
+  final seconds =
+      broadcast?.streamStartedAt != null && broadcast?.streamStoppedAt != null
+      ? broadcast!.streamStoppedAt!
+            .difference(broadcast.streamStartedAt!)
+            .inSeconds
+      : fixture.clock?.durationSeconds;
+  if (seconds == null || seconds <= 0) return 'Replay';
+  return '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
+}
+
+String _replayThumbnail(Fixture fixture, {required String fallback}) {
+  final uri = Uri.tryParse(fixture.fullGamePlaybackUrl ?? '');
+  final id = fixture.broadcast?.activeVideoId;
+  if (uri == null ||
+      id == null ||
+      !(uri.host.endsWith('cloudflarestream.com') ||
+          uri.host.endsWith('videodelivery.net'))) {
+    return fallback;
+  }
+  return uri
+      .replace(
+        path: '/$id/thumbnails/thumbnail.jpg',
+        queryParameters: {'height': '200', 'fit': 'crop'},
+      )
+      .toString();
+}
+
+class _ClipOwnerAvatar extends StatelessWidget {
+  const _ClipOwnerAvatar({required this.avatarUrl, required this.initials});
+  final String? avatarUrl;
+  final String initials;
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(10),
+    child: SizedBox.square(
+      dimension: 29,
+      child: ColoredBox(
+        color: const Color(0xFFEAE1C5),
+        child: avatarUrl?.isNotEmpty == true
+            ? Image.network(
+                avatarUrl!,
+                fit: BoxFit.cover,
+                errorBuilder: (_, _, _) => _label(),
+              )
+            : _label(),
+      ),
+    ),
+  );
+
+  Widget _label() => Center(
+    child: Text(
+      initials,
+      style: const TextStyle(
+        fontFamily: 'Outfit',
+        fontWeight: FontWeight.w800,
+        fontSize: 14,
+        color: Color(0xFF625429),
+      ),
+    ),
+  );
+}
+
+class _ClipAction extends StatelessWidget {
+  const _ClipAction({
+    super.key,
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+  });
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 64,
+    child: Column(
+      children: [
+        SizedBox.square(
+          dimension: 50,
+          child: IconButton(
+            tooltip: label,
+            onPressed: onPressed,
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: FieldrushAuthTheme.ink,
+              disabledForegroundColor: FieldrushAuthTheme.muted.withValues(
+                alpha: 0.5,
+              ),
+              shape: const CircleBorder(
+                side: BorderSide(color: FieldrushAuthTheme.border, width: 1.3),
+              ),
+            ),
+            icon: Icon(icon, size: 20),
+          ),
+        ),
+        const SizedBox(height: 7),
+        Text(
+          label,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            color: FieldrushAuthTheme.muted,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+class _ClipNextRow extends StatelessWidget {
+  const _ClipNextRow({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.thumbnailUrl,
+    required this.duration,
+    required this.onTap,
+  });
+  final String title;
+  final String subtitle;
+  final String thumbnailUrl;
+  final String duration;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    borderRadius: BorderRadius.circular(9),
+    onTap: onTap,
+    child: Row(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(9),
+          child: SizedBox(
+            width: 132,
+            height: 74,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                const ColoredBox(color: FieldrushAuthTheme.watermark),
+                if (thumbnailUrl.isNotEmpty)
+                  Image.network(
+                    thumbnailUrl,
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, _, _) => const Icon(
+                      Icons.smart_display_outlined,
+                      color: FieldrushAuthTheme.muted,
+                    ),
+                  )
+                else
+                  const Icon(
+                    Icons.smart_display_outlined,
+                    color: FieldrushAuthTheme.muted,
+                  ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.75),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      duration,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Outfit',
+                  fontSize: 17,
+                  height: 1.15,
+                  color: FieldrushAuthTheme.ink,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: FieldrushAuthTheme.muted,
+                  fontSize: 11.5,
+                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _ClipVisibilityCard extends StatelessWidget {
@@ -728,38 +1113,51 @@ class _ClipVisibilityCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 11),
-          SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<bool>(
-              key: const ValueKey('clip-visibility-selector'),
-              showSelectedIcon: true,
-              expandedInsets: EdgeInsets.zero,
-              segments: const [
-                ButtonSegment<bool>(
-                  value: true,
-                  icon: Icon(Icons.public_rounded, size: 17),
-                  label: Text('Public'),
-                ),
-                ButtonSegment<bool>(
-                  value: false,
-                  icon: Icon(Icons.lock_rounded, size: 17),
-                  label: Text('Private'),
-                ),
+          Container(
+            key: const ValueKey('clip-visibility-selector'),
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: FieldrushAuthTheme.border.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Row(
+              children: [
+                for (final option in [true, false])
+                  Expanded(
+                    child: Semantics(
+                      selected: isPublic == option,
+                      child: TextButton.icon(
+                        onPressed: isLoading ? null : () => onChanged(option),
+                        icon: Icon(
+                          option ? Icons.public_rounded : Icons.lock_rounded,
+                          size: 16,
+                        ),
+                        label: Text(option ? 'Public' : 'Private'),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 44),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
+                          backgroundColor: isPublic == option
+                              ? FieldrushAuthTheme.forest
+                              : Colors.transparent,
+                          foregroundColor: isPublic == option
+                              ? Colors.white
+                              : FieldrushAuthTheme.muted,
+                          disabledForegroundColor: isPublic == option
+                              ? Colors.white70
+                              : FieldrushAuthTheme.muted,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          textStyle: const TextStyle(
+                            fontFamily: 'PlusJakartaSans',
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
               ],
-              selected: {isPublic},
-              onSelectionChanged: isLoading
-                  ? null
-                  : (selection) => onChanged(selection.first),
-              style: SegmentedButton.styleFrom(
-                selectedBackgroundColor: FieldrushAuthTheme.forest,
-                selectedForegroundColor: Colors.white,
-                foregroundColor: FieldrushAuthTheme.muted,
-                side: const BorderSide(color: FieldrushAuthTheme.border),
-                textStyle: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
             ),
           ),
           const SizedBox(height: 9),
@@ -792,11 +1190,4 @@ String _downloadFileName(String title) {
 String _downloadLabel(double? progress) {
   if (progress == null || progress <= 0) return 'Preparing download...';
   return 'Saving ${(progress.clamp(0, 1) * 100).round()}%';
-}
-
-String _formatDuration(Duration value) {
-  final totalSeconds = value.inSeconds.clamp(0, 1 << 31);
-  final minutes = totalSeconds ~/ 60;
-  final seconds = totalSeconds % 60;
-  return '$minutes:${seconds.toString().padLeft(2, '0')}';
 }

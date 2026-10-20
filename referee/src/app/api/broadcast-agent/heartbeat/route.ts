@@ -1,13 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import {
-  broadcastDeviceKey,
-  broadcastDeviceName,
-  isBroadcastAgentRequest,
-} from "@/lib/broadcast-agent-auth";
+import { getBroadcastAgentContext } from "@/lib/broadcast-pairing";
 import { syncBroadcastFromCloudflare } from "@/lib/broadcasts";
 import { syncOpenQueueBroadcastFromCloudflare } from "@/lib/broadcasts";
-import { createSupabaseAdmin } from "@/lib/supabase-admin";
 
 type HeartbeatBody = {
   deviceKey?: string;
@@ -21,20 +16,23 @@ type HeartbeatBody = {
 };
 
 export async function POST(request: NextRequest) {
-  if (!isBroadcastAgentRequest(request)) {
-    return NextResponse.json({ error: "Invalid broadcaster token." }, { status: 401 });
-  }
+  const context = await getBroadcastAgentContext(request);
+  if (context instanceof NextResponse) return context;
 
   try {
     const body = (await request.json()) as HeartbeatBody;
-    const configuredKey = broadcastDeviceKey();
+    const configuredKey = context.deviceKey;
     if (body.deviceKey && body.deviceKey !== configuredKey) {
       throw new Error("This broadcaster is not registered for the configured pitch.");
     }
 
-    const db = createSupabaseAdmin();
+    const db = context.db;
     if (body.currentFixtureId && body.currentOpenQueueGameId) {
       throw new Error("The camera can only stream one match at a time.");
+    }
+    if ((body.currentFixtureId && (context.matchKind !== "CLAN" || body.currentFixtureId !== context.matchId)) ||
+        (body.currentOpenQueueGameId && (context.matchKind !== "SOLO" || body.currentOpenQueueGameId !== context.matchId))) {
+      throw new Error("This laptop is paired to a different match.");
     }
     const obsConnected = body.obsConnected === true;
     const obsStreaming = body.obsStreaming === true;
@@ -46,10 +44,8 @@ export async function POST(request: NextRequest) {
       : obsConnected
       ? "READY"
       : "OFFLINE";
-    const { error } = await db.from("broadcast_devices").upsert(
+    const { error } = await db.from("broadcast_devices").update(
       {
-        device_key: configuredKey,
-        display_name: body.displayName?.trim() || broadcastDeviceName(),
         status,
         obs_connected: obsConnected,
         obs_streaming: obsStreaming,
@@ -59,8 +55,7 @@ export async function POST(request: NextRequest) {
         error_message: errorMessage,
         metadata: body.metadata ?? {},
       },
-      { onConflict: "device_key" },
-    );
+    ).eq("device_key", configuredKey);
     if (error) throw new Error(`Could not save broadcaster heartbeat: ${error.message}`);
 
     if (body.currentFixtureId) {

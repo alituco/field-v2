@@ -280,7 +280,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Check admin inbox navigation before hosted journeys
-        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts referee-assigned-games.spec.ts season-zero-operations.spec.ts --project=chromium
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts referee-assigned-games.spec.ts season-zero-operations.spec.ts broadcaster-pairing.spec.ts broadcaster-desktop.spec.ts admin-game-bots.spec.ts broadcast-scoreboard.spec.ts --project=chromium
 
       - name: Build referee app
         run: npm run build
@@ -310,7 +310,12 @@ jobs:
         run: npm ci
 
       - name: Syntax-check broadcaster agent
-        run: node --check src/index.mjs
+        run: |
+          node --check src/index.mjs
+          node --check src/desktop/main.mjs
+          node --check src/desktop/preload.cjs
+          node --check src/desktop/app.js
+          npm test
 
   database:
     name: Supabase schema and behavior
@@ -362,7 +367,9 @@ jobs:
             supabase/functions/_shared/dev_auth_test.ts \
             supabase/functions/fieldrush-delete-account/request_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
+            supabase/functions/_shared/staging_admin_session_test.ts \
             supabase/functions/fieldrush-push-dispatch/handler_test.ts \
+            supabase/functions/cloudflare-stream-webhook/replay_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts \
             supabase/scripts/e2e/rating_tracks_test.ts \
@@ -397,6 +404,8 @@ jobs:
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_game_formations.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_staging_game_bots.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_solo_rebooking.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_staff_provisioning.mjs
@@ -408,6 +417,12 @@ jobs:
             node supabase/scripts/test_push_dispatch_schedule.mjs
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_stripe_checkout_recovery.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_paired_broadcasters.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_broadcast_recording_recovery.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_profile_clip_recommendations.mjs
 
       - name: Replay the account and push migration chain without provider access
         shell: bash
@@ -476,6 +491,9 @@ jobs:
             <supabase/scripts/verify_safe_staff_provisioning.sql
           docker exec -i supabase_db_field_v2 \
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_staging_game_bots.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_notification_push_security.sql
           docker exec -i supabase_db_field_v2 \
@@ -501,6 +519,15 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_legacy_solo_resume.sql
+
+      - name: Verify injury evidence for audited early solo matches
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_audited_early_match_injuries.sql
 
       - name: Verify staff offboarding and atomic account-deletion wallet forfeiture
         shell: bash

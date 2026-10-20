@@ -122,7 +122,7 @@ test("price edits preserve captured quotes, paid bookings and refunds before ful
 
 test("single-game registration, activity dismissals, and safe checkout cleanup are checked before full schema replay", () => {
   const source = job("database");
-  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs", "test_unpaid_legacy_checkout_repair.mjs", "test_game_division_ranges.mjs", "test_game_formations.mjs", "test_solo_rebooking.mjs"]) {
+  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs", "test_unpaid_legacy_checkout_repair.mjs", "test_game_division_ranges.mjs", "test_game_formations.mjs", "test_staging_game_bots.mjs", "test_solo_rebooking.mjs", "test_profile_clip_recommendations.mjs"]) {
     const check = stepContaining(source, `node supabase/scripts/${script}`);
     assert.match(check, /set -euo pipefail/);
     assert.match(check, /PGLITE_MODULE=/);
@@ -152,6 +152,18 @@ test("staff provisioning preserves identity in isolated and full-schema security
   for (const check of [isolated, full]) assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
 });
 
+test("staging bot fills run inert-by-default and full-schema regressions before deployment", () => {
+  const source = job("database");
+  const full = stepContaining(source, "<supabase/scripts/verify_staging_game_bots.sql");
+  assert.match(full, /set -euo pipefail/);
+  assert.match(full, /ON_ERROR_STOP=1/);
+  assert.doesNotMatch(full, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf("verify_staging_game_bots.sql") > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  const verifier = readFileSync(new URL("../../supabase/scripts/verify_staging_game_bots.sql", import.meta.url), "utf8");
+  assert.match(verifier, /^begin;/m);
+  assert.match(verifier, /^rollback;/m);
+});
+
 test("push delivery has mandatory isolated, provider-stub and full-schema checks", () => {
   const source = job("database");
   for (const script of ["test_notification_push_delivery.mjs", "test_notification_events.mjs", "test_push_dispatch_schedule.mjs"]) {
@@ -176,7 +188,7 @@ test("push delivery has mandatory isolated, provider-stub and full-schema checks
 
 test("audited containment has mandatory goal, clan, replacement and recovery regressions", () => {
   const source = job("database");
-  for (const file of ["verify_atomic_solo_goals.sql", "verify_clan_write_containment.sql", "verify_replacement_notifications.sql", "verify_push_priority.sql", "verify_legacy_solo_resume.sql"]) {
+  for (const file of ["verify_atomic_solo_goals.sql", "verify_clan_write_containment.sql", "verify_replacement_notifications.sql", "verify_push_priority.sql", "verify_legacy_solo_resume.sql", "verify_audited_early_match_injuries.sql"]) {
     const check = stepContaining(source, `<supabase/scripts/${file}`);
     assert.match(check, /set -euo pipefail/);
     assert.match(check, /ON_ERROR_STOP=1/);

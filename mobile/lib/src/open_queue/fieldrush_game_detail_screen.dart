@@ -9,7 +9,7 @@ import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../fixtures/fixture.dart';
-import '../fixtures/fixture_detail_screen.dart';
+import '../fixtures/fieldrush_match_replay_screen.dart';
 import '../fixtures/fixture_repository.dart';
 import '../home/field_bottom_nav.dart';
 import '../home/fieldrush_home_widgets.dart';
@@ -19,6 +19,7 @@ import '../profile/profile_screen.dart';
 import '../ranking/player_rating_visibility.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
+import '../ui/fieldrush_video_player.dart';
 import 'fieldrush_game_detail_party.dart';
 import 'fieldrush_game_loading.dart';
 import 'open_queue.dart';
@@ -372,27 +373,37 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     if (mounted) await _load(requireFresh: true);
   }
 
-  Future<void> _clips() async {
+  Future<void> _clips(Duration position, {bool highlights = false}) async {
     final detail = _detail;
-    if (detail == null) return;
+    if (detail == null || detail.game.status != 'FINAL') return;
+    final goals = highlights
+        ? detail.toFixture().highlightMoments
+        : const <FixtureHighlightMoment>[];
+    await _openReplay(
+      goals.isEmpty ? position : goals.first.start,
+      openClipEditor: !highlights,
+    );
+  }
+
+  Future<void> _openReplay(
+    Duration position, {
+    bool openClipEditor = false,
+  }) async {
+    final detail = _detail;
+    if (detail == null || detail.game.status != 'FINAL') return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => Theme(
-          data: FieldrushAuthTheme.theme(context),
-          child: FixtureDetailScreen(
-            fixture: detail.toFixture(),
-            fixtureRepository:
-                widget.fixtureRepository ?? SupabaseFixtureRepository(),
-            myClanMembership: null,
-            sourceLabel: 'SOLO',
-            showTeamRatings: false,
-            playerRatingUpdate: _ratingUpdate,
-            initiallyShowWatch: true,
-            profileRepository: widget.profileRepository,
-            refreshFixture: () async => (await widget.repository.getMatchDetail(
-              widget.gameId,
-            )).toFixture(),
-          ),
+        builder: (_) => FieldrushMatchReplayScreen(
+          fixture: detail.toFixture(),
+          fixtureRepository:
+              widget.fixtureRepository ?? SupabaseFixtureRepository(),
+          sourceLabel: 'SOLO',
+          initialPosition: position,
+          openClipEditor: openClipEditor,
+          profileRepository: widget.profileRepository,
+          refreshFixture: () async => (await widget.repository.getMatchDetail(
+            widget.gameId,
+          )).toFixture(),
         ),
       ),
     );
@@ -534,6 +545,9 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                       _Section.watch => _GameWatch(
                         detail: detail,
                         onClips: _clips,
+                        onReplay: _openReplay,
+                        onHighlights: () =>
+                            _clips(Duration.zero, highlights: true),
                       ),
                     },
                 ],
@@ -1676,17 +1690,27 @@ class _PitchPainter extends CustomPainter {
 }
 
 class _GameWatch extends StatefulWidget {
-  const _GameWatch({required this.detail, required this.onClips});
+  const _GameWatch({
+    required this.detail,
+    required this.onClips,
+    required this.onReplay,
+    required this.onHighlights,
+  });
   final OpenQueueMatchDetail detail;
-  final Future<void> Function() onClips;
+  final Future<void> Function(Duration) onClips;
+  final Future<void> Function(Duration) onReplay;
+  final Future<void> Function() onHighlights;
   @override
   State<_GameWatch> createState() => _GameWatchState();
 }
 
 class _GameWatchState extends State<_GameWatch> {
   VideoPlayerController? _controller;
+  String? _controllerUrl;
   bool _loading = false;
   bool _openingClips = false;
+  bool _fullscreen = false;
+  bool _pendingSourceChange = false;
   int _playGeneration = 0;
   String? _error;
   bool get _live =>
@@ -1704,12 +1728,32 @@ class _GameWatchState extends State<_GameWatch> {
         ? oldWidget.detail.toFixture().livePlaybackUrl
         : oldWidget.detail.toFixture().fullGamePlaybackUrl;
     if (oldUrl != _url) {
-      _playGeneration++;
-      _controller?.dispose();
-      _controller = null;
-      _loading = false;
-      _error = null;
+      _pendingSourceChange = true;
+      _applyPendingSourceChange();
     }
+  }
+
+  void _applyPendingSourceChange() {
+    if (!_pendingSourceChange || _fullscreen || _openingClips) return;
+    _pendingSourceChange = false;
+    // A refresh can briefly replace a playback URL and then restore it while
+    // the viewer is in fullscreen or the editor. Keep that controller/position.
+    if (_controller != null && _controllerUrl == _url) return;
+    _playGeneration++;
+    final previous = _controller;
+    _controller = null;
+    _controllerUrl = null;
+    _loading = false;
+    _error = null;
+    unawaited(previous?.dispose());
+  }
+
+  void _fullscreenChanged(bool fullscreen) {
+    if (!mounted) return;
+    setState(() {
+      _fullscreen = fullscreen;
+      if (!fullscreen) _applyPendingSourceChange();
+    });
   }
 
   @override
@@ -1721,10 +1765,28 @@ class _GameWatchState extends State<_GameWatch> {
 
   Future<void> _play() async {
     if (_loading || _openingClips) return;
+    if (widget.detail.game.status == 'FINAL') {
+      setState(() => _openingClips = true);
+      try {
+        final controller = _controller;
+        final position = controller?.value.position ?? Duration.zero;
+        if (controller?.value.isInitialized == true) {
+          await controller!.pause();
+        }
+        if (mounted) await widget.onReplay(position);
+      } finally {
+        if (mounted) {
+          setState(() {
+            _openingClips = false;
+            _applyPendingSourceChange();
+          });
+        }
+      }
+      return;
+    }
     final existing = _controller;
     if (existing != null && existing.value.isInitialized) {
       existing.value.isPlaying ? await existing.pause() : await existing.play();
-      if (mounted) setState(() {});
       return;
     }
     final url = _url;
@@ -1737,9 +1799,7 @@ class _GameWatchState extends State<_GameWatch> {
     });
     final controller = VideoPlayerController.networkUrl(uri);
     _controller = controller;
-    controller.addListener(() {
-      if (mounted && identical(_controller, controller)) setState(() {});
-    });
+    _controllerUrl = url;
     try {
       await controller.initialize();
       if (!mounted ||
@@ -1752,6 +1812,7 @@ class _GameWatchState extends State<_GameWatch> {
       if (mounted && identical(_controller, controller)) {
         _error = 'The video could not be played. Please try again.';
         _controller = null;
+        _controllerUrl = null;
         await controller.dispose();
       }
     } finally {
@@ -1761,24 +1822,36 @@ class _GameWatchState extends State<_GameWatch> {
     }
   }
 
-  Future<void> _openClips() async {
+  Future<void> _openClips({bool highlights = false}) async {
     if (_loading || _openingClips) return;
     setState(() => _openingClips = true);
     try {
       final controller = _controller;
+      final position = controller?.value.position ?? Duration.zero;
       if (controller?.value.isInitialized == true) {
         await controller!.pause();
       }
-      if (mounted) await widget.onClips();
+      if (mounted) {
+        if (highlights) {
+          await widget.onHighlights();
+        } else {
+          await widget.onClips(position);
+        }
+      }
     } finally {
-      if (mounted) setState(() => _openingClips = false);
+      if (mounted) {
+        setState(() {
+          _openingClips = false;
+          _applyPendingSourceChange();
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final hasUrl = _url != null;
-    final ready = _controller?.value.isInitialized == true;
+    final canClip = hasUrl && widget.detail.game.status == 'FINAL';
     final status = widget.detail.broadcast;
     final title = _live
         ? 'Live from the pitch'
@@ -1796,130 +1869,133 @@ class _GameWatchState extends State<_GameWatch> {
         children: [
           AspectRatio(
             aspectRatio: 16 / 9,
-            child: ColoredBox(
-              color: const Color(0xFF1D2A1B),
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  if (ready)
-                    Center(
-                      child: AspectRatio(
-                        aspectRatio: _controller!.value.aspectRatio,
-                        child: VideoPlayer(_controller!),
-                      ),
-                    ),
-                  Positioned(
-                    top: 13,
-                    left: 14,
-                    child: Text(
-                      _live
-                          ? '● LIVE'
-                          : hasUrl
-                          ? 'REPLAY'
-                          : 'WATCH',
-                      style: _body(10, color: _lime),
+            child: _controller != null
+                ? FieldrushVideoPlayer(
+                    controller: _controller!,
+                    isLive: _live,
+                    label: title,
+                    onTogglePlayback: _play,
+                    onFullscreenChanged: _fullscreenChanged,
+                  )
+                : ColoredBox(
+                    color: const Color(0xFF1D2A1B),
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        Positioned(
+                          top: 13,
+                          left: 14,
+                          child: Text(
+                            _live
+                                ? '● LIVE'
+                                : hasUrl
+                                ? 'REPLAY'
+                                : 'WATCH',
+                            style: _body(10, color: _lime),
+                          ),
+                        ),
+                        if (_loading)
+                          const FieldLoadingIndicator(
+                            label: 'Loading video',
+                            color: Colors.white54,
+                          )
+                        else
+                          IconButton(
+                            key: const ValueKey('solo-watch-play'),
+                            onPressed: hasUrl ? _play : null,
+                            tooltip: hasUrl
+                                ? _error != null
+                                      ? 'Retry video'
+                                      : _live
+                                      ? 'Watch live'
+                                      : 'Watch replay'
+                                : 'Video unavailable',
+                            style: IconButton.styleFrom(
+                              backgroundColor: Colors.white.withValues(
+                                alpha: .16,
+                              ),
+                              disabledBackgroundColor: Colors.white.withValues(
+                                alpha: .08,
+                              ),
+                              foregroundColor: Colors.white,
+                              disabledForegroundColor: Colors.white54,
+                              minimumSize: const Size(58, 58),
+                              side: const BorderSide(color: Colors.white54),
+                            ),
+                            icon: Icon(
+                              hasUrl
+                                  ? Icons.play_arrow_rounded
+                                  : Icons.videocam_off_outlined,
+                              size: 30,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                  if (_loading)
-                    const FieldLoadingIndicator(
-                      label: 'Loading video',
-                      color: Colors.white54,
-                    )
-                  else
-                    IconButton(
-                      onPressed: hasUrl ? _play : null,
-                      tooltip: ready && _controller!.value.isPlaying
-                          ? 'Pause'
-                          : hasUrl
-                          ? 'Play video'
-                          : 'Video unavailable',
-                      style: IconButton.styleFrom(
-                        backgroundColor: Colors.white.withValues(alpha: .16),
-                        disabledBackgroundColor: Colors.white.withValues(
-                          alpha: .08,
-                        ),
-                        foregroundColor: Colors.white,
-                        disabledForegroundColor: Colors.white54,
-                        minimumSize: const Size(58, 58),
-                        side: const BorderSide(color: Colors.white54),
-                      ),
-                      icon: Icon(
-                        ready && _controller!.value.isPlaying
-                            ? Icons.pause_rounded
-                            : hasUrl
-                            ? Icons.play_arrow_rounded
-                            : Icons.videocam_off_outlined,
-                        size: 30,
-                      ),
-                    ),
-                  if (ready && !_live)
-                    Positioned(
-                      left: 14,
-                      right: 14,
-                      bottom: 8,
-                      child: VideoProgressIndicator(
-                        _controller!,
-                        allowScrubbing: true,
-                        colors: const VideoProgressColors(
-                          playedColor: _lime,
-                          bufferedColor: Colors.white38,
-                          backgroundColor: Colors.white24,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
           ),
           Padding(
             padding: const EdgeInsets.all(17),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: _display(16)),
+                Text(title, style: _display(18)),
+                if (canClip) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        key: const ValueKey('solo-watch-highlights'),
+                        onPressed: _loading || _openingClips
+                            ? null
+                            : () => _openClips(highlights: true),
+                        icon: const Icon(
+                          Icons.play_circle_outline_rounded,
+                          size: 18,
+                        ),
+                        label: const Text('Highlights'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: _green,
+                          foregroundColor: Colors.white,
+                          textStyle: _body(12, color: Colors.white),
+                          shape: const StadiumBorder(),
+                        ),
+                      ),
+                      OutlinedButton.icon(
+                        key: const ValueKey('solo-watch-clip'),
+                        onPressed: _loading || _openingClips
+                            ? null
+                            : _openClips,
+                        icon: const Icon(Icons.content_cut_rounded, size: 16),
+                        label: Text(_openingClips ? 'Opening…' : 'Clip'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _green,
+                          backgroundColor: _wash,
+                          side: const BorderSide(color: _border),
+                          textStyle: _body(12, color: _green),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          shape: const StadiumBorder(),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 9),
                 Text(
                   _error ??
                       (hasUrl
                           ? _live
-                                ? 'Follow the game as it happens.'
-                                : 'Watch the recording and create a clip from the match.'
+                                ? 'Follow the game live. Tap the video for sound and fullscreen controls.'
+                                : 'Watch the goals or clip your own moment.'
                           : status?.isProcessing == true
                           ? 'The recording will appear here when processing finishes.'
                           : 'A stream or recording will appear here when published. Pull down to refresh.'),
                   style: _body(11.5, weight: FontWeight.w600),
                 ),
-                if (hasUrl) ...[
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton(
-                          onPressed: _loading ? null : _play,
-                          child: Text(
-                            ready && _controller!.value.isPlaying
-                                ? 'Pause'
-                                : _error != null
-                                ? 'Try again'
-                                : _live
-                                ? 'Watch live'
-                                : 'Watch replay',
-                          ),
-                        ),
-                      ),
-                      if (!_live) ...[
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          onPressed: _loading || _openingClips
-                              ? null
-                              : _openClips,
-                          icon: const Icon(Icons.content_cut_rounded, size: 16),
-                          label: const Text('Clip'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
               ],
             ),
           ),

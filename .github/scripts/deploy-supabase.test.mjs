@@ -95,7 +95,7 @@ if (command === 'node') {
 } else if (args[0] === 'functions' && args[1] === 'deploy') {
   const name = args[2];
   const names = ['stripe-payment', 'stripe-payment-webhook', 'stripe-payment-reconcile', 'fieldrush-delete-account',
-    'fieldrush-push-dispatch', 'cloudflare-stream-webhook', 'profile-goal-clip', 'dev-phone-login', 'dev-switch-user'];
+    'fieldrush-push-dispatch', 'cloudflare-stream-webhook', 'profile-goal-clip', 'dev-phone-login', 'dev-switch-user', 'staging-admin-session'];
   if (!names.includes(name)) reject('Unexpected function deployment');
   expect(['functions', 'deploy', name, '--project-ref', ref, ...(name === 'profile-goal-clip' ? [] : ['--no-verify-jwt']), '--yes']);
   fail('deploy:' + name);

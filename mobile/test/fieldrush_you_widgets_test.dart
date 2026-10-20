@@ -13,6 +13,30 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('clips header keeps its count beside the title and action right', (
+    tester,
+  ) async {
+    var opened = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: FieldrushProfileClips(
+            highlights: const [],
+            onClip: (_) {},
+            onAllClips: () => opened = true,
+          ),
+        ),
+      ),
+    );
+    final title = find.text('CLIPS (0)');
+    final action = find.text('View all clips');
+    expect(title, findsOneWidget);
+    expect(tester.getTopLeft(title).dx, lessThan(tester.getTopLeft(action).dx));
+    await tester.tap(action);
+    expect(opened, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'season minimum does not hide an already revealed player rating',
     (tester) async {

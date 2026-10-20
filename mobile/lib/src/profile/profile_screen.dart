@@ -33,6 +33,7 @@ import 'fieldrush_player_profile.dart';
 import 'fieldrush_match_history_screen.dart';
 import 'profile.dart';
 import 'profile_clip_screen.dart';
+import 'profile_clips_screen.dart';
 import 'profile_connections_screen.dart';
 import 'profile_repository.dart';
 
@@ -238,6 +239,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
           highlight: highlight,
           profileRepository: widget.profileRepository,
           canManage: _canManageProfile,
+          ownerLabel: _latestProfile == null
+              ? null
+              : '@${_latestProfile!.username}',
+          ownerAvatarUrl: _latestProfile?.avatarUrl,
+          ownerInitials: _latestProfile?.initials,
+          fixtureRepository: _fixtureRepository,
+          openQueueRepository: _openQueueRepository,
+        ),
+      ),
+    );
+    if (mounted) await _refresh();
+  }
+
+  Future<void> _openAllClips(PlayerProfile profile) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ProfileClipsScreen(
+          profile: profile,
+          repository: widget.profileRepository,
+          canManage: _canManageProfile,
+          fixtureRepository: _fixtureRepository,
+          openQueueRepository: _openQueueRepository,
         ),
       ),
     );
@@ -684,6 +707,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     highlights: profile.highlights,
                     showEmptyState: _isCurrentProfile,
                     onOpenHighlight: _openHighlight,
+                    onAllClips: () => _openAllClips(profile),
                   ),
                 ],
                 if (profile.previousGames.isNotEmpty) ...[
@@ -805,6 +829,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       positionLabel: profile.playedPositionLabel,
                       onMatchHistory: () => _openPublicHistory(profile),
                       onClip: _openHighlight,
+                      onAllClips: () => _openAllClips(profile),
                       recentResults: profile.lastFiveResults,
                       trailingChildren: [
                         Padding(
@@ -1397,11 +1422,13 @@ class _HighlightsCard extends StatelessWidget {
     required this.highlights,
     required this.showEmptyState,
     required this.onOpenHighlight,
+    required this.onAllClips,
   });
 
   final List<ProfileHighlight> highlights;
   final bool showEmptyState;
   final ValueChanged<ProfileHighlight> onOpenHighlight;
+  final VoidCallback onAllClips;
 
   @override
   Widget build(BuildContext context) {
@@ -1418,23 +1445,37 @@ class _HighlightsCard extends StatelessWidget {
                   size: 16,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'CLIPS',
-                  style: TextStyle(
-                    color: fieldGray700,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.8,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CLIPS',
+                        style: TextStyle(
+                          color: fieldGray700,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      Text(
+                        '${highlights.length} clips',
+                        style: const TextStyle(
+                          color: fieldGray400,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  '${highlights.length} clips',
-                  style: const TextStyle(
-                    color: fieldGray400,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                TextButton(
+                  onPressed: onAllClips,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    textStyle: const TextStyle(fontSize: 13),
                   ),
+                  child: const Text('View all clips'),
                 ),
               ],
             ),

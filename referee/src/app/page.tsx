@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
+import { BroadcasterLaptopPanel } from "@/components/broadcaster-laptop-panel";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
@@ -352,6 +353,7 @@ export default function RefereePage() {
               <span>{me?.displayName ?? "Referee"}</span>
               <small>{me?.role === "admin" ? "Admin and referee" : "Referee"}</small>
               {me?.role === "admin" ? <a href="/admin">Open admin panel</a> : null}
+              <a href="/broadcast/setup">Camera setup guide</a>
               <button onClick={() => void signOut()} type="button">Sign out</button>
             </div>
           </details>
@@ -793,7 +795,7 @@ function GamesView({
               <DisclosureChevron />
             </summary>
             <div className="referee-disclosure-body">
-              <BroadcastControl key={`broadcast-${refereeMatchKey(activeFixture)}`} fixture={activeFixture} accessToken={accessToken} />
+              <BroadcastControl key={`broadcast-${refereeMatchKey(activeFixture)}`} fixture={activeFixture} accessToken={accessToken} canAdminister={canAdminister} />
             </div>
           </details>
         </div>
@@ -1462,9 +1464,11 @@ function MatchContextSignal({
 function BroadcastControl({
   fixture,
   accessToken,
+  canAdminister,
 }: {
   fixture: RefereeFixture;
   accessToken: string;
+  canAdminister: boolean;
 }) {
   const [state, setState] = useState<BroadcastControlResponse>({
     broadcast: null,
@@ -1501,6 +1505,8 @@ function BroadcastControl({
       if (!quiet) setIsLoading(false);
     }
   }, [accessToken, fixture.id, fixture.matchKind]);
+
+  const refreshDevice = useCallback(() => void load(true), [load]);
 
   useEffect(() => {
     void load();
@@ -1549,6 +1555,9 @@ function BroadcastControl({
     !deviceStreamingThisMatch;
   const deviceReady = state.device?.obsConnected === true &&
     state.device.status !== "OFFLINE" &&
+    state.device.status !== "ERROR" &&
+    !state.device.revokedAt &&
+    !state.device.testCleanupPending &&
     !deviceBusy;
   const streamActive = ["STARTING", "LIVE", "STOPPING"].includes(status);
   const canStart = deviceReady &&
@@ -1570,24 +1579,7 @@ function BroadcastControl({
         <span className={`broadcast-status-dot ${status.toLowerCase()}`} />
       </div>
 
-      <div className="camera-readiness">
-        <span className={`camera-dot ${deviceReady ? "ready" : ""}`} />
-        <div>
-          <strong>
-            {deviceBusy
-              ? "Camera in use"
-              : deviceReady
-              ? "Camera ready"
-              : "Camera offline"}
-          </strong>
-          <span>
-            {deviceBusy
-              ? "Another match is currently streaming"
-              : state.device?.displayName ??
-                "Open the Field broadcaster on the camera laptop"}
-          </span>
-        </div>
-      </div>
+      <BroadcasterLaptopPanel fixture={fixture} accessToken={accessToken} streamActive={streamActive} canAdminister={canAdminister} onDeviceChanged={refreshDevice} />
 
       {error || state.broadcast?.errorMessage ? (
         <div className="broadcast-error">{error ?? state.broadcast?.errorMessage}</div>
@@ -1615,7 +1607,7 @@ function BroadcastControl({
         )}
       </div>
       <p className="broadcast-hint">
-        Starting the stream keeps the match clock at 00:00. Use Start below at kickoff.
+        Starting the stream does not start the match clock. Return to Match and use Start game at kickoff.
       </p>
     </section>
   );

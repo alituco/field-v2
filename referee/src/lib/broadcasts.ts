@@ -10,6 +10,7 @@ import {
   setCloudflareLiveInputEnabled,
 } from "./cloudflare-stream";
 import { broadcastDeviceKey, broadcastDeviceName } from "./broadcast-agent-auth";
+import { getPairedBroadcastDevice, type BroadcastMatchKind } from "./broadcast-pairing";
 
 export type BroadcastStatus =
   | "NOT_CONFIGURED"
@@ -22,6 +23,8 @@ export type BroadcastStatus =
   | "ERROR";
 
 export type FixtureBroadcast = {
+  deviceKey?: string | null;
+  recoveryUploadId?: string | null;
   matchKind?: "CLAN" | "SOLO";
   fixtureId: string;
   openQueueGameId?: string | null;
@@ -72,7 +75,8 @@ export async function getFixtureBroadcast(
   return data ? normalizeBroadcast(data) : null;
 }
 
-export async function getBroadcastDevice(db: SupabaseClient) {
+export async function getBroadcastDevice(db: SupabaseClient, kind?: BroadcastMatchKind, matchId?: string) {
+  if (kind && matchId) return getPairedBroadcastDevice(db, kind, matchId);
   const key = broadcastDeviceKey();
   const { data, error } = await db
     .from("broadcast_devices")
@@ -151,28 +155,13 @@ export async function queueBroadcastStart(
   fixtureId: string,
   requestedBy: string,
 ) {
-  const deviceKey = await ensureBroadcastDevice(db);
   const broadcast = await ensureFixtureBroadcast(db, fixtureId, requestedBy);
   if (!broadcast.liveInputId) throw new Error("Broadcast input is unavailable.");
 
   await setCloudflareLiveInputEnabled(broadcast.liveInputId, true);
-  await failActiveCommands(db, fixtureId, "STOP_STREAM", "Superseded by start.");
-  await queueCommand(db, fixtureId, deviceKey, "START_STREAM", requestedBy);
-
-  const now = new Date().toISOString();
-  const { error } = await db
-    .from("fixture_broadcasts")
-    .update({
-      status: "STARTING",
-      stream_requested_at: now,
-      stream_started_at: null,
-      stream_stopped_at: null,
-      recording_ready_at: null,
-      replay_hls_url: null,
-      active_video_id: null,
-      error_message: null,
-    })
-    .eq("fixture_id", fixtureId);
+  const { error } = await db.rpc("reserve_broadcast_start", {
+    actor_id: requestedBy, kind: "CLAN", target_id: fixtureId,
+  });
 
   if (error) throw new Error(`Could not start broadcast: ${error.message}`);
   return getFixtureBroadcast(db, fixtureId);
@@ -190,7 +179,7 @@ export async function queueBroadcastStop(
     return broadcast;
   }
 
-  const deviceKey = await ensureBroadcastDevice(db);
+  const deviceKey = broadcast.deviceKey ?? await ensureBroadcastDevice(db);
   await failActiveCommands(db, fixtureId, "START_STREAM", "Superseded by stop.");
 
   const availableAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
@@ -242,7 +231,7 @@ export async function syncBroadcastFromCloudflare(
   fixtureId: string,
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
-  if (!broadcast?.liveInputId) return broadcast;
+  if (!broadcast?.liveInputId || broadcast.recoveryUploadId) return broadcast;
 
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
@@ -273,6 +262,7 @@ export async function syncBroadcastFromCloudflare(
           error_message: null,
         })
         .eq("fixture_id", fixtureId)
+        .is("recovery_upload_id", null)
         .is("stream_stopped_at", null)
         .neq("status", "REPLAY_READY");
       if (error) throw error;
@@ -300,7 +290,7 @@ export async function syncBroadcastFromCloudflare(
         const { error } = await db
           .from("fixture_broadcasts")
           .update({ active_video_id: activeVideoId })
-          .eq("fixture_id", fixtureId);
+          .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
         if (error) throw error;
       }
     }
@@ -321,30 +311,20 @@ export async function syncBroadcastFromCloudflare(
             error_message:
               video.status.errorReasonText ?? "Cloudflare could not process the recording.",
           })
-          .eq("fixture_id", fixtureId);
+          .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
         if (error) throw error;
         return getFixtureBroadcast(db, fixtureId);
       }
 
       if (isReady) {
         const readyAt = new Date().toISOString();
-        const { error } = await db
-          .from("fixture_broadcasts")
-          .update({
-            status: "REPLAY_READY",
-            active_video_id: activeVideoId,
-            replay_hls_url: replayUrl,
-            recording_ready_at: readyAt,
-            error_message: null,
-          })
-          .eq("fixture_id", fixtureId);
+        const { error } = await db.rpc("sync_broadcast_replay", {
+          kind: "CLAN", target_id: fixtureId, video_id: activeVideoId,
+          replay_url: replayUrl, ready_at: readyAt,
+          expected_requested_at: broadcast.streamRequestedAt,
+          expected_input_id: broadcast.liveInputId,
+        });
         if (error) throw error;
-
-        const { error: fixtureError } = await db
-          .from("fixtures")
-          .update({ video_url: replayUrl })
-          .eq("id", fixtureId);
-        if (fixtureError) throw fixtureError;
         return getFixtureBroadcast(db, fixtureId);
       }
 
@@ -354,7 +334,7 @@ export async function syncBroadcastFromCloudflare(
         const { error } = await db
           .from("fixture_broadcasts")
           .update({ status: "PROCESSING", replay_hls_url: replayUrl })
-          .eq("fixture_id", fixtureId);
+          .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
         if (error) throw error;
       }
     }
@@ -363,7 +343,7 @@ export async function syncBroadcastFromCloudflare(
     await db
       .from("fixture_broadcasts")
       .update({ error_message: message })
-      .eq("fixture_id", fixtureId);
+      .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
   }
 
   return getFixtureBroadcast(db, fixtureId);
@@ -425,28 +405,13 @@ export async function queueOpenQueueBroadcastStart(
   gameId: string,
   requestedBy: string,
 ) {
-  const deviceKey = await ensureBroadcastDevice(db);
   const broadcast = await ensureOpenQueueBroadcast(db, gameId, requestedBy);
   if (!broadcast.liveInputId) throw new Error("Broadcast input is unavailable.");
 
   await setCloudflareLiveInputEnabled(broadcast.liveInputId, true);
-  await failActiveOpenQueueCommands(
-    db,
-    gameId,
-    "STOP_STREAM",
-    "Superseded by start.",
-  );
-  await queueOpenQueueCommand(db, gameId, deviceKey, "START_STREAM", requestedBy);
-  const { error } = await db.from("open_queue_broadcasts").update({
-    status: "STARTING",
-    stream_requested_at: new Date().toISOString(),
-    stream_started_at: null,
-    stream_stopped_at: null,
-    recording_ready_at: null,
-    replay_hls_url: null,
-    active_video_id: null,
-    error_message: null,
-  }).eq("game_id", gameId);
+  const { error } = await db.rpc("reserve_broadcast_start", {
+    actor_id: requestedBy, kind: "SOLO", target_id: gameId,
+  });
   if (error) throw new Error(`Could not start solo broadcast: ${error.message}`);
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -463,7 +428,7 @@ export async function queueOpenQueueBroadcastStop(
     return broadcast;
   }
 
-  const deviceKey = await ensureBroadcastDevice(db);
+  const deviceKey = broadcast.deviceKey ?? await ensureBroadcastDevice(db);
   await failActiveOpenQueueCommands(
     db,
     gameId,
@@ -512,7 +477,7 @@ export async function syncOpenQueueBroadcastFromCloudflare(
   gameId: string,
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
-  if (!broadcast?.liveInputId) return broadcast;
+  if (!broadcast?.liveInputId || broadcast.recoveryUploadId) return broadcast;
 
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
@@ -533,6 +498,7 @@ export async function syncOpenQueueBroadcastFromCloudflare(
         error_message: null,
       })
         .eq("game_id", gameId)
+        .is("recovery_upload_id", null)
         .is("stream_stopped_at", null)
         .neq("status", "REPLAY_READY");
       if (error) throw error;
@@ -552,7 +518,7 @@ export async function syncOpenQueueBroadcastFromCloudflare(
       if (activeVideoId) {
         const { error } = await db.from("open_queue_broadcasts")
           .update({ active_video_id: activeVideoId })
-          .eq("game_id", gameId);
+          .eq("game_id", gameId).is("recovery_upload_id", null);
         if (error) throw error;
       }
     }
@@ -566,38 +532,33 @@ export async function syncOpenQueueBroadcastFromCloudflare(
           active_video_id: activeVideoId,
           error_message:
             video.status.errorReasonText ?? "Cloudflare could not process the recording.",
-        }).eq("game_id", gameId);
+        }).eq("game_id", gameId).is("recovery_upload_id", null);
         if (error) throw error;
         return getOpenQueueBroadcast(db, gameId);
       }
 
       if (video?.readyToStream === true || video?.status?.state === "ready") {
-        const { error } = await db.from("open_queue_broadcasts").update({
-          status: "REPLAY_READY",
-          active_video_id: activeVideoId,
-          replay_hls_url: replayUrl,
-          recording_ready_at: new Date().toISOString(),
-          error_message: null,
-        }).eq("game_id", gameId);
+        const { error } = await db.rpc("sync_broadcast_replay", {
+          kind: "SOLO", target_id: gameId, video_id: activeVideoId,
+          replay_url: replayUrl, ready_at: new Date().toISOString(),
+          expected_requested_at: broadcast.streamRequestedAt,
+          expected_input_id: broadcast.liveInputId,
+        });
         if (error) throw error;
-        const { error: gameError } = await db.from("open_queue_games")
-          .update({ video_url: replayUrl })
-          .eq("id", gameId);
-        if (gameError) throw gameError;
         return getOpenQueueBroadcast(db, gameId);
       }
 
       if (["LIVE", "STOPPING", "PROCESSING"].includes(broadcast.status)) {
         const { error } = await db.from("open_queue_broadcasts")
           .update({ status: "PROCESSING", replay_hls_url: replayUrl })
-          .eq("game_id", gameId);
+          .eq("game_id", gameId).is("recovery_upload_id", null);
         if (error) throw error;
       }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stream status failed.";
     await db.from("open_queue_broadcasts").update({ error_message: message })
-      .eq("game_id", gameId);
+      .eq("game_id", gameId).is("recovery_upload_id", null);
   }
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -828,6 +789,8 @@ async function failActiveOpenQueueCommands(
 
 function normalizeBroadcast(row: Record<string, unknown>): FixtureBroadcast {
   return {
+    deviceKey: nullableString(row.device_key),
+    recoveryUploadId: nullableString(row.recovery_upload_id),
     matchKind: "CLAN",
     fixtureId: String(row.fixture_id),
     openQueueGameId: null,
@@ -849,6 +812,8 @@ function normalizeOpenQueueBroadcast(
 ): FixtureBroadcast {
   const gameId = String(row.game_id);
   return {
+    deviceKey: nullableString(row.device_key),
+    recoveryUploadId: nullableString(row.recovery_upload_id),
     matchKind: "SOLO",
     fixtureId: gameId,
     openQueueGameId: gameId,
