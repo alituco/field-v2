@@ -2,17 +2,25 @@ import { expect, type Locator, type Page, test } from "@playwright/test";
 
 import { verifyAdminRequestInboxes } from "./support/admin-request-navigation";
 import { finishSoloMatch } from "./support/finish-solo-match";
+import { waitForPlayingDuration } from "./support/season-zero-journey";
 import { refereeMatchKey } from "../src/lib/referee-assigned-matches";
 import {
   installAdminSession,
   loadStagingManifest,
 } from "./support/staging-session";
 
+test.use({ actionTimeout: 15_000 });
+
 test("referee runs the match and admin sees player-created requests", async ({
   context,
   page,
 }) => {
+  // S0 requires the agreed playing duration; the fixture is a real 30-minute
+  // game. Keep individual UI assertions bounded instead of masking hangs.
+  test.setTimeout(35 * 60 * 1000);
   const manifest = await loadStagingManifest();
+  expect(Math.abs(Date.parse(manifest.games.match.startsAt) - Date.now()),
+    "The test match must be inside the real +/-24h referee check-in window.").toBeLessThanOrEqual(24 * 60 * 60 * 1000);
   const session = await installAdminSession(context, manifest);
 
   await page.goto("/");
@@ -29,6 +37,8 @@ test("referee runs the match and admin sees player-created requests", async ({
   const playersTab = page.getByRole("button", { name: /Players/ }).first();
   await playersTab.click();
   await openRoster(page.locator("details.attendance-roster"));
+  await expect(page.getByText("Ready for check-in", { exact: true }),
+    "Server attendance is closed; check fixture kickoff and review state.").toBeVisible();
 
   const correctedPlayerName = manifest.accounts.main.displayName;
   const correctedPlayer = page.locator(".attendance-player").filter({
@@ -70,6 +80,13 @@ test("referee runs the match and admin sees player-created requests", async ({
 
   await checkInEveryPlayer(page, page.locator("details.attendance-roster"));
   await expect(playersTab).toContainText("14/14");
+  await page.getByRole("button", { name: /^Match/ }).first().click();
+  const assignment = page.getByRole("button", { name: "Assign booked players to teams", exact: true });
+  if (await assignment.count() > 0) {
+    await expect(assignment).toBeEnabled();
+    await assignment.click();
+    await expect(assignment).toBeHidden();
+  }
   await expect(page.getByRole("button", {
     name: "Start game",
     exact: true,
@@ -94,6 +111,8 @@ test("referee runs the match and admin sees player-created requests", async ({
     exact: true,
   }).click();
   await expect(goalDialog).toBeHidden();
+
+  await waitForPlayingDuration(page, manifest.games.match.id, session.accessToken);
 
   const endMatch = page.locator("details.timer-end-disclosure");
   await endMatch.locator("summary").click();
@@ -134,6 +153,8 @@ async function checkInPlayer(
   player: Locator,
   timing: "Check in early" | "Check in late" | "Check in after kickoff",
 ) {
+  await expect(player.getByRole("button", { name: "Check in", exact: true }),
+    "Expected an eligible missing player with server-authorized check-in.").toBeVisible();
   await player.getByRole("button", {
     name: "Check in",
     exact: true,

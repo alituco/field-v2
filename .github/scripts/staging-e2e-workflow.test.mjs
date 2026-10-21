@@ -135,6 +135,7 @@ test("checkout preflight regression tests run with the mandatory Deno suite", ()
   const source = job("database");
   const check = stepContaining(source, "name: Check Edge Functions and database verifier");
   assert.match(check, /deno test[\s\S]*supabase\/scripts\/e2e\/checkouts_test\.ts/);
+  assert.match(check, /deno test[\s\S]*supabase\/scripts\/e2e\/game_slots_test\.ts/);
   assert.match(check, /deno test[\s\S]*supabase\/scripts\/e2e\/rating_tracks_test\.ts/);
   assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true/);
 });
