@@ -201,6 +201,7 @@ test("audited containment has mandatory goal, clan, replacement and recovery reg
   assert.match(provider, /deno test[\s\S]*_shared\/stripe_recovery_test\.ts/);
   assert.match(provider, /deno test[\s\S]*_shared\/stripe_reconcile_test\.ts/);
   assert.match(provider, /deno test[\s\S]*_shared\/stripe_resume_test\.ts/);
+  assert.match(provider, /deno test[\s\S]*_shared\/stripe_staging_fixture_test\.ts/);
   assert.match(provider, /deno test[\s\S]*_shared\/dev_auth_test\.ts/);
 });
 

@@ -710,6 +710,52 @@ async function reconcileAndRefund(
   };
 }
 
+export async function assertStagingE2EGameCreator(
+  admin: PaymentDatabase,
+  runId: string,
+  gameId: string,
+) {
+  const reject = () =>
+    new PaymentError(
+      "Staging checkout is restricted to this run's fixtures.",
+      403,
+    );
+  const { data: game, error: gameError } = await admin.from("open_queue_games")
+    .select("venue,created_by_staff_id").eq("id", gameId).maybeSingle();
+  if (gameError) throw gameError;
+  if (!game?.created_by_staff_id) throw reject();
+
+  // The operational staff key is not an Auth user (or a player) ID.
+  // Resolve its independent binding before checking protected run metadata.
+  const { data: staff, error: staffError } = await admin.from(
+    "referee_profiles",
+  )
+    .select("auth_user_id,email,role,is_active")
+    .eq("profile_id", game.created_by_staff_id).maybeSingle();
+  if (staffError) throw staffError;
+  if (
+    !staff?.auth_user_id || !staff.email || staff.role !== "admin" ||
+    staff.is_active !== true
+  ) throw reject();
+
+  const { data: creator, error: creatorError } = await admin.auth.admin
+    .getUserById(staff.auth_user_id);
+  if (creatorError) throw creatorError;
+  if (
+    !creator.user || creator.user.id !== staff.auth_user_id ||
+    creator.user.email?.toLowerCase() !== staff.email || creator.user.phone ||
+    !creator.user.email_confirmed_at ||
+    creator.user.app_metadata?.fieldrush_account_type !== "staff"
+  ) {
+    throw reject();
+  }
+  assertStagingE2EGame({
+    runId,
+    venue: game.venue,
+    creatorMetadata: creator.user.app_metadata,
+  });
+}
+
 async function stagingE2ECheckout(ctx: Context, body: Record<string, unknown>) {
   const runId = text(body.run_id);
   if (!runId || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(runId)) {
@@ -730,37 +776,19 @@ async function stagingE2ECheckout(ctx: Context, body: Record<string, unknown>) {
       400,
     );
   }
-  const [profileResult, gameResult] = await Promise.all([
-    ctx.admin.from("profiles").select("display_name,username").eq(
-      "id",
-      ctx.userId,
-    ).maybeSingle(),
-    ctx.admin.from("open_queue_games").select("venue,created_by").eq(
-      "id",
-      payload.game_id,
-    )
-      .maybeSingle(),
-  ]);
+  const profileResult = await ctx.admin.from("profiles")
+    .select("display_name,username").eq("id", ctx.userId).maybeSingle();
   if (profileResult.error) throw profileResult.error;
-  if (gameResult.error) throw gameResult.error;
   if (
     !String(profileResult.data?.display_name ?? "").startsWith("[E2E]") ||
-    !String(profileResult.data?.username ?? "").startsWith("field_e2e_") ||
-    !gameResult.data?.created_by
+    !String(profileResult.data?.username ?? "").startsWith("field_e2e_")
   ) {
     throw new PaymentError(
       "Staging checkout is restricted to this run's fixtures.",
       403,
     );
   }
-  const { data: creator, error: creatorError } = await ctx.admin.auth.admin
-    .getUserById(gameResult.data.created_by);
-  if (creatorError) throw creatorError;
-  assertStagingE2EGame({
-    runId,
-    venue: gameResult.data.venue,
-    creatorMetadata: creator.user?.app_metadata,
-  });
+  await assertStagingE2EGameCreator(ctx.admin, runId, String(payload.game_id));
   const { data: existing, error: existingError } = await ctx.admin.from(
     "payment_intents",
   ).select("*").eq("profile_id", ctx.userId).eq("provider", "STAGING_E2E").eq(
