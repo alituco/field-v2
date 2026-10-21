@@ -84,6 +84,34 @@ void main() {
     },
   );
 
+  for (final minimum in [2, 10]) {
+    testWidgets('review shows capacity and $minimum-player minimum', (
+      tester,
+    ) async {
+      final repository = _Repository([
+        _game('minimum', minimumPlayers: minimum),
+      ]);
+      await _pump(
+        tester,
+        FieldrushBookingFlow(
+          repository: repository,
+          now: _now,
+          startAtGames: true,
+          initialRoles: const {OpenQueueRole.attacker},
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('booking-game-minimum')));
+      await tester.pumpAndSettle();
+      expect(find.text('STEP 3 OF 3'), findsOneWidget);
+      expect(find.text('Up to 7v7'), findsOneWidget);
+      expect(find.text('7v7'), findsNothing);
+      expect(find.text('Players needed'), findsOneWidget);
+      expect(find.text('$minimum minimum · 14 maximum'), findsOneWidget);
+      expect(repository.bookCalls, 0);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('Home starts at game choice with all selected positions', (
     tester,
   ) async {
@@ -557,6 +585,7 @@ OpenQueueGame _game(
   String status = 'OPEN',
   DateTime? start,
   int durationMinutes = 60,
+  int? minimumPlayers,
 }) => OpenQueueGame(
   id: id,
   status: status,
@@ -570,6 +599,10 @@ OpenQueueGame _game(
   priceFils: 13000,
   ageLabel: '18+',
   capacity: 14,
+  minimumPlayers: minimumPlayers ?? 10,
+  participationRulesVersion: minimumPlayers == null
+      ? 'legacy-fixed-v1'
+      : 's0-configurable-v1',
   confirmedCount: 3,
   spots: {
     OpenQueueRole.goalkeeper: keeper,

@@ -80,6 +80,41 @@ test("round-trips exact payload bytes with private output modes", async (t) => {
   await noTemporaryFiles(options.root);
 });
 
+test("cleanup shell restores a discarded Android password from the encrypted handoff", async (t) => {
+  const options = await fixture(t);
+  const download = path.join(options.root, "field-e2e-cleanup-download");
+  await mkdir(download);
+  await packHandoff({ ...options, outputFile: path.join(download, "field-e2e-handoff.bin") });
+  const action = await readFile(new URL("../actions/cleanup-staging-e2e/action.yml", import.meta.url), "utf8");
+  const restore = action.split("    - name: Restore cleanup manifest\n")[1].split("    - name:")[0];
+  const script = restore.split("      run: |\n")[1].replace(/^        /gm, "");
+  const envFile = path.join(options.root, "github-env");
+  await writeFile(envFile, "");
+  const result = spawnSync("/bin/bash", ["-c", script], {
+    cwd: fileURLToPath(new URL("../../", import.meta.url)),
+    env: {
+      PATH: `${path.dirname(process.execPath)}:/usr/bin:/bin`,
+      RUNNER_TEMP: options.root,
+      GITHUB_ENV: envFile,
+      GITHUB_RUN_ID: CONTEXT,
+      STAGING_E2E_HANDOFF_KEY: KEY,
+      E2E_MANIFEST_PATH: path.join(options.sourceDir, "manifest.json"),
+      E2E_TEST_PASSWORD: "",
+    },
+    encoding: "utf8",
+    timeout: 10_000,
+  });
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  const restored = path.join(options.root, "field-e2e-cleanup-restored");
+  assert.equal(await readFile(envFile, "utf8"),
+    `E2E_MANIFEST_PATH=${restored}/manifest.json\nE2E_TEST_PASSWORD=${PASSWORD}\n`);
+  assert.equal(result.stdout.includes(`::add-mask::${PASSWORD}`), true);
+  assert.deepEqual(await readFile(path.join(restored, "manifest.json")),
+    await readFile(path.join(options.sourceDir, "manifest.json")));
+  await doesNotExist(path.join(restored, "password.txt"));
+});
+
 test("a partial-fixture handoff can omit the APK for cleanup", async (t) => {
   const options = await fixture(t, { apk: false });
   await packHandoff(options);
