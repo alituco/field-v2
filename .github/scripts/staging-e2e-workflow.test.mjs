@@ -231,6 +231,13 @@ test("configurable solo minimum and timing have mandatory full-schema regression
   }
 });
 
+test("player rating read parity and expensive-call budgets are mandatory before deployment", () => {
+  const check = stepContaining(job("database"), "node supabase/scripts/test_player_rating_read_cost.mjs");
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /PGLITE_MODULE=/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+});
+
 test("city and keeper behavior is verified against the fully replayed schema", () => {
   const source = job("database");
   const script = "supabase/scripts/verify_fieldrush_city_keeper_rankings.sql";
