@@ -29,6 +29,8 @@ export type StagingManifest = {
       id: string;
       venue: string;
       capacity: number;
+      startsAt: string;
+      endsAt: string;
     };
   };
   markers: {
@@ -62,6 +64,8 @@ export async function loadStagingManifest(): Promise<StagingManifest> {
     !isUuid(manifest.games?.match?.id) ||
     !manifest.games?.match?.venue ||
     manifest.games?.match?.capacity !== 14 ||
+    !Number.isFinite(Date.parse(manifest.games?.match?.startsAt)) ||
+    Date.parse(manifest.games?.match?.endsAt) - Date.parse(manifest.games?.match?.startsAt) !== 30 * 60 * 1000 ||
     !manifest.markers?.reportDetails ||
     !manifest.markers?.supportDetails
   ) {

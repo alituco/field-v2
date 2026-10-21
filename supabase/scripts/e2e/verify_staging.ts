@@ -10,6 +10,7 @@ import {
   bookedRoleRatingBaselines,
   ratingTrackForRole,
 } from "./rating_tracks.ts";
+import { assertJourneyKickoffWindow } from "./game_slots.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -186,12 +187,24 @@ async function verifyPreparedGames(): Promise<void> {
   const { data, error } = await admin
     .from("open_queue_games")
     .select(
-      "id,status,venue,starts_at,ends_at,capacity,created_by,created_by_staff_id,currency,price_fils,format_version,timezone",
+      "id,status,venue,starts_at,ends_at,capacity,created_by,created_by_staff_id,currency,price_fils,format_version,timezone,rating_policy_id",
     )
     .in("id", [manifest.games.match.id, manifest.games.cancellation.id]);
   if (error) throw new Error(`verify E2E games: ${error.message}`);
   assert((data ?? []).length === 2, "Both E2E games must exist.");
   for (const game of data ?? []) {
+    if (phase === "prepared" && game.id === manifest.games.match.id) {
+      assert(
+        game.rating_policy_id === "field-sr-season0-v2",
+        "The played E2E fixture must exercise the active Season 0 policy.",
+      );
+      assertJourneyKickoffWindow(String(game.starts_at), new Date());
+      assert(
+        new Date(game.ends_at).getTime() -
+            new Date(game.starts_at).getTime() === 30 * 60 * 1000,
+        "The played E2E match must use the real 30-minute minimum duration.",
+      );
+    }
     assert(
       String(game.venue).startsWith(manifest.markers.venuePrefix),
       "An E2E game lost its run marker.",

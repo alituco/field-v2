@@ -5,6 +5,7 @@ import {
 } from "../../functions/dev-switch-user/fixture.ts";
 import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
 import { bookedRoleRatingBaselines } from "./rating_tracks.ts";
+import { selectJourneySlots } from "./game_slots.ts";
 
 import {
   type AdminClient,
@@ -188,7 +189,7 @@ const venuePrefix = `${E2E_VENUE_PREFIX} ${shortId}]`;
 const createdGames: Array<Omit<E2EGame, "seededConfirmedCount">> = [];
 try {
   logStep("Reserving two unused permanent solo schedule slots.");
-  const [matchStart, cancellationStart] = await findUnusedSoloSlots(admin, 2);
+  const [matchStart, cancellationStart] = await findUnusedSoloSlots(admin);
   const match = await createGame(
     admin,
     e2eAdmin.profileId,
@@ -940,11 +941,9 @@ async function assertPoolHasNoForeignUpcomingBookings(
 
 async function findUnusedSoloSlots(
   client: AdminClient,
-  count: number,
-): Promise<Date[]> {
+): Promise<[Date, Date]> {
   const now = new Date();
-  const earliest = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  const latest = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000);
+  const latest = new Date(now.getTime() + 96 * 60 * 60 * 1000);
   const { data: existing, error } = await client
     .from("open_queue_games")
     .select("starts_at,status")
@@ -956,64 +955,12 @@ async function findUnusedSoloSlots(
     .limit(2000);
   if (error) throw new Error(`load occupied solo slots: ${error.message}`);
 
-  const occupied = new Set(
-    (existing ?? []).map((row) =>
-      new Date(String(row.starts_at)).toISOString()
-    ),
-  );
-  const slots: Date[] = [];
-  const cursor = new Date(Date.UTC(
-    earliest.getUTCFullYear(),
-    earliest.getUTCMonth(),
-    earliest.getUTCDate(),
-    12,
-  ));
-
-  while (cursor <= latest && slots.length < count) {
-    // Phoenix is UTC-7 year-round. 20:30 local is 03:30 UTC the next day.
-    const weekday = cursor.getUTCDay();
-    if (weekday === 2 || weekday === 5) {
-      const candidate = new Date(Date.UTC(
-        cursor.getUTCFullYear(),
-        cursor.getUTCMonth(),
-        cursor.getUTCDate() + 1,
-        3,
-        30,
-      ));
-      if (
-        candidate.getTime() > earliest.getTime() &&
-        !occupied.has(candidate.toISOString())
-      ) {
-        slots.push(candidate);
-      }
-    }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-
-  if (slots.length !== count) {
+  if ((existing ?? []).length >= 2000) {
     throw new Error(
-      `Could not find ${count} unused Tuesday/Friday solo slots.`,
+      "E2E slot lookup was truncated; refusing an incomplete collision check.",
     );
   }
-
-  const visibleStarts = (existing ?? [])
-    .filter((row) => row.status === "OPEN" || row.status === "FULL")
-    .map((row) => new Date(String(row.starts_at)).getTime());
-  for (const [index, slot] of slots.entries()) {
-    const earlierExisting = visibleStarts.filter((start) =>
-      start < slot.getTime()
-    ).length;
-    const earlierFixtureSlots =
-      slots.slice(0, index).filter((start) => start < slot).length;
-    const feedPosition = earlierExisting + earlierFixtureSlots + 1;
-    if (feedPosition > 40) {
-      throw new Error(
-        "Could not create a discoverable E2E game without touching normal " +
-          `staging fixtures; candidate feed position was ${feedPosition}.`,
-      );
-    }
-  }
-  return slots;
+  return selectJourneySlots(now, existing ?? []);
 }
 
 async function createGame(
@@ -1023,7 +970,7 @@ async function createGame(
   start: Date,
   mainRole: E2EGame["mainRole"],
 ): Promise<Omit<E2EGame, "seededConfirmedCount">> {
-  const endsAt = new Date(start.getTime() + 60 * 60 * 1000);
+  const endsAt = new Date(start.getTime() + 30 * 60 * 1000);
   const { data, error } = await client.from("open_queue_games").insert({
     format_version: "FIELDRUSH_7V7",
     currency: "USD",

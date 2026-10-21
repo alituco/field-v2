@@ -29,6 +29,20 @@ The production project is explicitly denied by
    temporary referee assignment, and resets the reusable accounts to a safe
    baseline.
 
+The played fixture starts 12–23 hours after setup so real Season 0 check-in,
+team assignment and kickoff are inside the ±24-hour window. The separate
+cancellation fixture stays 72–96 hours ahead to retain advance-refund coverage.
+Both use whole-minute, 30-minute Phoenix slots; existing games are never moved.
+Prepared verification rejects an out-of-window played fixture.
+
+The browser journey checks everyone in, exercises a check-in correction, assigns
+teams, starts the match and records a goal. It then waits for **30 real minutes of
+server playing time** before normal finalization. There is no clock backdating,
+rating bypass or shortened production rule. Its test budget is 35 minutes and
+the browser job budget is 55 minutes (including build/cleanup); ordinary UI
+actions remain limited to 15 seconds. This replaces the obsolete instant-finish
+assumption from the pre-Season-0 journey.
+
 Final matches and their Player SR, attendance, wallet, and audit records are
 intentionally immutable. Cleanup retains this tagged history instead of
 weakening production integrity rules for tests.

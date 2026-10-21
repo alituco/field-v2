@@ -375,6 +375,7 @@ jobs:
             supabase/scripts/e2e/_shared_test.ts \
             supabase/scripts/e2e/rating_tracks_test.ts \
             supabase/scripts/e2e/checkouts_test.ts
+          deno test supabase/scripts/e2e/game_slots_test.ts
 
       - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
         shell: bash
@@ -1047,7 +1048,8 @@ jobs:
     needs: [preflight, prepare-staging-e2e, android-staging-e2e]
     if: needs.preflight.outputs.browser == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Includes the real 30-minute S0 match plus build, verification and cleanup.
+    timeout-minutes: 55
     environment:
       name: staging
     env:
