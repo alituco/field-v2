@@ -11,7 +11,8 @@ const args = ['exec', '-i', container, 'psql', '-X', '-q', '-A', '-t',
   '-U', 'postgres', '-d', 'postgres', '-v', 'ON_ERROR_STOP=1'];
 const game = randomUUID();
 const actor = randomUUID();
-const phone = '1555' + (BigInt('0x' + actor.slice(0, 8)) % 10000000n).toString().padStart(7, '0');
+const login = randomUUID();
+const email = login + '@season-concurrency.example';
 function run(sql, allowFailure = false) {
   const result = spawnSync('docker', args, { input: sql, encoding: 'utf8', timeout: 10000 });
   if (!allowFailure && result.status !== 0) throw new Error(result.stderr || 'Local SQL verification failed.');
@@ -38,6 +39,7 @@ function session() {
   };
 }
 const rename = [
+  "select set_config('request.jwt.claim.role','service_role',true);",
   "do $$ declare actor uuid := '" + actor + "'; season public.fieldrush_seasons%rowtype; begin",
   "select * into season from public.fieldrush_seasons order by (lifecycle='ACTIVE') desc,starts_on limit 1;",
   "if season.id is null then raise exception 'Apply season migrations before the concurrency check.'; end if;",
@@ -46,12 +48,15 @@ const rename = [
 ].join('\n');
 const booking = session(); const calendar = session();
 try {
-  run("insert into auth.users(id,phone,phone_confirmed_at) values('" + actor + "','" + phone + "',now()); " +
-    "insert into public.profiles(id,auth_user_id,display_name,username) values('" + actor + "','" + actor +
-    "','Isolated season concurrency admin','concur_" + actor.replaceAll('-', '').slice(0, 12) +
-    "') on conflict(id) do update set display_name=excluded.display_name,username=excluded.username; " +
-    "insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values('" + actor +
-    "','Isolated season concurrency admin','+" + phone + "','admin',true);");
+  // Model the real email-only staff identity. The stable operational key is
+  // distinct from its Auth login, and no player profile is created.
+  run("begin; insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data) values('" + login + "','" + email +
+    "',now(),'{\"fieldrush_account_type\":\"staff\"}'::jsonb); " +
+    "insert into public.referee_profiles(profile_id,auth_user_id,email,display_name,role,is_active) values('" + actor +
+    "','" + login + "','" + email + "','Isolated season concurrency admin','admin',true); " +
+    "do $$ begin if not fieldrush_private.staff_identity_is_active('" + actor + "') or exists(" +
+    "select 1 from public.profiles where id in ('" + actor + "','" + login + "') or auth_user_id='" + login +
+    "') then raise exception 'Concurrency fixture must be an independent active staff identity.'; end if; end $$; commit;");
   run("insert into public.open_queue_games(id,status,venue,starts_at,ends_at,price_fils,market_city_id) " +
     "select '" + game + "','OPEN','Isolated season concurrency regression',kickoff,kickoff+interval '1 hour',0,'phoenix' " +
     "from (select ((now() at time zone 'America/Phoenix')::date+1+time '19:00') at time zone 'America/Phoenix' kickoff) x;");
@@ -85,6 +90,6 @@ try {
   booking.close(); calendar.close();
   run("delete from public.open_queue_games where id='" + game + "' and venue='Isolated season concurrency regression'; " +
     "delete from public.referee_profiles where profile_id='" + actor + "' and display_name='Isolated season concurrency admin'; " +
-    "delete from public.profiles where id='" + actor + "' and username='concur_" + actor.replaceAll('-', '').slice(0, 12) + "'; " +
-    "delete from auth.users where id='" + actor + "' and phone='" + phone + "';");
+    "delete from auth.users where id='" + login + "' and email='" + email + "' " +
+    "and raw_app_meta_data->>'fieldrush_account_type'='staff';");
 }
