@@ -452,6 +452,7 @@ jobs:
           node supabase/scripts/test_season_zero_match_evidence.mjs
           node supabase/scripts/test_season_zero_sr_settlement.mjs
           node supabase/scripts/test_lifetime_rating_visibility.mjs
+          node supabase/scripts/test_player_rating_read_cost.mjs
           node supabase/scripts/test_season_zero_rebalance.mjs
           node supabase/scripts/test_season_zero_migration_chain.mjs
 
