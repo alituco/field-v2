@@ -59,7 +59,8 @@ begin
   perform pg_temp.staff_reject(format('update auth.users set raw_app_meta_data=''{"fieldrush_account_type":"staff"}'' where id=%L',existing_email),
     'do not convert a player');
   insert into auth.users(id,email) values(google_user,'google-player@example.test');
-  insert into auth.identities(user_id,provider,provider_id) values(google_user,'google',google_user::text);
+  insert into auth.identities(user_id,provider,provider_id,identity_data)
+    values(google_user,'google',google_user::text,jsonb_build_object('sub',google_user,'email','google-player@example.test'));
   perform pg_temp.staff_reject(format('update auth.users set raw_app_meta_data=''{"fieldrush_account_type":"staff"}'' where id=%L',google_user),
     'independent of player');
   perform pg_temp.staff_expect(not has_table_privilege('service_role','fieldrush_private.staff_auth_creation_context','INSERT')
