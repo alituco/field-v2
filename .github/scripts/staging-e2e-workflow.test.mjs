@@ -433,6 +433,7 @@ test("fixture owners clean up failures and player-only diagnostics in their own 
   assert.doesNotMatch(prepare, /handoff-upload\.outcome/);
   const android = stepContaining(job("android-staging-e2e"), "uses: ./.github/actions/cleanup-staging-e2e");
   assert.match(android, /if: always\(\) && \(failure\(\) \|\| cancelled\(\) \|\| needs\.preflight\.outputs\.browser != 'true'\)/);
+  assert.match(android, /SUPABASE_PUBLISHABLE_KEY: \$\{\{ vars\.STAGING_SUPABASE_PUBLISHABLE_KEY \}\}/);
   const browser = stepContaining(job("browser-staging-e2e"), "uses: ./.github/actions/cleanup-staging-e2e");
   assert.match(browser, /if: always\(\)/);
   for (const source of [prepare, android, browser]) {
@@ -447,18 +448,23 @@ test("fixture owners clean up failures and player-only diagnostics in their own 
   assert.match(job("android-staging-e2e"), /echo "E2E_MANIFEST_PATH=.*manifest\.json" >>"\$GITHUB_ENV"/);
 });
 
-test("cleanup recovers encrypted state after early setup failure and requires a manifest", () => {
+test("cleanup restores credentials even when Android already restored the manifest", () => {
   const download = stepContaining(cleanupAction, "uses: actions/download-artifact", 4);
-  assert.match(download, /if: always\(\) && env\.E2E_MANIFEST_PATH == ''/);
+  const missingState = /if: always\(\) && \(env\.E2E_MANIFEST_PATH == '' \|\| env\.E2E_TEST_PASSWORD == ''\)/;
+  assert.match(download, missingState);
   assert.match(download, /artifact-ids: \$\{\{ inputs\.handoff-artifact-id \}\}/);
   const restore = stepContaining(cleanupAction, "staging-e2e-handoff.mjs unpack", 4);
-  assert.match(restore, /if: always\(\) && env\.E2E_MANIFEST_PATH == ''/);
+  assert.match(restore, missingState);
   assert.match(restore, /field-e2e-handoff\.bin/);
   assert.match(restore, /echo "E2E_MANIFEST_PATH=.*manifest\.json" >>"\$GITHUB_ENV"/);
+  assert.ok(restore.indexOf('echo "::add-mask::$password"') < restore.indexOf('echo "E2E_TEST_PASSWORD=$password"'));
+  assert.match(restore, /rm -f "\$RUNNER_TEMP\/field-e2e-cleanup-restored\/password\.txt"/);
   const runtime = stepContaining(cleanupAction, "uses: denoland/setup-deno@", 4);
   assert.match(runtime, /if: always\(\)/);
   const clean = stepContaining(cleanupAction, "cleanup_staging.ts", 4);
   assert.match(clean, /test -s "\$E2E_MANIFEST_PATH"/);
+  assert.match(clean, /test -n "\$E2E_TEST_PASSWORD"/);
+  assert.match(clean, /test -n "\$SUPABASE_PUBLISHABLE_KEY"/);
   assert.match(clean, /if: always\(\)/);
   assert.doesNotMatch(cleanupAction, /continue-on-error|\|\| true/);
   const androidRestore = stepContaining(job("android-staging-e2e"), "staging-e2e-handoff.mjs unpack");

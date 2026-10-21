@@ -918,7 +918,14 @@ Future<void> _bookGameThroughUi(
   );
   expect(find.text(game.calendarDateLabel), findsWidgets);
   expect(find.text(bookingRoleName(role)), findsOneWidget);
-  expect(find.text('7v7'), findsOneWidget);
+  expect(
+    find.text(game.hasConfigurableMinimum ? 'Up to 7v7' : '7v7'),
+    findsOneWidget,
+  );
+  if (game.hasConfigurableMinimum) {
+    expect(find.text('Players needed'), findsOneWidget);
+    expect(find.text(game.minimumPlayersLabel), findsOneWidget);
+  }
   await _expectNoBooking(
     repository,
     game.id,

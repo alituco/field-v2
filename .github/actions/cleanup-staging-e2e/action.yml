@@ -7,15 +7,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Recover encrypted cleanup state when normal restoration did not finish
-      if: always() && env.E2E_MANIFEST_PATH == ''
+    - name: Recover encrypted cleanup state when manifest or credentials are missing
+      if: always() && (env.E2E_MANIFEST_PATH == '' || env.E2E_TEST_PASSWORD == '')
       uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
       with:
         artifact-ids: ${{ inputs.handoff-artifact-id }}
         path: ${{ runner.temp }}/field-e2e-cleanup-download
         merge-multiple: true
     - name: Restore cleanup manifest
-      if: always() && env.E2E_MANIFEST_PATH == ''
+      if: always() && (env.E2E_MANIFEST_PATH == '' || env.E2E_TEST_PASSWORD == '')
       shell: bash
       run: |
         set -euo pipefail
@@ -27,6 +27,7 @@ runs:
         echo "::add-mask::$password"
         echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-cleanup-restored/manifest.json" >>"$GITHUB_ENV"
         echo "E2E_TEST_PASSWORD=$password" >>"$GITHUB_ENV"
+        rm -f "$RUNNER_TEMP/field-e2e-cleanup-restored/password.txt"
     - name: Ensure cleanup runtime is available
       if: always()
       uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
@@ -38,6 +39,8 @@ runs:
       run: |
         set -euo pipefail
         test -s "$E2E_MANIFEST_PATH"
+        test -n "$E2E_TEST_PASSWORD"
+        test -n "$SUPABASE_PUBLISHABLE_KEY"
         deno run --allow-env --allow-net --allow-read \
           supabase/scripts/e2e/cleanup_staging.ts
     - name: Ensure E2E auth cleanup CLI is available
