@@ -1,10 +1,13 @@
 import {
   createAdminClient,
+  createE2EStaffClient,
   createE2EUserClient,
+  E2E_STAFF_EMAIL,
   isTerminalGameStatus,
   listAuthUsers,
   loadManifestConfig,
   logStep,
+  requireIndependentE2EStaff,
   unwrapRpcRow,
   updateAuthUser,
 } from "./_shared.ts";
@@ -33,6 +36,7 @@ referee assignment, closes test queues, and restores the reusable accounts.`);
 
 const config = await loadManifestConfig("staging E2E cleanup");
 const manifest = config.manifest;
+const staffIdentity = requireIndependentE2EStaff(manifest);
 const admin = createAdminClient(config.supabaseUrl, config.serviceRoleKey);
 const errors: string[] = [];
 
@@ -71,14 +75,15 @@ console.log("FIELD_E2E_CLEANUP=complete");
 async function cancelTransientGames(): Promise<void> {
   const { data, error } = await admin
     .from("open_queue_games")
-    .select("id,status,venue,created_by")
+    .select("id,status,venue,created_by,created_by_staff_id")
     .in("id", [manifest.games.match.id, manifest.games.cancellation.id]);
   if (error) throw new Error(`load manifest games: ${error.message}`);
 
   for (const game of data ?? []) {
     if (isTerminalGameStatus(String(game.status))) continue;
     if (
-      game.created_by !== manifest.accounts.admin.profileId ||
+      (game.created_by_staff_id ?? game.created_by) !==
+        manifest.accounts.admin.profileId ||
       !String(game.venue).startsWith(manifest.markers.venuePrefix)
     ) {
       throw new Error(
@@ -252,7 +257,9 @@ async function restoreAccountBaselines(): Promise<void> {
   }
 
   for (const account of accounts) {
-    const existing = authUsersById.get(account.profileId);
+    const isStaff = account.profileId === manifest.accounts.admin.profileId;
+    const authUserId = isStaff ? staffIdentity.authUserId : account.profileId;
+    const existing = authUsersById.get(authUserId);
     if (!existing) {
       throw new Error(
         `load auth baseline ${account.profileId}: user missing`,
@@ -260,12 +267,36 @@ async function restoreAccountBaselines(): Promise<void> {
     }
 
     if (
+      isStaff && (existing.email !== E2E_STAFF_EMAIL || existing.phone ||
+        existing.app_metadata?.fieldrush_e2e !== true ||
+        existing.app_metadata?.fieldrush_e2e_role !== "admin" ||
+        existing.app_metadata?.fieldrush_account_type !== "staff")
+    ) {
+      throw new Error(
+        "Refusing to retire an unmarked independent staff fixture.",
+      );
+    }
+
+    if (
       existing.app_metadata?.fieldrush_e2e_revoked_run_id === manifest.runId &&
       existing.app_metadata?.fieldrush_e2e_run_id == null
-    ) continue;
+    ) {
+      if (isStaff) {
+        await bestEffort(
+          "retire previously revoked staff access",
+          retireIndependentStaffAccess,
+        );
+      }
+      continue;
+    }
     if (
       !isCurrentRunFixture(existing, manifest.runId, Date.now()) ||
-      existing.phone?.replace(/\D/g, "") !== account.phone.replace(/\D/g, "")
+      (isStaff
+        ? existing.email !== E2E_STAFF_EMAIL || Boolean(existing.phone) ||
+          existing.app_metadata?.fieldrush_account_type !== "staff" ||
+          existing.app_metadata?.fieldrush_e2e_role !== "admin"
+        : existing.phone?.replace(/\D/g, "") !==
+          account.phone.replace(/\D/g, ""))
     ) {
       throw new Error(
         `refusing to change unmarked account ${account.profileId}`,
@@ -276,10 +307,9 @@ async function restoreAccountBaselines(): Promise<void> {
       // A prior JWT is never saved in a manifest or copied into another run.
       let logoutFailed = false;
       try {
-        const actor = await createE2EUserClient(
-          config.supabaseUrl,
-          account.phone,
-        );
+        const actor = isStaff
+          ? await createE2EStaffClient(config.supabaseUrl, staffIdentity.email)
+          : await createE2EUserClient(config.supabaseUrl, account.phone);
         const { data: sessionData } = await actor.auth.getSession();
         const token = sessionData.session?.access_token;
         const { error } = token
@@ -299,7 +329,7 @@ async function restoreAccountBaselines(): Promise<void> {
       await updateAuthUser(
         config.supabaseUrl,
         config.serviceRoleKey,
-        account.profileId,
+        authUserId,
         {
           password,
           app_metadata: {
@@ -309,18 +339,27 @@ async function restoreAccountBaselines(): Promise<void> {
           },
         },
       );
-      if (account.profileId === manifest.accounts.admin.profileId) {
-        const { error } = await admin.from("referee_profiles").update({
-          is_active: false,
-        }).eq("profile_id", account.profileId);
-        if (error) {
-          throw new Error("Could not retire isolated E2E staff access");
-        }
+      if (isStaff) {
+        await retireIndependentStaffAccess();
       }
       if (logoutFailed) {
         throw new Error("Could not confirm isolated E2E session revocation");
       }
     });
+  }
+}
+
+async function retireIndependentStaffAccess(): Promise<void> {
+  const { data, error } = await admin.from("referee_profiles").update({
+    is_active: false,
+  })
+    .eq("profile_id", manifest.accounts.admin.profileId).eq(
+      "auth_user_id",
+      staffIdentity.authUserId,
+    )
+    .eq("email", E2E_STAFF_EMAIL).select("profile_id").maybeSingle();
+  if (error || !data) {
+    throw new Error("Could not retire the exact isolated E2E staff access.");
   }
 }
 

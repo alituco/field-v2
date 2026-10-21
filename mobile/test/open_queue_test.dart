@@ -5,6 +5,58 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
+    'configured minimum is total players and remains separate from full capacity',
+    () {
+      final base = <String, dynamic>{
+        'id': 'small-game',
+        'status': 'OPEN',
+        'capacity': 14,
+        'starts_at': '2099-01-01T00:00:00Z',
+        'ends_at': '2099-01-01T01:00:00Z',
+        'confirmed_count': 2,
+        'minimum_players': 2,
+        'participation_rules_version': 's0-configurable-v1',
+        'teams_assigned_at': '2098-12-31T23:00:00Z',
+      };
+      for (final game in [
+        OpenQueueGame.fromJson(base),
+        OpenQueueGame.fromBookingJson(base),
+      ]) {
+        expect(game.minimumPlayers, 2);
+        expect(game.hasMinimumPlayers, isTrue);
+        expect(game.isFull, isFalse);
+        expect(game.isUpcomingMatchConfirmed, isTrue);
+        expect(game.hasActiveTeamAssignment, isTrue);
+        expect(game.statusLabel, 'Minimum reached');
+        expect(game.minimumPlayersLabel, '2 minimum · 14 maximum');
+      }
+      final below = OpenQueueGame.fromJson({...base, 'minimum_players': 3});
+      expect(below.hasMinimumPlayers, isFalse);
+      expect(below.isUpcomingMatchConfirmed, isFalse);
+      expect(
+        below.minimumPlayersProgressLabel,
+        '1 more needed · 3 minimum · 14 maximum',
+      );
+      final odd = OpenQueueGame.fromJson({
+        ...base,
+        'minimum_players': 3,
+        'confirmed_count': 3,
+      });
+      expect(odd.hasMinimumPlayers, isTrue);
+      final old = OpenQueueGame.fromJson({
+        ...base,
+        'participation_rules_version': 's0-standard-v1',
+      });
+      expect(old.hasMinimumPlayers, isFalse);
+      expect(old.isUpcomingMatchConfirmed, isFalse);
+      expect(old.statusLabel, 'Spots available');
+      final malformed = OpenQueueGame.fromJson({...base, 'minimum_players': 1});
+      expect(malformed.hasMinimumPlayers, isFalse);
+      expect(malformed.requiredMinimumPlayers, 14);
+    },
+  );
+
+  test(
     'game division ranges describe server admission and preserve old all-division games',
     () {
       OpenQueueGame game(int highest, int lowest) => OpenQueueGame(

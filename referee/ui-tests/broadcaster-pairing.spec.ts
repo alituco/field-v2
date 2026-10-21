@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 
 const env = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
-const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
+const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
 const matchId = "c0000000-0000-4000-8000-000000000001";
 const deviceKey = "paired-mac-1";
 const code = "ABCD-EFGH-JKLM";
@@ -29,7 +29,7 @@ function pairedMac(streaming = false) {
 
 async function setup(page: Page, options: { paired?: boolean; streaming?: boolean; status?: string; expiresSoon?: boolean; rejectDisconnect?: boolean; rejectPair?: boolean; admin?: boolean; rejectForceOnce?: boolean; hideAfterForceFailure?: boolean; revoked?: boolean; testCleanupPending?: boolean } = {}) {
   const state = { device: options.paired ? { ...pairedMac(options.streaming), ...(options.revoked ? { revokedAt: new Date().toISOString(), reservationActive: true, status: "OFFLINE" } : {}), testCleanupPending: options.testCleanupPending ?? false } : null as ReturnType<typeof pairedMac> | null, writes: [] as { path: string; method: string; body: unknown }[], reads: 0 };
-  await page.addInitScript((key) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" } })), `sb-${project}-auth-token`);
+  await page.addInitScript((key) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } })), `fieldrush-staff-${project}-auth-v1`);
   await page.route("**/*.supabase.co/**", route => route.fulfill({ json: {} }));
   await page.route("**/api/referee/**", async route => {
     const request = route.request();

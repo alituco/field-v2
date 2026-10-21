@@ -4,10 +4,13 @@ export type DevAuthEnvironment = (name: string) => string | undefined;
 export type DevAuthUser = {
   id: string;
   phone?: string;
+  email?: string;
+  email_confirmed_at?: string | null;
   deleted_at?: string | null;
   banned_until?: string | null;
   app_metadata?: Record<string, unknown>;
 };
+export const E2E_STAFF_EMAIL = "field_e2e_staff@fieldrush-e2e.example";
 export type DevAuthWindow = {
   runId: string;
   password: string;
@@ -65,10 +68,15 @@ export function isCurrentRunFixture(
   const metadata = user.app_metadata;
   const role = metadata?.fieldrush_e2e_role;
   const phone = user.phone?.replace(/\D/g, "");
+  if (role === "admin") {
+    return metadata?.fieldrush_e2e === true &&
+      metadata.fieldrush_e2e_run_id === runId &&
+      metadata.fieldrush_account_type === "staff" && !user.phone &&
+      user.email === E2E_STAFF_EMAIL && Boolean(user.email_confirmed_at);
+  }
+  if (metadata?.fieldrush_account_type === "staff") return false;
   const expectedPhone = role === "bootstrap"
     ? phone === "97339009098"
-    : role === "admin"
-    ? phone === "97339009099"
     : role === "onboarding"
     ? phone === "97339009100"
     : role === "player"

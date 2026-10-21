@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Disposable full-schema verification. All accounts, controls and games roll back.
 begin;
 set local client_min_messages=warning;
@@ -26,6 +39,7 @@ begin
     'username','botadm_'||phone_suffix,'date_of_birth','2000-01-01','email','botadmin@example.test','skill_assessment','intermediate'),
     'fieldrush-v1','fieldrush-v1');
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values(actor,'Bot Tool Admin','+155571'||phone_suffix,'admin',true);
+  perform pg_temp.bind_staff_login_for_verification(actor);
   perform set_config('request.jwt.claim.sub',player::text,true);
   perform public.complete_fieldrush_onboarding(jsonb_build_object('first_name','Real','last_name','Player',
     'username','botreal_'||phone_suffix,'date_of_birth','2000-01-01','email','realplayer@example.test','skill_assessment','intermediate'),

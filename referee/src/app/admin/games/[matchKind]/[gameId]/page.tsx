@@ -26,6 +26,7 @@ import {
 import type { MatchResolutionType } from "@/lib/match-action-input";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { refundRetryNotice } from "@/lib/payment-refunds";
+import { soloGameReadiness, soloMinimumHint } from "@/lib/solo-game-readiness";
 import {
   canFillGameWithBots,
   isStagingGameBotsEnabled,
@@ -211,6 +212,9 @@ export default function AdminGameDetailPage() {
     ["NO_DATA", "UNDER_REVIEW"].includes(resolutionCase.state),
   );
   const displayedStatus = resolutionDisplayStatus(detail);
+  const rosterReadiness = soloGameReadiness(fixture,
+    detail.participants.matchKind === "SOLO" ? detail.participants.counts.registered : 0);
+  const canLockRoster = seasonZero ? rosterReadiness.minimumReached : fixture.status === "FULL";
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
@@ -296,10 +300,11 @@ export default function AdminGameDetailPage() {
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />
             {fixture.matchKind === "SOLO" && ["OPEN", "FULL"].includes(fixture.status) ? <div>
-              <p className={styles.actionHint}>Lock a full roster into balanced White and Black teams, preserving parties and the saved formation. This releases team assignments and closes outstanding party invitations; it does not start the match or check players in.</p>
+              <p className={styles.actionHint}>Lock the booked roster into balanced White and Black teams, preserving parties and the saved formation. This releases team assignments and closes outstanding party invitations; it does not start the match or check players in.</p>
+              {seasonZero ? <p className={styles.actionHint}>{rosterReadiness.minimumReached ? "Minimum reached" : `${rosterReadiness.minimumPlayers} confirmed players needed`} · {rosterReadiness.minimumPlayers} minimum / {rosterReadiness.capacity} maximum. {soloMinimumHint(fixture)}</p> : null}
               {confirmLockTeams ? <p>Assign and release both teams now?</p> : null}
               <button type="button" className={styles.primaryButton}
-                disabled={lockingTeams || fillingBots || fixture.status !== "FULL" || Boolean(fixture.teamsAssignedAt)}
+                disabled={lockingTeams || fillingBots || !canLockRoster || Boolean(fixture.teamsAssignedAt) || fixture.operationalState !== "NORMAL"}
                 onClick={async () => {
                   setConfirmFillBots(false);
                   if (!confirmLockTeams) { setConfirmLockTeams(true); return; }
@@ -318,7 +323,7 @@ export default function AdminGameDetailPage() {
                 {lockingTeams ? "Locking teams…" : fixture.teamsAssignedAt ? "Teams locked" : confirmLockTeams ? "Confirm lock teams" : "Lock teams"}
               </button>
               {confirmLockTeams ? <button type="button" className={styles.cancelButton} disabled={lockingTeams} onClick={() => setConfirmLockTeams(false)}>Cancel</button> : null}
-              {fixture.status !== "FULL" ? <p className={styles.actionHint}>Available when all places are booked.</p> : null}
+              {!canLockRoster ? <p className={styles.actionHint}>{seasonZero ? `Available once ${rosterReadiness.minimumPlayers} players are booked.` : "Available when all places are booked."}</p> : null}
             </div> : null}
             {fixture.id === gameId && fixture.matchKind === matchKind &&
               isStagingGameBotsEnabled() && canFillGameWithBots(fixture) ? (
@@ -1975,7 +1980,9 @@ function confirmedCount(detail: AdminGameDetail) {
 }
 
 function capacityLabel(detail: AdminGameDetail) {
-  return detail.participants.matchKind === "SOLO" ? `${detail.participants.capacity} game places` : "Confirmed clan roster";
+  if (detail.participants.matchKind !== "SOLO") return "Confirmed clan roster";
+  const rules = soloGameReadiness(detail.fixture, detail.participants.counts.registered);
+  return `${rules.minimumPlayers} minimum · ${detail.participants.capacity} maximum`;
 }
 
 function score(fixture: RefereeFixture) {

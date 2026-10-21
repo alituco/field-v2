@@ -731,6 +731,18 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+                  if (game.hasConfigurableMinimum) ...[
+                    Text(
+                      game.minimumPlayersProgressLabel,
+                      style: _body(11, color: _light),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'At kickoff and during play: ${game.requiredMinimumPlayers} actual players total, with at least one on each team.',
+                      style: _body(10.5, color: _light),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
                   Divider(
                     height: 1,
                     color: Colors.white.withValues(alpha: .14),
@@ -1077,8 +1089,10 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
             children: [
               _Fact(
                 'Format',
-                '${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
+                '${game.hasConfigurableMinimum ? 'Up to ' : ''}${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
               ),
+              if (game.hasConfigurableMinimum)
+                _Fact('Players needed', game.minimumPlayersLabel),
               _Fact(
                 'Rated',
                 publicRatingStatusLabel(_ratingStatus) ??

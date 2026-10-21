@@ -88,7 +88,7 @@ class FieldrushHomeHeader extends StatelessWidget {
         ? 'Placement · ${matches.clamp(0, 2)} of 2 played'
         : value == null
         ? 'View your skill rating'
-        : 'Division ${divisionFromRating(value).number} · $value skill rating${current?.provisional == true ? ' · Provisional' : ''}';
+        : 'Division ${divisionFromRating(value).number} · $value skill rating';
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
       child: Row(
@@ -1376,14 +1376,6 @@ class FieldrushHomeRating extends StatelessWidget {
                     ),
                   ],
                 ),
-                if (current?.provisional == true)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      'Provisional',
-                      style: _jakarta(10, color: _muted),
-                    ),
-                  ),
                 const SizedBox(height: 14),
                 _ShieldLadder(selected: n),
                 const SizedBox(height: 14),

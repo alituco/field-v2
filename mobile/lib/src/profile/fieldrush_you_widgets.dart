@@ -865,14 +865,6 @@ class _RatingCard extends StatelessWidget {
                                             height: .9,
                                           ),
                                     ),
-                                    if (current.provisional)
-                                      Text(
-                                        'Provisional',
-                                        style: _jakarta(
-                                          10,
-                                          color: palette.accent,
-                                        ),
-                                      ),
                                     Padding(
                                       padding: const EdgeInsets.only(bottom: 3),
                                       child: Text(

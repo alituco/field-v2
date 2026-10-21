@@ -9,7 +9,8 @@ import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliabilit
 import { SeasonZeroParticipationPanel } from "@/components/season-zero-participation-panel";
 import { SeasonZeroRebalancePanel } from "@/components/season-zero-rebalance-panel";
 import { SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
-import { normalizePhoneNumber } from "@/lib/phone";
+import { isStaffBrowserSession, STAFF_SIGN_IN_REQUIRED } from "@/lib/staff-browser-session";
+import { soloMinimumHint, soloStarterLineupReady } from "@/lib/solo-game-readiness";
 import { formatPlayerSr, ratingTrackLabel } from "@/lib/open-queue-ratings";
 import { plannedMatchDurationSeconds } from "@/lib/match-duration";
 import { refereeMatchKey } from "@/lib/referee-assigned-matches";
@@ -43,7 +44,7 @@ export default function RefereePage() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
-  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [fixtures, setFixtures] = useState<RefereeFixture[]>([]);
@@ -109,7 +110,11 @@ export default function RefereePage() {
     loadedSession.current = true;
 
     supabase.auth.getSession().then(({ data }) => {
-      const token = data.session?.access_token ?? null;
+      const token = isStaffBrowserSession(data.session) ? data.session.access_token : null;
+      if (data.session && !token) {
+        setError(STAFF_SIGN_IN_REQUIRED);
+        void supabase.auth.signOut({ scope: "local" });
+      }
       setAccessToken(token);
       setSessionChecked(true);
     }).catch(() => {
@@ -119,7 +124,12 @@ export default function RefereePage() {
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        setAccessToken(session?.access_token ?? null);
+        const valid = isStaffBrowserSession(session);
+        setAccessToken(valid ? session.access_token : null);
+        if (session && !valid) {
+          setError(STAFF_SIGN_IN_REQUIRED);
+          queueMicrotask(() => void supabase.auth.signOut({ scope: "local" }));
+        }
         setSessionChecked(true);
       },
     );
@@ -156,15 +166,18 @@ export default function RefereePage() {
     setSubmitting("otp");
 
     try {
-      const normalizedPhone = normalizePhoneNumber(phone);
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: normalizedPhone,
+      const normalizedEmail = email.trim().toLowerCase();
+      const response = await fetch("/api/staff-auth/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail }),
       });
-      if (otpError) throw otpError;
-      setPhone(normalizedPhone);
+      if (!response.ok) throw new Error("Could not request a staff code. Try again shortly.");
+      setEmail(normalizedEmail);
+      setOtp("");
       setOtpSent(true);
     } catch (otpError) {
-      setError(otpError instanceof Error ? otpError.message : "Could not send OTP.");
+      setError(otpError instanceof Error ? otpError.message : "Could not request a staff code.");
     } finally {
       setSubmitting(null);
     }
@@ -177,11 +190,15 @@ export default function RefereePage() {
 
     try {
       const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        phone: normalizePhoneNumber(phone),
+        email: email.trim().toLowerCase(),
         token: otp.trim(),
-        type: "sms",
+        type: "email",
       });
       if (verifyError) throw verifyError;
+      if (!isStaffBrowserSession(data.session)) {
+        await supabase.auth.signOut({ scope: "local" });
+        throw new Error(STAFF_SIGN_IN_REQUIRED);
+      }
       setAccessToken(data.session?.access_token ?? null);
     } catch (verifyError) {
       setError(
@@ -277,18 +294,21 @@ export default function RefereePage() {
       <main className="app-shell">
         <div className="content">
           <section className="code-card">
-            <Header title="REFEREE" subtitle="PHONE LOGIN" />
+            <Header title="STAFF" subtitle="EMAIL SIGN IN" />
+            <p>Use the dedicated staff email registered by your administrator.</p>
             <div style={{ height: 20 }} />
             {!otpSent ? (
               <form className="form-grid" onSubmit={sendOtp}>
                 <label>
-                  <span className="field-label">Phone</span>
+                  <span className="field-label">Staff email</span>
                   <input
                     className="input"
-                    inputMode="tel"
-                    value={phone}
-                    onChange={(event) => setPhone(event.target.value)}
-                    placeholder="+1 480 746 9696"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="referee@example.com"
                   />
                 </label>
                 <button
@@ -296,24 +316,29 @@ export default function RefereePage() {
                   disabled={submitting === "otp"}
                   type="submit"
                 >
-                  {submitting === "otp" ? "Sending code…" : "Send OTP"}
+                  {submitting === "otp" ? "Sending code…" : "Send code"}
                 </button>
               </form>
             ) : (
               <form className="form-grid" onSubmit={verifyOtp}>
+                <p role="status">If {email} has active staff access, a six-digit code will arrive in its inbox.</p>
                 <label>
-                  <span className="field-label">OTP</span>
+                  <span className="field-label">6-digit code</span>
                   <input
                     className="input"
                     inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    required
                     value={otp}
-                    onChange={(event) => setOtp(event.target.value)}
+                    onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
                     placeholder="000000"
                   />
                 </label>
                 <button
                   className="primary-button"
-                  disabled={submitting === "verify"}
+                  disabled={submitting === "verify" || !/^\d{6}$/.test(otp)}
                   type="submit"
                 >
                   {submitting === "verify" ? "Verifying…" : "Verify"}
@@ -323,7 +348,7 @@ export default function RefereePage() {
                   onClick={() => setOtpSent(false)}
                   type="button"
                 >
-                  Change Phone
+                  Change email
                 </button>
               </form>
             )}
@@ -1562,7 +1587,7 @@ function BroadcastControl({
   const streamActive = ["STARTING", "LIVE", "STOPPING"].includes(status);
   const canStart = deviceReady &&
     (fixture.matchKind === "SOLO"
-      ? ["FULL", "LIVE"].includes(fixture.status)
+      ? state.streamReady ?? ["FULL", "LIVE"].includes(fixture.status)
       : ["SCHEDULED", "LIVE"].includes(fixture.status)) &&
     !streamActive &&
     status !== "PROCESSING";
@@ -1751,7 +1776,9 @@ function TimerPanel({
     ? !seasonZero && canAdminister &&
       fixture.players.length > 0 &&
       selectedParticipantIds.length === fixture.players.length
-    : selectedHomeCount >= (seasonZero ? 5 : 1) && selectedAwayCount >= (seasonZero ? 5 : 1);
+    : fixture.matchKind === "SOLO"
+      ? soloStarterLineupReady(fixture, selectedHomeCount, selectedAwayCount)
+      : selectedHomeCount >= 1 && selectedAwayCount >= 1;
   const startBlockedReason = !isBeforeStart
     ? fixture.matchKind === "SOLO"
       ? seasonZero ? "This game must be open with assigned teams before it can start." : "This solo game must be full before it can start."
@@ -1761,7 +1788,7 @@ function TimerPanel({
       : !hasValidLineup
         ? soloTeamsPending && canAdminister
           ? `Check in all ${fixture.players.length} booked players before an early test start.`
-          : seasonZero ? "Check in and select at least five actual starting players on each team." : "Check in at least one player from each team before starting."
+          : seasonZero ? soloMinimumHint(fixture) : "Check in at least one player from each team before starting."
         : null;
 
   function setPlayerSelected(profileId: string, selected: boolean) {

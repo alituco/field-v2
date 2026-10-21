@@ -11,6 +11,8 @@ import '../support/support_repository.dart';
 import 'auth_flow_screen.dart';
 import 'auth_repository.dart';
 import 'onboarding_status.dart';
+import 'player_identity.dart';
+import 'staff_identity_screen.dart';
 
 typedef AuthenticatedAppBuilder =
     Widget Function(BuildContext context, ModerationStatus status);
@@ -45,6 +47,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
   ModerationStatus? _moderationStatus;
   bool _isLoadingModerationStatus = false;
   int _moderationRequestGeneration = 0;
+  bool _staffIdentityRejected = false;
 
   @override
   void initState() {
@@ -55,6 +58,11 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
     _supportRepository =
         widget.supportRepository ?? SupabaseSupportRepository();
     _session = widget.authRepository.currentSession;
+    if (isStaffIdentity(_session?.user)) {
+      _session = null;
+      _staffIdentityRejected = true;
+      unawaited(_signOutStaffIdentity());
+    }
     if (_session != null) {
       _isLoadingModerationStatus = true;
       unawaited(_loadModerationStatus(_session!));
@@ -84,6 +92,17 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
   void _setSession(Session? nextSession) {
     if (!mounted) return;
+    if (isStaffIdentity(nextSession?.user)) {
+      setState(() {
+        _staffIdentityRejected = true;
+        _session = null;
+        _moderationRequestGeneration++;
+        _moderationStatus = null;
+        _isLoadingModerationStatus = false;
+      });
+      unawaited(_signOutStaffIdentity());
+      return;
+    }
     final previousUserId = _session?.user.id;
     final nextUserId = nextSession?.user.id;
     final userChanged = previousUserId != nextUserId;
@@ -94,6 +113,7 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
     setState(() {
       _session = nextSession;
+      if (nextSession != null) _staffIdentityRejected = false;
       if (userChanged) {
         _moderationRequestGeneration++;
         _moderationStatus = null;
@@ -103,6 +123,14 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
     if (shouldLoad) {
       unawaited(_loadModerationStatus(nextSession));
+    }
+  }
+
+  Future<void> _signOutStaffIdentity() async {
+    try {
+      await widget.authRepository.signOut();
+    } catch (_) {
+      // Player UI remains blocked until local sign-out succeeds.
     }
   }
 
@@ -141,6 +169,16 @@ class _AuthGateState extends State<AuthGate> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (_staffIdentityRejected) {
+      return StaffIdentityScreen(
+        onUsePlayerAccount: () async {
+          await _signOutStaffIdentity();
+          if (mounted && widget.authRepository.currentUser == null) {
+            setState(() => _staffIdentityRejected = false);
+          }
+        },
+      );
+    }
     final user = _session?.user;
     final requirement = onboardingRequirementForUser(user);
 

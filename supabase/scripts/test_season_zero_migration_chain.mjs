@@ -30,7 +30,7 @@ try {
       raw_app_meta_data jsonb default '{}',phone_confirmed_at timestamptz,email_confirmed_at timestamptz,
       deleted_at timestamptz,banned_until timestamptz,created_at timestamptz default now(),updated_at timestamptz default now());
     create table auth.identities(id uuid primary key default gen_random_uuid(),user_id uuid references auth.users,
-      provider text,provider_id text,identity_data jsonb default '{}',
+      provider text,provider_id text,identity_data jsonb not null,
       created_at timestamptz default now(),updated_at timestamptz default now());
     create function auth.uid() returns uuid language sql stable as $$
       select coalesce(nullif(current_setting('request.jwt.claim.sub',true),''),

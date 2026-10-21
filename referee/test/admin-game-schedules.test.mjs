@@ -14,13 +14,27 @@ const base = { name: "Saturday football", fieldId: id, weekdays: [6], kickoffTim
 test("weekly Saturday schedules use Phoenix defaults, 60 minutes, $13, and four weeks", () => {
   assert.deepEqual(parse(base), { name: base.name, field_id: id, weekdays: [6], kickoff_time: "18:15", duration_minutes: 60,
     starts_on: "2099-07-25", ends_on: null, booking_window_days: 28, price_fils: 13000, age_label: "18+", highest_division: 1, lowest_division: 5,
-    goalkeepers_per_side: 1, defenders_per_side: 2, attackers_per_side: 4, is_active: true });
+    goalkeepers_per_side: 1, defenders_per_side: 2, attackers_per_side: 4, minimum_players: 10, is_active: true });
   const custom = parse({ ...base, weekdays: [7, 2, 6], durationMinutes: 90, priceUsd: "15.50", bookingWindowDays: 42, highestDivision: 2, lowestDivision: 4 });
   assert.deepEqual(custom.weekdays, [2, 6, 7]);
   assert.equal(custom.price_fils, 15500);
   assert.equal(custom.duration_minutes, 90);
   assert.equal(custom.highest_division, 2);
   assert.equal(custom.lowest_division, 4);
+});
+
+test("schedule minimums accept two total players and odd rosters without changing capacity or unrelated settings", () => {
+  for (const minimumPlayers of [2, 3, 11, 14]) {
+    assert.equal(parse({ ...base, minimumPlayers }).minimum_players, minimumPlayers);
+    assert.deepEqual(parse({ minimumPlayers }, true), { minimum_players: minimumPlayers });
+  }
+  assert.deepEqual(parse({ isActive: false }, true), { is_active: false });
+  for (const minimumPlayers of [1, 15, 2.5, "2", null, false]) {
+    assert.throws(() => parse({ minimumPlayers }, true), /Minimum players/);
+  }
+  const result = serializeGameSchedule({ ...parse(base), id, minimum_players: 3, participation_rules_version: "s0-configurable-v1" }, "Pitch");
+  assert.equal(result.minimumPlayers, 3);
+  assert.equal(result.participationRulesVersion, "s0-configurable-v1");
 });
 
 test("schedule input rejects invalid and duplicate weekdays, dates, money, duration and windows", () => {

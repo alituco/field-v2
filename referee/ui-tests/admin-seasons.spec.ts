@@ -5,7 +5,7 @@ import type { AdminSeason, AdminSeasonCatalog, AdminSeasonReward } from "../src/
 
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
 const supabaseUrl = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co");
-const project = supabaseUrl.hostname.split(".")[0];
+const project = supabaseUrl.hostname;
 const actor = "00000000-0000-4000-8000-000000000001";
 
 function makeSeason(values: Partial<AdminSeason> & Pick<AdminSeason, "id" | "label" | "startsOn" | "endsOn">): AdminSeason {
@@ -31,7 +31,7 @@ async function mockAdmin(page: Page, failSave = false, liveGames = 0) {
     rewards: [], audit: [],
   };
   catalog.rewards = catalog.seasons.flatMap((season) => catalog.cities.flatMap((city) => (["OUTFIELD", "GOALKEEPER"] as const).map((track) => ({ seasonId: season.id, cityId: city.id, ratingTrack: track, currency: "USD" as const, firstPrizeCents: 15000, secondPrizeCents: 10000, thirdPrizeCents: 5000, status: season.id === "s0" ? "PUBLISHED" as const : "DRAFT" as const, revision: 1, publishedAt: season.id === "s0" ? "2026-06-01T00:00:00Z" : null }))));
-  await page.addInitScript(({ key, actor }) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: actor, aud: "authenticated" } })), { key: `sb-${project}-auth-token`, actor });
+  await page.addInitScript(({ key, actor }) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: actor, aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } })), { key: `fieldrush-staff-${project}-auth-v1`, actor });
   await page.route(`${supabaseUrl.origin}/**`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await page.route("**/api/referee/**", async (route) => {
     const request = route.request(); const path = new URL(request.url()).pathname;

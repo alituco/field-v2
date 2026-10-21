@@ -542,6 +542,15 @@ jobs:
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_account_deletion_wallet_forfeiture.sql
 
+      - name: Verify independent staff email accounts and player deletion isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_independent_staff_accounts.sql
+
       - name: Verify once-only assessment initialization on the full schema
         shell: bash
         run: |
@@ -561,6 +570,19 @@ jobs:
           docker exec -i supabase_db_field_v2 \
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             <supabase/scripts/verify_season_zero_full_schema.sql
+
+      - name: Verify configurable solo minimum, start window, and stream readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for verifier in \
+            supabase/scripts/verify_configurable_solo_minimum.sql \
+            supabase/scripts/verify_solo_start_window.sql \
+            supabase/scripts/verify_solo_minimum_streaming.sql; do
+            docker exec -i supabase_db_field_v2 \
+              psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+              -c BEGIN -f /dev/stdin -c ROLLBACK <"$verifier"
+          done
 
       - name: Verify private launch interest capture
         shell: bash
@@ -633,16 +655,13 @@ jobs:
 
           docker exec supabase_db_field_v2 \
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
-            -c "insert into public.referee_profiles (
-                  profile_id, display_name, phone, role
-                )
-                select id, 'CI Admin', phone, 'admin'
-                from public.profiles
-                where phone is not null
-                order by created_at
-                limit 1
-                on conflict (profile_id) do update
-                  set role = 'admin', is_active = true"
+            -c "do \$fixture\$ declare staff_id uuid := gen_random_uuid(); begin
+                  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+                    values(staff_id, staff_id::text || '@ci-staff.example', now(),
+                      '{\"fieldrush_account_type\":\"staff\"}'::jsonb);
+                  insert into public.referee_profiles(profile_id,auth_user_id,email,display_name,role)
+                    values(staff_id,staff_id,staff_id::text || '@ci-staff.example','CI Admin','admin');
+                end \$fixture\$"
 
           for verifier in \
             supabase/scripts/verify_admin_game_reserves.sql \

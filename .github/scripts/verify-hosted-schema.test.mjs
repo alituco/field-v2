@@ -7,6 +7,19 @@ const rankings = readFileSync(new URL('../../supabase/migrations/20261014000300_
 const privacy = readFileSync(new URL('../../supabase/migrations/20261014001500_lifetime_rating_visibility.sql', import.meta.url), 'utf8');
 const mobile = readFileSync(new URL('../../mobile/lib/src/leaderboard/leaderboard_repository.dart', import.meta.url), 'utf8');
 
+test('hosted staff schema rejects player-profile linkage and public provisioning authority', () => {
+  assert.match(hosted, /conrelid='public\.referee_profiles'::regclass[\s\S]*confrelid='public\.profiles'::regclass/);
+  assert.match(hosted, /column_name='auth_user_id'/);
+  assert.match(hosted, /column_name='email'/);
+  for (const signature of ['public.admin_grant_independent_staff(uuid,uuid,text,text,text,uuid)', 'public.bootstrap_independent_staff_admin(uuid,uuid,text)']) {
+    assert.ok(hosted.includes(signature));
+  }
+  const guard = hosted.slice(hosted.indexOf("'public.admin_grant_independent_staff("));
+  assert.match(guard, /has_function_privilege\('anon',checked_rpc,'EXECUTE'\)/);
+  assert.match(guard, /has_function_privilege\('authenticated',checked_rpc,'EXECUTE'\)/);
+  assert.match(guard, /not has_function_privilege\('service_role',checked_rpc,'EXECUTE'\)/);
+});
+
 test('hosted Ranks checks the RPC and named arguments used by the role-aware mobile client', () => {
   const checked = hosted.match(/ranks_function\s*:=\s*to_regprocedure\(\s*'public\.(\w+)\(([^']+)\)'\s*\)/);
   assert.ok(checked, 'Hosted verifier must check an exact Ranks signature');

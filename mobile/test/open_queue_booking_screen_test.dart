@@ -8,6 +8,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'small games show minimum reached without claiming a full squad or an automatic kit update',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpenQueueBookingScreen(
+            repository: _FakeOpenQueueRepository(),
+            booking: _booking(minimumPlayers: 2, confirmedCount: 2),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('MINIMUM REACHED'), findsOneWidget);
+      expect(find.text('Everyone is in'), findsNothing);
+      expect(
+        find.text('2 minimum reached. Up to 14 players can book.'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('kit-assignment-updating')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Go back home clears the open queue navigation stack', (
     tester,
   ) async {
@@ -889,6 +919,8 @@ OpenQueueBooking _booking({
   bool fullBeforeCutoff = false,
   String assignedTeam = openQueueWhiteTeamId,
   int assignmentLeadMinutes = 180,
+  int? minimumPlayers,
+  int? confirmedCount,
 }) {
   final hasAssignmentMetadata = assigned || staleAssignment;
   final isFull = assigned || fullBeforeCutoff;
@@ -904,8 +936,12 @@ OpenQueueBooking _booking({
     timezone: 'Asia/Bahrain',
     priceFils: 3000,
     ageLabel: 'Ages 16-20',
-    capacity: 12,
-    confirmedCount: isFull ? 12 : 10,
+    capacity: minimumPlayers == null ? 12 : 14,
+    minimumPlayers: minimumPlayers ?? 10,
+    participationRulesVersion: minimumPlayers == null
+        ? 's0-standard-v1'
+        : 's0-configurable-v1',
+    confirmedCount: confirmedCount ?? (isFull ? 12 : 10),
     spots: const {
       OpenQueueRole.goalkeeper: 1,
       OpenQueueRole.defender: 1,

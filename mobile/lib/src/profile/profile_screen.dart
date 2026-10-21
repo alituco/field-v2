@@ -1274,18 +1274,6 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                 ),
             ],
           ),
-          if (rating.provisional)
-            const Padding(
-              padding: EdgeInsets.only(top: 8),
-              child: Text(
-                'Provisional',
-                style: TextStyle(
-                  color: Color(0xFF9999A8),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
           const SizedBox(height: 22),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),

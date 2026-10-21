@@ -11,7 +11,7 @@ const project = new URL(
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
     publicConfig.NEXT_PUBLIC_SUPABASE_URL ??
     "https://nfdkdhdevpstfspazbfn.supabase.co",
-).hostname.split(".")[0];
+).hostname;
 const adminId = "00000000-0000-4000-8000-000000000001";
 const applicants = [
   normalizeAdminWaitlistApplicant({
@@ -60,9 +60,9 @@ test("Interest shows one list and filters all launch subscribers without changin
       refresh_token: "ui-test-refresh",
       token_type: "bearer",
       expires_at: 4102444800,
-      user: { id: userId, aud: "authenticated" },
+      user: { id: userId, aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } },
     }));
-  }, { key: `sb-${project}-auth-token`, userId: adminId });
+  }, { key: `fieldrush-staff-${project}-auth-v1`, userId: adminId });
 
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());

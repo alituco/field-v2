@@ -367,14 +367,8 @@ export async function ensureOpenQueueBroadcast(
   gameId: string,
   requestedBy: string,
 ) {
-  const { data: game, error: gameError } = await db
-    .from("open_queue_games")
-    .select("id,status")
-    .eq("id", gameId)
-    .single();
-  if (gameError) throw new Error(`Could not load solo game: ${gameError.message}`);
-  if (!["FULL", "LIVE"].includes(String(game.status))) {
-    throw new Error("Only a full or live solo game can be streamed.");
+  if (!await isOpenQueueStreamReady(db, gameId)) {
+    throw new Error("Assign teams and reach this game’s minimum within its start window before streaming.");
   }
 
   const existing = await getOpenQueueBroadcast(db, gameId);
@@ -398,6 +392,13 @@ export async function ensureOpenQueueBroadcast(
   ).select("*").single();
   if (error) throw new Error(`Could not save solo broadcast: ${error.message}`);
   return normalizeOpenQueueBroadcast(data);
+}
+
+export async function isOpenQueueStreamReady(db: SupabaseClient, gameId: string): Promise<boolean> {
+  const { data, error } = await db.rpc("solo_game_stream_ready", { game_id_to_use: gameId });
+  if (error) throw new Error(`Could not check solo stream readiness: ${error.message}`);
+  if (typeof data !== "boolean") throw new Error("The solo stream readiness response was invalid. Refresh the match.");
+  return data;
 }
 
 export async function queueOpenQueueBroadcastStart(

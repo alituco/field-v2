@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Disposable full-schema regression. No production timing bypass or data survives.
 begin;
 set local client_min_messages=warning;
@@ -43,6 +56,8 @@ begin
   end loop;
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values
     (admin_id,'Goal Admin','+15558616015','admin',true),(other_ref,'Other Ref','+15558616016','referee',true);
+  perform pg_temp.bind_staff_login_for_verification(admin_id);
+  perform pg_temp.bind_staff_login_for_verification(other_ref);
   perform set_config('request.jwt.claim.sub',admin_id::text,true);
   insert into public.reliability_policy_versions(version,state,effective_from,config,summary,published_by,published_at)
     select (select max(version)+1 from public.reliability_policy_versions),'PUBLISHED',

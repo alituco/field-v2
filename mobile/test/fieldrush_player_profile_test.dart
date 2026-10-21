@@ -14,7 +14,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets(
-    'revealed lifetime rating survives season rollover and shows provisional',
+    'revealed lifetime rating survives season rollover without a status label',
     (tester) async {
       await _pump(
         tester,
@@ -35,7 +35,7 @@ void main() {
         ),
       );
       expect(find.text('1199'), findsOneWidget);
-      expect(find.text('Provisional'), findsOneWidget);
+      expect(find.text('Provisional'), findsNothing);
       expect(find.text('PLACEMENT'), findsNothing);
       expect(find.textContaining('placement games'), findsNothing);
       expect(tester.takeException(), isNull);

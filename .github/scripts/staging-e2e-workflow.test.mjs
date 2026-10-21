@@ -204,6 +204,31 @@ test("audited containment has mandatory goal, clan, replacement and recovery reg
   assert.match(provider, /deno test[\s\S]*_shared\/dev_auth_test\.ts/);
 });
 
+test("independent staff and player account isolation is mandatory before deployment", () => {
+  const source = job("database");
+  const check = stepContaining(source, "verify_independent_staff_accounts.sql");
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.match(check, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);
+  assert.ok(source.indexOf("verify_independent_staff_accounts.sql") > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  const seed = stepContaining(source, 'name: Verify fake local seed and admin workflows');
+  assert.match(seed, /auth_user_id,email,display_name,role/);
+  assert.match(seed, /fieldrush_account_type/);
+  assert.doesNotMatch(seed, /select id, 'CI Admin', phone/);
+});
+
+test("configurable solo minimum and timing have mandatory full-schema regressions", () => {
+  const source = job("database");
+  for (const file of ["verify_configurable_solo_minimum.sql", "verify_solo_start_window.sql", "verify_solo_minimum_streaming.sql"]) {
+    const check = stepContaining(source, `supabase/scripts/${file}`);
+    assert.match(check, /set -euo pipefail/);
+    assert.match(check, /ON_ERROR_STOP=1/);
+    assert.match(check, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);
+    assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+    assert.ok(source.indexOf(`supabase/scripts/${file}`) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  }
+});
+
 test("city and keeper behavior is verified against the fully replayed schema", () => {
   const source = job("database");
   const script = "supabase/scripts/verify_fieldrush_city_keeper_rankings.sql";

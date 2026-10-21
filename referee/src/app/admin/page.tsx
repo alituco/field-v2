@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { isStaffBrowserSession, STAFF_SIGN_IN_REQUIRED } from "@/lib/staff-browser-session";
 import type {
   AdminGameParticipant,
   AdminGameParticipants,
@@ -199,7 +200,9 @@ type FlaggedSubject = {
 type AdminStaffMember = {
   profileId: string;
   displayName: string;
-  phone: string;
+  phone: string | null;
+  email: string | null;
+  setupRequired?: boolean;
   role: "admin" | "referee";
   isActive: boolean;
   createdAt: string | null;
@@ -225,6 +228,7 @@ type SoloGameDialog =
   | null;
 
 type SoloGameDraft = SoloFormation & {
+  minimumPlayers: number;
   matchDate: string;
   kickoffTime: string;
   durationMinutes: number;
@@ -467,11 +471,21 @@ export default function AdminPage() {
     if (loadedSession.current) return;
     loadedSession.current = true;
     void supabase.auth.getSession().then(({ data }) => {
-      setAccessToken(data.session?.access_token ?? null);
+      const valid = isStaffBrowserSession(data.session);
+      setAccessToken(isStaffBrowserSession(data.session) ? data.session.access_token : null);
+      if (data.session && !valid) {
+        setError(STAFF_SIGN_IN_REQUIRED);
+        void supabase.auth.signOut({ scope: "local" });
+      }
       setSessionChecked(true);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAccessToken(session?.access_token ?? null);
+      const valid = isStaffBrowserSession(session);
+      setAccessToken(valid ? session.access_token : null);
+      if (session && !valid) {
+        setError(STAFF_SIGN_IN_REQUIRED);
+        queueMicrotask(() => void supabase.auth.signOut({ scope: "local" }));
+      }
       setSessionChecked(true);
     });
     return () => listener.subscription.unsubscribe();
@@ -579,6 +593,7 @@ export default function AdminPage() {
   }
 
   async function createSoloGame(input: {
+    minimumPlayers: number;
     fieldId: string;
     matchDate: string;
     kickoffTime: string;
@@ -692,7 +707,7 @@ export default function AdminPage() {
     }
   }
 
-  async function createReferee(input: { displayName: string; phone: string }) {
+  async function createReferee(input: { displayName: string; email: string }) {
     setSubmitting("create-referee");
     setError(null);
     try {
@@ -701,12 +716,12 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           displayName: input.displayName,
-          phone: input.phone,
+          email: input.email,
           role: "referee",
           sendOtp: true,
         }),
       });
-      setNotice(result.warning ?? `Referee access is ready for ${input.displayName}. Existing sign-in and player details are unchanged.`);
+      setNotice(result.warning ?? `A separate staff account is ready for ${input.displayName}. A login code was requested by email.`);
       await Promise.all([loadGames(), loadStaff()]);
       return true;
     } catch (createError) {
@@ -719,8 +734,9 @@ export default function AdminPage() {
 
   async function createStaff(input: {
     displayName: string;
-    phone: string;
+    email: string;
     role: "admin" | "referee";
+    existingStaffProfileId?: string;
   }) {
     setSubmitting("create-staff");
     setError(null);
@@ -730,7 +746,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ ...input, sendOtp: true }),
       });
-      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} access is ready and a login code was requested. Existing sign-in and player details are unchanged.`);
+      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} staff email is ready and a login code was requested.`);
       await Promise.all([loadStaff(), loadGames()]);
       return true;
     } catch (createError) {
@@ -932,10 +948,10 @@ export default function AdminPage() {
         <section className="admin-entry-card">
           <div className="admin-entry-mark">F</div>
           <span className="admin-eyebrow">Field operations</span>
-          <h1>Admin access requires a referee session</h1>
-          <p>Sign in through the referee console, then open the admin panel again.</p>
+          <h1>Sign in with your staff email</h1>
+          <p>{error ?? "Use your dedicated staff email and six-digit code. Ask an administrator to set up your staff email if you previously used phone sign-in."}</p>
           <a className="admin-primary-link" href="/">
-            Go to referee sign in
+            Go to staff sign in
           </a>
         </section>
       </main>
@@ -1860,7 +1876,7 @@ function GamesSection({
   onAssignReferee: (fixture: RefereeFixture, refereeId: string) => Promise<boolean>;
   onCancel: (fixture: RefereeFixture) => void;
   onCreateSoloGame: () => void;
-  onCreateReferee: (input: { displayName: string; phone: string }) => Promise<boolean>;
+  onCreateReferee: (input: { displayName: string; email: string }) => Promise<boolean>;
   onOverrideScore: (fixture: RefereeFixture) => void;
   onRemoveSoloGame: (fixture: RefereeFixture) => void;
 }) {
@@ -1883,7 +1899,7 @@ function GamesSection({
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [participantsError, setParticipantsError] = useState<string | null>(null);
   const [newRefereeName, setNewRefereeName] = useState("");
-  const [newRefereePhone, setNewRefereePhone] = useState("");
+  const [newRefereeEmail, setNewRefereeEmail] = useState("");
 
   useEffect(() => {
     const requestedGameId = new URLSearchParams(window.location.search).get("gameId");
@@ -1997,11 +2013,11 @@ function GamesSection({
     event.preventDefault();
     const created = await onCreateReferee({
       displayName: newRefereeName.trim(),
-      phone: newRefereePhone.trim(),
+      email: newRefereeEmail.trim().toLowerCase(),
     });
     if (created) {
       setNewRefereeName("");
-      setNewRefereePhone("");
+      setNewRefereeEmail("");
     }
   }
 
@@ -2222,7 +2238,7 @@ function GamesSection({
                   <option value="">Unassigned</option>
                   {assignments.referees.map((referee) => (
                     <option key={referee.profileId} value={referee.profileId}>
-                      {referee.displayName} · {referee.phone}
+                      {referee.displayName} · {referee.email ?? "Staff email setup required"}
                     </option>
                   ))}
                 </select>
@@ -2241,11 +2257,12 @@ function GamesSection({
                     onChange={(event) => setNewRefereeName(event.target.value)}
                   />
                   <input
-                    inputMode="tel"
-                    placeholder="Phone number"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="Dedicated staff email"
                     required
-                    value={newRefereePhone}
-                    onChange={(event) => setNewRefereePhone(event.target.value)}
+                    value={newRefereeEmail}
+                    onChange={(event) => setNewRefereeEmail(event.target.value)}
                   />
                   <button
                     className="admin-secondary-button"
@@ -2254,7 +2271,7 @@ function GamesSection({
                   >
                     {submitting === "create-referee" ? "Adding access…" : "Add access and send login"}
                   </button>
-                  <p className="admin-detail-hint">Existing players keep their name, username, Google link and sign-in credentials. This only adds staff access.</p>
+                  <p className="admin-detail-hint">Creates a separate email-only staff account. Use an email that is not used by a player account.</p>
                 </form>
               </details>
             </div>
@@ -3245,25 +3262,33 @@ function StaffSection({
   submitting: string | null;
   onCreate: (input: {
     displayName: string;
-    phone: string;
+    email: string;
     role: "admin" | "referee";
+    existingStaffProfileId?: string;
   }) => Promise<boolean>;
 }) {
   const [displayName, setDisplayName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "referee">("referee");
+  const [existingStaffProfileId, setExistingStaffProfileId] = useState<string | null>(null);
+
+  function resetForm() {
+    setDisplayName("");
+    setEmail("");
+    setRole("referee");
+    setExistingStaffProfileId(null);
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const created = await onCreate({
       displayName: displayName.trim(),
-      phone: phone.trim(),
+      email: email.trim().toLowerCase(),
       role,
+      ...(existingStaffProfileId ? { existingStaffProfileId } : {}),
     });
     if (created) {
-      setDisplayName("");
-      setPhone("");
-      setRole("referee");
+      resetForm();
     }
   }
 
@@ -3271,18 +3296,18 @@ function StaffSection({
     <div className="admin-staff-layout">
       <section className="admin-card admin-staff-create">
         <span className="admin-eyebrow">Controlled access</span>
-        <h2>Add an admin or referee</h2>
+        <h2>{existingStaffProfileId ? "Set up staff email" : "Add an admin or referee"}</h2>
         <p>
-          Add staff access to their phone account and send a one-time login code.
-          Existing players keep their sign-in credentials, linked Google account,
-          name, username and account details. A new phone sign-in is created only
-          when no account already uses the number.
+          Staff use a separate email-only account and a six-digit login code.
+          Choose a dedicated email that is not already used by a player account.
+          {existingStaffProfileId ? " Existing assignments and staff records will stay with this staff member." : ""}
         </p>
         <form onSubmit={(event) => void submit(event)}>
           <label>
             <span>Staff display name</span>
             <input
               autoComplete="name"
+              disabled={existingStaffProfileId !== null}
               maxLength={50}
               onChange={(event) => setDisplayName(event.target.value)}
               placeholder="Mohamed Ali"
@@ -3291,21 +3316,23 @@ function StaffSection({
             />
           </label>
           <label>
-            <span>Phone number</span>
+            <span>Dedicated staff email</span>
             <input
-              autoComplete="tel"
-              inputMode="tel"
-              onChange={(event) => setPhone(event.target.value)}
-              placeholder="+973 3XXX XXXX"
+              aria-label="Dedicated staff email"
+              type="email"
+              autoComplete="email"
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="referee@example.com"
               required
-              value={phone}
+              value={email}
             />
-            <small>Uses this exact phone account. This does not reset its password or change its Google link.</small>
+            <small>A staff account cannot sign in to the player app. Phone and Google sign-in are not used for staff.</small>
           </label>
           <fieldset>
             <legend>Access level</legend>
             <button
               className={role === "referee" ? "active" : ""}
+              disabled={existingStaffProfileId !== null}
               onClick={() => setRole("referee")}
               type="button"
             >
@@ -3314,6 +3341,7 @@ function StaffSection({
             </button>
             <button
               className={role === "admin" ? "active" : ""}
+              disabled={existingStaffProfileId !== null}
               onClick={() => setRole("admin")}
               type="button"
             >
@@ -3327,11 +3355,12 @@ function StaffSection({
           </div>
           <button
             className="admin-primary-button"
-            disabled={submitting !== null || displayName.trim().length < 2 || phone.trim().length < 8}
+            disabled={submitting !== null || displayName.trim().length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())}
             type="submit"
           >
-            {submitting === "create-staff" ? "Adding access…" : `Add ${role} access`}
+            {submitting === "create-staff" ? "Setting up staff…" : existingStaffProfileId ? "Set up email and send code" : `Add ${role} access`}
           </button>
+          {existingStaffProfileId ? <button className="admin-secondary-button" onClick={resetForm} type="button">Cancel setup</button> : null}
         </form>
       </section>
 
@@ -3341,7 +3370,7 @@ function StaffSection({
           <b>{staff.filter((member) => member.isActive).length} active</b>
         </header>
         {staff.length === 0 ? (
-          <AdminEmpty icon="referee" title="No staff accounts found" detail="Add referee or administrator access to a phone account." />
+          <AdminEmpty icon="referee" title="No staff accounts found" detail="Create a dedicated email account for an administrator or referee." />
         ) : (
           <div className="admin-staff-list">
             {staff.map((member) => (
@@ -3349,11 +3378,18 @@ function StaffSection({
                 <span className="admin-subject-avatar small">{initials(member.displayName)}</span>
                 <div>
                   <strong>{member.displayName}</strong>
-                  <small>{member.phone} · Added {member.createdAt ? formatAdminDate(member.createdAt) : "date unavailable"}</small>
+                  <small>{member.email ?? "Dedicated staff email required"} · Added {member.createdAt ? formatAdminDate(member.createdAt) : "date unavailable"}</small>
+                  {member.phone ? <small>Previous staff contact: {member.phone}</small> : null}
+                  {member.isActive && (member.setupRequired ?? !member.email) ? <button className="admin-secondary-button" type="button" disabled={submitting !== null} onClick={() => {
+                    setExistingStaffProfileId(member.profileId);
+                    setDisplayName(member.displayName);
+                    setEmail(member.email ?? "");
+                    setRole(member.role);
+                  }}>Set up staff email for {member.displayName}</button> : null}
                 </div>
                 <span className={`admin-staff-role ${member.role}`}>{member.role}</span>
                 <span className={member.isActive ? "admin-clear-status" : "admin-action-status"}>
-                  {member.isActive ? <><i /> Active</> : "Inactive"}
+                  {!member.isActive ? "Inactive" : (member.setupRequired ?? !member.email) ? "Setup required" : <><i /> Active</>}
                 </span>
               </article>
             ))}
@@ -3547,6 +3583,7 @@ function SoloGameManagementDialog({
   submitting: boolean;
   onClose: () => void;
   onCreate: (input: {
+    minimumPlayers: number;
     fieldId: string;
     matchDate: string;
     kickoffTime: string;
@@ -3566,6 +3603,7 @@ function SoloGameManagementDialog({
   const [matchDate, setMatchDate] = useState(draft?.matchDate ?? nextSoloMatchDate());
   const [kickoffTime, setKickoffTime] = useState(draft?.kickoffTime ?? "20:30");
   const [durationMinutes, setDurationMinutes] = useState(draft?.durationMinutes ?? 60);
+  const [minimumPlayers, setMinimumPlayers] = useState(draft?.minimumPlayers ?? 10);
   const [priceUsd, setPriceUsd] = useState(draft?.priceUsd ?? "13.00");
   const [ageLabel, setAgeLabel] = useState(draft?.ageLabel ?? "18+");
   const [highestDivision, setHighestDivision] = useState(draft?.highestDivision ?? 1);
@@ -3590,7 +3628,8 @@ function SoloGameManagementDialog({
     ageLabel.trim().length >= 2 &&
     Number.isInteger(highestDivision) && highestDivision >= 1 && highestDivision <= 5 &&
     Number.isInteger(lowestDivision) && lowestDivision >= 1 && lowestDivision <= 5 &&
-    highestDivision <= lowestDivision && validFormation;
+    highestDivision <= lowestDivision && validFormation &&
+    Number.isInteger(minimumPlayers) && minimumPlayers >= 2 && minimumPlayers <= 14;
   const removeReady =
     reason.trim().length >= 8 &&
     confirmation.trim().toUpperCase() === "REMOVE";
@@ -3611,7 +3650,7 @@ function SoloGameManagementDialog({
             The game opens for player bookings as soon as it is created.
           </p>
           <div className="admin-modal-warning">
-            7-a-side · Any day · The saved field determines the city and local time. Games at the same pitch cannot overlap. Prices are in USD.
+            Up to 7-a-side · Any day · The saved field determines the city and local time. Games at the same pitch cannot overlap. Prices are in USD.
           </div>
           <label className="admin-modal-field">
             <span>Field / pitch <span aria-hidden="true">*</span></span>
@@ -3623,7 +3662,7 @@ function SoloGameManagementDialog({
             </select>
             <small>{selectedField ? `${selectedField.address}, ${selectedField.city}, ${selectedField.state}` : "Players will see this field’s address and map pin in the app."}</small>
           </label>
-          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, priceUsd, ageLabel, highestDivision, lowestDivision, ...formation })}>+ Add a new field</button>
+          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, minimumPlayers, priceUsd, ageLabel, highestDivision, lowestDivision, ...formation })}>+ Add a new field</button>
           <div className="admin-solo-game-fields">
             <label className="admin-modal-field">
               <span>Match date</span>
@@ -3688,6 +3727,11 @@ function SoloGameManagementDialog({
             />
           </label>
           <SoloFormationFields value={formation} onChange={setFormation} disabled={submitting} />
+          <label className="admin-modal-field">
+            <span>Minimum players (both teams)</span>
+            <input required type="number" min={2} max={14} step={1} value={minimumPlayers || ""} onChange={(event) => setMinimumPlayers(Number(event.target.value))} />
+            <small>2–14 players total. 2 allows 1v1; odd counts allow uneven teams. Booking capacity stays 14. At kickoff and during play, at least this many actual players and one on each team are required.</small>
+          </label>
           <p className="admin-detail-hint">Formation can be changed from the game overview until its first booking or payment attempt.</p>
         </>
       ) : (
@@ -3740,6 +3784,7 @@ function SoloGameManagementDialog({
                 matchDate,
                 kickoffTime,
                 durationMinutes,
+                minimumPlayers,
                 priceUsd: priceUsd.trim(),
                 ageLabel: ageLabel.trim(),
                 highestDivision,
@@ -4783,7 +4828,7 @@ function sectionSubtitle(section: AdminSection) {
     reports: "Triage player reports privately and consistently.",
     waitlist: "Review launch update signups and player applications in one place.",
     people: "Understand patterns before taking proportionate action.",
-    staff: "Register trusted phone numbers and control who can operate Field.",
+    staff: "Set up dedicated staff email accounts and control who can operate Field.",
     audit: "A permanent trail of sensitive admin decisions.",
   }[section];
 }

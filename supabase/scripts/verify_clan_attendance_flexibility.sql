@@ -73,6 +73,7 @@ begin
   select referee.profile_id into actor_referee_id
   from public.referee_profiles referee
   where referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by (referee.role = 'admin') desc, referee.created_at, referee.profile_id
   limit 1;
 

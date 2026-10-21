@@ -54,7 +54,7 @@ void main() {
       ),
     );
     expect(find.textContaining('1199', findRichText: true), findsOneWidget);
-    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.text('Provisional'), findsNothing);
     expect(find.textContaining('games to reveal'), findsNothing);
     expect(tester.takeException(), isNull);
   });

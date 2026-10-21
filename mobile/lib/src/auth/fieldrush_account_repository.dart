@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'fieldrush_account.dart';
+import 'player_identity.dart';
 
 /// Authentication remains owned by Supabase. Profile RPCs never accept a user ID,
 /// verification flag or a client-controlled completion flag.
@@ -34,12 +35,14 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<FieldrushAccount> loadAccount() async {
+    await requirePlayerIdentity(_client);
     final value = await _client.rpc('get_my_fieldrush_account');
     return FieldrushAccount.fromJson(_object(value));
   }
 
   @override
   Future<void> saveDraft(AccountDraft draft) async {
+    await requirePlayerIdentity(_client);
     await _client.rpc(
       'save_fieldrush_onboarding_draft',
       params: {'draft': draft.toJson()},
@@ -48,6 +51,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<FieldrushAccount> completeOnboarding(AccountDraft draft) async {
+    await requirePlayerIdentity(_client);
     final value = await _client.rpc(
       'complete_fieldrush_onboarding',
       params: {
@@ -75,6 +79,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> signInWithGoogle() async {
+    await requirePlayerIdentity(_client);
     final launched = await _client.auth.signInWithOAuth(
       OAuthProvider.google,
       redirectTo: redirectUrl,
@@ -88,6 +93,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> linkGoogle() async {
+    await requirePlayerIdentity(_client);
     if (_client.auth.currentUser == null) throw AuthSessionMissingException();
     final launched = await _client.auth.linkIdentity(
       OAuthProvider.google,
@@ -104,6 +110,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> sendPhoneCode(String phone) async {
+    await requirePlayerIdentity(_client);
     _requirePhone(phone);
     // Adding a phone to a Google account must update that authenticated account,
     // not sign into a second phone account and accidentally discard the identity.
@@ -118,6 +125,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> switchIncompletePhoneAccount(String phone) async {
+    await requirePlayerIdentity(_client);
     _requirePhone(phone);
     final session = _requireEmailSession();
     final user =
@@ -179,6 +187,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> sendRecoveryCode(String phone) async {
+    await requirePlayerIdentity(_client);
     _requirePhone(phone);
     if (_client.auth.currentUser != null) {
       throw const AuthException('Sign out before recovering another account.');
@@ -200,6 +209,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
       token: token,
       type: type,
     );
+    await requirePlayerIdentity(_client, authenticatedUser: response.user);
     if (type == OtpType.phoneChange && before != response.user?.id) {
       await _client.auth.signOut(scope: SignOutScope.local);
       throw const AuthException(
@@ -211,6 +221,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> sendReauthenticationCode() async {
+    await requirePlayerIdentity(_client);
     final user = (await _client.auth.getUser()).user;
     final phone = user?.phone;
     if (user == null ||
@@ -231,6 +242,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> verifyReauthenticationCode(String token) async {
+    await requirePlayerIdentity(_client);
     _requireCode(token);
     final phone = _reauthPhone;
     final id = _reauthUserId;
@@ -254,6 +266,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> requestEmailVerification(String email) async {
+    await requirePlayerIdentity(_client);
     if (!emailDeliveryEnabled) {
       throw const AuthException(
         'Email verification is not available yet. Use your verified phone or linked Google account to sign in.',
@@ -305,6 +318,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> verifyEmailCode(String email, String token) async {
+    await requirePlayerIdentity(_client);
     if (!emailDeliveryEnabled) {
       throw const AuthException('Email verification is not available yet.');
     }
@@ -512,6 +526,7 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
     AccountDraft draft, {
     bool disconnectGoogle = false,
   }) async {
+    await requirePlayerIdentity(_client);
     final targetEmail = _requireEmail(draft.email);
     final session = _requireEmailSession();
     // The screen may predate an OAuth callback. Ask Auth for current identities
@@ -665,11 +680,13 @@ class SupabaseFieldrushAccountRepository implements FieldrushAccountRepository {
 
   @override
   Future<void> markTourCompleted() async {
+    await requirePlayerIdentity(_client);
     await _client.rpc('complete_fieldrush_tour');
   }
 
   @override
   Future<void> deleteAccount() async {
+    await requirePlayerIdentity(_client);
     try {
       final result = await _client.functions.invoke(
         'fieldrush-delete-account',

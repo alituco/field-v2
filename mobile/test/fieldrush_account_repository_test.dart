@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:field/src/auth/fieldrush_account.dart';
 import 'package:field/src/auth/fieldrush_account_repository.dart';
+import 'package:field/src/auth/player_identity.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -63,6 +64,140 @@ void main() {
       emailVerificationHttpClient: transport,
     );
   }
+
+  Map<String, dynamic> staffSession() {
+    final session = _session();
+    session['user'] = {
+      ..._user(),
+      'app_metadata': {'fieldrush_account_type': 'staff'},
+    };
+    return session;
+  }
+
+  test(
+    'staff account load refuses player RPCs and clears the local session',
+    () async {
+      await client.auth.recoverSession(jsonEncode(staffSession()));
+      await expectLater(
+        repository.loadAccount(),
+        throwsA(
+          isA<AuthException>().having(
+            (error) => error.code,
+            'code',
+            'staff_account_only',
+          ),
+        ),
+      );
+      expect(client.auth.currentUser, isNull);
+      expect(
+        requests.every((request) => request.url.path == '/auth/v1/logout'),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'staff identity cannot mutate its phone or create a player draft',
+    () async {
+      for (final operation in <Future<void> Function()>[
+        () => repository.sendPhoneCode('+16025550101'),
+        () => repository.saveDraft(const AccountDraft()),
+        () => repository.requestEmailVerification('staff-edit@example.test'),
+        () => repository.verifyEmailCode('staff-edit@example.test', '123456'),
+        () async {
+          await repository.updateAccount(const AccountDraft());
+        },
+        () => repository.deleteAccount(),
+        () async {
+          await repository.completeOnboarding(const AccountDraft());
+        },
+      ]) {
+        await client.auth.recoverSession(jsonEncode(staffSession()));
+        requests.clear();
+        await expectLater(
+          operation(),
+          throwsA(
+            isA<AuthException>().having(
+              (error) => error.message,
+              'message',
+              staffAccountOnlyMessage,
+            ),
+          ),
+        );
+        expect(client.auth.currentUser, isNull);
+        expect(
+          requests.every((request) => request.url.path == '/auth/v1/logout'),
+          isTrue,
+        );
+      }
+    },
+  );
+
+  test(
+    'SMS response carrying a staff realm is refused before player onboarding',
+    () async {
+      respond = (_) => _json(staffSession());
+      await expectLater(
+        repository.verifyPhoneCode('+14807469696', '123456'),
+        throwsA(
+          isA<AuthException>().having(
+            (error) => error.code,
+            'code',
+            'staff_account_only',
+          ),
+        ),
+      );
+      expect(client.auth.currentUser, isNull);
+      expect(requests.map((request) => request.url.path), [
+        '/auth/v1/verify',
+        '/auth/v1/logout',
+      ]);
+    },
+  );
+
+  test('editable user metadata cannot claim or remove the staff realm', () {
+    expect(
+      isStaffIdentity(
+        User.fromJson({
+          ..._user(),
+          'user_metadata': {'fieldrush_account_type': 'staff'},
+        }),
+      ),
+      isFalse,
+    );
+    expect(
+      isStaffIdentity(
+        User.fromJson({
+          ..._user(),
+          'app_metadata': {'fieldrush_account_type': 'staff'},
+          'user_metadata': {'fieldrush_account_type': 'player'},
+        }),
+      ),
+      isTrue,
+    );
+  });
+
+  test(
+    'a returned staff identity still fails after another player session replaces it',
+    () async {
+      await signedIn(id: 'new-player');
+      final staff = User.fromJson(
+        jsonDecode(jsonEncode(staffSession()['user'])) as Map<String, dynamic>,
+      );
+      await expectLater(
+        requirePlayerIdentity(client, authenticatedUser: staff),
+        throwsA(
+          isA<AuthException>().having(
+            (error) => error.code,
+            'code',
+            'staff_account_only',
+          ),
+        ),
+      );
+      expect(client.auth.currentUser?.id, 'new-player');
+      expect(requests, isEmpty);
+    },
+  );
 
   test(
     'disabled email delivery cannot report success or send any request',

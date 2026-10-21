@@ -5,6 +5,10 @@
 
 begin;
 
+-- Player report/status checks stay authenticated. Only staff API actions below
+-- switch to the service context; player JWTs never confer administrator access.
+select set_config('request.jwt.claim.role', 'authenticated', true);
+
 create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
 returns boolean language plpgsql as $availability$
 begin
@@ -47,6 +51,7 @@ begin
   select referee.profile_id into admin_id
   from public.referee_profiles referee
   where referee.role = 'admin' and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -94,6 +99,7 @@ begin
     raise exception 'Duplicate report protection did not reject the report.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   perform public.admin_update_moderation_report(
     admin_id, report_id, 'TRIAGE', null
   );
@@ -184,6 +190,7 @@ begin
     raise exception 'Restricted player future booking was not released and refunded.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform set_config('request.jwt.claim.sub', target_id::text, true);
   status_payload := public.get_my_moderation_status();
   if status_payload ->> 'state' <> 'SUSPENDED'
@@ -191,6 +198,7 @@ begin
     raise exception 'Moderation status did not expose the account suspension.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   perform public.admin_revoke_moderation_action(
     admin_id,
     action_id,
@@ -212,12 +220,14 @@ begin
     null,
     'NONE'
   );
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   status_payload := public.get_my_moderation_status();
   if status_payload ->> 'state' <> 'WARNING'
     or status_payload ->> 'message'
       <> 'Verification warning visible to the affected player.' then
     raise exception 'Latest warning was not exposed to the affected player.';
   end if;
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   perform public.admin_revoke_moderation_action(
     admin_id,
     action_id,
@@ -329,7 +339,8 @@ begin
       select 1 from public.fixtures fixture
       where fixture.id = future_fixture_id
         and fixture.status = 'CANCELLED'
-        and fixture.cancelled_by = admin_id
+        and fixture.cancelled_by is null
+        and fixture.cancelled_by_staff_id = admin_id
     ) then
       raise exception 'Clan match cancellation was not recorded.';
     end if;
@@ -382,7 +393,8 @@ begin
       select 1 from public.open_queue_games game
       where game.id = future_solo_id
         and game.status = 'CANCELLED'
-        and game.cancelled_by = admin_id
+        and game.cancelled_by is null
+        and game.cancelled_by_staff_id = admin_id
     ) then
       raise exception 'Solo match cancellation was not recorded.';
     end if;

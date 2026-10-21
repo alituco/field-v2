@@ -6,6 +6,10 @@
 
 begin;
 
+-- These are server-side staff/admin calls. The independent verified staff
+-- binding remains required in addition to the service context.
+select set_config('request.jwt.claim.role', 'service_role', true);
+
 do $$
 declare
   admin_id uuid;
@@ -33,6 +37,7 @@ begin
   select referee.profile_id into admin_id
   from public.referee_profiles referee
   where referee.role = 'admin' and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -75,7 +80,7 @@ begin
   update public.open_queue_games game
   set status='CANCELLED',cancellation_code='ADMIN_DECISION',
     cancellation_reason='Isolate clan forfeit rollback verification.',
-    cancelled_at=clock_timestamp(),cancelled_by=admin_id,
+    cancelled_at=clock_timestamp(),cancelled_by=null,cancelled_by_staff_id=admin_id,
     cancellation_context=jsonb_build_object('source','CLAN_FORFEIT_ROLLBACK_VERIFICATION')
   where public.player_game_blocks_registration(game.status,game.ends_at,game.operational_state)
     and exists (

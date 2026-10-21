@@ -1,9 +1,11 @@
 import {
   E2E_SCHEMA_VERSION,
+  E2E_STAFF_EMAIL,
   type E2EAccount,
   type E2EManifest,
   normalizeRunId,
   parseManifest,
+  requireIndependentE2EStaff,
   selectRotatingIndex,
 } from "./_shared.ts";
 
@@ -16,6 +18,47 @@ Deno.test("parses the versioned, tagged E2E manifest contract", () => {
   assertEquals(
     parsed.accounts.main.profileId,
     manifest.accounts.main.profileId,
+  );
+});
+
+Deno.test("staff Auth and actor keys are separate and alias fields are exact", () => {
+  const valid = validManifest();
+  assertEquals(requireIndependentE2EStaff(valid).email, E2E_STAFF_EMAIL);
+  for (
+    const mutate of [
+      (m: E2EManifest) => {
+        m.login.adminAuthUserId = m.login.adminProfileId;
+      },
+      (m: E2EManifest) => {
+        m.login.adminEmail = "real@example.test";
+      },
+      (m: E2EManifest) => {
+        m.accounts.admin.authUserId = m.accounts.main.profileId;
+      },
+      (m: E2EManifest) => {
+        m.accounts.admin.email = "other@example.test";
+      },
+    ]
+  ) {
+    const manifest = validManifest();
+    mutate(manifest);
+    assertThrows(
+      () => parseManifest(manifest),
+      "independent reserved staff identity",
+    );
+  }
+});
+
+Deno.test("older schema-2 mobile manifests parse but cannot authorize new staff setup or cleanup", () => {
+  const manifest = validManifest();
+  delete manifest.login.adminAuthUserId;
+  delete manifest.login.adminEmail;
+  delete manifest.accounts.admin.authUserId;
+  delete manifest.accounts.admin.email;
+  assertEquals(parseManifest(manifest).schemaVersion, 2);
+  assertThrows(
+    () => requireIndependentE2EStaff(manifest),
+    "independent E2E staff Auth id",
   );
 });
 
@@ -84,6 +127,8 @@ function validManifest(): E2EManifest {
     "field_e2e_onboarding",
   );
   const admin = account(16, "+97339009099", "field_e2e_admin");
+  admin.authUserId = uuid(17);
+  admin.email = E2E_STAFF_EMAIL;
 
   return {
     schemaVersion: E2E_SCHEMA_VERSION,
@@ -99,6 +144,8 @@ function validManifest(): E2EManifest {
       otpCode: "000000",
       adminProfileId: admin.profileId,
       adminPhone: admin.phone,
+      adminAuthUserId: admin.authUserId,
+      adminEmail: admin.email,
     },
     accounts: {
       main: players[0],

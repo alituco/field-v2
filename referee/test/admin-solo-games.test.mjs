@@ -40,6 +40,7 @@ test("admin can prepare a Tuesday solo game in the Phoenix slot", () => {
     startsAt: "2099-07-22T03:30:00.000Z",
     durationMinutes: 60,
     fieldId,
+    minimumPlayers: 10,
     priceFils: 13500,
     ageLabel: "18+",
     highestDivision: 1,
@@ -48,6 +49,18 @@ test("admin can prepare a Tuesday solo game in the Phoenix slot", () => {
     defendersPerSide: 2,
     attackersPerSide: 4,
   });
+});
+
+test("minimum players counts both teams, accepts 1v1 and odd totals, and rejects malformed limits", () => {
+  const base = { fieldId, matchDate: "2099-07-25", ageLabel: "18+" };
+  for (const minimumPlayers of [2, 3, 10, 13, 14]) {
+    const game = parseAdminSoloGameCreateInput({ ...base, minimumPlayers });
+    assert.equal(game.minimumPlayers, minimumPlayers);
+    assert.equal(game.goalkeepersPerSide + game.defendersPerSide + game.attackersPerSide, 7);
+  }
+  for (const minimumPlayers of [null, "2", 0, 1, 15, 2.5, false, NaN]) {
+    assert.throws(() => parseAdminSoloGameCreateInput({ ...base, minimumPlayers }), /Minimum players/);
+  }
 });
 
 test("admin can prepare a Friday solo game", () => {

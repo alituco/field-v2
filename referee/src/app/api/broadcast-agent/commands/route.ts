@@ -6,6 +6,7 @@ import {
   getFixtureBroadcast,
   getOpenQueueBroadcast,
   getStreamCredentials,
+  isOpenQueueStreamReady,
   markBroadcastStopped,
   markOpenQueueBroadcastStopped,
   syncBroadcastFromCloudflare,
@@ -86,7 +87,10 @@ export async function GET(request: NextRequest) {
     };
 
     if (claimed.action === "START_STREAM") {
-      if (!["FULL", "SCHEDULED", "LIVE"].includes(context.matchStatus)) {
+      const ready = isSolo
+        ? await isOpenQueueStreamReady(db, matchId)
+        : ["SCHEDULED", "LIVE"].includes(context.matchStatus);
+      if (!ready) {
         await db.from("broadcast_commands").update({ status: "FAILED", completed_at: new Date().toISOString(), error_message: "Match is no longer ready to stream." }).eq("id", claimed.id);
         return NextResponse.json({ command: null });
       }

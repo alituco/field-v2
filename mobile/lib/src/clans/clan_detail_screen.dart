@@ -879,7 +879,6 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     final meta = [
       if (member.username != null) '@${member.username}',
       placed ? divisionFromRating(member.skillRating!).label : 'Placement',
-      if (member.provisional) 'Provisional',
     ].join(' · ');
     return Container(
       decoration: BoxDecoration(

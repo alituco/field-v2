@@ -47,7 +47,7 @@ void main() {
     );
     expect(find.textContaining('1234'), findsWidgets);
     expect(find.text('1 game to qualify this season'), findsOneWidget);
-    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.text('Provisional'), findsNothing);
     expect(find.byKey(const ValueKey('ranks-placement-row')), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -73,10 +73,7 @@ void main() {
       expect(find.text('2 games to qualify this season'), findsOneWidget);
       expect(find.text('2 games to reveal your division'), findsNothing);
       expect(find.byKey(const ValueKey('ranks-placement-row')), findsNothing);
-      expect(
-        find.text('Provisional'),
-        lifetime < 10 ? findsOneWidget : findsNothing,
-      );
+      expect(find.text('Provisional'), findsNothing);
       expect(tester.takeException(), isNull);
     });
   }

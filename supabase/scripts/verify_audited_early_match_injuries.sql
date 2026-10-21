@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Run inside a rollback-only transaction against the complete application
 -- schema. No application function is stubbed and no real match is touched.
 set local client_min_messages=warning;
@@ -31,7 +44,7 @@ begin
     values(player,'active',now()) on conflict(user_id) do update set status='active',onboarding_completed_at=now();
   return player;
 end$$;
-create function pg_temp.early_injury_game(actor uuid,kickoff timestamptz)
+create function pg_temp.early_injury_game(actor uuid,kickoff timestamptz,check_in boolean default true)
 returns uuid language plpgsql as $$
 declare game uuid; player uuid; i integer;
 begin
@@ -41,7 +54,7 @@ begin
     player:=pg_temp.early_injury_player();
     insert into public.open_queue_bookings(game_id,profile_id,role,status,amount_paid_fils,base_amount_fils,payment_method)
       values(game,player,case when i<=2 then 'GK' when i<=6 then 'DEF' else 'ATT' end,'CONFIRMED',0,0,'FREE');
-    perform public.referee_check_in_player_with_timing(actor,'SOLO',game,player,'EARLY');
+    if check_in then perform public.referee_check_in_player_with_timing(actor,'SOLO',game,player,'EARLY'); end if;
   end loop;
   return game;
 end$$;
@@ -58,6 +71,8 @@ begin
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
     values(actor,'Early injury admin','+15551110001','admin',true),
       (stranger,'Unassigned referee','+15551110002','referee',true);
+  perform pg_temp.bind_staff_login_for_verification(actor);
+  perform pg_temp.bind_staff_login_for_verification(stranger);
   perform set_config('request.jwt.claim.sub',actor::text,true);
   -- Fresh replay publishes its first policy at migration time. Add unchanged
   -- rollback-only historical coverage for the ordinary already-started case.
@@ -138,12 +153,11 @@ begin
   perform pg_temp.early_injury_reject(format('select public.referee_record_verified_injury(%L,''SOLO'',%L,%L,true,false,true)',actor,second_game,teammate),'from kickoff');
   perform pg_temp.early_injury_expect(not exists(select 1 from public.match_verified_injuries where open_queue_game_id=second_game),'no-audit failure is atomic');
 
-  -- Prospective policy keeps its own scheduled-start restriction.
+  -- Prospective policy keeps its own bounded start window.
   perform public.admin_set_season_zero_policy(actor,true,'Rollback-only new-policy early injury isolation.');
-  season_zero_game:=pg_temp.early_injury_game(actor,date_trunc('minute',now())+interval '3 hours');
+  season_zero_game:=pg_temp.early_injury_game(actor,date_trunc('minute',now())+interval '25 hours',false);
   select array_agg(profile_id order by id) into player_ids from public.open_queue_bookings where game_id=season_zero_game and status='CONFIRMED';
-  perform public.referee_assign_season_zero_teams(actor,season_zero_game,gen_random_uuid());
-  perform pg_temp.early_injury_reject(format('select public.referee_season_zero_action(%L,%L,%L,0,%L::jsonb)',actor,season_zero_game,gen_random_uuid(),jsonb_build_object('action','START','participant_ids',to_jsonb(player_ids))),'scheduled kickoff');
+  perform pg_temp.early_injury_reject(format('select public.referee_season_zero_action(%L,%L,%L,0,%L::jsonb)',actor,season_zero_game,gen_random_uuid(),jsonb_build_object('action','START','participant_ids',to_jsonb(player_ids))),'24 hours');
   perform pg_temp.early_injury_expect(not exists(select 1 from fieldrush_rating_private.season_zero_matches where game_id=season_zero_game),'new-policy early start creates no state');
 
   -- The ordinary after-kickoff path must continue without an admin override.

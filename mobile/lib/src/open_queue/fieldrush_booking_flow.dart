@@ -852,8 +852,10 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
             ),
             BookingValueRow(
               'Format',
-              '${game.capacity ~/ 2}v${game.capacity ~/ 2}',
+              '${game.hasConfigurableMinimum ? 'Up to ' : ''}${game.capacity ~/ 2}v${game.capacity ~/ 2}',
             ),
+            if (game.hasConfigurableMinimum)
+              BookingValueRow('Players needed', game.minimumPlayersLabel),
             BookingValueRow('Match fee', game.priceLabel),
           ],
         ),

@@ -19,6 +19,32 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2026, 10, 10, 17);
 
 void main() {
+  testWidgets('small games show their minimum separately from maximum places', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _Repository(
+        fixtures: [
+          _game(
+            'small',
+            confirmedCount: 2,
+            minimumPlayers: 2,
+            participationRulesVersion: 's0-configurable-v1',
+          ),
+        ],
+      ),
+      width: 320,
+      scale: 1.3,
+    );
+    expect(
+      find.text('Minimum reached · 2 minimum · 14 maximum'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('solo-fixture-small')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'preferred city scopes discovery and browsing never changes preference',
     (tester) async {
@@ -786,6 +812,9 @@ OpenQueueGame _game(
   int? average,
   int highestDivision = 1,
   int lowestDivision = 5,
+  int confirmedCount = 8,
+  int minimumPlayers = 10,
+  String participationRulesVersion = 's0-standard-v1',
   MatchOperationalState operational = MatchOperationalState.normal,
 }) {
   final at = start ?? DateTime.utc(2026, 10, 11, 3);
@@ -801,7 +830,9 @@ OpenQueueGame _game(
     currency: currency,
     ageLabel: '18+',
     capacity: 14,
-    confirmedCount: 8,
+    confirmedCount: confirmedCount,
+    minimumPlayers: minimumPlayers,
+    participationRulesVersion: participationRulesVersion,
     spots: const {
       OpenQueueRole.goalkeeper: 1,
       OpenQueueRole.defender: 3,

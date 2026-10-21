@@ -3,15 +3,15 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
-const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
+const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
 const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
 
 async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; fieldsError?: boolean; saveError?: boolean; createError?: boolean } = {}) {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   let fields = options.fields ?? [];
   await page.addInitScript(({ key }) => {
-    localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" } }));
-  }, { key: `sb-${project}-auth-token` });
+    localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } }));
+  }, { key: `fieldrush-staff-${project}-auth-v1` });
   await page.route("**/*.supabase.co/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await page.route("**/api/referee/**", async (route) => {
     const request = route.request();
@@ -80,6 +80,7 @@ test("empty catalogue redirects into field creation then resumes the solo game",
     matchDate: "2099-07-24",
     kickoffTime: "20:30",
     durationMinutes: 60,
+    minimumPlayers: 10,
     priceUsd: "13.00",
     ageLabel: "18+",
     highestDivision: 1,
@@ -115,6 +116,7 @@ test("adding a field midway preserves the game draft and validates the map pin",
   await page.getByLabel("Match date").fill("2099-07-24");
   await page.getByLabel("Kickoff time").fill("18:15");
   await page.getByLabel("Duration (minutes)").fill("90");
+  await page.getByLabel("Minimum players (both teams)").fill("3");
   await page.getByLabel("Price per player (USD)").fill("15.50");
   await page.getByLabel("Highest division").selectOption("2");
   await page.getByLabel("Lowest division").selectOption("4");
@@ -131,6 +133,7 @@ test("adding a field midway preserves the game draft and validates the map pin",
   await expect(page.getByLabel("Match date")).toHaveValue("2099-07-24");
   await expect(page.getByLabel("Kickoff time")).toHaveValue("18:15");
   await expect(page.getByLabel("Duration (minutes)")).toHaveValue("90");
+  await expect(page.getByLabel("Minimum players (both teams)")).toHaveValue("3");
   await expect(page.getByLabel("Price per player (USD)")).toHaveValue("15.50");
   await expect(page.getByLabel("Highest division")).toHaveValue("2");
   await expect(page.getByLabel("Lowest division")).toHaveValue("4");
@@ -143,11 +146,30 @@ test("adding a field midway preserves the game draft and validates the map pin",
     highestDivision: 2,
     lowestDivision: 4,
     durationMinutes: 90,
+    minimumPlayers: 3,
     priceUsd: "15.50",
     goalkeepersPerSide: 1,
     defendersPerSide: 1,
     attackersPerSide: 5,
   });
+});
+
+test("one-off games allow a total minimum of two and keep invalid thresholds unsaveable", async ({ page }) => {
+  const writes = await mockAdmin(page, { fields: [sampleField] });
+  await page.goto("/admin?section=games");
+  await page.getByRole("button", { name: "Create solo game", exact: false }).click();
+  await page.getByLabel("Field / pitch", { exact: false }).selectOption(sampleField.id);
+  await page.getByLabel("Match date").fill("2099-07-24");
+  const minimum = page.getByLabel("Minimum players (both teams)");
+  for (const value of ["1", "15", "2.5"]) {
+    await minimum.fill(value);
+    await expect(page.getByRole("button", { name: "Create and open game" })).toBeDisabled();
+  }
+  await minimum.fill("2");
+  await expect(page.getByText(/2 allows 1v1/)).toBeVisible();
+  await page.getByRole("button", { name: "Create and open game" }).click();
+  await expect.poll(() => writes.filter(write => write.path.endsWith("solo-games")).length).toBe(1);
+  expect(writes.find(write => write.path.endsWith("solo-games"))?.body).toMatchObject({ minimumPlayers: 2, goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4 });
 });
 
 test("field loading failure is not treated as an empty catalogue", async ({ page }) => {

@@ -4,17 +4,17 @@ import { parseEnv } from "node:util";
 import type { AdminGameSchedule } from "../src/lib/admin-game-schedules";
 
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
-const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
+const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
 const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
-const sampleSchedule: AdminGameSchedule = { id: "c1000000-0000-4000-8000-000000000001", name: "Saturday football", fieldId: sampleField.id, fieldName: sampleField.name, weekdays: [6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2026-10-10", endsOn: null, bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 1, lowestDivision: 5, goalkeepersPerSide: 1, defendersPerSide: 3, attackersPerSide: 3, isActive: true, timezone: "America/Phoenix", createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z", occurrences: [], skips: [] };
+const sampleSchedule: AdminGameSchedule = { id: "c1000000-0000-4000-8000-000000000001", name: "Saturday football", fieldId: sampleField.id, fieldName: sampleField.name, weekdays: [6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2026-10-10", endsOn: null, bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 1, lowestDivision: 5, goalkeepersPerSide: 1, defendersPerSide: 3, attackersPerSide: 3, minimumPlayers: 10, participationRulesVersion: "s0-standard-v1", isActive: true, timezone: "America/Phoenix", createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z", occurrences: [], skips: [] };
 
 async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; schedules?: AdminGameSchedule[]; loadError?: boolean; saveError?: boolean; skipError?: boolean } = {}) {
   const writes: { path: string; method: string; body: Record<string, unknown> }[] = [];
   let fields = options.fields ?? [sampleField];
   let schedules = options.schedules ?? [];
   await page.addInitScript(({ key }) => {
-    localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" } }));
-  }, { key: `sb-${project}-auth-token` });
+    localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } }));
+  }, { key: `fieldrush-staff-${project}-auth-v1` });
   await page.route("**/*.supabase.co/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await page.route("**/api/referee/**", async (route) => {
     const request = route.request();
@@ -89,7 +89,7 @@ test("Saturday schedule defaults are clear and additional days are sent explicit
   await page.getByRole("button", { name: "Save schedule", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Saturday football", exact: true })).toBeVisible();
   expect(writes).toHaveLength(1);
-  expect(writes[0].body).toEqual({ name: "Saturday football", fieldId: sampleField.id, weekdays: [2, 6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2099-07-04", endsOn: "2099-08-01", bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 2, lowestDivision: 4, goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4, isActive: true });
+  expect(writes[0].body).toEqual({ name: "Saturday football", fieldId: sampleField.id, weekdays: [2, 6], kickoffTime: "20:30", durationMinutes: 60, startsOn: "2099-07-04", endsOn: "2099-08-01", bookingWindowDays: 28, priceUsd: "13.00", ageLabel: "18+", highestDivision: 2, lowestDivision: 4, goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4, minimumPlayers: 10, isActive: true });
 });
 
 test("missing field routes through adding a field and restores the schedule", async ({ page }) => {
@@ -184,6 +184,8 @@ test("existing schedules retain their formation until an admin changes future ga
   const writes = await mockAdmin(page, { schedules: [sampleSchedule] });
   await page.goto("/admin?section=schedules");
   await page.getByRole("button", { name: "Edit schedule", exact: true }).click();
+  await expect(page.getByLabel("Minimum players (both teams)")).toBeDisabled();
+  await expect(page.getByText(/Create a new schedule to choose a configurable minimum/)).toBeVisible();
   await expect(page.getByLabel("Defenders per team")).toHaveValue("3");
   await expect(page.getByLabel("Attackers per team")).toHaveValue("3");
   await page.getByLabel("Defenders per team").selectOption("2");
@@ -194,6 +196,19 @@ test("existing schedules retain their formation until an admin changes future ga
   expect(writes[0].method).toBe("PATCH");
   expect(writes[0].path).toBe(`/api/referee/admin/game-schedules/${sampleSchedule.id}`);
   expect(writes[0].body).toMatchObject({ goalkeepersPerSide: 1, defendersPerSide: 2, attackersPerSide: 4 });
+});
+
+test("new schedules save a two-player minimum for future games", async ({ page }) => {
+  const writes = await mockAdmin(page);
+  await page.goto("/admin?section=schedules");
+  await page.getByRole("button", { name: "Add schedule", exact: false }).click();
+  await page.getByLabel("Field / pitch", { exact: true }).selectOption(sampleField.id);
+  await page.getByLabel("Start date", { exact: true }).fill("2099-07-04");
+  await page.getByLabel("Minimum players (both teams)").fill("2");
+  await page.getByRole("button", { name: "Save schedule", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0].body.minimumPlayers).toBe(2);
+  await expect(page.getByText("2 players", { exact: true })).toBeVisible();
 });
 
 test("skip and restore use explicit reasons without cancelling generated games", async ({ page }) => {

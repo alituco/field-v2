@@ -119,6 +119,7 @@ export type AdminGameDetail = {
     profileId: string;
     displayName: string;
     phone: string;
+    email?: string | null;
   } | null;
   ratingSummary:
     | {
@@ -179,6 +180,7 @@ export async function loadAdminGameDetail(
       referee:referee_profiles!${assignmentTable}_referee_id_fkey(
         profile_id,
         display_name,
+        email,
         phone
       )
     `).eq(assignmentKey, matchId).maybeSingle(),
@@ -229,6 +231,7 @@ export async function loadAdminGameDetail(
       profileId: text(referee.profile_id),
       displayName: text(referee.display_name, "Referee"),
       phone: text(referee.phone),
+      email: typeof referee.email === "string" ? referee.email : null,
     } : null,
     ratingSummary,
     audit: rows(auditResult.data).map((row) => ({

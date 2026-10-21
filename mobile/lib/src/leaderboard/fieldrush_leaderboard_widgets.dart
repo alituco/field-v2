@@ -1621,11 +1621,6 @@ class _StandingCard extends StatelessWidget {
                               tracking: 1.71,
                             ),
                           ),
-                          if (rating.provisional)
-                            Text(
-                              'Provisional',
-                              style: _jakarta(10, color: palette.ink),
-                            ),
                           if (!placement && rating.lastChange != null)
                             Text(
                               '${_signed(rating.lastChange!)} SR last game',
@@ -1779,8 +1774,6 @@ class _PodiumPlayer extends StatelessWidget {
             player.ratingVisible ? '${player.skillRating}' : '????',
             style: _outfit(first ? 19 : 16),
           ),
-          if (player.provisional)
-            Text('Provisional', style: _jakarta(9, color: _muted)),
           const SizedBox(height: 7),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
@@ -1875,8 +1868,6 @@ class _PlayerRow extends StatelessWidget {
                       weight: FontWeight.w600,
                     ),
                   ),
-                  if (player.provisional)
-                    Text('Provisional', style: _jakarta(9, color: _muted)),
                 ],
               ),
             ),

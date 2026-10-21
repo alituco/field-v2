@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Transactional behavioral checks: no hosted configuration or ratings change.
 begin;
 set local client_min_messages=warning;
@@ -45,6 +58,7 @@ begin
     insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(member,'active',now()) on conflict(user_id) do update set status='active',onboarding_completed_at=now();
   end loop;
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values(admin_id,'Season Admin','+15558880001','admin',true);
+  perform pg_temp.bind_staff_login_for_verification(admin_id);
   perform set_config('request.jwt.claim.sub',player::text,true);
   select * into original from public.fieldrush_seasons where lifecycle='ACTIVE'; current_id:=original.id;
   perform pg_temp.expect(current_id is not null,'migration initializes the existing current season');

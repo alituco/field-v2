@@ -166,6 +166,8 @@ class OpenQueueGame {
     required this.capacity,
     required this.confirmedCount,
     required this.spots,
+    this.minimumPlayers = 10,
+    this.participationRulesVersion = 's0-standard-v1',
     this.goalkeeperCapacity,
     this.defenderCapacity,
     this.midfielderCapacity,
@@ -212,6 +214,10 @@ class OpenQueueGame {
   final String ageLabel;
   final int capacity;
   final int confirmedCount;
+
+  /// Saved total required at kickoff and during play; separate from capacity.
+  final int minimumPlayers;
+  final String participationRulesVersion;
   final Map<OpenQueueRole, int> spots;
 
   /// Saved whole-match position capacities. Older payloads may omit them.
@@ -323,6 +329,26 @@ class OpenQueueGame {
 
   bool get isFull => status == 'FULL' || confirmedCount >= capacity;
 
+  bool get hasConfigurableMinimum =>
+      participationRulesVersion == 's0-configurable-v1';
+
+  int get requiredMinimumPlayers =>
+      minimumPlayers >= 2 && minimumPlayers <= capacity
+      ? minimumPlayers
+      : capacity;
+
+  bool get hasMinimumPlayers =>
+      hasConfigurableMinimum &&
+      confirmedCount >= requiredMinimumPlayers &&
+      confirmedCount <= capacity;
+
+  String get minimumPlayersLabel =>
+      '$requiredMinimumPlayers minimum · $capacity maximum';
+
+  String get minimumPlayersProgressLabel => hasMinimumPlayers
+      ? 'Minimum reached · $minimumPlayersLabel'
+      : '${(requiredMinimumPlayers - confirmedCount).clamp(0, capacity)} more needed · $minimumPlayersLabel';
+
   bool get hasRecordedScore => whiteScore != null || blackScore != null;
 
   bool get hasPendingOperationalResolution =>
@@ -358,6 +384,7 @@ class OpenQueueGame {
     if (operationalLabel != null) return operationalLabel;
     return switch (status.toUpperCase()) {
       'OPEN' when isFull => 'Full',
+      'OPEN' when hasMinimumPlayers => 'Minimum reached',
       'OPEN' => 'Spots available',
       'FULL' => 'Full',
       'LIVE' => 'Live Now',
@@ -376,7 +403,10 @@ class OpenQueueGame {
   }
 
   bool get isUpcomingMatchConfirmed {
-    return status == 'FULL' && confirmedCount >= capacity && !hasRecordedScore;
+    return !hasRecordedScore &&
+        (hasConfigurableMinimum
+            ? (status == 'OPEN' || status == 'FULL') && hasMinimumPlayers
+            : status == 'FULL' && confirmedCount >= capacity);
   }
 
   bool get isTeamAssignmentDue => isTeamAssignmentDueAt(DateTime.now());
@@ -397,7 +427,7 @@ class OpenQueueGame {
     // Calibration can hide every aggregate SR without undoing the teams.
     return isUpcomingMatchConfirmed &&
         capacity > 0 &&
-        isTeamAssignmentDue &&
+        (hasConfigurableMinimum || isTeamAssignmentDue) &&
         teamsAssignedAt != null;
   }
 
@@ -517,6 +547,12 @@ class OpenQueueGame {
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
+      minimumPlayers: _asInt(
+        json['minimum_players'],
+        fallback: _asInt(json['capacity'], fallback: 12),
+      ),
+      participationRulesVersion:
+          json['participation_rules_version'] as String? ?? 's0-standard-v1',
       goalkeeperCapacity: _asNullableInt(json['goalkeeper_capacity']),
       defenderCapacity: _asNullableInt(json['defender_capacity']),
       midfielderCapacity: _asNullableInt(json['midfielder_capacity']),
@@ -581,6 +617,12 @@ class OpenQueueGame {
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
+      minimumPlayers: _asInt(
+        json['minimum_players'],
+        fallback: _asInt(json['capacity'], fallback: 12),
+      ),
+      participationRulesVersion:
+          json['participation_rules_version'] as String? ?? 's0-standard-v1',
       goalkeeperCapacity: _asNullableInt(json['goalkeeper_capacity']),
       defenderCapacity: _asNullableInt(json['defender_capacity']),
       midfielderCapacity: _asNullableInt(json['midfielder_capacity']),

@@ -650,7 +650,6 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
             placed
                 ? divisionFromRating(player.skillRating!).label
                 : 'Placement',
-            if (player.provisional) 'Provisional',
             if (player.cityName != null) player.cityName!,
           ].join(' · ');
     final initials = player.name

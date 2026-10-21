@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import type { BrowserContext } from "@playwright/test";
+import { staffStorageKey } from "../../src/lib/staff-browser-session";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -14,6 +15,8 @@ export type StagingManifest = {
     bootstrapPhone: string;
     otpCode: string;
     adminProfileId: string;
+    adminAuthUserId: string;
+    adminEmail: string;
   };
   accounts: {
     main: {
@@ -52,6 +55,8 @@ export async function loadStagingManifest(): Promise<StagingManifest> {
     !manifest.login?.bootstrapPhone ||
     !manifest.login?.otpCode ||
     !isUuid(manifest.login?.adminProfileId) ||
+    !isUuid(manifest.login?.adminAuthUserId) || manifest.login.adminAuthUserId === manifest.login.adminProfileId ||
+    manifest.login.adminEmail !== "field_e2e_staff@fieldrush-e2e.example" ||
     !isUuid(manifest.accounts?.main?.profileId) ||
     !manifest.accounts?.main?.displayName ||
     !isUuid(manifest.games?.match?.id) ||
@@ -98,7 +103,7 @@ export async function installAdminSession(
     expires_at?: unknown;
   }>(
     `${supabaseUrl}/functions/v1/dev-switch-user`,
-    { profile_id: manifest.login.adminProfileId },
+    { profile_id: manifest.login.adminAuthUserId },
     {
       apikey: publishableKey,
       authorization: `Bearer ${bootstrapAccessToken}`,
@@ -127,7 +132,10 @@ export async function installAdminSession(
     );
   }
   const user = await userResponse.json() as unknown;
-  if (!isRecord(user) || !isUuid(user.id)) {
+  if (!isRecord(user) || user.id !== manifest.login.adminAuthUserId || user.email !== manifest.login.adminEmail ||
+    !isRecord(user.app_metadata) || user.app_metadata.fieldrush_account_type !== "staff" ||
+    user.app_metadata.fieldrush_e2e !== true || user.app_metadata.fieldrush_e2e_role !== "admin" ||
+    user.app_metadata.fieldrush_e2e_run_id !== manifest.runId || !user.email_confirmed_at || user.phone) {
     throw new Error("The switched staging session returned an invalid user.");
   }
 
@@ -143,7 +151,7 @@ export async function installAdminSession(
     expires_in: Math.max(60, expiresAt - nowSeconds),
     user,
   };
-  const storageKey = `sb-${projectRef(supabaseUrl)}-auth-token`;
+  const storageKey = staffStorageKey(supabaseUrl);
 
   await context.addInitScript(
     ({ key, session }) => {
@@ -192,14 +200,6 @@ function normalizedSupabaseUrl(value: string): string {
     );
   }
   return url.origin;
-}
-
-function projectRef(supabaseUrl: string): string {
-  const ref = new URL(supabaseUrl).hostname.split(".")[0];
-  if (!/^[a-z0-9]{20}$/.test(ref)) {
-    throw new Error("Could not derive the Supabase project ref.");
-  }
-  return ref;
 }
 
 function requiredEnv(name: string): string {
