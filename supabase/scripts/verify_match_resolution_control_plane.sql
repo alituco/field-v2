@@ -3,6 +3,10 @@
 -- Run after the local development seed. Every mutation is rolled back.
 begin;
 
+-- Mirror the server API's service context while retaining actual player
+-- subjects for the participant-facing dispute and redaction checks.
+select set_config('request.jwt.claim.role', 'service_role', true);
+
 create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
 returns boolean language plpgsql as $availability$
 begin
@@ -174,6 +178,7 @@ begin
   select referee.profile_id into admin_id
   from public.referee_profiles referee
   where referee.role = 'admin' and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -684,6 +689,7 @@ begin
   -- Two different affected members may dispute the same current revision.
   -- The first dispute clears resolved_at, so the second call also verifies
   -- that the deadline is revision-based rather than case-state-based.
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform set_config('request.jwt.claim.sub', member_ids[1]::text, true);
   dispute_result := public.submit_match_resolution_dispute(
     review_case.id,
@@ -729,6 +735,7 @@ begin
     raise exception 'Participant dispute lifecycle or finance redaction is incorrect.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   -- Build a rollback-only solo match in a future slot so normal booking
   -- guards run, then backdate the match/terms to exercise No Data detection.
   select array_agg(candidate.profile_id order by candidate.profile_id)
@@ -1103,6 +1110,7 @@ begin
       'Solo correction duplicated Player SR or clawed back/duplicated a refund.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform set_config(
     'request.jwt.claim.sub', solo_player_ids[1]::text, true
   );

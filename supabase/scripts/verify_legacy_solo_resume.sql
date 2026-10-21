@@ -1,9 +1,22 @@
 -- Bind a synthetic staff login separately from the historical operational key.
 -- This temporary fixture helper never converts the existing player Auth user.
+-- CI also runs this regression at the pre-separation 20261016000600 boundary;
+-- exercise that installed schema's shared fixture without importing future DDL.
 create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
 returns uuid language plpgsql as $$
 declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
 begin
+  if not exists(select 1 from pg_attribute where attrelid='public.referee_profiles'::regclass
+    and attname='auth_user_id' and not attisdropped) then
+    if to_regprocedure('public.current_fieldrush_staff_id()') is not null then
+      raise exception 'Independent staff authority exists without its identity column.'; end if;
+    perform 1 from public.referee_profiles staff
+      join public.profiles player on player.id=staff.profile_id
+      join auth.users identity on identity.id=player.auth_user_id and identity.id=staff.profile_id
+      where staff.profile_id=staff_id and staff.is_active;
+    if not found then raise exception 'The exact historical shared staff fixture was not found.'; end if;
+    return staff_id;
+  end if;
   insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
     values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
   update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
@@ -38,13 +51,27 @@ create trigger test_resume_audit_failure before insert on public.admin_audit_eve
 do $$
 declare actor uuid:=gen_random_uuid(); outsider uuid:=gen_random_uuid(); game uuid; new_game uuid; reply jsonb;
   before_clock jsonb; after_clock jsonb; event_count integer; failure text;
+  actor_login uuid; outsider_login uuid; auth_count_before integer;
 begin
   insert into auth.users(id,phone,phone_confirmed_at) values(actor,'15558619001',now()),(outsider,'15558619002',now());
   insert into public.profiles(id,auth_user_id,display_name,phone) values(actor,actor,'Resume admin','+15558619001'),(outsider,outsider,'Unassigned referee','+15558619002');
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values
     (actor,'Resume admin','+15558619001','admin',true),(outsider,'Unassigned referee','+15558619002','referee',true);
-  perform pg_temp.bind_staff_login_for_verification(actor);
-  perform pg_temp.bind_staff_login_for_verification(outsider);
+  select count(*) into auth_count_before from auth.users;
+  actor_login:=pg_temp.bind_staff_login_for_verification(actor);
+  outsider_login:=pg_temp.bind_staff_login_for_verification(outsider);
+  if exists(select 1 from pg_attribute where attrelid='public.referee_profiles'::regclass
+    and attname='auth_user_id' and not attisdropped) then
+    perform pg_temp.resume_expect(actor_login<>actor and outsider_login<>outsider
+      and (select count(*)=auth_count_before+2 from auth.users)
+      and (select auth_user_id=actor_login from public.referee_profiles where profile_id=actor),
+      'latest schema uses separate staff Auth identities without changing player identities');
+  else
+    perform pg_temp.resume_expect(actor_login=actor and outsider_login=outsider
+      and (select count(*)=auth_count_before from auth.users)
+      and (select auth_user_id=actor from public.profiles where id=actor),
+      'historical boundary retains its exact shared fixture without future identity writes');
+  end if;
   perform set_config('request.jwt.claim.role','service_role',true);
   insert into public.open_queue_games(venue,starts_at,ends_at,price_fils) values('Resume fixture',date_trunc('minute',now())+interval '1 hour',date_trunc('minute',now())+interval '2 hours',0) returning id into game;
   insert into public.open_queue_clock_states(game_id,status,started_at,accumulated_seconds,duration_seconds)

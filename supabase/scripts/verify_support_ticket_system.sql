@@ -3,6 +3,9 @@
 
 begin;
 
+-- Begin as the player; switch to the service only for the admin API actions.
+select set_config('request.jwt.claim.role', 'authenticated', true);
+
 do $verify$
 declare
   requester_id uuid;
@@ -36,6 +39,7 @@ begin
   from public.referee_profiles referee
   where referee.role = 'admin'
     and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -134,6 +138,7 @@ begin
     raise exception 'The five-per-hour support rate limit was not enforced.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   select *
   into ticket_row
   from public.admin_update_support_ticket(
