@@ -53,6 +53,12 @@ try {
       ratings_reset_at timestamptz,ratings_reset_sequence bigint);
     create table public.player_rating_events(id uuid primary key default gen_random_uuid(),profile_id uuid);
   `);
+  // Exercise the real reserved-name list too, rather than an empty stub table.
+  const reservedStart = accounts.indexOf('insert into fieldrush_private.reserved_usernames (normalized_name)');
+  assert.notEqual(reservedStart, -1);
+  const reservedEnd = accounts.indexOf('\n]);', reservedStart);
+  assert.notEqual(reservedEnd, -1);
+  await db.exec(accounts.slice(reservedStart, reservedEnd + 4));
   const tracksStart = tracks.indexOf('create table public.fieldrush_player_rating_tracks (');
   await db.exec(tracks.slice(tracksStart, tracks.indexOf('\n);', tracksStart) + 3));
   for (const name of ['fieldrush_private.require_user','fieldrush_private.validate_draft','public.get_my_fieldrush_account',
@@ -60,6 +66,23 @@ try {
     'public.update_my_fieldrush_account','public.is_fieldrush_account_active']) {
     await db.exec(definition(accounts, name));
   }
+  // Evaluate the exact username expression used by the full-schema privacy
+  // verifier with the UUID shape that caused its intermittent CI failure.
+  const privacyVerifier = await readFile(new URL('./verify_rating_privacy_rpc_volatility.sql', import.meta.url), 'utf8');
+  const usernameExpression = privacyVerifier.match(/'username',([^\n]+),\n/)?.[1];
+  assert.ok(usernameExpression, 'Read the actual privacy fixture username expression');
+  await assert.rejects(db.query(`select fieldrush_private.validate_draft($1::jsonb)`, [
+    JSON.stringify({ username: 'privacy_123456789012' }),
+  ]), /That username is reserved/);
+  const fixtureNames = await db.query(`select fieldrush_private.validate_draft(
+    jsonb_build_object('username',${usernameExpression})) as draft
+    from (values ('12345678-9012-4000-8000-000000000001'::uuid),
+      ('abcdefab-cdef-4000-8000-000000000002'::uuid)) fixtures(player)`);
+  assert.equal(fixtureNames.rows.length, 2);
+  assert.deepEqual(fixtureNames.rows.map(row => row.draft.username), [
+    'pvrpc_123456789012', 'pvrpc_abcdefabcdef',
+  ]);
+  console.log('PASS: real reserved-name protection rejects privacy + digits; actual privacy fixtures accept numeric-only and alphabetic UUID fragments.');
   await db.exec(`alter function public.get_my_fieldrush_account() rename to get_my_fieldrush_account_before_cities;
     revoke all on function public.get_my_fieldrush_account_before_cities() from public,anon,authenticated;`);
   await db.exec(definition(cities, 'public.get_my_fieldrush_account'));

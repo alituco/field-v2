@@ -99,7 +99,9 @@ begin
     perform set_config('request.jwt.claim.sub',player::text,true);
     perform public.complete_fieldrush_onboarding(jsonb_build_object(
       'first_name','Privacy','last_name','RPC',
-      'username','privacy_'||replace(left(player::text,13),'-',''),
+      -- A UUID prefix may contain digits only. Never prefix it with a reserved
+      -- name: validation strips trailing digits (privacy_123 becomes privacy).
+      'username','pvrpc_'||replace(left(player::text,13),'-',''),
       'date_of_birth','2000-01-01','email','privacy-rpc-'||player::text||'@example.test',
       'skill_assessment','intermediate'),'fieldrush-v1','fieldrush-v1');
   end loop;
