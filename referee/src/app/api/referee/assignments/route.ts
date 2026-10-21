@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isStaffAuthIdentity, normalizeStaffEmail } from "@/lib/staff-identities";
 
 import {
   adminOnly,
@@ -50,8 +51,10 @@ export async function GET(request: NextRequest) {
     ] = await Promise.all([
       context.db
         .from("referee_profiles")
-        .select("profile_id,display_name,phone,role")
+        .select("profile_id,auth_user_id,email,display_name,phone,role")
         .eq("is_active", true)
+        .not("auth_user_id", "is", null)
+        .not("email", "is", null)
         .order("display_name"),
       context.db
         .from("fixtures")
@@ -92,11 +95,22 @@ export async function GET(request: NextRequest) {
       ]),
     );
 
+    const readyReferees: NonNullable<typeof refereesResult.data> = [];
+    const candidates = refereesResult.data ?? [];
+    for (let offset = 0; offset < candidates.length; offset += 20) {
+      const verified = await Promise.all(candidates.slice(offset, offset + 20).map(async row => {
+        const { data, error } = await context.db.auth.admin.getUserById(String(row.auth_user_id));
+        if (error) throw new Error("Could not verify staff sign-in readiness. Try again shortly.");
+        return isStaffAuthIdentity(data.user, true) && data.user?.id === row.auth_user_id && normalizeStaffEmail(data.user.email) === row.email ? row : null;
+      }));
+      for (const row of verified) if (row) readyReferees.push(row);
+    }
     const payload: RefereeAssignmentsResponse = {
-      referees: (refereesResult.data ?? []).map((row) => ({
+      referees: readyReferees.map((row) => ({
         profileId: String(row.profile_id),
         displayName: String(row.display_name),
-        phone: String(row.phone),
+        phone: typeof row.phone === "string" ? row.phone : "",
+        email: typeof row.email === "string" ? row.email : null,
         role: String(row.role) === "admin" ? "admin" : "referee",
       } satisfies RefereeListItem)),
       fixtures: [

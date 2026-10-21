@@ -69,6 +69,8 @@ export type BroadcastDeviceState = {
 };
 
 export type BroadcastControlResponse = {
+  /** Server checks the saved minimum, assigned teams and allowed start window. */
+  streamReady?: boolean;
   broadcast: FixtureBroadcastState | null;
   device: BroadcastDeviceState | null;
 };
@@ -255,6 +257,10 @@ export type MatchReliabilityContext = {
 export type RefereeFixture = {
   /** Immutable prospective rating policy; absent on legacy fixture responses. */
   ratingPolicyId?: string;
+  /** Immutable participation policy and total kickoff/continuation threshold. */
+  minimumPlayers?: number;
+  participationRulesVersion?: string;
+  capacity?: number;
   matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
@@ -306,6 +312,7 @@ export type RefereeListItem = {
   profileId: string;
   displayName: string;
   phone: string;
+  email?: string | null;
   role: "admin" | "referee";
 };
 

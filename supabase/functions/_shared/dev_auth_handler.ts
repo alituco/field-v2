@@ -129,10 +129,11 @@ export async function handleDevAuth(
     const password = local
       ? env("LOCAL_DEV_SEED_PASSWORD") ?? "LocalField_Only_42!"
       : window!.password;
-    const { data, error } = await auth.auth.signInWithPassword({
-      phone: target.phone!,
-      password,
-    });
+    const { data, error } = await auth.auth.signInWithPassword(
+      target.app_metadata?.fieldrush_account_type === "staff"
+        ? { email: target.email!, password }
+        : { phone: target.phone!, password },
+    );
     if (
       error || !data.session || data.user?.id !== target.id ||
       (!local &&

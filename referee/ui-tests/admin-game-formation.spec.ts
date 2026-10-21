@@ -4,14 +4,14 @@ import { parseEnv } from "node:util";
 import type { AdminGameFormation } from "../src/lib/admin-game-formation";
 
 const config = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
-const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? config.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
+const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? config.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
 const id = "d1000000-0000-4000-8000-000000000001";
 const reason = "More attacking places for the Saturday match.";
 
 async function mockGame(page: Page, options: { locked?: boolean; conflict?: boolean } = {}) {
   const writes: Record<string, unknown>[] = [];
   let formation: AdminGameFormation = { goalkeepersPerSide: 1, defendersPerSide: 3, attackersPerSide: 3, canEdit: !options.locked, lockedReason: options.locked ? "Formation is locked after the first booking or payment attempt. Create a new game to use a different formation." : null };
-  await page.addInitScript(({ key }) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" } })), { key: `sb-${project}-auth-token` });
+  await page.addInitScript(({ key }) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } })), { key: `fieldrush-staff-${project}-auth-v1` });
   await page.route("**/*.supabase.co/**", (route) => route.fulfill({ json: {} }));
   await page.route("**/api/referee/**", async (route) => {
     if (route.request().method() === "PATCH") {

@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Run only in the disposable full-schema migration harness, inside rollback.
 -- Actual onboarding, roles, booking triggers, assignment, and START functions.
 select set_config('request.jwt.claim.role','service_role',true);
@@ -28,8 +41,9 @@ create function pg_temp.assignment_game(n integer,future_game boolean default fa
 declare game uuid; player uuid; i integer; kickoff timestamptz:=date_trunc('minute',now())+
   case when future_game then interval '14 days' else interval '0' end-interval '1 minute'*nextval('pg_temp.assignment_game_number');
 begin
-  insert into public.open_queue_games(status,venue,starts_at,ends_at,price_fils,defender_capacity,attacker_capacity)
-    values('OPEN','Isolated partial assignment',kickoff,kickoff+interval '1 hour',0,defenders_per_side*2,12-defenders_per_side*2) returning id into game;
+  -- Keep this regression on the historical five-per-side participation policy.
+  insert into public.open_queue_games(status,venue,starts_at,ends_at,price_fils,defender_capacity,attacker_capacity,participation_rules_version)
+    values('OPEN','Isolated partial assignment',kickoff,kickoff+interval '1 hour',0,defenders_per_side*2,12-defenders_per_side*2,'s0-standard-v1') returning id into game;
   for i in 1..n loop
     player:=pg_temp.assignment_player();
     insert into public.open_queue_bookings(game_id,profile_id,role,status,amount_paid_fils,base_amount_fils,payment_method)
@@ -43,6 +57,7 @@ declare admin_id uuid:=pg_temp.assignment_player(); outsider uuid:=pg_temp.assig
 begin
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
     values(admin_id,'Assignment admin','+15557770001','admin',true);
+  perform pg_temp.bind_staff_login_for_verification(admin_id);
   -- The fresh migration's first reliability policy starts at this instant.
   -- Add rollback-only historical evidence for these already-due fixtures;
   -- retain every immutable-policy trigger and the actual snapshotted config.
@@ -95,7 +110,7 @@ begin
   game:=pg_temp.assignment_game(9);
   perform pg_temp.assignment_reject(format('select public.referee_assign_season_zero_teams(%L,%L,%L)',admin_id,game,gen_random_uuid()),'ten to fourteen');
   game:=pg_temp.assignment_game(10,true);
-  perform pg_temp.assignment_reject(format('select public.referee_assign_season_zero_teams(%L,%L,%L)',admin_id,game,gen_random_uuid()),'team-reveal');
+  perform pg_temp.assignment_reject(format('select public.referee_assign_season_zero_teams(%L,%L,%L)',admin_id,game,gen_random_uuid()),'24 hours');
   game:=pg_temp.assignment_game(10);
   select profile_id into owner from public.open_queue_bookings where game_id=game and role='GK' order by id limit 1;
   select profile_id into other from public.open_queue_bookings where game_id=game and role='GK' and profile_id<>owner;

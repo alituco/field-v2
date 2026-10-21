@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     // Neither a client-supplied timezone nor postal city can move this game's market.
     const input = parseAdminSoloGameCreateInput(body, field.marketTimezone);
     const { data, error } = await context.db.rpc(
-      "admin_create_open_queue_game",
+      "admin_create_open_queue_game_with_minimum",
       {
         actor_admin_id: context.referee.profileId,
         field_id_to_use: input.fieldId,
@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
         goalkeepers_per_side_to_use: input.goalkeepersPerSide,
         defenders_per_side_to_use: input.defendersPerSide,
         attackers_per_side_to_use: input.attackersPerSide,
+        minimum_players_to_use: input.minimumPlayers,
       },
     );
     if (error) {

@@ -1,4 +1,23 @@
-import { readDeletionConfirmation } from "./request.ts";
+import {
+  isStaffDeletionIdentity,
+  readDeletionConfirmation,
+} from "./request.ts";
+
+Deno.test("player deletion rejects server-marked staff but not a former staff player identity", () => {
+  if (
+    !isStaffDeletionIdentity({
+      app_metadata: { fieldrush_account_type: "staff" },
+    }) ||
+    isStaffDeletionIdentity({
+      app_metadata: { fieldrush_account_type: "player" },
+    }) ||
+    isStaffDeletionIdentity({ app_metadata: {} }) || isStaffDeletionIdentity({})
+  ) {
+    throw new Error(
+      "Player and independent staff deletion realms were confused.",
+    );
+  }
+});
 
 Deno.test("deletion accepts only explicit self-deletion confirmation", () => {
   if (

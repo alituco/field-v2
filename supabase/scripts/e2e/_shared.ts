@@ -16,6 +16,7 @@ export const E2E_PROFILE_PREFIX = "[E2E]";
 export const E2E_DEFAULT_BIRTH_DATE = "2000-01-01";
 export const E2E_DEFAULT_BOOTSTRAP_PHONE = "+97339009098";
 export const E2E_DEFAULT_OTP_CODE = "000000";
+export const E2E_STAFF_EMAIL = "field_e2e_staff@fieldrush-e2e.example";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -28,6 +29,9 @@ export type E2EAccount = {
   phone: string;
   displayName: string;
   username: string;
+  /** Only the synthetic staff fixture has an Auth key distinct from its actor key. */
+  authUserId?: string;
+  email?: string;
 };
 
 export type E2EGame = {
@@ -54,6 +58,8 @@ export type E2EManifest = {
     otpCode: string;
     adminProfileId: string;
     adminPhone: string;
+    adminAuthUserId?: string;
+    adminEmail?: string;
   };
   accounts: {
     main: E2EAccount;
@@ -204,6 +210,51 @@ export async function createE2EUserClient(supabaseUrl: string, phone: string) {
   return client;
 }
 
+export async function createE2EStaffClient(supabaseUrl: string, email: string) {
+  assertAndConfirmTarget(supabaseUrl, "authenticate isolated E2E staff");
+  if (email !== E2E_STAFF_EMAIL) {
+    throw new Error(
+      "Only the reserved synthetic staff email can use E2E password authentication.",
+    );
+  }
+  const client = createClient(
+    supabaseUrl,
+    requireEnv("SUPABASE_PUBLISHABLE_KEY"),
+    {
+      auth: { autoRefreshToken: false, persistSession: false },
+    },
+  );
+  const { error } = await client.auth.signInWithPassword({
+    email,
+    password: requireEnv("E2E_TEST_PASSWORD"),
+  });
+  if (error) throw new Error(`authenticate E2E staff: ${error.message}`);
+  return client;
+}
+
+export function requireIndependentE2EStaff(manifest: E2EManifest) {
+  const authUserId = requireUuid(
+    manifest.login?.adminAuthUserId,
+    "independent E2E staff Auth id",
+  );
+  if (
+    manifest.login.adminEmail !== E2E_STAFF_EMAIL ||
+    manifest.accounts?.admin?.email !== E2E_STAFF_EMAIL ||
+    manifest.accounts.admin.authUserId !== authUserId ||
+    authUserId === manifest.accounts.admin.profileId ||
+    !Array.isArray(manifest.accounts.players) ||
+    manifest.accounts.players.some((player) =>
+      player.profileId === authUserId
+    ) ||
+    manifest.accounts.onboarding?.profileId === authUserId
+  ) {
+    throw new Error(
+      "The E2E manifest is missing an independent reserved staff identity.",
+    );
+  }
+  return { authUserId, email: E2E_STAFF_EMAIL };
+}
+
 export async function listAuthUsers(
   supabaseUrl: string,
   serviceRoleKey: string,
@@ -347,6 +398,14 @@ export function parseManifest(value: unknown): E2EManifest {
   }
 
   const manifest = value as unknown as E2EManifest;
+  if (
+    manifest.login?.adminAuthUserId !== undefined ||
+    manifest.login?.adminEmail !== undefined ||
+    manifest.accounts?.admin?.authUserId !== undefined ||
+    manifest.accounts?.admin?.email !== undefined
+  ) {
+    requireIndependentE2EStaff(manifest);
+  }
   const accounts = [
     ...(Array.isArray(manifest.accounts?.players)
       ? manifest.accounts.players

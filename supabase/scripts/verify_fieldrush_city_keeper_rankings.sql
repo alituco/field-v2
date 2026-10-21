@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Run against a disposable/local database with the complete migration chain.
 -- All profiles, cities, fixtures, ratings and settings created here roll back.
 begin;
@@ -79,6 +92,7 @@ begin
   insert into fieldrush_private.accounts(user_id,status,onboarding_completed_at) values(me,'active',now()),(other,'active',now()),(admin_id,'active',now())
     on conflict(user_id) do update set status='active',onboarding_completed_at=now();
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values(admin_id,'City Admin','+15559990001','admin',true);
+  perform pg_temp.bind_staff_login_for_verification(admin_id);
   perform pg_temp.expect((select count(*)=6 from public.fieldrush_player_rating_tracks where profile_id in(me,other,admin_id)), 'two tracks created per profile');
   perform pg_temp.expect((select bool_and(skill_rating=1200 and matches_played=0) from public.fieldrush_player_rating_tracks where profile_id in(me,other)), 'both tracks start fresh');
   payload:=public.search_fieldrush_players('@keeper_alpha');
@@ -116,6 +130,10 @@ begin
   exception when raise_exception then rejected:=true; end;
   perform pg_temp.expect(rejected,'game timezone snapshot cannot be changed');
 
+  -- Newly created schedules now pin configurable S0 participation. Enable it
+  -- for this rollback-only schedule lifecycle; legacy rating fixtures below
+  -- deliberately restore their original policy after generation.
+  perform public.admin_set_season_zero_policy(admin_id,true,'Rollback-only city schedule generation regression.');
   payload:=public.admin_save_game_schedule(admin_id,null,jsonb_build_object('name','City snapshot regression','field_id',ny_field,
     'weekdays',jsonb_build_array(1,2,3,4,5,6,7),'kickoff_time','20:30','starts_on',schedule_day,'ends_on',schedule_day,
     'duration_minutes',60,'booking_window_days',28,'price_fils',13000,'age_label','18+','is_active',true));
@@ -135,6 +153,7 @@ begin
   perform pg_temp.expect((select o.status='CONFLICT' from public.game_schedule_occurrences o where o.schedule_id=schedule_to_check and o.match_date=schedule_day+2),'catalog timezone change cannot silently retime a recurring game');
   perform public.admin_save_fieldrush_city(admin_id,'phoenix','{"timezone":"America/Phoenix"}');
   perform public.admin_save_game_schedule(admin_id,schedule_to_check,jsonb_build_object('is_active',false));
+  perform public.admin_set_season_zero_policy(admin_id,false,'Rollback-only legacy city and keeper regression.');
   perform public.admin_save_field(admin_id,ny_field,jsonb_build_object('market_city_id','new-york'));
   perform pg_temp.expect(not fieldrush_private.schedule_kickoff_is_unambiguous('2026-11-01 01:30','America/New_York'),'DST repeated kickoff rejected');
   perform pg_temp.expect(not fieldrush_private.schedule_kickoff_is_unambiguous('2026-03-08 02:30','America/New_York'),'DST missing kickoff rejected');

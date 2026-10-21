@@ -5,7 +5,7 @@ import { finishSoloMatch } from "../e2e/support/finish-solo-match";
 const gameId = "diagnostic-game";
 const project = new URL(
   process.env.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co",
-).hostname.split(".")[0];
+).hostname;
 const timeoutError = "Could not finalize solo game: canceling statement due to statement timeout";
 
 async function mockLiveGame(page: Page, failFinalization: boolean) {
@@ -26,8 +26,8 @@ async function mockLiveGame(page: Page, failFinalization: boolean) {
   };
   await page.addInitScript((key) => localStorage.setItem(key, JSON.stringify({
     access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer",
-    expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" },
-  })), `sb-${project}-auth-token`);
+    expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } },
+  })), `fieldrush-staff-${project}-auth-v1`);
   await page.route("**/*.supabase.co/**", (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}" }));
   await page.route("**/api/referee/**", async (route) => {
     const request = route.request();

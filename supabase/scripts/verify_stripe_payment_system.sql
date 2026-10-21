@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Runs in a transaction and leaves no users, charges, games or refund records.
 -- Provider responses are supplied only through the service-only capture RPC;
 -- the real domain booking, capacity, cancellation and refund functions run.
@@ -132,6 +145,7 @@ begin
   perform set_config('request.jwt.claim.role','service_role',true);
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
     select players[5],'Payment admin','+'||phone,'admin',true from auth.users where id=players[5];
+  perform pg_temp.bind_staff_login_for_verification(players[5]);
   settings:=public.get_game_payment_settings();
   if settings->>'clan_enabled'<>'false' or settings->>'clan_price_fils'<>'80000' or settings->>'currency'<>'USD' then
     raise exception 'Clan checkout is not paused with its USD 80 default.'; end if;

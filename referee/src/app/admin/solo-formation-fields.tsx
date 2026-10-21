@@ -22,7 +22,7 @@ export function SoloFormationFields({ value, onChange, disabled = false }: {
           onChange({ goalkeepersPerSide: 1, defendersPerSide: 6 - attackersPerSide, attackersPerSide });
         }}>{[0, 1, 2, 3, 4, 5, 6].map((count) => <option key={count} value={count}>{count}</option>)}</select></label>
       </div>
-      <p>Seven players per team: one keeper and six outfield players. Changing defenders also updates attackers.</p>
+      <p>Maximum seven players per team: one keeper and six outfield players. Smaller games use the booked positions within these limits. Changing defenders also updates attackers.</p>
     </fieldset>
   );
 }

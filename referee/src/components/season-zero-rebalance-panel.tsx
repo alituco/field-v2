@@ -2,6 +2,7 @@
 
 import { useRef, useState, type FormEvent } from "react";
 import type { RefereeFixture } from "@/lib/types";
+import { soloGameReadiness, soloMinimumHint } from "@/lib/solo-game-readiness";
 import styles from "./season-zero-operations.module.css";
 
 export function SeasonZeroRebalancePanel({ fixture, accessToken, submitting, onSaved }: {
@@ -21,7 +22,8 @@ export function SeasonZeroRebalancePanel({ fixture, accessToken, submitting, onS
   const players = fixture.players;
   const hasPriorTeam = (team: string) => ["WHITE", "BLACK"].includes(team);
   const retainedTeams = players.some(player => hasPriorTeam(player.clanId));
-  const validRosterSize = players.length >= 10 && players.length <= 14;
+  const rules = soloGameReadiness(fixture, players.length);
+  const validRosterSize = rules.minimumReached;
   const canEdit = retainedTeams && fixture.operationalState === "NORMAL" && validRosterSize;
   const moves = players.filter(player => targets[player.id] && targets[player.id] !== player.clanId);
   const presence = (id: string) => fixture.reliabilityContext?.players.find(player => player.profileId === id)?.isCheckedIn;
@@ -43,7 +45,7 @@ export function SeasonZeroRebalancePanel({ fixture, accessToken, submitting, onS
       if (!response.ok) throw new Error(payload.error ?? "Could not assign the booked players.");
       if (payload.ok !== true || payload.assignment?.game_id !== fixture.id || payload.assignment?.action !== "ASSIGN") throw new Error("Assignment was not acknowledged. Retry this same request before starting the game.");
       request.current = null;
-      setNotice("Booked players assigned. Review the refreshed teams and confirm at least five actual starters per side before kickoff.");
+      setNotice(`Booked players assigned. Review the refreshed teams and starters before kickoff. ${soloMinimumHint(fixture)}`);
       await onSaved();
     } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not assign the booked players."); }
     finally { setSaving(false); }
@@ -79,15 +81,16 @@ export function SeasonZeroRebalancePanel({ fixture, accessToken, submitting, onS
       {canEdit && !editing ? <button className={styles.secondary} disabled={locked} type="button" onClick={() => { setEditing(true); setError(null); setNotice(null); }}>Review team moves</button> : null}</header>
     <p className={styles.hint}>Only originally booked players can move. Keep each booked position and accepted party intact. No replacements or team changes after kickoff.</p>
     {!fixture.teamsAssignedAt ? <>
-      <p className={styles.hint}>{fixture.players.length} booked players. At least 10 and at most 14 are needed. Assignment opens in the saved reveal / kickoff window; the server checks the cutoff, accepted parties and formation. Assignment does not start the clock.</p>
+      <p className={styles.hint}>{fixture.players.length} booked players. At least {rules.minimumPlayers} and at most {rules.capacity} are needed. Assignment opens in the saved reveal / kickoff window; the server checks the cutoff, accepted parties and formation. Assignment does not start the clock.</p>
       {retainedTeams ? <p className={styles.hint}>The roster changed after teams were revealed. Existing teams are retained. Confirming fills new slots without moving anyone already assigned; use team moves if a consented repair is needed.</p> : null}
       <button className={styles.primary} type="button" disabled={locked || fixture.operationalState !== "NORMAL" || !validRosterSize} onClick={() => void assign()}>{saving ? "Confirming booked players…" : retainedTeams ? "Confirm roster without moving players" : "Assign booked players to teams"}</button>
     </> : null}
-    {!canEdit ? <p className={styles.hint}>Team moves need 10–14 booked players, at least one retained team assignment and an available match.</p> : null}
+    <p className={styles.hint}>{soloMinimumHint(fixture)}</p>
+    {!canEdit ? <p className={styles.hint}>Team moves need {rules.minimumPlayers}–{rules.capacity} booked players, at least one retained team assignment and an available match.</p> : null}
     {notice ? <p className={styles.notice} role="status">{notice}</p> : null}
     {error ? <p role="alert" className={styles.error}>{error}</p> : null}
     {editing ? <form onSubmit={event => void save(event)} aria-label="Rebalance assigned teams">
-      <p className={styles.hint}>Select a swap or multiple moves, and assign every new slot. Record each checked-in player’s agreement when changing their existing team. The server checks five to seven per side, the saved formation, parties and current check-ins before applying the whole change.</p>
+      <p className={styles.hint}>Select a swap or multiple moves, and assign every new slot. Record each checked-in player’s agreement when changing their existing team. The server checks {rules.configurable ? `at least ${rules.minimumPlayers} total and one to seven per side` : "five to seven per side"}, the saved formation, parties and current check-ins before applying the whole change.</p>
       <div className={styles.playerList}>{players.map(player => {
         const moving = Boolean(targets[player.id] && targets[player.id] !== player.clanId);
         const present = presence(player.id);

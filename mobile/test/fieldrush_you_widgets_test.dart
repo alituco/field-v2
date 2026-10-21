@@ -57,13 +57,13 @@ void main() {
         ),
       );
       expect(find.text('1199'), findsOneWidget);
-      expect(find.text('Provisional'), findsOneWidget);
+      expect(find.text('Provisional'), findsNothing);
       expect(find.text('1 game to qualify this season'), findsOneWidget);
       expect(find.text('PLACEMENT'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
-  testWidgets('lifetime reveal and provisional survive a new season', (
+  testWidgets('lifetime reveal survives a new season without a status label', (
     tester,
   ) async {
     await _pump(
@@ -82,7 +82,7 @@ void main() {
       ),
     );
     expect(find.text('1199'), findsOneWidget);
-    expect(find.text('Provisional'), findsOneWidget);
+    expect(find.text('Provisional'), findsNothing);
     expect(find.text('2 games to qualify this season'), findsOneWidget);
     expect(find.text('PLACEMENT'), findsNothing);
     expect(tester.takeException(), isNull);

@@ -26,6 +26,7 @@ export function parseSoloFormation(body: Record<string, unknown>, useDefaults = 
 }
 
 export type AdminSoloGameCreateInput = SoloFormation & {
+  minimumPlayers: number;
   fieldId: string;
   matchDate: string;
   startsAt: string;
@@ -35,6 +36,15 @@ export type AdminSoloGameCreateInput = SoloFormation & {
   highestDivision: number;
   lowestDivision: number;
 };
+
+export const DEFAULT_SOLO_MINIMUM_PLAYERS = 10;
+
+export function parseSoloMinimumPlayers(value: unknown = DEFAULT_SOLO_MINIMUM_PLAYERS): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 2 || value > 14) {
+    throw new Error("Minimum players must be a whole number from 2 to 14, counting both teams together.");
+  }
+  return value;
+}
 
 export type AdminSoloGameRemoveInput = {
   reason: string;
@@ -157,6 +167,7 @@ export function parseAdminSoloGameCreateInput(
   }
   return {
     fieldId: parseSavedFieldId(body.fieldId),
+    minimumPlayers: parseSoloMinimumPlayers(body.minimumPlayers),
     ...schedule,
     durationMinutes,
     // The ledger retains thousandths internally for legacy BHD compatibility.

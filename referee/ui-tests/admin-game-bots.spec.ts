@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 
 const config = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
-const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? config.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
+const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? config.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
 const id = "d1000000-0000-4000-8000-000000000001";
 
 type Options = {
@@ -18,8 +18,8 @@ async function mockGame(page: Page, options: Options = {}) {
   let filled = false;
   await page.addInitScript(({ key }) => localStorage.setItem(key, JSON.stringify({
     access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800,
-    user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" },
-  })), { key: `sb-${project}-auth-token` });
+    user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } },
+  })), { key: `fieldrush-staff-${project}-auth-v1` });
   await page.route("**/*.supabase.co/**", route => route.fulfill({ json: {} }));
   await page.route("**/api/referee/**", async route => {
     const request = route.request();
@@ -77,6 +77,16 @@ test("staging bot fill explains the limited action and can be cancelled without 
   await expect(page.getByRole("button", { name: "Confirm fill with bots", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Cancel bot fill" }).click();
   await expect(page.getByRole("button", { name: "Fill game with bots", exact: true })).toBeVisible();
+  expect(calls.writes).toHaveLength(0);
+});
+
+test("a configurable minimum unlocks team locking before fourteen places are filled", async ({ page }) => {
+  const calls = await mockGame(page, { fixture: {
+    ratingPolicyId: "field-sr-season0-v2", minimumPlayers: 2,
+    participationRulesVersion: "s0-configurable-v1", capacity: 14,
+  } });
+  await expect(page.getByRole("button", { name: "Lock teams", exact: true })).toBeEnabled();
+  await expect(page.getByText(/Minimum reached · 2 minimum \/ 14 maximum/)).toBeVisible();
   expect(calls.writes).toHaveLength(0);
 });
 

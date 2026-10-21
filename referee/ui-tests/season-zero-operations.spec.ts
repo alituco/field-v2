@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
 
 const env = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
-const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname.split(".")[0];
+const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? env.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
 const gameId = "d1000000-0000-4000-8000-000000000001";
 const reason = "Reviewed the full recording and confirmed the actual evidence.";
 const fixture = (started = false) => {
@@ -14,6 +14,7 @@ const fixture = (started = false) => {
   ];
   return {
   id: gameId, matchKind: "SOLO", ratingPolicyId: "field-sr-season0-v2", status: started ? "FINAL" : "FULL",
+  minimumPlayers: 10, participationRulesVersion: "s0-standard-v1", capacity: 14,
   venue: "Saved pitch", day: "SATURDAY", timeSlot: "6:00 PM - 7:00 PM", matchDate: "2030-01-12",
   scheduledDurationSeconds: 3600, operationalState: "NORMAL", operationalStateUpdatedAt: null,
   cancellationCode: null, cancellationReason: null, cancelledAt: null, cancelledBy: null,
@@ -40,13 +41,23 @@ function reviewState() {
     audit: { players: { "white-player": { actual_seconds: 1800, final_state: "EXCUSED", exit_reason: "INJURY" }, "black-player": { actual_seconds: 3600, final_state: "ACTIVE", exit_reason: "NONE" } } } };
 }
 async function auth(page: Page) {
-  await page.addInitScript(key => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated" } })), `sb-${project}-auth-token`);
+  await page.addInitScript(key => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } })), `fieldrush-staff-${project}-auth-v1`);
   await page.route("**/*.supabase.co/**", route => route.fulfill({ json: {} }));
 }
-async function referee(page: Page, options: { reject?: boolean; started?: boolean; unassigned?: number; stale?: boolean; invalidateAssignment?: boolean; live?: boolean; legacy?: boolean } = {}) {
+async function referee(page: Page, options: { reject?: boolean; started?: boolean; unassigned?: number; stale?: boolean; invalidateAssignment?: boolean; live?: boolean; legacy?: boolean; minimum?: number; players?: number } = {}) {
   await auth(page);
   const writes: Record<string, unknown>[] = [];
   const game = fixture(options.started);
+  if (options.minimum !== undefined) {
+    game.minimumPlayers = options.minimum;
+    game.participationRulesVersion = "s0-configurable-v1";
+    game.status = "OPEN";
+  }
+  if (options.players !== undefined) {
+    game.players = game.players.slice(0, options.players);
+    game.reliabilityContext.players = game.reliabilityContext.players.slice(0, options.players);
+    game.reliabilityContext.expectedCount = game.reliabilityContext.checkedInCount = options.players;
+  }
   if (options.unassigned !== undefined) {
     game.status = "OPEN";
     game.teamsAssignedAt = "";
@@ -105,6 +116,32 @@ async function admin(page: Page, conflict = false, lifecycle = "REVIEW") {
   await page.goto(`/admin/games/solo/${gameId}`);
   return writes;
 }
+
+test("configured 1v1 and odd-player games enable kickoff once their actual minimum is met", async ({ page }) => {
+  for (const [minimum, players] of [[2, 2], [3, 3]]) {
+    await referee(page, { minimum, players });
+    await expect(page.getByRole("button", { name: "Start game", exact: true })).toBeEnabled();
+    await expect(page.getByText(new RegExp(`At least ${minimum} actual players total`)).first()).toBeVisible();
+    await page.unroute("**/api/referee/**");
+  }
+});
+
+test("a small roster below its saved minimum and old S0 games cannot start", async ({ page }) => {
+  await referee(page, { minimum: 4, players: 3 });
+  await expect(page.getByRole("button", { name: "Start game", exact: true })).toBeDisabled();
+  await page.unroute("**/api/referee/**");
+  await referee(page, { players: 2 });
+  await expect(page.getByRole("button", { name: "Start game", exact: true })).toBeDisabled();
+});
+
+test("configured two-player rosters can be assigned while the game is still OPEN", async ({ page }) => {
+  const writes = await referee(page, { minimum: 2, unassigned: 2 });
+  const panel = page.getByRole("region", { name: "Rebalance assigned teams" });
+  await expect(panel.getByText(/At least 2 and at most 14/)).toBeVisible();
+  await panel.getByRole("button", { name: "Assign booked players to teams" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toMatchObject({ action: "assign_teams" });
+});
 
 test("pre-kickoff multi-player move requires consent and reason, then refreshes assignments", async ({ page }) => {
   const writes = await referee(page);

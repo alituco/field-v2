@@ -12,7 +12,7 @@ const project = new URL(
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
     publicConfig.NEXT_PUBLIC_SUPABASE_URL ??
     "https://nfdkdhdevpstfspazbfn.supabase.co",
-).hostname.split(".")[0];
+).hostname;
 const markers = {
   supportDetails: "[FIELD UI INBOX] A player needs help with a booking.",
   reportDetails: "[FIELD UI INBOX] A player reported unsafe conduct.",
@@ -74,9 +74,9 @@ async function mockAdminInboxes(page: Page, initialLoad?: Promise<void>) {
       refresh_token: "ui-test-refresh",
       token_type: "bearer",
       expires_at: 4102444800,
-      user: { id: userId, aud: "authenticated" },
+      user: { id: userId, aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } },
     }));
-  }, { key: `sb-${project}-auth-token`, userId: adminId });
+  }, { key: `fieldrush-staff-${project}-auth-v1`, userId: adminId });
 
   // The real page and local assets may load; no unmocked remote traffic may leave.
   await page.route("**/*", async (route) => {

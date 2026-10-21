@@ -32,7 +32,7 @@ function route({ identity = actor, active = true, marketActive = true } = {}) {
 test("game route uses the saved field city timezone even when the client forges another", async () => {
   const api = route();
   assert.equal((await api.POST({ json: async () => body })).status, 201);
-  const rpc = api.calls.find(([name]) => name === "admin_create_open_queue_game");
+  const rpc = api.calls.find(([name]) => name === "admin_create_open_queue_game_with_minimum");
   assert.equal(rpc[1].starts_at_to_use, "2099-07-25T00:30:00.000Z");
   assert.equal(rpc[1].field_id_to_use, fieldId);
   assert.equal(rpc[1].market_city_id, undefined);
@@ -41,12 +41,23 @@ test("game route uses the saved field city timezone even when the client forges 
   assert.equal(rpc[1].goalkeepers_per_side_to_use, 1);
   assert.equal(rpc[1].defenders_per_side_to_use, 2);
   assert.equal(rpc[1].attackers_per_side_to_use, 4);
+  assert.equal(rpc[1].minimum_players_to_use, 10);
+});
+test("game route passes the chosen total minimum only after validation", async () => {
+  const allowed = route();
+  assert.equal((await allowed.POST({ json: async () => ({ ...body, minimumPlayers: 2 }) })).status, 201);
+  assert.equal(allowed.calls.find(([name]) => name === "admin_create_open_queue_game_with_minimum")[1].minimum_players_to_use, 2);
+  for (const minimumPlayers of [1, 15, "2", 2.5, null]) {
+    const api = route();
+    assert.equal((await api.POST({ json: async () => ({ ...body, minimumPlayers }) })).status, 400);
+    assert.equal(api.calls.filter(([name]) => name === "admin_create_open_queue_game_with_minimum").length, 0);
+  }
 });
 test("closed cities and archived fields cannot create new games", async () => {
   for (const options of [{ active: false }, { marketActive: false }]) {
     const api = route(options);
     assert.equal((await api.POST({ json: async () => body })).status, 400);
-    assert.equal(api.calls.filter(([name]) => name === "admin_create_open_queue_game").length, 0);
+    assert.equal(api.calls.filter(([name]) => name === "admin_create_open_queue_game_with_minimum").length, 0);
   }
 });
 test("game route does not read fields for unauthenticated or non-admin callers", async () => {

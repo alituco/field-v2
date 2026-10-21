@@ -39,13 +39,26 @@ do $$
 declare
   actor uuid := pg_temp.staff_player(); target uuid := pg_temp.staff_player();
   outsider uuid := pg_temp.staff_player(); keeper uuid := pg_temp.staff_player();
+  actor_auth uuid:=gen_random_uuid(); target_auth uuid:=gen_random_uuid(); keeper_auth uuid:=gen_random_uuid();
+  bound_player uuid:=pg_temp.staff_player(); bound_auth uuid:=gen_random_uuid(); outsider_auth uuid:=gen_random_uuid();
   target_phone text; reply jsonb; finished_game uuid; upcoming_game uuid;
   clan uuid; intent uuid; refund uuid; prior_audit bigint;
 begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data) values
+    (actor_auth,'offboard-admin@example.test',now(),'{"fieldrush_account_type":"staff"}'),
+    (target_auth,'offboard-target@example.test',now(),'{"fieldrush_account_type":"staff"}'),
+    (keeper_auth,'offboard-keeper@example.test',now(),'{"fieldrush_account_type":"staff"}'),
+    (bound_auth,'bound-player-staff@example.test',now(),'{"fieldrush_account_type":"staff"}'),
+    (outsider_auth,'offboard-fresh@example.test',now(),'{"fieldrush_account_type":"staff"}');
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
     values(actor,'Staff Actor','+15558880001','admin',true),
       (target,'Staff Target','+15558880002','admin',true),
       (keeper,'Staff Keeper','+15558880004','referee',true);
+  perform public.bootstrap_independent_staff_admin(actor,actor_auth,'offboard-admin@example.test');
+  perform public.admin_grant_independent_staff(actor,target_auth,'offboard-target@example.test','Staff Target','admin',target);
+  perform public.admin_grant_independent_staff(actor,keeper_auth,'offboard-keeper@example.test','Staff Keeper','referee',keeper);
+  insert into public.referee_profiles(profile_id,display_name,role,is_active) values(bound_player,'Separate Bound Staff','referee',true);
+  perform public.admin_grant_independent_staff(actor,bound_auth,'bound-player-staff@example.test','Separate Bound Staff','referee',bound_player);
   select phone into target_phone from public.referee_profiles where profile_id = target;
   perform pg_temp.staff_expect(not has_function_privilege('anon',
     'public.admin_offboard_fieldrush_staff(uuid,uuid,text)','EXECUTE'), 'anonymous offboarding RPC denied');
@@ -55,8 +68,12 @@ begin
     'public.admin_offboard_fieldrush_staff(uuid,uuid,text)','EXECUTE'), 'service offboarding RPC permitted');
   perform pg_temp.staff_expect(not has_function_privilege('authenticated',
     'fieldrush_private.require_active_assigned_staff()','EXECUTE'), 'assignment helper not client callable');
-  perform pg_temp.staff_reject(format('select fieldrush_private.assert_deletion_ready(%L)',target),
-    '22023','remove your staff access');
+  perform fieldrush_private.assert_deletion_ready(bound_player);
+  delete from auth.users where id=bound_player;
+  perform pg_temp.staff_expect((select is_active and auth_user_id=bound_auth and email='bound-player-staff@example.test'
+    and display_name='Separate Bound Staff' from public.referee_profiles where profile_id=bound_player),
+    'deleting a player leaves its independent active staff binding unchanged');
+  perform pg_temp.staff_expect(exists(select 1 from auth.users where id=bound_auth), 'independent staff Auth survives player deletion');
   perform set_config('request.jwt.claim.role','authenticated',true);
   perform pg_temp.staff_reject(format('select public.admin_offboard_fieldrush_staff(%L,%L,%L)',
     actor,target,'Requested account removal for local verification.'), '42501','staff administration service');
@@ -151,8 +168,8 @@ begin
     'inactive staff use ordinary deletion preparation');
   delete from auth.users where id=target;
   perform pg_temp.staff_expect(not exists(select 1 from auth.users where id=target), 'Auth identity deleted');
-  perform pg_temp.staff_expect((select not is_active and display_name='Deleted staff' and phone is null
-    from public.referee_profiles where profile_id=target), 'historical staff key retained with contact details anonymized');
+  perform pg_temp.staff_expect((select not is_active and display_name='Staff Target' and phone=target_phone and auth_user_id=target_auth
+    from public.referee_profiles where profile_id=target), 'player deletion preserves the independent inactive staff record');
   perform pg_temp.staff_expect((select display_name='Deleted player' and phone is null and username is null
     and auth_user_id is null and account_deleted_at is not null from public.profiles where id=target),
     'normal public profile anonymization preserved');
@@ -166,16 +183,21 @@ begin
     'transferred clan and creator history preserved');
   perform pg_temp.staff_expect(not exists(select 1 from fieldrush_private.accounts where user_id=target),
     'private account deleted through the ordinary Auth cascade');
-  perform pg_temp.staff_reject(format('update public.referee_profiles set is_active=true where profile_id=%L',target),
-    '23514','referee_profiles_active_phone_required');
-  perform pg_temp.staff_reject(format('update public.referee_profiles set phone=null where profile_id=%L',actor),
-    '23514','referee_profiles_active_phone_required');
+  update public.referee_profiles set phone=null where profile_id=actor;
+  perform pg_temp.staff_expect(fieldrush_private.staff_identity_is_active(actor),'active staff authority does not depend on a player phone');
   perform pg_temp.staff_reject(format('update public.referee_profiles set phone=''bad phone'' where profile_id=%L',target),
     '23514','referee_profiles_phone_check');
-  -- The original unique-phone contract remains; the old phone is released only
-  -- when the deleted staff row itself is anonymized.
-  insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
-    values(outsider,'Fresh Staff',target_phone,'referee',true);
+  -- Player deletion does not release staff contact details. Only deletion of
+  -- the separately offboarded staff Auth identity anonymizes that staff record.
+  perform pg_temp.staff_reject(format('update public.referee_profiles set phone=%L where profile_id=%L',target_phone,keeper),
+    '23505','referee_profiles_phone_key');
+  delete from auth.users where id=target_auth;
+  perform pg_temp.staff_expect((select not is_active and display_name='Deleted staff' and phone is null and email is null and auth_user_id is null
+    from public.referee_profiles where profile_id=target),'only separate inactive staff Auth deletion anonymizes its retained key');
+  perform pg_temp.staff_expect(exists(select 1 from public.admin_audit_events where id=prior_audit and actor_referee_id=target)
+    and exists(select 1 from public.open_queue_referee_assignments where game_id=finished_game and referee_id=target),'staff Auth deletion retains historical audit and assignment');
+  insert into public.referee_profiles(profile_id,auth_user_id,email,display_name,phone,role,is_active)
+    values(outsider,outsider_auth,'offboard-fresh@example.test','Fresh Staff',target_phone,'referee',true);
   perform pg_temp.staff_reject(format('update public.referee_profiles set phone=%L where profile_id=%L',
     target_phone,keeper), '23505','referee_profiles_phone_key');
 end;

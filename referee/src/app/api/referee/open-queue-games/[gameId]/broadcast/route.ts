@@ -4,6 +4,7 @@ import {
   ensureOpenQueueBroadcast,
   getBroadcastDevice,
   getOpenQueueBroadcast,
+  isOpenQueueStreamReady,
   queueOpenQueueBroadcastStart,
   queueOpenQueueBroadcastStop,
   syncOpenQueueBroadcastFromCloudflare,
@@ -33,7 +34,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
       ? await syncOpenQueueBroadcastFromCloudflare(refereeContext.db, gameId)
       : current;
     const device = await getBroadcastDevice(refereeContext.db, "SOLO", gameId);
-    return NextResponse.json({ broadcast, device });
+    const streamReady = await isOpenQueueStreamReady(refereeContext.db, gameId);
+    return NextResponse.json({ broadcast, device, streamReady });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Could not load stream." },
@@ -98,7 +100,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       getOpenQueueBroadcast(refereeContext.db, gameId),
       getBroadcastDevice(refereeContext.db, "SOLO", gameId),
     ]);
-    return NextResponse.json({ broadcast, device });
+    const streamReady = await isOpenQueueStreamReady(refereeContext.db, gameId);
+    return NextResponse.json({ broadcast, device, streamReady });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Stream action failed." },

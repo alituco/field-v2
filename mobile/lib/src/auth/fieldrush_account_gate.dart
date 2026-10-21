@@ -14,8 +14,10 @@ import 'auth_repository.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_auth_screen.dart';
 import 'fieldrush_auth_theme.dart';
+import 'player_identity.dart';
+import 'staff_identity_screen.dart';
 
-/// Auth metadata is editable by the client; it is never an onboarding gate.
+/// Client-editable user metadata never controls onboarding.
 class FieldrushAccountGate extends StatefulWidget {
   const FieldrushAccountGate({
     super.key,
@@ -54,6 +56,7 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
   int _request = 0;
   int _screenGeneration = 0;
   bool _switchingPhoneAccount = false;
+  bool _staffIdentityRejected = false;
 
   @override
   void initState() {
@@ -62,10 +65,30 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
     _moderation = widget.moderationRepository ?? SupabaseModerationRepository();
     _support = widget.supportRepository ?? SupabaseSupportRepository();
     _userId = widget.authRepository.currentUser?.id;
-    _initialLoading = _userId != null;
-    if (_userId != null) unawaited(_refresh());
+    if (isStaffIdentity(widget.authRepository.currentUser)) {
+      _userId = null;
+      _staffIdentityRejected = true;
+      unawaited(_signOutStaffIdentity());
+    } else {
+      _initialLoading = _userId != null;
+      if (_userId != null) unawaited(_refresh());
+    }
     _subscription = widget.authRepository.authStateChanges.listen(
       (event) {
+        if (isStaffIdentity(event.session?.user)) {
+          _request++;
+          setState(() {
+            _staffIdentityRejected = true;
+            _userId = null;
+            _account = null;
+            _status = null;
+            _error = null;
+            _initialLoading = false;
+            _screenGeneration++;
+          });
+          unawaited(_signOutStaffIdentity());
+          return;
+        }
         final id = event.session?.user.id;
         if (id == null) {
           _request++;
@@ -84,6 +107,7 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         final changed = id != _userId;
         if (changed) {
           setState(() {
+            _staffIdentityRejected = false;
             // Ordinary SMS verification may finish on the signed-out screen.
             // A session arriving DURING an unfinished-signup switch is not
             // that flow: discard the previous user's still-mounted draft.
@@ -103,6 +127,14 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         if (mounted) setState(() => _error = userFacingError(error));
       },
     );
+  }
+
+  Future<void> _signOutStaffIdentity() async {
+    try {
+      await widget.authRepository.signOut();
+    } catch (_) {
+      // Keep the staff-only screen mounted if device cleanup needs a retry.
+    }
   }
 
   @override
@@ -152,6 +184,19 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
 
   @override
   Widget build(BuildContext context) {
+    if (_staffIdentityRejected) {
+      return StaffIdentityScreen(
+        onUsePlayerAccount: () async {
+          await _signOutStaffIdentity();
+          if (mounted && widget.authRepository.currentUser == null) {
+            setState(() {
+              _staffIdentityRejected = false;
+              _screenGeneration++;
+            });
+          }
+        },
+      );
+    }
     if (_initialLoading) {
       return const Scaffold(
         backgroundColor: FieldrushAuthTheme.cream,

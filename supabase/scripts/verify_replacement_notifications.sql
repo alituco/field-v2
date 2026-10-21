@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Disposable full-schema transaction. Fake tokens only; no provider call or
 -- scheduler is executed. Phone deliveries are inspected in the private outbox.
 create function pg_temp.spot_assert(ok boolean,message text)
@@ -45,6 +58,7 @@ begin
   perform pg_temp.spot_assert(fieldrush_private.replacement_recipient_eligible(people[2],game,source),'same-city eligible opt-in qualifies');
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
     values(people[1],'Spot fixture admin','+15558617001','admin',true);
+  perform pg_temp.bind_staff_login_for_verification(people[1]);
   insert into public.moderation_actions(subject_type,subject_profile_id,action_type,restriction_scope,
     reason_code,user_message,starts_at,ends_at,issued_by)
   values('PLAYER',people[2],'SUSPENSION','PLAY','VERIFICATION','Disposable alert restriction.',

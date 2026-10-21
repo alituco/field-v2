@@ -518,13 +518,6 @@ class _PlayerRatingCard extends StatelessWidget {
                       ).copyWith(fontWeight: FontWeight.w700),
                     ),
                   ],
-                  if (rating?.provisional == true) ...[
-                    const SizedBox(height: 8),
-                    Text(
-                      'Provisional',
-                      style: _jakarta(11, color: palette.accent),
-                    ),
-                  ],
                 ],
               ),
             ),

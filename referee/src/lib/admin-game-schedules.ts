@@ -1,4 +1,4 @@
-import { parseSoloFormation, type SoloFormation } from "./admin-solo-games.ts";
+import { parseSoloFormation, parseSoloMinimumPlayers, type SoloFormation } from "./admin-solo-games.ts";
 
 export type ScheduleOccurrence = {
   matchDate: string;
@@ -8,6 +8,8 @@ export type ScheduleOccurrence = {
 };
 
 export type AdminGameSchedule = SoloFormation & {
+  minimumPlayers: number;
+  participationRulesVersion: string;
   id: string; name: string; fieldId: string; fieldName: string;
   weekdays: number[]; kickoffTime: string; durationMinutes: number;
   startsOn: string; endsOn: string | null; bookingWindowDays: number;
@@ -18,9 +20,9 @@ export type AdminGameSchedule = SoloFormation & {
   skips: Array<{ matchDate: string; reason: string }>;
 };
 
-export const SCHEDULE_SELECT = "id,name,field_id,weekdays,kickoff_time,duration_minutes,starts_on,ends_on,booking_window_days,price_fils,age_label,highest_division,lowest_division,goalkeepers_per_side,defenders_per_side,attackers_per_side,is_active,timezone,created_at,updated_at";
+export const SCHEDULE_SELECT = "id,name,field_id,weekdays,kickoff_time,duration_minutes,starts_on,ends_on,booking_window_days,price_fils,age_label,highest_division,lowest_division,goalkeepers_per_side,defenders_per_side,attackers_per_side,minimum_players,participation_rules_version,is_active,timezone,created_at,updated_at";
 const FORMATION_KEYS = ["goalkeepersPerSide", "defendersPerSide", "attackersPerSide"];
-const KEYS = ["name", "fieldId", "weekdays", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "highestDivision", "lowestDivision", "isActive", ...FORMATION_KEYS];
+const KEYS = ["name", "fieldId", "weekdays", "kickoffTime", "durationMinutes", "startsOn", "endsOn", "bookingWindowDays", "priceUsd", "ageLabel", "highestDivision", "lowestDivision", "minimumPlayers", "isActive", ...FORMATION_KEYS];
 
 export function parseScheduleId(value: unknown): string {
   if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error("Choose a valid schedule.");
@@ -70,6 +72,7 @@ export function parseAdminGameScheduleInput(value: unknown, partial = false): Re
   const body = record(value);
   if (Object.keys(body).some((key) => !KEYS.includes(key)) || Object.keys(body).length === 0) throw new Error("Unknown or missing schedule detail. Refresh and try again.");
   const result: Record<string, unknown> = {};
+  if (!partial || "minimumPlayers" in body) result.minimum_players = parseSoloMinimumPlayers(body.minimumPlayers);
   if (!partial || FORMATION_KEYS.some((key) => key in body)) {
     const formation = parseSoloFormation(body, !partial);
     result.goalkeepers_per_side = formation.goalkeepersPerSide;
@@ -113,6 +116,8 @@ export function parseScheduleSkipInput(value: unknown) {
 export function serializeGameSchedule(row: Record<string, unknown>, fieldName: string, occurrences: Record<string, unknown>[] = [], skips: Record<string, unknown>[] = []): AdminGameSchedule {
   return {
     id: String(row.id), name: String(row.name), fieldId: String(row.field_id), fieldName,
+    minimumPlayers: Number.isInteger(row.minimum_players) ? Number(row.minimum_players) : 10,
+    participationRulesVersion: typeof row.participation_rules_version === "string" ? row.participation_rules_version : "s0-standard-v1",
     weekdays: row.weekdays as number[], kickoffTime: String(row.kickoff_time).slice(0, 5), durationMinutes: Number(row.duration_minutes),
     startsOn: String(row.starts_on), endsOn: row.ends_on ? String(row.ends_on) : null, bookingWindowDays: Number(row.booking_window_days),
     priceUsd: (Number(row.price_fils) / 1000).toFixed(2), ageLabel: String(row.age_label),

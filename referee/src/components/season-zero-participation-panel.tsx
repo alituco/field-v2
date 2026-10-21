@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import type { RefereeFixture } from "@/lib/types";
 import type { SeasonZeroMatchState } from "@/lib/season-zero-actions";
+import { soloMinimumHint } from "@/lib/solo-game-readiness";
 
 const labels: Record<string, string> = {
   JOIN: "Join play", EXCUSED_LEAVE: "Injury / excused leave", RETURN: "Return from injury",
@@ -50,8 +51,9 @@ export function SeasonZeroParticipationPanel({ fixture, accessToken, submitting,
     <div className="panel-heading"><div><span className="match-action-kicker">Season 0 rating policy</span>
       <h2 className="panel-title">Playing time</h2></div></div>
     <p className="timer-start-note">Record actual entries and departures. Pauses do not count as playing time. No replacements or rotations.</p>
+    <p className="timer-start-note">{soloMinimumHint(fixture)}</p>
     {error ? <p role="alert" className="error-message">{error}</p> : null}
-    {!state && !error ? <p>{fixture.status === "LIVE" ? "Loading playing time…" : "Confirm at least five booked players per team at kickoff."}</p> : null}
+    {!state && !error ? <p>{fixture.status === "LIVE" ? "Loading playing time…" : "Confirm the checked-in starting players at kickoff."}</p> : null}
     {state ? <>
       <p className="timer-start-note">{state.lifecycle === "LIVE" ? "Live participation" : state.rating_status === "pending_review"
         ? "Ratings held for organizer review" : `Rating outcome: ${state.rating_status.replaceAll("_", " ")}`}</p>

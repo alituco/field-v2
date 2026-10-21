@@ -3,7 +3,10 @@ import {
   isExactFieldStagingSupabaseUrl,
   isLocalSupabaseUrl,
 } from "../_shared/staging_guard.ts";
-import { readDeletionConfirmation } from "./request.ts";
+import {
+  isStaffDeletionIdentity,
+  readDeletionConfirmation,
+} from "./request.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -64,6 +67,12 @@ Deno.serve(async (request) => {
   const { data: identity, error: authError } = await admin.auth.getUser(bearer);
   if (authError || !identity.user) {
     return json({ error: "Your session has expired. Sign in again." }, 401);
+  }
+  if (isStaffDeletionIdentity(identity.user)) {
+    return json({
+      error:
+        "This is a staff login, not a player account. Manage staff access from the staff website.",
+    }, 403);
   }
   const user = createClient(url!, anonKey, {
     ...options,

@@ -90,6 +90,8 @@ class SupabaseOpenQueueRepository
     currency,
     highest_division,
     lowest_division,
+    minimum_players,
+    participation_rules_version,
     goalkeeper_capacity,
     defender_capacity,
     midfielder_capacity,

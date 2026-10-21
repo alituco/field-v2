@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Disposable/local full-schema smoke only. Fixture timestamps/clock progression
 -- are test-owned; no public timing bypass is introduced. Everything rolls back.
 begin;
@@ -51,6 +64,7 @@ begin
   end loop;
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
     values(admin_id,'Smoke Admin','+15558817015','admin',true);
+  perform pg_temp.bind_staff_login_for_verification(admin_id);
   -- Fresh migrations publish their initial policy "now". This rollback-only
   -- clone supplies unchanged existing financial rules to our past kickoff.
   insert into public.reliability_policy_versions(version,state,effective_from,config,summary,published_by,published_at)

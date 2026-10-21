@@ -15,6 +15,7 @@ import {
   E2E_DEFAULT_BIRTH_DATE,
   E2E_PROFILE_PREFIX,
   E2E_SCHEMA_VERSION,
+  E2E_STAFF_EMAIL,
   E2E_VENUE_PREFIX,
   type E2EAccount,
   type E2EGame,
@@ -108,6 +109,7 @@ if (config.onboardingPhone !== "+97339009100") {
     "The auth-only onboarding fixture must use the server-allowlisted +97339009100 test number.",
   );
 }
+const authUsersByEmail = new Map<string, User>();
 const authUsersByPhone = await loadAuthUsersByPhone();
 await ensureBootstrapAccount();
 const selectedMainIndex = selectRotatingIndex(
@@ -151,27 +153,7 @@ const onboarding = await ensureAccount(admin, {
   clearAuthOnboarding: true,
 });
 
-const e2eAdmin = await ensureAccount(admin, {
-  phone: ADMIN_DEFINITION[0],
-  displayName: `${E2E_PROFILE_PREFIX} ${ADMIN_DEFINITION[1]}`,
-  username: ADMIN_DEFINITION[2],
-  password: config.testPassword,
-  dateOfBirth: E2E_DEFAULT_BIRTH_DATE,
-  role: "admin",
-});
-
-await admin.from("referee_profiles").upsert(
-  {
-    profile_id: e2eAdmin.profileId,
-    display_name: e2eAdmin.displayName,
-    phone: e2eAdmin.phone,
-    role: "admin",
-    is_active: true,
-  },
-  { onConflict: "profile_id" },
-).then(({ error }) => {
-  if (error) throw new Error(`upsert E2E referee: ${error.message}`);
-});
+const e2eAdmin = await ensureIndependentE2EStaff(admin);
 
 logStep("Closing stale transient E2E state from earlier interrupted runs.");
 await closeStaleTransientState(admin, e2eAdmin, [...players, onboarding]);
@@ -290,6 +272,8 @@ try {
       otpCode: config.otpCode,
       adminProfileId: e2eAdmin.profileId,
       adminPhone: e2eAdmin.phone,
+      adminAuthUserId: e2eAdmin.authUserId,
+      adminEmail: e2eAdmin.email,
     },
     accounts: {
       main,
@@ -397,7 +381,7 @@ async function ensureAccount(
     username: string;
     password: string;
     dateOfBirth: string | null;
-    role: "player" | "admin";
+    role: "player";
     clearAuthOnboarding?: boolean;
   },
 ): Promise<E2EAccount> {
@@ -651,12 +635,143 @@ async function loadAuthUsersByPhone(): Promise<Map<string, User>> {
       throw new Error(`list auth users: ${errorMessage(error)}`);
     });
     for (const user of users) {
+      if (user.email) authUsersByEmail.set(user.email.toLowerCase(), user);
       const phone = (user.phone ?? "").replace(/\D/g, "");
       if (phone.length > 0) usersByPhone.set(phone, user);
     }
-    if (users.length < 1000) break;
+    if (users.length < 1000) return usersByPhone;
   }
-  return usersByPhone;
+  throw new Error(
+    "The Auth fixture directory could not be searched completely; no new fixture identity will be created.",
+  );
+}
+
+async function ensureIndependentE2EStaff(
+  client: AdminClient,
+): Promise<E2EAccount> {
+  let user = authUsersByEmail.get(E2E_STAFF_EMAIL);
+  const legacy = authUsersByPhone.get(ADMIN_DEFINITION[0].replace(/\D/g, ""));
+  const displayName = `${E2E_PROFILE_PREFIX} ${ADMIN_DEFINITION[1]}`;
+  if (
+    user &&
+    (user.app_metadata?.fieldrush_e2e !== true ||
+      user.app_metadata?.fieldrush_e2e_role !== "admin" ||
+      user.app_metadata?.fieldrush_account_type !== "staff" || user.phone)
+  ) {
+    throw new Error(
+      "The reserved staff fixture email belongs to an unmarked or player identity. No identity was changed.",
+    );
+  }
+  if (
+    legacy &&
+    (legacy.app_metadata?.fieldrush_e2e !== true ||
+      legacy.app_metadata?.fieldrush_e2e_role !== "admin")
+  ) {
+    throw new Error(
+      "The reserved legacy staff contact belongs to an unmarked account. No identity was changed.",
+    );
+  }
+  const { data: existing, error } = await client.from("referee_profiles")
+    .select("profile_id,auth_user_id,email,display_name,phone,role")
+    .or(`email.eq.${E2E_STAFF_EMAIL},phone.eq.${ADMIN_DEFINITION[0]}`);
+  if (error) {
+    throw new Error(`inspect isolated staff fixture: ${error.message}`);
+  }
+  if ((existing ?? []).length > 1) {
+    throw new Error(
+      "The isolated staff fixture has conflicting retained staff records.",
+    );
+  }
+  const retained = existing?.[0];
+  if (
+    retained &&
+    (retained.role !== "admin" ||
+      !String(retained.display_name).startsWith(E2E_PROFILE_PREFIX) ||
+      (retained.auth_user_id != null
+        ? retained.auth_user_id !== user?.id ||
+          retained.email !== E2E_STAFF_EMAIL
+        : !legacy || retained.profile_id !== legacy.id))
+  ) {
+    throw new Error("Refusing to claim an unmarked retained staff record.");
+  }
+  const metadata = {
+    ...user?.app_metadata,
+    fieldrush_account_type: "staff",
+    fieldrush_e2e: true,
+    fieldrush_e2e_role: "admin",
+    fieldrush_e2e_run_id: config.runId,
+    fieldrush_e2e_revoked_run_id: null,
+  };
+  if (user) {
+    const { data: playerRows, error: playerError } = await client.from(
+      "profiles",
+    ).select("id")
+      .or(`id.eq.${user.id},auth_user_id.eq.${user.id}`);
+    if (playerError || playerRows?.length) {
+      throw new Error(
+        "The isolated staff Auth identity must not own a player profile.",
+      );
+    }
+    user = await updateAuthUser(
+      config.supabaseUrl,
+      config.serviceRoleKey,
+      user.id,
+      {
+        password: config.testPassword,
+        email_confirm: true,
+        app_metadata: metadata,
+      },
+    );
+  } else {
+    // Only this protected synthetic fixture bypasses inbox delivery. Real
+    // invitations remain unverified until their email code is entered.
+    user = await createAuthUser(config.supabaseUrl, config.serviceRoleKey, {
+      email: E2E_STAFF_EMAIL,
+      email_confirm: true,
+      password: config.testPassword,
+      app_metadata: metadata,
+      user_metadata: { display_name: displayName },
+    });
+  }
+  if (
+    user.email?.toLowerCase() !== E2E_STAFF_EMAIL || user.phone ||
+    !user.email_confirmed_at ||
+    user.app_metadata?.fieldrush_account_type !== "staff" ||
+    user.app_metadata?.fieldrush_e2e !== true ||
+    user.app_metadata?.fieldrush_e2e_role !== "admin" ||
+    user.app_metadata?.fieldrush_e2e_run_id !== config.runId
+  ) {
+    throw new Error("The isolated staff Auth acknowledgement was invalid.");
+  }
+  const profileId = requireUuid(
+    retained?.profile_id ?? crypto.randomUUID(),
+    "isolated staff actor id",
+  );
+  if (profileId === user.id) {
+    throw new Error(
+      "Synthetic staff Auth and operational actor keys must be separate.",
+    );
+  }
+  await assertNoError(
+    client.from("referee_profiles").upsert({
+      profile_id: profileId,
+      auth_user_id: user.id,
+      email: E2E_STAFF_EMAIL,
+      display_name: displayName,
+      phone: ADMIN_DEFINITION[0],
+      role: "admin",
+      is_active: true,
+    }, { onConflict: "profile_id" }),
+    "bind isolated staff email identity",
+  );
+  return {
+    profileId,
+    authUserId: requireUuid(user.id, "isolated staff Auth id"),
+    email: E2E_STAFF_EMAIL,
+    phone: ADMIN_DEFINITION[0],
+    displayName,
+    username: ADMIN_DEFINITION[2],
+  };
 }
 
 async function closeStaleTransientState(
@@ -666,8 +781,10 @@ async function closeStaleTransientState(
 ): Promise<void> {
   const { data: games, error: gamesError } = await client
     .from("open_queue_games")
-    .select("id,status,venue,created_by")
-    .eq("created_by", actor.profileId)
+    .select("id,status,venue,created_by,created_by_staff_id")
+    .or(
+      `created_by_staff_id.eq.${actor.profileId},created_by.eq.${actor.profileId}`,
+    )
     .like("venue", `${E2E_VENUE_PREFIX}%`)
     .in("status", ["OPEN", "FULL", "LIVE"]);
   if (gamesError) {
@@ -675,6 +792,14 @@ async function closeStaleTransientState(
   }
 
   for (const game of games ?? []) {
+    if (
+      (game.created_by_staff_id ?? game.created_by) !== actor.profileId ||
+      !String(game.venue).startsWith(E2E_VENUE_PREFIX)
+    ) {
+      throw new Error(
+        "Refusing to cancel a game outside the isolated staff fixture ownership.",
+      );
+    }
     const { error } = await client.rpc("admin_cancel_match", {
       actor_admin_id: actor.profileId,
       match_kind_to_use: "SOLO",
@@ -786,13 +911,13 @@ async function assertPoolHasNoForeignUpcomingBookings(
   if (gameIds.length === 0) return;
   const { data: games, error: gameError } = await client
     .from("open_queue_games")
-    .select("id,status,venue,created_by,starts_at")
+    .select("id,status,venue,created_by,created_by_staff_id,starts_at")
     .in("id", gameIds)
     .in("status", ["OPEN", "FULL", "LIVE"]);
   if (gameError) throw new Error(`load booked E2E games: ${gameError.message}`);
 
   const foreign = (games ?? []).filter((game) =>
-    game.created_by !== actor.profileId ||
+    (game.created_by_staff_id ?? game.created_by) !== actor.profileId ||
     !String(game.venue).startsWith(E2E_VENUE_PREFIX)
   );
   if (foreign.length > 0) {
@@ -913,7 +1038,7 @@ async function createGame(
     timezone: "America/Phoenix",
     price_fils: 13000,
     age_label: "18+ · E2E",
-    created_by: createdBy,
+    created_by_staff_id: createdBy,
   }).select("id,venue,starts_at,ends_at,capacity").single();
   if (error || !data) {
     throw new Error(`create E2E game ${venue}: ${error?.message ?? "no row"}`);

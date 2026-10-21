@@ -241,6 +241,27 @@ begin
     raise exception 'Hosted season lifecycle, visibility or original-game season assignment is missing.';
   end if;
 
+  if not exists (select 1 from information_schema.columns where table_schema='public'
+    and table_name='referee_profiles' and column_name='auth_user_id')
+    or not exists (select 1 from information_schema.columns where table_schema='public'
+      and table_name='referee_profiles' and column_name='email')
+    or exists(select 1 from pg_constraint where conrelid='public.referee_profiles'::regclass
+      and contype='f' and confrelid='public.profiles'::regclass)
+    or to_regclass('public.staff_notifications') is null then
+    raise exception 'Hosted staff identities must be independent of player profiles.';
+  end if;
+  foreach rpc_signature in array array[
+    'public.admin_grant_independent_staff(uuid,uuid,text,text,text,uuid)',
+    'public.bootstrap_independent_staff_admin(uuid,uuid,text)'
+  ] loop
+    checked_rpc:=to_regprocedure(rpc_signature);
+    if checked_rpc is null or has_function_privilege('anon',checked_rpc,'EXECUTE')
+      or has_function_privilege('authenticated',checked_rpc,'EXECUTE')
+      or not has_function_privilege('service_role',checked_rpc,'EXECUTE') then
+      raise exception 'Hosted independent staff provisioning must be service-only: %.',rpc_signature;
+    end if;
+  end loop;
+
   if not exists (select 1 from public.fieldrush_cities where active)
     or not exists (select 1 from public.fieldrush_seasons) then
     raise exception 'Hosted city and season catalogs are not configured.';

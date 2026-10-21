@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Disposable full-schema transaction. Exercises the actual transition and
 -- event/audit transaction with injected failures, not just route substitutes.
 create function pg_temp.resume_expect(ok boolean,message text)
@@ -30,6 +43,8 @@ begin
   insert into public.profiles(id,auth_user_id,display_name,phone) values(actor,actor,'Resume admin','+15558619001'),(outsider,outsider,'Unassigned referee','+15558619002');
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active) values
     (actor,'Resume admin','+15558619001','admin',true),(outsider,'Unassigned referee','+15558619002','referee',true);
+  perform pg_temp.bind_staff_login_for_verification(actor);
+  perform pg_temp.bind_staff_login_for_verification(outsider);
   perform set_config('request.jwt.claim.role','service_role',true);
   insert into public.open_queue_games(venue,starts_at,ends_at,price_fils) values('Resume fixture',date_trunc('minute',now())+interval '1 hour',date_trunc('minute',now())+interval '2 hours',0) returning id into game;
   insert into public.open_queue_clock_states(game_id,status,started_at,accumulated_seconds,duration_seconds)

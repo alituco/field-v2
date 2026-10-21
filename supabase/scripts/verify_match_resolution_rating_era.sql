@@ -1,3 +1,16 @@
+-- Bind a synthetic staff login separately from the historical operational key.
+-- This temporary fixture helper never converts the existing player Auth user.
+create function pg_temp.bind_staff_login_for_verification(staff_id uuid)
+returns uuid language plpgsql as $$
+declare login uuid:=gen_random_uuid(); address text:=login::text||'@staff-fixture.example';
+begin
+  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+    values(login,address,now(),'{"fieldrush_account_type":"staff"}'::jsonb);
+  update public.referee_profiles set auth_user_id=login,email=address where profile_id=staff_id;
+  if not found then raise exception 'The exact synthetic staff fixture was not found.'; end if;
+  return login;
+end$$;
+
 -- Independent current-period regressions complement the historical correction
 -- verifier. All identities, cases, games, payments and settings roll back.
 begin;
@@ -29,6 +42,7 @@ begin
   admin_id:=actors[1]; home_player:=actors[1]; away_player:=actors[8];
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
   values(admin_id,'Rating replay admin','+15559992001','admin',true);
+  perform pg_temp.bind_staff_login_for_verification(admin_id);
   insert into public.clans(name,tag,created_by,theme_id) values('Rating Replay Home','RRH',home_player,'electric') returning id into home_clan;
   insert into public.clans(name,tag,created_by,theme_id) values('Rating Replay Away','RRA',away_player,'electric') returning id into away_clan;
   for i in 1..14 loop

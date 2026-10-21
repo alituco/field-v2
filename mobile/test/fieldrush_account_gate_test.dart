@@ -4,6 +4,7 @@ import 'package:field/src/auth/auth_repository.dart';
 import 'package:field/src/auth/fieldrush_account.dart';
 import 'package:field/src/auth/fieldrush_account_gate.dart';
 import 'package:field/src/auth/fieldrush_auth_screen.dart';
+import 'package:field/src/auth/player_identity.dart';
 import 'package:field/src/moderation/account_restriction_screen.dart';
 import 'package:field/src/moderation/moderation.dart';
 import 'package:field/src/moderation/moderation_repository.dart';
@@ -64,6 +65,40 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 150));
   }
+
+  testWidgets(
+    'stored staff identity is signed out before player loading or signup',
+    (tester) async {
+      auth.session = _session(appMetadata: {'fieldrush_account_type': 'staff'});
+      await showGate(tester);
+      expect(auth.currentUser, isNull);
+      expect(find.text(staffAccountOnlyMessage), findsOneWidget);
+      expect(find.byType(FieldrushAuthScreen), findsNothing);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+      expect(accounts.loadCalls, 0);
+      expect(accounts.completionCalls, 0);
+      expect(accounts.draftSaves, 0);
+      expect(moderation.calls, 0);
+      await tester.tap(find.text('Use a player account'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushAuthScreen), findsOneWidget);
+    },
+  );
+
+  testWidgets('staff auth event cannot enter an unfinished player signup', (
+    tester,
+  ) async {
+    auth.session = null;
+    await showGate(tester);
+    auth.signIn(appMetadata: {'fieldrush_account_type': 'staff'});
+    await tester.pumpAndSettle();
+    expect(auth.currentUser, isNull);
+    expect(find.text(staffAccountOnlyMessage), findsOneWidget);
+    expect(find.byType(FieldrushAuthScreen), findsNothing);
+    expect(accounts.loadCalls, 0);
+    expect(accounts.completionCalls, 0);
+    expect(moderation.calls, 0);
+  });
 
   testWidgets('unknown phone entered through Log in starts signup after OTP', (
     tester,
@@ -481,12 +516,15 @@ void main() {
   });
 }
 
-Session _session({String userId = 'player-a'}) => Session(
+Session _session({
+  String userId = 'player-a',
+  Map<String, dynamic> appMetadata = const {},
+}) => Session(
   accessToken: 'local-test-token',
   tokenType: 'bearer',
   user: User(
     id: userId,
-    appMetadata: {},
+    appMetadata: appMetadata,
     userMetadata: {
       'onboarding_completed': true,
       'tour_completed': true,
@@ -528,8 +566,11 @@ class _Auth extends Fake implements AuthRepository {
   User? get currentUser => session?.user;
   @override
   Stream<AuthState> get authStateChanges => events.stream;
-  void signIn({String userId = 'player-a'}) {
-    session = _session(userId: userId);
+  void signIn({
+    String userId = 'player-a',
+    Map<String, dynamic> appMetadata = const {},
+  }) {
+    session = _session(userId: userId, appMetadata: appMetadata);
     events.add(AuthState(AuthChangeEvent.signedIn, session));
   }
 
@@ -552,10 +593,12 @@ class _Accounts extends Fake implements FieldrushAccountRepository {
   int completionCalls = 0;
   int draftSaves = 0;
   int tourCalls = 0;
+  int loadCalls = 0;
   @override
   bool get emailDeliveryEnabled => false;
   @override
   Future<FieldrushAccount> loadAccount() async {
+    loadCalls++;
     if (error != null) throw error!;
     return nextLoad == null ? account : nextLoad!();
   }

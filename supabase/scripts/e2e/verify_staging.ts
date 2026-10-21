@@ -1,8 +1,10 @@
 import {
   createAdminClient,
   createE2EUserClient,
+  getAuthUser,
   loadManifestConfig,
   logStep,
+  requireIndependentE2EStaff,
 } from "./_shared.ts";
 import {
   bookedRoleRatingBaselines,
@@ -30,12 +32,12 @@ The complete phase validates the full player/referee/admin journey.`);
 const phase = readPhase(Deno.args);
 const config = await loadManifestConfig(`staging E2E ${phase} verification`);
 const manifest = config.manifest;
+const staffIdentity = requireIndependentE2EStaff(manifest);
 const admin = createAdminClient(config.supabaseUrl, config.serviceRoleKey);
 const playerIds = manifest.accounts.players.map((player) => player.profileId);
 const allProfileIds = [
   ...playerIds,
   manifest.accounts.onboarding.profileId,
-  manifest.accounts.admin.profileId,
 ];
 
 await verifyProfiles();
@@ -62,8 +64,8 @@ async function verifyProfiles(): Promise<void> {
     .in("id", allProfileIds);
   if (error) throw new Error(`verify E2E profiles: ${error.message}`);
   assert(
-    (data ?? []).length === (phase === "prepared" ? 15 : 16),
-    "Expected 14 match players and one admin; the signup profile exists only after completion.",
+    (data ?? []).length === (phase === "prepared" ? 14 : 15),
+    "Expected 14 match players; the signup profile exists only after completion. Staff must not create a player profile.",
   );
 
   const onboardingProfile = (data ?? []).find((row) =>
@@ -128,15 +130,42 @@ async function verifyProfiles(): Promise<void> {
 
   const { data: referee, error: refereeError } = await admin
     .from("referee_profiles")
-    .select("profile_id,role,is_active")
+    .select("profile_id,auth_user_id,email,role,is_active")
     .eq("profile_id", manifest.accounts.admin.profileId)
     .single();
   if (refereeError) {
     throw new Error(`verify E2E admin: ${refereeError.message}`);
   }
   assert(
-    referee.role === "admin" && referee.is_active === true,
+    referee.role === "admin" && referee.is_active === true &&
+      referee.auth_user_id === staffIdentity.authUserId &&
+      referee.email === staffIdentity.email,
     "The E2E admin referee is not active.",
+  );
+  const identity = await getAuthUser(
+    config.supabaseUrl,
+    config.serviceRoleKey,
+    staffIdentity.authUserId,
+  );
+  assert(
+    identity.email === staffIdentity.email && !identity.phone &&
+      identity.email_confirmed_at != null &&
+      identity.app_metadata?.fieldrush_account_type === "staff" &&
+      identity.app_metadata?.fieldrush_e2e === true &&
+      identity.app_metadata?.fieldrush_e2e_role === "admin" &&
+      identity.app_metadata?.fieldrush_e2e_run_id === manifest.runId,
+    "The isolated staff sign-in is not a verified, protected email identity for this run.",
+  );
+  const { data: staffPlayers, error: staffPlayerError } = await admin.from(
+    "profiles",
+  ).select("id")
+    .or(
+      `id.eq.${staffIdentity.authUserId},auth_user_id.eq.${staffIdentity.authUserId}`,
+    );
+  if (staffPlayerError) throw staffPlayerError;
+  assert(
+    staffPlayers?.length === 0,
+    "The staff Auth identity must not own any player profile.",
   );
 }
 
@@ -157,7 +186,7 @@ async function verifyPreparedGames(): Promise<void> {
   const { data, error } = await admin
     .from("open_queue_games")
     .select(
-      "id,status,venue,starts_at,ends_at,capacity,created_by,currency,price_fils,format_version,timezone",
+      "id,status,venue,starts_at,ends_at,capacity,created_by,created_by_staff_id,currency,price_fils,format_version,timezone",
     )
     .in("id", [manifest.games.match.id, manifest.games.cancellation.id]);
   if (error) throw new Error(`verify E2E games: ${error.message}`);
@@ -168,7 +197,8 @@ async function verifyPreparedGames(): Promise<void> {
       "An E2E game lost its run marker.",
     );
     assert(
-      game.created_by === manifest.accounts.admin.profileId,
+      game.created_by_staff_id === manifest.accounts.admin.profileId &&
+        game.created_by == null,
       "An E2E game is not owned by the isolated test admin.",
     );
     assert(Number(game.capacity) === 14, "E2E solo capacity must be 14.");
