@@ -375,7 +375,7 @@ jobs:
             supabase/scripts/e2e/_shared_test.ts \
             supabase/scripts/e2e/rating_tracks_test.ts \
             supabase/scripts/e2e/checkouts_test.ts
-          deno test supabase/scripts/e2e/game_slots_test.ts
+          deno test supabase/scripts/e2e/game_slots_test.ts supabase/scripts/e2e/completion_evidence_test.ts
 
       - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
         shell: bash

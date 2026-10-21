@@ -99,6 +99,25 @@ begin
   elapsed_ms:=extract(epoch from clock_timestamp()-started)*1000;
   insert into sr_smoke_metrics values('first_native_finish',1,round(elapsed_ms,2),round(elapsed_ms,2));
   perform pg_temp.sr_expect(payload->>'settlement_status'='RATED','actual finalization rates the match');
+  -- Match the hosted completion verifier's real persisted sources. Its legacy
+  -- early-admin-test audit is deliberately absent on this ordinary S0 path.
+  perform pg_temp.sr_expect((select
+      s.game_id=match_id and s.policy_id='field-sr-season0-v2' and s.lifecycle='FINAL'
+      and s.rating_status='completed' and s.settlement_status='RATED'
+      and s.scheduled_seconds=extract(epoch from(g.ends_at-g.starts_at))
+      and s.played_seconds>=s.scheduled_seconds
+      and fieldrush_rating_private.solo_start_window_allows(g.starts_at,s.started_at)
+      and c.status='ENDED' and c.started_at is null
+      and c.duration_seconds=s.scheduled_seconds and c.accumulated_seconds=s.played_seconds
+      and (public.get_season_zero_match_state(admin_id,match_id)->>'elapsed_seconds')::integer=s.played_seconds
+      and (select count(*)=1 from public.open_queue_events e where e.game_id=match_id
+        and e.event_type='MATCH_STARTED' and e.occurred_at=s.started_at)
+      and (select count(*)=1 from public.open_queue_events e where e.game_id=match_id
+        and e.event_type='MATCH_ENDED' and e.minute*60+e.second=s.played_seconds)
+    from fieldrush_rating_private.season_zero_matches s
+    join public.open_queue_games g on g.id=s.game_id
+    join public.open_queue_clock_states c on c.game_id=s.game_id where s.game_id=match_id),
+    'normal completion exposes consistent S0 participation, event and stopped-clock evidence');
   perform pg_temp.sr_expect((select count(*)=14 from public.player_rating_events e where e.source_id=match_id),'14 native ledger rows');
   perform pg_temp.sr_expect((select skill_rating=30 and matches_played=1 from public.fieldrush_player_rating_tracks
     where profile_id=winner_player and rating_track='GOALKEEPER'),'first winner +40, keeper count1');
