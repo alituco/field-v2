@@ -11,6 +11,7 @@ import {
   ratingTrackForRole,
 } from "./rating_tracks.ts";
 import { assertJourneyKickoffWindow } from "./game_slots.ts";
+import { assertCompletedSeasonZeroEvidence } from "./completion_evidence.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -290,7 +291,7 @@ async function verifyCompletedMatch(): Promise<void> {
   const { data: game, error: gameError } = await admin
     .from("open_queue_games")
     .select(
-      "status,white_score,black_score,teams_assigned_at,white_average_sr,black_average_sr",
+      "status,rating_policy_id,starts_at,ends_at,white_score,black_score,teams_assigned_at,white_average_sr,black_average_sr",
     )
     .eq("id", manifest.games.match.id)
     .single();
@@ -453,19 +454,44 @@ async function verifyCompletedMatch(): Promise<void> {
     "Every E2E player must have finalized referee attendance.",
   );
 
-  const { data: audit, error: auditError } = await admin
-    .from("admin_audit_events")
-    .select("id")
-    .eq("action", "OPEN_QUEUE_TEAMS_ASSIGNED_EARLY")
-    .eq("entity_type", "SOLO_MATCH")
-    .eq("entity_id", manifest.games.match.id)
-    .limit(1);
-  if (auditError) {
-    throw new Error(`verify E2E start audit: ${auditError.message}`);
+  // S0 uses the ordinary ±24h kickoff path. The legacy admin test-start
+  // audit is neither emitted nor required; verify the real persisted evidence.
+  const { data: state, error: stateError } = await admin.rpc(
+    "get_season_zero_match_state",
+    {
+      actor_referee_id: manifest.accounts.admin.profileId,
+      game_id_to_use: manifest.games.match.id,
+    },
+  );
+  if (stateError) {
+    throw new Error(`verify E2E participation evidence: ${stateError.message}`);
   }
-  assert(
-    (audit ?? []).length === 1,
-    "The future E2E test start was not permanently audited.",
+  const { data: matchEvents, error: matchEventsError } = await admin
+    .from("open_queue_events")
+    .select("game_id,event_type,occurred_at,minute,second")
+    .eq("game_id", manifest.games.match.id)
+    .in("event_type", ["MATCH_STARTED", "MATCH_ENDED"]);
+  if (matchEventsError) {
+    throw new Error(`verify E2E match evidence: ${matchEventsError.message}`);
+  }
+  const { data: clock, error: clockError } = await admin
+    .from("open_queue_clock_states")
+    .select("game_id,status,started_at,accumulated_seconds,duration_seconds")
+    .eq("game_id", manifest.games.match.id)
+    .single();
+  if (clockError) {
+    throw new Error(`verify E2E stopped clock: ${clockError.message}`);
+  }
+  assertCompletedSeasonZeroEvidence(
+    {
+      id: manifest.games.match.id,
+      startsAt: game.starts_at,
+      endsAt: game.ends_at,
+      ratingPolicy: game.rating_policy_id,
+    },
+    state,
+    matchEvents,
+    clock,
   );
 }
 

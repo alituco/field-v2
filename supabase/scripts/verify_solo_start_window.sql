@@ -133,6 +133,12 @@ begin
   perform pg_temp.window_expect((select jsonb_agg(to_jsonb(r) order by profile_id,rating_track)=tracks_before from public.fieldrush_player_rating_tracks r
     where profile_id in(select profile_id from public.open_queue_bookings where game_id=early_game)),'start does not change SR, counted games or visibility');
   perform pg_temp.window_expect((select count(*)=1 from public.open_queue_events where game_id=early_game and event_type='MATCH_STARTED' and occurred_at=started),'actual kickoff recorded separately');
+  perform pg_temp.window_expect((select count(*)=1 from fieldrush_rating_private.season_zero_match_revisions
+    where game_id=early_game and action='START' and actor_id=referee_id
+      and (evidence->>'started_at')::timestamptz=started),'normal early kickoff retains its actor-bound permanent S0 revision');
+  perform pg_temp.window_expect(not exists(select 1 from public.admin_audit_events
+    where entity_id=early_game and action='OPEN_QUEUE_TEAMS_ASSIGNED_EARLY'),
+    'normal S0 kickoff does not require or manufacture a legacy admin test-start audit');
   perform pg_temp.window_expect(public.finalize_match_attendance_internal('SOLO',early_game,referee_id)=0,'early actual match does not finalize attendance before actual grace');
   perform pg_temp.window_expect(not exists(select 1 from public.current_match_attendance_records where open_queue_game_id=early_game and outcome='NO_SHOW'),'no early no-shows');
   perform pg_temp.window_reject(format('select public.referee_finish_season_zero_match(%L,%L,%L,1)',referee_id,early_game,gen_random_uuid()),'agreed playing duration');

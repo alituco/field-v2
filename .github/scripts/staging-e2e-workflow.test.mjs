@@ -231,6 +231,18 @@ test("configurable solo minimum and timing have mandatory full-schema regression
   }
 });
 
+test("hosted completion verifies actual S0 evidence instead of the legacy test-start bypass", () => {
+  const check = stepContaining(job("database"), "supabase/scripts/e2e/completion_evidence_test.ts");
+  assert.match(check, /deno test/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true/);
+  const verifier = readFileSync(new URL("../../supabase/scripts/e2e/verify_staging.ts", import.meta.url), "utf8");
+  assert.match(verifier, /assertCompletedSeasonZeroEvidence\(/);
+  assert.match(verifier, /get_season_zero_match_state/);
+  assert.match(verifier, /\.from\("open_queue_events"\)/);
+  assert.match(verifier, /\.from\("open_queue_clock_states"\)/);
+  assert.doesNotMatch(verifier, /OPEN_QUEUE_TEAMS_ASSIGNED_EARLY/);
+});
+
 test("player rating read parity and expensive-call budgets are mandatory before deployment", () => {
   const check = stepContaining(job("database"), "node supabase/scripts/test_player_rating_read_cost.mjs");
   assert.match(check, /set -euo pipefail/);
