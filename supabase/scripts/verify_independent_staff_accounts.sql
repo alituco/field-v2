@@ -32,6 +32,41 @@ begin
   return identity_id;
 end $$;
 do $$
+declare fresh uuid:=gen_random_uuid(); existing_email uuid:=gen_random_uuid(); google_user uuid:=gen_random_uuid();
+begin
+  -- Follow GoTrue adminUserCreate ordering, including the intermediate role
+  -- update. Direct SQL insertion of final metadata alone missed this path.
+  insert into auth.users(id,email,raw_app_meta_data)
+    values(fresh,'auth-create-order@example.test','{"provider":"email","providers":["email"]}');
+  insert into auth.identities(user_id,provider,provider_id,identity_data)
+    values(fresh,'email',fresh::text,'{"email":"auth-create-order@example.test"}');
+  update auth.users set role='authenticated' where id=fresh;
+  update auth.users set raw_app_meta_data=raw_app_meta_data||'{"fieldrush_account_type":"staff"}' where id=fresh;
+  update auth.users set email_confirmed_at=now() where id=fresh;
+  perform pg_temp.staff_expect(fieldrush_private.is_staff_auth_user(fresh),'GoTrue staged creation initializes staff');
+  perform pg_temp.staff_expect(not exists(select 1 from public.profiles where id=fresh or auth_user_id=fresh)
+    and not exists(select 1 from fieldrush_private.accounts where user_id=fresh)
+    and not exists(select 1 from fieldrush_rating_private.season_zero_initialization_eligibility where user_id=fresh)
+    and not exists(select 1 from fieldrush_private.staff_auth_creation_context where user_id=fresh),
+    'staged staff creation leaves no player records or reusable admission');
+  insert into auth.users(id,email) values(existing_email,'existing-email-player@example.test');
+  -- Execute exactly the deferred cleanup that runs at transaction commit.
+  set constraints auth.fieldrush_close_staff_auth_creation immediate;
+  set constraints auth.fieldrush_close_staff_auth_creation deferred;
+  perform pg_temp.staff_expect(not exists(select 1 from fieldrush_private.staff_auth_creation_context),
+    'creation admission expires at the transaction boundary');
+  update auth.users set role='authenticated' where id=existing_email;
+  perform pg_temp.staff_reject(format('update auth.users set raw_app_meta_data=''{"fieldrush_account_type":"staff"}'' where id=%L',existing_email),
+    'do not convert a player');
+  insert into auth.users(id,email) values(google_user,'google-player@example.test');
+  insert into auth.identities(user_id,provider,provider_id) values(google_user,'google',google_user::text);
+  perform pg_temp.staff_reject(format('update auth.users set raw_app_meta_data=''{"fieldrush_account_type":"staff"}'' where id=%L',google_user),
+    'independent of player');
+  perform pg_temp.staff_expect(not has_table_privilege('service_role','fieldrush_private.staff_auth_creation_context','INSERT')
+    and not has_table_privilege('authenticated','fieldrush_private.staff_auth_creation_context','INSERT'),
+    'API callers cannot manufacture staff creation admission');
+end $$;
+do $$
 declare player_admin uuid:=pg_temp.staff_player(); other_player uuid:=pg_temp.staff_player();
   admin_auth uuid:=pg_temp.staff_auth('staff-admin@example.test',false); ref_auth uuid;
   staff_ref uuid; pending_ref uuid:=gen_random_uuid(); second_admin uuid:=gen_random_uuid(); pending_auth uuid;
