@@ -395,7 +395,7 @@ test("backend deploy starts after fast app and database checks, not native build
 
 test("each Supabase caller installs the CLI on its own runner before first use", () => {
   for (const [id, firstUse] of [
-    ["database", "node .github/scripts/start-ci-supabase.mjs"],
+    ["database", "node .github/scripts/prefetch-ci-supabase-images.mjs"],
     ["backend-staging", ".github/scripts/deploy-supabase.sh staging"],
     ["prepare-staging-e2e", ".github/scripts/configure-staging-e2e-auth.sh"],
   ]) {
@@ -412,7 +412,18 @@ test("each Supabase caller installs the CLI on its own runner before first use",
 
 test("database startup recovery runs before every mandatory schema verification", () => {
   const source = job("database");
+  assert.match(source, /^    permissions:\n      contents: read\n      packages: read$/m);
+  const login = stepContaining(source, "name: Authenticate read-only container downloads");
+  assert.match(login, /GHCR_PULL_TOKEN: \$\{\{ github\.token \}\}/);
+  assert.match(login, /printf '%s' "\$GHCR_PULL_TOKEN" \| docker login ghcr\.io --username "\$GITHUB_ACTOR" --password-stdin/);
+  assert.doesNotMatch(login, /--password\s|secrets\.|continue-on-error:/);
+  const download = stepContaining(source, "name: Download local Supabase images before schema initialization");
+  assert.ok(source.indexOf(login) < source.indexOf(download));
+  assert.match(download, /run: node \.github\/scripts\/prefetch-ci-supabase-images\.mjs/);
+  assert.match(source, /^      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr\.io$/m);
+  assert.doesNotMatch(download, /continue-on-error:|\|\|\s*true|secrets\./);
   const start = stepContaining(source, "name: Replay migrations on a fresh local Supabase stack");
+  assert.ok(source.indexOf(download) < source.indexOf(start));
   assert.match(start, /run: node \.github\/scripts\/start-ci-supabase\.mjs/);
   assert.doesNotMatch(start, /continue-on-error:|\|\|\s*true|--ignore-health-check|secrets\./);
   for (const next of [
@@ -424,6 +435,9 @@ test("database startup recovery runs before every mandatory schema verification"
     assert.ok(source.indexOf(next) > source.indexOf(start));
   }
   assert.doesNotMatch(source, /^    continue-on-error:/m);
+  const cleanup = stepContaining(source, "name: Remove container registry credentials");
+  assert.match(cleanup, /if: always\(\)/);
+  assert.match(cleanup, /run: docker logout ghcr\.io/);
 });
 
 test("every planned journey has successful planned prerequisites despite skipped native jobs", () => {
