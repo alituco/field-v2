@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { queueBroadcastStop } from "@/lib/broadcasts";
+import { ClanGoalActionError, mutateClanGoal } from "@/lib/clan-goal-actions";
 import { assertCanManageFixture } from "@/lib/fixture-access";
 import {
   parseAdminCancellationInput,
@@ -93,7 +94,6 @@ type ClockRow = {
 const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const requestReceivedAt = new Date().toISOString();
   const refereeContext = await requireReferee(request);
   if (!isRefereeContext(refereeContext)) return refereeContext;
 
@@ -120,7 +120,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
     if (
-      !canRefereePerformOperationalAction(
+      body.action !== "goal" && !canRefereePerformOperationalAction(
         operationalFixture.operational_state,
         body.action,
       )
@@ -155,7 +155,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         await setFixtureTime(db, fixtureId, body.elapsedSeconds);
         break;
       case "goal":
-        await recordGoal(db, fixtureId, body, requestReceivedAt);
+        // The RPC checks its durable receipt before the operational/live gate,
+        // so retries can acknowledge a committed goal after the match finishes.
+        result = await mutateClanGoal(db, refereeContext.referee.profileId, fixtureId, body);
         break;
       case "blue_card":
         await recordBlueCard(db, fixtureId, body);
@@ -428,7 +430,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Action failed." },
+      { error: error instanceof Error ? error.message : "Action failed.",
+        ...(error instanceof ClanGoalActionError && error.definitivelyRejected ? { goalOperationRejected: true } : {}) },
       { status: 400 },
     );
   }
@@ -496,53 +499,6 @@ async function resumeFixture(db: SupabaseClient, fixtureId: string) {
     "Could not resume fixture clock",
   );
   await insertEvent(db, fixtureId, "MATCH_RESUMED", minute, second);
-}
-
-async function recordGoal(
-  db: SupabaseClient,
-  fixtureId: string,
-  body: ActionBody,
-  occurredAt: string,
-) {
-  const fixture = await loadLiveFixture(db, fixtureId);
-  const clanId = requireString(body.clanId, "Choose the scoring team.");
-  const profileId = requireString(body.profileId, "Choose the scorer.");
-  const assistProfileId = body.assistProfileId || null;
-
-  assertParticipatingClan(fixture, clanId);
-  await assertPlayerInClan(db, clanId, profileId);
-
-  if (assistProfileId) {
-    await assertPlayerInClan(db, clanId, assistProfileId);
-  }
-
-  const { minute, second } = splitElapsed(await currentElapsed(db, fixtureId));
-  const scoringMinute = clamp(minute === 0 ? 1 : minute, 1, 240);
-
-  await assertNoError(
-    db.from("fixture_scorers").insert({
-      fixture_id: fixtureId,
-      clan_id: clanId,
-      profile_id: profileId,
-      assist_profile_id: assistProfileId,
-      minute: scoringMinute,
-    }),
-    "Could not record goal",
-  );
-  await insertEvent(
-    db,
-    fixtureId,
-    "GOAL",
-    scoringMinute,
-    second,
-    clanId,
-    profileId,
-    assistProfileId,
-    null,
-    "",
-    occurredAt,
-  );
-  await syncScoreFromScorers(db, fixture);
 }
 
 async function recordBlueCard(
@@ -709,42 +665,6 @@ async function setFixtureTime(
     null,
     null,
     `Match time corrected to ${formatElapsed(elapsedSeconds)}`,
-  );
-}
-
-async function syncScoreFromScorers(
-  db: SupabaseClient,
-  fixture: FixtureRow,
-) {
-  const { data: rows, error } = await db
-    .from("fixture_scorers")
-    .select("clan_id")
-    .eq("fixture_id", fixture.id);
-
-  if (error) throw new Error(`Could not recalculate score: ${error.message}`);
-
-  const homeScore = (rows ?? []).filter(
-    (row) => String(row.clan_id) === fixture.home_clan_id,
-  ).length;
-  const awayScore = (rows ?? []).filter(
-    (row) => String(row.clan_id) === fixture.away_clan_id,
-  ).length;
-  const winnerClanId = homeScore > awayScore
-    ? fixture.home_clan_id
-    : awayScore > homeScore
-    ? fixture.away_clan_id
-    : null;
-
-  await assertNoError(
-    db
-      .from("fixtures")
-      .update({
-        home_score: homeScore,
-        away_score: awayScore,
-        winner_clan_id: winnerClanId,
-      })
-      .eq("id", fixture.id),
-    "Could not update final score",
   );
 }
 

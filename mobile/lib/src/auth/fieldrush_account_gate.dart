@@ -76,6 +76,7 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
     _subscription = widget.authRepository.authStateChanges.listen(
       (event) {
         if (isStaffIdentity(event.session?.user)) {
+          _clearProtectedNavigation(identityChanged: true);
           _request++;
           setState(() {
             _staffIdentityRejected = true;
@@ -91,6 +92,9 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         }
         final id = event.session?.user.id;
         if (id == null) {
+          _clearProtectedNavigation(
+            identityChanged: _userId != null && !_switchingPhoneAccount,
+          );
           _request++;
           setState(() {
             _userId = null;
@@ -106,6 +110,9 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         }
         final changed = id != _userId;
         if (changed) {
+          _clearProtectedNavigation(
+            identityChanged: _userId != null || _switchingPhoneAccount,
+          );
           setState(() {
             _staffIdentityRejected = false;
             // Ordinary SMS verification may finish on the signed-out screen.
@@ -124,7 +131,10 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
         }
       },
       onError: (Object error) {
-        if (mounted) setState(() => _error = userFacingError(error));
+        if (mounted) {
+          _clearProtectedNavigation();
+          setState(() => _error = userFacingError(error));
+        }
       },
     );
   }
@@ -135,6 +145,24 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
     } catch (_) {
       // Keep the staff-only screen mounted if device cleanup needs a retry.
     }
+  }
+
+  bool get _hasProtectedAccess =>
+      _userId != null &&
+      _account?.completed == true &&
+      _account?.phoneVerified == true &&
+      _account?.deletionPending == false &&
+      _status != null &&
+      !_status!.blocksAccount &&
+      _error == null;
+
+  void _clearProtectedNavigation({bool identityChanged = false}) {
+    if (!_hasProtectedAccess && !identityChanged) return;
+    // The account gate owns the first route, but pushed pages and dialogs
+    // belong to the Navigator above it. Replacing only the gate's child leaves
+    // those pages alive with the previous player's data and callbacks. Identity
+    // changes also clear account-specific sheets on restricted/signup screens.
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
   @override
@@ -155,6 +183,9 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
           ? await _moderation.getMyModerationStatus()
           : null;
       if (!mounted || generation != _request || id != _userId) return;
+      if (status == null || status.blocksAccount) {
+        _clearProtectedNavigation();
+      }
       setState(() {
         _account = account;
         _status = status;
@@ -163,6 +194,7 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
       });
     } catch (error) {
       if (!mounted || generation != _request || id != _userId) return;
+      _clearProtectedNavigation();
       setState(() {
         _error = userFacingError(
           error,

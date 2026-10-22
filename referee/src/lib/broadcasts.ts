@@ -175,7 +175,7 @@ export async function queueBroadcastStop(
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
   if (!broadcast?.liveInputId) return null;
-  if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+  if (broadcast.streamStoppedAt) {
     return broadcast;
   }
 
@@ -219,8 +219,7 @@ export async function queueBroadcastStop(
     .from("fixture_broadcasts")
     .update({ status: "STOPPING", error_message: null })
     .eq("fixture_id", fixtureId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY");
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not stop broadcast: ${error.message}`);
 
   return getFixtureBroadcast(db, fixtureId);
@@ -229,17 +228,19 @@ export async function queueBroadcastStop(
 export async function syncBroadcastFromCloudflare(
   db: SupabaseClient,
   fixtureId: string,
+  throwOnError = false,
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
-  if (!broadcast?.liveInputId || broadcast.recoveryUploadId) return broadcast;
+  if (!broadcast?.liveInputId || broadcast.recoveryUploadId ||
+    (broadcast.streamStoppedAt && broadcast.status === "REPLAY_READY")) return broadcast;
 
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
-    if (lifecycle.live) {
+    if (lifecycle.live && !broadcast.streamStoppedAt) {
       // Cloudflare can report the previous live lifecycle briefly after OBS stops.
-      // Once our stop is recorded (or its replay is ready), LIVE is no longer a
-      // valid state for this broadcast.
-      if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+      // Once our stop is recorded, LIVE is no longer valid. A ready segment
+      // alone is not terminal: Cloudflare may finalize one during a disconnect.
+      if (broadcast.status === "STOPPING") {
         return broadcast;
       }
       let providerStartedAt: string | null = null;
@@ -255,6 +256,8 @@ export async function syncBroadcastFromCloudflare(
         .update({
           status: "LIVE",
           active_video_id: lifecycle.videoUID,
+          replay_hls_url: null,
+          recording_ready_at: null,
           stream_started_at:
             providerStartedAt ??
             broadcast.streamStartedAt ??
@@ -264,36 +267,29 @@ export async function syncBroadcastFromCloudflare(
         .eq("fixture_id", fixtureId)
         .is("recovery_upload_id", null)
         .is("stream_stopped_at", null)
-        .neq("status", "REPLAY_READY");
+        .neq("status", "STOPPING");
       if (error) throw error;
       return getFixtureBroadcast(db, fixtureId);
     }
 
-    let activeVideoId = broadcast.activeVideoId;
-    if (
-      !activeVideoId &&
-      ["STARTING", "LIVE", "STOPPING", "PROCESSING"].includes(
-        broadcast.status,
-      )
-    ) {
-      const recordings = await listCloudflareLiveInputVideos(
-        broadcast.liveInputId,
-      );
-      const latest = recordings
-        .filter((video) => Boolean(video.uid))
-        .sort((left, right) =>
-          (right.created ?? "").localeCompare(left.created ?? ""),
-        )[0];
-      activeVideoId = latest?.uid ?? null;
-
-      if (activeVideoId) {
-        const { error } = await db
-          .from("fixture_broadcasts")
-          .update({ active_video_id: activeVideoId })
-          .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
+    // A provider disconnect can finish a segment while OBS is still reconnecting.
+    // Keep the session stoppable until the laptop acknowledges an intentional stop.
+    if (!broadcast.streamStoppedAt) {
+      if (["STARTING", "LIVE", "PROCESSING", "REPLAY_READY"].includes(broadcast.status)) {
+        const { error } = await db.from("fixture_broadcasts")
+          .update({ status: "STARTING", replay_hls_url: null, recording_ready_at: null })
+          .eq("fixture_id", fixtureId)
+          .is("recovery_upload_id", null)
+          .is("stream_stopped_at", null)
+          .neq("status", "STOPPING");
         if (error) throw error;
       }
+      return getFixtureBroadcast(db, fixtureId);
     }
+
+    const activeVideoId = await refreshStoppedRecording(
+      db, "fixture_broadcasts", "fixture_id", fixtureId, broadcast,
+    );
 
     if (activeVideoId) {
       const video = await getCloudflareVideo(activeVideoId);
@@ -321,6 +317,7 @@ export async function syncBroadcastFromCloudflare(
         const { error } = await db.rpc("sync_broadcast_replay", {
           kind: "CLAN", target_id: fixtureId, video_id: activeVideoId,
           replay_url: replayUrl, ready_at: readyAt,
+          recording_started_at: validRecordingTimestamp(video?.created),
           expected_requested_at: broadcast.streamRequestedAt,
           expected_input_id: broadcast.liveInputId,
         });
@@ -344,6 +341,7 @@ export async function syncBroadcastFromCloudflare(
       .from("fixture_broadcasts")
       .update({ error_message: message })
       .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
+    if (throwOnError) throw error;
   }
 
   return getFixtureBroadcast(db, fixtureId);
@@ -425,7 +423,7 @@ export async function queueOpenQueueBroadcastStop(
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
   if (!broadcast?.liveInputId) return null;
-  if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+  if (broadcast.streamStoppedAt) {
     return broadcast;
   }
 
@@ -467,8 +465,7 @@ export async function queueOpenQueueBroadcastStop(
   const { error } = await db.from("open_queue_broadcasts")
     .update({ status: "STOPPING", error_message: null })
     .eq("game_id", gameId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY");
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not stop solo broadcast: ${error.message}`);
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -476,14 +473,16 @@ export async function queueOpenQueueBroadcastStop(
 export async function syncOpenQueueBroadcastFromCloudflare(
   db: SupabaseClient,
   gameId: string,
+  throwOnError = false,
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
-  if (!broadcast?.liveInputId || broadcast.recoveryUploadId) return broadcast;
+  if (!broadcast?.liveInputId || broadcast.recoveryUploadId ||
+    (broadcast.streamStoppedAt && broadcast.status === "REPLAY_READY")) return broadcast;
 
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
-    if (lifecycle.live) {
-      if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+    if (lifecycle.live && !broadcast.streamStoppedAt) {
+      if (broadcast.status === "STOPPING") {
         return broadcast;
       }
       let providerStartedAt: string | null = null;
@@ -494,6 +493,8 @@ export async function syncOpenQueueBroadcastFromCloudflare(
       const { error } = await db.from("open_queue_broadcasts").update({
         status: "LIVE",
         active_video_id: lifecycle.videoUID,
+        replay_hls_url: null,
+        recording_ready_at: null,
         stream_started_at:
           providerStartedAt ?? broadcast.streamStartedAt ?? new Date().toISOString(),
         error_message: null,
@@ -501,28 +502,29 @@ export async function syncOpenQueueBroadcastFromCloudflare(
         .eq("game_id", gameId)
         .is("recovery_upload_id", null)
         .is("stream_stopped_at", null)
-        .neq("status", "REPLAY_READY");
+        .neq("status", "STOPPING");
       if (error) throw error;
       return getOpenQueueBroadcast(db, gameId);
     }
 
-    let activeVideoId = broadcast.activeVideoId;
-    if (
-      !activeVideoId &&
-      ["STARTING", "LIVE", "STOPPING", "PROCESSING"].includes(broadcast.status)
-    ) {
-      const recordings = await listCloudflareLiveInputVideos(broadcast.liveInputId);
-      activeVideoId = recordings
-        .filter((video) => Boolean(video.uid))
-        .sort((left, right) => (right.created ?? "").localeCompare(left.created ?? ""))[0]
-        ?.uid ?? null;
-      if (activeVideoId) {
+    // A provider disconnect can finish a segment while OBS is still reconnecting.
+    // Keep the session stoppable until the laptop acknowledges an intentional stop.
+    if (!broadcast.streamStoppedAt) {
+      if (["STARTING", "LIVE", "PROCESSING", "REPLAY_READY"].includes(broadcast.status)) {
         const { error } = await db.from("open_queue_broadcasts")
-          .update({ active_video_id: activeVideoId })
-          .eq("game_id", gameId).is("recovery_upload_id", null);
+          .update({ status: "STARTING", replay_hls_url: null, recording_ready_at: null })
+          .eq("game_id", gameId)
+          .is("recovery_upload_id", null)
+          .is("stream_stopped_at", null)
+          .neq("status", "STOPPING");
         if (error) throw error;
       }
+      return getOpenQueueBroadcast(db, gameId);
     }
+
+    const activeVideoId = await refreshStoppedRecording(
+      db, "open_queue_broadcasts", "game_id", gameId, broadcast,
+    );
 
     if (activeVideoId) {
       const video = await getCloudflareVideo(activeVideoId);
@@ -542,6 +544,7 @@ export async function syncOpenQueueBroadcastFromCloudflare(
         const { error } = await db.rpc("sync_broadcast_replay", {
           kind: "SOLO", target_id: gameId, video_id: activeVideoId,
           replay_url: replayUrl, ready_at: new Date().toISOString(),
+          recording_started_at: validRecordingTimestamp(video?.created),
           expected_requested_at: broadcast.streamRequestedAt,
           expected_input_id: broadcast.liveInputId,
         });
@@ -560,6 +563,7 @@ export async function syncOpenQueueBroadcastFromCloudflare(
     const message = error instanceof Error ? error.message : "Stream status failed.";
     await db.from("open_queue_broadcasts").update({ error_message: message })
       .eq("game_id", gameId).is("recovery_upload_id", null);
+    if (throwOnError) throw error;
   }
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -577,16 +581,18 @@ export async function markBroadcastStopped(
   fixtureId: string,
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
-  if (!broadcast?.liveInputId || broadcast.streamStoppedAt) return;
-
-  if (broadcast.status !== "REPLAY_READY") {
-    await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
+  if (!broadcast?.liveInputId) return;
+  if (broadcast.streamStoppedAt) {
+    await syncBroadcastFromCloudflare(db, fixtureId, true);
+    return;
   }
+
+  await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
   const stoppedAt = new Date().toISOString();
   const replayUrl = broadcast.replayHlsUrl ?? (broadcast.activeVideoId
     ? cloudflareHlsUrl(broadcast.activeVideoId)
     : null);
-  const { data: marked, error } = await db
+  const { error } = await db
     .from("fixture_broadcasts")
     .update({
       status: "PROCESSING",
@@ -595,22 +601,11 @@ export async function markBroadcastStopped(
       error_message: null,
     })
     .eq("fixture_id", fixtureId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY")
-    .select("fixture_id")
-    .maybeSingle();
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not save stopped broadcast: ${error.message}`);
-  if (marked) return;
-
-  const { error: replayReadyError } = await db
-    .from("fixture_broadcasts")
-    .update({ stream_stopped_at: stoppedAt })
-    .eq("fixture_id", fixtureId)
-    .is("stream_stopped_at", null)
-    .eq("status", "REPLAY_READY");
-  if (replayReadyError) {
-    throw new Error(`Could not save stopped broadcast: ${replayReadyError.message}`);
-  }
+  // A ready callback may have arrived before the stop acknowledgement.
+  // Reconcile here; a repeated acknowledgement retries any provider failure.
+  await syncBroadcastFromCloudflare(db, fixtureId, true);
 }
 
 export async function markOpenQueueBroadcastStopped(
@@ -618,39 +613,26 @@ export async function markOpenQueueBroadcastStopped(
   gameId: string,
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
-  if (!broadcast?.liveInputId || broadcast.streamStoppedAt) return;
-  if (broadcast.status !== "REPLAY_READY") {
-    await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
+  if (!broadcast?.liveInputId) return;
+  if (broadcast.streamStoppedAt) {
+    await syncOpenQueueBroadcastFromCloudflare(db, gameId, true);
+    return;
   }
+  await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
   const stoppedAt = new Date().toISOString();
   const replayUrl = broadcast.replayHlsUrl ?? (broadcast.activeVideoId
     ? cloudflareHlsUrl(broadcast.activeVideoId)
     : null);
-  const { data: marked, error } = await db.from("open_queue_broadcasts").update({
+  const { error } = await db.from("open_queue_broadcasts").update({
     status: "PROCESSING",
     stream_stopped_at: stoppedAt,
     replay_hls_url: replayUrl,
     error_message: null,
   })
     .eq("game_id", gameId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY")
-    .select("game_id")
-    .maybeSingle();
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not save stopped solo broadcast: ${error.message}`);
-  if (marked) return;
-
-  const { error: replayReadyError } = await db
-    .from("open_queue_broadcasts")
-    .update({ stream_stopped_at: stoppedAt })
-    .eq("game_id", gameId)
-    .is("stream_stopped_at", null)
-    .eq("status", "REPLAY_READY");
-  if (replayReadyError) {
-    throw new Error(
-      `Could not save stopped solo broadcast: ${replayReadyError.message}`,
-    );
-  }
+  await syncOpenQueueBroadcastFromCloudflare(db, gameId, true);
 }
 
 async function loadFixtureForBroadcast(
@@ -786,6 +768,43 @@ async function failActiveOpenQueueCommands(
     .eq("action", action)
     .in("status", ["PENDING", "CLAIMED"]);
   if (error) throw new Error(`Could not clear camera command: ${error.message}`);
+}
+
+// A reconnect may create a new segment before a live poll observes its UID.
+// On stop, discover the latest recording in this generation rather than
+// publishing the previously observed partial segment. Compare-and-set prevents
+// a delayed provider response from replacing a newer or recovered source.
+async function refreshStoppedRecording(
+  db: SupabaseClient,
+  table: "fixture_broadcasts" | "open_queue_broadcasts",
+  idColumn: "fixture_id" | "game_id",
+  matchId: string,
+  broadcast: FixtureBroadcast,
+): Promise<string | null> {
+  const recordings = await listCloudflareLiveInputVideos(broadcast.liveInputId!);
+  const earliest = Math.max(
+    broadcast.streamRequestedAt ? Date.parse(broadcast.streamRequestedAt) - 60_000 : 0,
+    broadcast.streamStartedAt ? Date.parse(broadcast.streamStartedAt) : 0,
+  );
+  const latest = recordings.filter(video => Boolean(video.uid) &&
+    (video.uid === broadcast.activeVideoId ||
+      (video.created && Date.parse(video.created) >= earliest)))
+    .sort((left, right) => (right.created ?? "").localeCompare(left.created ?? ""))[0];
+  if (!latest?.uid || latest.uid === broadcast.activeVideoId) return broadcast.activeVideoId;
+  let update = db.from(table).update({
+    active_video_id: latest.uid,
+    stream_started_at: validRecordingTimestamp(latest.created) ?? broadcast.streamStartedAt,
+    replay_hls_url: null,
+    recording_ready_at: null,
+  }).eq(idColumn, matchId).is("recovery_upload_id", null)
+    .eq("stream_stopped_at", broadcast.streamStoppedAt!)
+    .eq("live_input_id", broadcast.liveInputId!)
+    .neq("status", "REPLAY_READY");
+  update = broadcast.activeVideoId ? update.eq("active_video_id", broadcast.activeVideoId) : update.is("active_video_id", null);
+  update = broadcast.streamRequestedAt ? update.eq("stream_requested_at", broadcast.streamRequestedAt) : update.is("stream_requested_at", null);
+  const { data, error } = await update.select(idColumn).maybeSingle();
+  if (error) throw error;
+  return data ? latest.uid : null;
 }
 
 function normalizeBroadcast(row: Record<string, unknown>): FixtureBroadcast {

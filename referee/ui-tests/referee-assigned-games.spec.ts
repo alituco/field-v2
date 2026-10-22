@@ -20,7 +20,11 @@ function game(id: string, status = "OPEN", overrides: Record<string, unknown> = 
   };
 }
 
-async function mockAssignments(page: Page, fixtures: ReturnType<typeof game>[]) {
+type WriteResult = { data?: unknown; status?: number; abort?: boolean };
+
+async function mockAssignments(page: Page, fixtures: ReturnType<typeof game>[], onWrite?: (
+  body: Record<string, unknown>, path: string,
+) => WriteResult | Promise<WriteResult>) {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   let reads = 0;
   await page.addInitScript((key) => localStorage.setItem(key, JSON.stringify({ access_token: "ui-test-token", refresh_token: "ui-test-refresh", token_type: "bearer", expires_at: 4102444800, user: { id: "00000000-0000-4000-8000-000000000001", aud: "authenticated", app_metadata: { fieldrush_account_type: "staff" } } })), `fieldrush-staff-${project}-auth-v1`);
@@ -28,17 +32,94 @@ async function mockAssignments(page: Page, fixtures: ReturnType<typeof game>[]) 
   await page.route("**/api/referee/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
     let data: unknown = {};
+    let status = 200;
     if (route.request().method() !== "GET") {
       writes.push({ path, body: route.request().postDataJSON() });
-      data = { ok: true };
+      const result = await onWrite?.(writes.at(-1)!.body, path);
+      if (result?.abort) return route.abort("failed");
+      data = result?.data ?? { ok: true };
+      status = result?.status ?? 200;
     } else if (path === "/api/referee/fixtures") {
       reads++;
       data = { me: { profileId: "00000000-0000-4000-8000-000000000001", displayName: "Preview Referee", role: "admin" }, fixtures };
     } else if (path.includes("broadcast")) data = { broadcast: null, device: null };
-    await route.fulfill({ json: data });
+    await route.fulfill({ status, json: data });
   });
   return { writes, get reads() { return reads; } };
 }
+
+test("an unacknowledged clan goal survives refresh and retries the same request before another goal", async ({ page }) => {
+  const id = (n: number) => `a0220000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const fixture = game(id(1), "LIVE", {
+    matchKind: "CLAN",
+    homeClan: { id: id(2), name: "Home Clan", tag: "HOME", emblem: "", skillRating: 1500 },
+    awayClan: { id: id(3), name: "Away Clan", tag: "AWAY", emblem: "", skillRating: 1500 },
+    players: [4, 5].map((n) => ({ id: id(n), clanId: id(2), displayName: `Player ${n}`, username: null, avatarUrl: null, role: "member", ratingAtTeamAssignment: null })),
+  });
+  const requests = new Map<string, Record<string, unknown>>();
+  let loseFirstResponse = true;
+  const state = await mockAssignments(page, [fixture], (body) => {
+    expect(body.action).toBe("goal");
+    expect(body.requestId).toMatch(/^[0-9a-f-]{36}$/i);
+    const requestId = String(body.requestId);
+    if (!requests.has(requestId)) requests.set(requestId, {
+      fixture_id: fixture.id, request_id: requestId, action: "ADD",
+      goal_id: id(100 + requests.size), event_id: id(200 + requests.size),
+      home_score: requests.size + 1, away_score: 0,
+    });
+    if (loseFirstResponse) { loseFirstResponse = false; return { abort: true }; }
+    return { data: { goalOperation: requests.get(requestId) } };
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Goal Scorer and assist" }).click();
+  await page.getByRole("combobox", { name: "Assist", exact: true }).selectOption(id(5));
+  await page.getByRole("button", { name: "Confirm goal", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry saved goal action" })).toBeVisible();
+  expect(state.writes).toHaveLength(1);
+  expect(requests.size).toBe(1);
+
+  // An ambiguous result cannot be turned into a new operation by changing its fields.
+  await page.getByRole("combobox", { name: "Assist", exact: true }).selectOption("");
+  await page.getByRole("button", { name: "Confirm goal", exact: true }).click();
+  await expect(page.locator(".error")).toContainText("previous goal action");
+  expect(state.writes).toHaveLength(1);
+
+  await page.reload();
+  await page.getByRole("button", { name: "Retry saved goal action" }).click();
+  await expect(page.getByRole("button", { name: "Retry saved goal action" })).toHaveCount(0);
+  expect(state.writes).toHaveLength(2);
+  expect(state.writes[1]).toEqual(state.writes[0]);
+  expect(requests.size).toBe(1);
+
+  await page.getByRole("button", { name: "Goal Scorer and assist" }).click();
+  await page.getByRole("button", { name: "Confirm goal", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.writes).toHaveLength(3);
+  expect(state.writes[2].body.requestId).not.toBe(state.writes[0].body.requestId);
+  expect(requests.size).toBe(2);
+});
+
+test("a clan goal retry finishing after a match switch cannot expose its receipt on the other match", async ({ page }) => {
+  const id = (n: number) => `a0220000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const first = game(id(1), "LIVE", { matchKind: "CLAN" });
+  const second = game(id(2), "LIVE", { matchKind: "CLAN" });
+  let finishRequest!: (result: WriteResult) => void;
+  const response = new Promise<WriteResult>((resolve) => { finishRequest = resolve; });
+  const state = await mockAssignments(page, [first, second], () => response);
+  await page.addInitScript(({ key, requestId, clanId, scorerId }) => {
+    sessionStorage.setItem(key, JSON.stringify({ requestId, input: { action: "ADD", clan_id: clanId, profile_id: scorerId, assist_profile_id: null } }));
+  }, { key: `fieldrush:clan-goal:00000000-0000-4000-8000-000000000001:${first.id}`, requestId: id(3), clanId: id(4), scorerId: id(5) });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Retry saved goal action" }).click();
+  await expect.poll(() => state.writes.length).toBe(1);
+  await page.getByLabel("Choose assigned match").selectOption(`CLAN:${second.id}`);
+  finishRequest({ abort: true });
+  await expect(page.locator(".error")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry saved goal action" })).toHaveCount(0);
+  await page.getByLabel("Choose assigned match").selectOption(`CLAN:${first.id}`);
+  await expect(page.getByRole("button", { name: "Retry saved goal action" })).toBeVisible();
+  expect(state.writes[0].path).toBe(`/api/referee/fixtures/${first.id}/action`);
+});
 
 test("an assigned OPEN game appears before it fills without enabling legacy kickoff", async ({ page }, info) => {
   const state = await mockAssignments(page, [game("open")]);
