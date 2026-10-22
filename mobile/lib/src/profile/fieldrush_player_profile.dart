@@ -7,6 +7,7 @@ import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../ranking/rating_division.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import 'fieldrush_you_widgets.dart';
 import 'profile.dart';
 
@@ -550,16 +551,11 @@ class _PlayerAvatar extends StatelessWidget {
       ),
     );
     final url = profile.avatarUrl?.trim();
-    if (url == null || url.isEmpty) return initials;
-    return Image.network(
-      url,
-      width: 58,
-      height: 58,
-      fit: BoxFit.cover,
+    return FieldrushAvatarImage(
+      url: url,
+      size: 58,
       excludeFromSemantics: true,
-      errorBuilder: (context, error, stackTrace) => initials,
-      frameBuilder: (context, child, frame, synchronouslyLoaded) =>
-          frame == null ? initials : child,
+      fallback: initials,
     );
   }
 }

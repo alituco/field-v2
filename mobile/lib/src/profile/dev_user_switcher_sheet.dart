@@ -4,6 +4,7 @@ import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_modal.dart';
 import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
@@ -336,13 +337,11 @@ class _SwitchAvatar extends StatelessWidget {
       width: 44,
       height: 44,
       child: ClipOval(
-        child: profile.avatarUrl == null || profile.avatarUrl!.isEmpty
-            ? fallback
-            : Image.network(
-                profile.avatarUrl!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => fallback,
-              ),
+        child: FieldrushAvatarImage(
+          size: 44,
+          url: profile.avatarUrl,
+          fallback: fallback,
+        ),
       ),
     );
   }

@@ -15,6 +15,7 @@ import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../home/navigation_profile_scope.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_modal.dart';
 import '../markets/fieldrush_city.dart';
 import '../markets/fieldrush_city_repository.dart';
@@ -883,13 +884,11 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
                   width: 64,
                   height: 64,
                   color: const Color(0xFFF2EFE3),
-                  child: avatar?.isNotEmpty == true
-                      ? Image.network(
-                          avatar!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => _photoPlaceholder(),
-                        )
-                      : _photoPlaceholder(),
+                  child: FieldrushAvatarImage(
+                    size: 64,
+                    url: avatar,
+                    fallback: _photoPlaceholder(),
+                  ),
                 ),
               ),
               const SizedBox(width: 14),

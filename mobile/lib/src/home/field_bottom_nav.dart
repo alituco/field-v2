@@ -3,6 +3,7 @@ import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import 'native_glass_surface.dart';
 import 'navigation_profile_scope.dart';
 
@@ -371,16 +372,12 @@ class _FieldBottomNavState extends State<FieldBottomNav>
       return fallback;
     }
     return ClipOval(
-      child: Image.network(
-        avatarUrl.trim(),
-        key: const ValueKey('field-you-nav-avatar'),
-        width: 32,
-        height: 32,
-        fit: BoxFit.cover,
+      child: FieldrushAvatarImage(
+        url: avatarUrl,
+        size: 32,
+        imageKey: const ValueKey('field-you-nav-avatar'),
         excludeFromSemantics: true,
-        frameBuilder: (context, child, frame, synchronous) =>
-            frame == null && !synchronous ? fallback : child,
-        errorBuilder: (context, error, stackTrace) => fallback,
+        fallback: fallback,
       ),
     );
   }

@@ -12,6 +12,7 @@ import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../open_queue/open_queue.dart';
 import '../profile/profile.dart';
 import '../ranking/player_rating_visibility.dart';
+import '../ui/fieldrush_avatar_image.dart';
 
 const fieldrushHomeCream = Color(0xFFFAF7EF);
 const _ink = Color(0xFF22301F);
@@ -108,13 +109,11 @@ class FieldrushHomeHeader extends StatelessWidget {
                   color: _wash,
                   borderRadius: BorderRadius.circular(14),
                 ),
-                child: profile.avatarUrl?.trim().isNotEmpty == true
-                    ? Image.network(
-                        profile.avatarUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) => _initials(),
-                      )
-                    : _initials(),
+                child: FieldrushAvatarImage(
+                  size: 42,
+                  url: profile.avatarUrl,
+                  fallback: _initials(),
+                ),
               ),
             ),
           ),

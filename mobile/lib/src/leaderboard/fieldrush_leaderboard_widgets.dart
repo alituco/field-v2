@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../home/fieldrush_home_widgets.dart';
@@ -1169,15 +1170,11 @@ class _SparsePlacementRow extends StatelessWidget {
                     color: you ? _green : _wash,
                     borderRadius: BorderRadius.circular(11),
                   ),
-                  child: !you && player.avatarUrl?.trim().isNotEmpty == true
-                      ? Image.network(
-                          player.avatarUrl!,
-                          width: 34,
-                          height: 34,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, _, _) => _initials(),
-                        )
-                      : _initials(),
+                  child: FieldrushAvatarImage(
+                    size: 34,
+                    url: you ? null : player.avatarUrl,
+                    fallback: _initials(),
+                  ),
                 ),
                 const Positioned(
                   right: -9,
@@ -1945,13 +1942,11 @@ class _PlayerBadge extends StatelessWidget {
             podium ? (size / 3.4).roundToDouble() : 11,
           ),
         ),
-        child: player.avatarUrl?.trim().isNotEmpty == true
-            ? Image.network(
-                player.avatarUrl!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _initials(),
-              )
-            : _initials(),
+        child: FieldrushAvatarImage(
+          size: size,
+          url: player.avatarUrl,
+          fallback: _initials(),
+        ),
       ),
       Positioned(
         right: podium ? -7 : -9,

@@ -9,6 +9,7 @@ import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../ranking/rating_division.dart';
 import '../reliability/reliability.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import 'profile.dart';
 
 const _ink = FieldrushAuthTheme.ink;
@@ -579,16 +580,10 @@ class _Avatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(21),
         child: ColoredBox(
           color: _wash,
-          child: SizedBox(
-            width: 66,
-            height: 66,
-            child: url == null || url.isEmpty
-                ? placeholder
-                : Image.network(
-                    url,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => placeholder,
-                  ),
+          child: FieldrushAvatarImage(
+            size: 66,
+            url: url,
+            fallback: placeholder,
           ),
         ),
       ),

@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 import '../ui/fieldrush_toast.dart';
@@ -311,33 +312,21 @@ class _EditAvatarPreview extends StatelessWidget {
             ],
           ),
           child: ClipOval(
-            child: selectedBytes != null
-                ? Image.memory(selectedBytes, fit: BoxFit.cover)
-                : avatarUrl.isEmpty
-                ? Center(
-                    child: Text(
-                      initials,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 30,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  )
-                : Image.network(
-                    avatarUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Center(
-                      child: Text(
-                        initials,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 30,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
+            child: FieldrushAvatarImage(
+              size: 92,
+              url: selectedBytes == null ? avatarUrl : null,
+              image: selectedBytes == null ? null : MemoryImage(selectedBytes),
+              fallback: Center(
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
                   ),
+                ),
+              ),
+            ),
           ),
         );
       },
