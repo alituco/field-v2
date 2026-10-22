@@ -117,6 +117,166 @@ async function admin(page: Page, conflict = false, lifecycle = "REVIEW") {
   return writes;
 }
 
+async function adminMissingData(page: Page, options: {
+  started?: boolean;
+  stateError?: boolean;
+  missingState?: boolean;
+  previewConflict?: boolean;
+  saveConflict?: boolean;
+} = {}) {
+  await auth(page);
+  const writes: { path: string; body: Record<string, unknown> }[] = [];
+  const game = { ...fixture(), operationalState: "NO_DATA" };
+  const caseData = {
+    id: "missing-data-case", matchKind: "SOLO", state: "NO_DATA", reasonCode: "RESULT_MISSING",
+    scheduledEndAt: "2030-01-12T19:00:00Z", detectedAt: "2030-01-12T20:00:00Z",
+    highPriorityAt: "2030-01-13T20:00:00Z", resolvedAt: null, resolvedBy: null,
+    currentRevision: 0, evidenceSnapshot: {}, policySnapshot: {},
+    createdAt: "2030-01-12T20:00:00Z", updatedAt: "2030-01-12T20:00:00Z",
+    revisions: [], refunds: [], disputes: [],
+  };
+  await page.route("**/api/referee/**", async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/rating-review")) {
+      if (options.stateError) return route.fulfill({ status: 503, json: { error: "Rating evidence is temporarily unavailable." } });
+      if (options.missingState) return route.fulfill({ json: {} });
+      return route.fulfill({ json: { state: options.started ? reviewState() : null } });
+    }
+    if (route.request().method() === "POST") {
+      const body = route.request().postDataJSON();
+      writes.push({ path, body });
+      if (path.endsWith("/resolution/preview")) {
+        if (options.previewConflict) return route.fulfill({ status: 409, json: { error: "This match started or changed. Refresh before resolving it." } });
+        return route.fulfill({ json: { preview: {
+          preview: true, case_id: caseData.id, current_revision: 0, next_revision: 1,
+          is_correction: false, resolution_type: body.resolutionType, would_set_case_state: "RESOLVED",
+          consequences: { home_refund_bps: 10000, away_refund_bps: 10000, home_sr_delta: 0, away_sr_delta: 0, home_strikes: 0, away_strikes: 0 },
+          refunds: [],
+        } } });
+      }
+      expect(path).toBe(`/api/referee/admin/games/solo/${gameId}/resolution`);
+      if (options.saveConflict) return route.fulfill({ status: 409, json: { error: "This match started or changed. Refresh before resolving it." } });
+      caseData.state = "RESOLVED";
+      caseData.currentRevision = 1;
+      game.status = "CANCELLED";
+      game.operationalState = "NORMAL";
+      return route.fulfill({ json: { ok: true } });
+    }
+    return route.fulfill({ json: { detail: { fixture: game, currency: "USD", pricing: null, formation: null,
+      participants: { matchKind: "SOLO", matchId: gameId, status: game.status, capacity: 14, capacityPerSide: 7,
+        registeredPlayers: [], actualPlayers: [], withdrawnPlayers: [], counts: { registered: 0, actual: 0, withdrawn: 0 } },
+      reserves: { active: [], history: [] }, assignedReferee: null,
+      ratingSummary: { kind: "SOLO", whiteAverageSr: null, blackAverageSr: null, matchAverageSr: null, teamSrSpread: null, ratedPlayers: 0 },
+      audit: [], reports: [], stoppages: [], resolutionCase: caseData,
+    } } });
+  });
+  await page.goto(`/admin/games/solo/${gameId}`);
+  return writes;
+}
+
+async function chooseUnstartedCancellation(page: Page, outcome: string, entry = "Review & resolve no data") {
+  await page.getByRole("button", { name: entry, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Resolve missing match data" });
+  await expect(dialog.getByRole("button", { name: "Field / venue cancellation", exact: false })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Administrative void", exact: false })).toBeVisible();
+  for (const forbidden of ["Recorded result", "Home / white no-show", "Away / black no-show", "Both sides no-show", "Mutual cancellation", "Both sides at fault"]) {
+    await expect(dialog.getByRole("button", { name: forbidden, exact: false })).toHaveCount(0);
+  }
+  await dialog.getByRole("button", { name: outcome, exact: false }).click();
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(dialog.getByText("Advanced overrides", { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("spinbutton")).toHaveCount(0);
+  await expect(dialog.getByRole("combobox")).toHaveCount(0);
+  return dialog;
+}
+
+for (const [outcome, resolutionType, entry] of [
+  ["Field / venue cancellation", "FIELD_OR_VENUE_CANCELLATION", "Review & resolve no data"],
+  ["Administrative void", "ADMINISTRATIVE_VOID", "Cancel game"],
+]) {
+  test(`unstarted Season 0 missing data can use ${outcome.toLowerCase()} with policy-only consequences`, async ({ page }) => {
+    const writes = await adminMissingData(page);
+    const dialog = await chooseUnstartedCancellation(page, outcome, entry);
+    expect(writes).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+    await expect(dialog.getByText("Exact server-calculated preview", { exact: true })).toBeVisible();
+    const confirm = dialog.getByRole("button", { name: "Confirm and resolve", exact: true });
+    await expect(confirm).toBeDisabled();
+    await dialog.getByLabel("Evidence and reason · required").fill(reason);
+    await confirm.click();
+    await expect(dialog).toHaveCount(0);
+    expect(writes).toEqual([
+      { path: `/api/referee/admin/games/solo/${gameId}/resolution/preview`, body: {
+        expectedRevision: 0, resolutionType, reason: "Consequence preview before admin confirmation.", payload: {},
+      } },
+      { path: `/api/referee/admin/games/solo/${gameId}/resolution`, body: { expectedRevision: 0, resolutionType, reason, payload: {} } },
+    ]);
+    await expect(page.getByRole("button", { name: "Cancel game", exact: true })).toBeDisabled();
+  });
+}
+
+test("unstarted cancellation surfaces a stale preview and cannot proceed to confirmation", async ({ page }) => {
+  const writes = await adminMissingData(page, { previewConflict: true });
+  const dialog = await chooseUnstartedCancellation(page, "Field / venue cancellation");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await expect(dialog.getByText("This match started or changed. Refresh before resolving it.", { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Confirm and resolve", exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(1);
+  expect(writes[0].path).toMatch(/\/resolution\/preview$/);
+});
+
+test("unstarted cancellation preserves the audited reason when the final save becomes stale", async ({ page }) => {
+  const writes = await adminMissingData(page, { saveConflict: true });
+  const dialog = await chooseUnstartedCancellation(page, "Administrative void");
+  await dialog.getByRole("button", { name: "Continue", exact: true }).click();
+  await dialog.getByLabel("Evidence and reason · required").fill(reason);
+  await dialog.getByRole("button", { name: "Confirm and resolve", exact: true }).click();
+  await expect(dialog.getByText("This match started or changed. Refresh before resolving it.", { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel("Evidence and reason · required")).toHaveValue(reason);
+  expect(writes).toHaveLength(2);
+  expect(writes[1].body).toEqual({ expectedRevision: 0, resolutionType: "ADMINISTRATIVE_VOID", reason, payload: {} });
+});
+
+test("started Season 0 missing data stays on rating review and cannot enter unstarted cancellation", async ({ page }) => {
+  const writes = await adminMissingData(page, { started: true });
+  const panel = page.getByRole("region", { name: "Rating review" });
+  await expect(panel.getByRole("button", { name: "Review outcome or correct evidence" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Cancel game", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Review & resolve no data", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Match data resolution" }).getByRole("button", { name: "Resolve match", exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+});
+
+test("failed kickoff evidence load cannot expose unstarted Season 0 cancellation", async ({ page }) => {
+  const writes = await adminMissingData(page, { stateError: true });
+  await expect(page.getByRole("region", { name: "Rating review" }).getByRole("alert")).toHaveText("Rating evidence is temporarily unavailable.");
+  await expect(page.getByRole("button", { name: "Cancel game", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Review & resolve no data", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Match data resolution" }).getByRole("button", { name: "Resolve match", exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+});
+
+test("missing kickoff state is not mistaken for a confirmed unstarted game", async ({ page }) => {
+  const writes = await adminMissingData(page, { missingState: true });
+  await expect(page.getByRole("region", { name: "Rating review" }).getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Cancel game", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Review & resolve no data", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Match data resolution" }).getByRole("button", { name: "Resolve match", exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+});
+
+test("refresh failure invalidates earlier confirmation that kickoff has not happened", async ({ page }) => {
+  const writes = await adminMissingData(page);
+  await expect(page.getByRole("button", { name: "Cancel game", exact: true })).toBeEnabled();
+  await page.route("**/rating-review", route => route.fulfill({ status: 503, json: { error: "Rating evidence is temporarily unavailable." } }));
+  const panel = page.getByRole("region", { name: "Rating review" });
+  await panel.getByRole("button", { name: "Refresh rating evidence", exact: true }).click();
+  await expect(panel.getByRole("alert")).toHaveText("Rating evidence is temporarily unavailable.");
+  await expect(page.getByRole("button", { name: "Cancel game", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Review & resolve no data", exact: true })).toHaveCount(0);
+  expect(writes).toHaveLength(0);
+});
+
 test("configured 1v1 and odd-player games enable kickoff once their actual minimum is met", async ({ page }) => {
   for (const [minimum, players] of [[2, 2], [3, 3]]) {
     await referee(page, { minimum, players });
