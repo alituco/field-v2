@@ -325,7 +325,12 @@ jobs:
     if: needs.preflight.outputs.database == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
     env:
+      # The prefetch stage caches these exact names for the pinned CLI.
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       # config.toml references these values, but the corresponding local
       # integrations are disabled. These are deliberately non-secret values.
       OPENAI_API_KEY: ci-placeholder
@@ -468,6 +473,17 @@ jobs:
           node supabase/scripts/test_player_rating_read_cost.mjs
           node supabase/scripts/test_season_zero_rebalance.mjs
           node supabase/scripts/test_season_zero_migration_chain.mjs
+
+      - name: Authenticate read-only container downloads
+        shell: bash
+        env:
+          GHCR_PULL_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Download local Supabase images before schema initialization
+        run: node .github/scripts/prefetch-ci-supabase-images.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
         run: node .github/scripts/start-ci-supabase.mjs
@@ -694,6 +710,10 @@ jobs:
               psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
               <"$verifier"
           done
+
+      - name: Remove container registry credentials
+        if: always()
+        run: docker logout ghcr.io
 
   backend-staging:
     name: Deploy and smoke-test staging backend
