@@ -165,7 +165,9 @@ jobs:
     needs: preflight
     if: needs.preflight.outputs.ios == 'true'
     runs-on: macos-26
-    timeout-minutes: 35
+    # Cold simulator and device builds share this budget; macOS runner variance
+    # can use 28 minutes for the simulator alone. Keep both flavors mandatory.
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: mobile

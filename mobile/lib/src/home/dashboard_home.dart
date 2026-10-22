@@ -189,90 +189,169 @@ class _DashboardHomeState extends State<DashboardHome> {
       _loading = _profile == null;
       _error = null;
     });
-    try {
-      final season = await loadActiveLeaderboardSeason(
-        widget.leaderboardRepository,
-      );
-      if (!mounted || version != _loadVersion) return;
-      final openQueue = widget.openQueueRepository;
-      final cityRepository =
-          widget.cityRepository ??
-          (openQueue is SupabaseOpenQueueRepository
-              ? SupabaseFieldrushCityRepository()
-              : null);
-      final city = cityRepository == null
-          ? FieldrushCity.phoenix
-          : await cityRepository.loadPreferredCity();
-      if (!mounted || version != _loadVersion) return;
-      final failures = <String>[];
-      Future<T?> optional<T>(String label, Future<T> future) async {
-        try {
-          return await future;
-        } catch (_) {
-          failures.add(label);
-          return null;
-        }
-      }
+    const coreTimeout = Duration(seconds: 30);
+    const extraTimeout = Duration(seconds: 12);
+    bool current() => mounted && version == _loadVersion;
+    void publish(VoidCallback change) {
+      if (current()) setState(change);
+    }
 
-      final data = await Future.wait<Object?>([
-        widget.profileRepository.getCurrentProfile(),
-        optional(
-          'rating',
-          widget.leaderboardRepository is TrackLeaderboardRepository
-              ? (widget.leaderboardRepository as TrackLeaderboardRepository)
-                    .loadPlayerRatings(season: season)
-              : widget.leaderboardRepository.loadCurrentPlayerRating(season),
-        ),
-        optional(
-          'bookings',
-          widget.openQueueRepository.getMyUpcomingBookings(),
-        ),
-        optional(
-          'available games',
-          openQueue is OpenQueueCityRepository
-              ? (openQueue as OpenQueueCityRepository).listCityGames(city.id)
-              : openQueue is OpenQueueMarketRepository
-              ? (openQueue as OpenQueueMarketRepository).listMarketGames(
-                  city.timezone,
+    final failures = <String>{};
+    void failed(String label) {
+      if (!current()) return;
+      failures.add(label);
+      setState(() {
+        _error =
+            'Could not refresh ${failures.join(', ')}. Pull down to try again.';
+      });
+    }
+
+    Future<void> section(String label, Future<void> Function() read) async {
+      try {
+        await read();
+      } catch (_) {
+        failed(label);
+      }
+    }
+
+    // A pending season, city, clip/history or discovery read must not hold
+    // already-booked games and actionable party invitations behind a skeleton.
+    final bookingsRead = () async {
+      try {
+        final rows = await widget.openQueueRepository
+            .getMyUpcomingBookings()
+            .timeout(coreTimeout);
+        final bookings =
+            rows
+                .where(
+                  (b) =>
+                      b.status.toUpperCase() == 'CONFIRMED' &&
+                      ![
+                        'CANCELLED',
+                        'FINAL',
+                      ].contains(b.game.status.toUpperCase()) &&
+                      !b.game.hasPendingOperationalResolution,
                 )
-              : openQueue.listGames(),
-        ),
-        optional('clans', widget.clanRepository.listClans()),
-        optional<ClanMembership?>(
-          'clan membership',
+                .toList()
+              ..sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
+        publish(() => _bookings = bookings);
+        return bookings;
+      } catch (_) {
+        failed('bookings');
+        return _bookings;
+      }
+    }();
+    final openQueue = widget.openQueueRepository;
+    await Future.wait<void>([
+      () async {
+        try {
+          final repository = widget.profileRepository;
+          final profile =
+              await (repository is ProfileSummaryRepository
+                      ? (repository as ProfileSummaryRepository)
+                            .getCurrentProfileSummary()
+                      : repository.getCurrentProfile())
+                  .timeout(coreTimeout);
+          if (!current()) return;
+          navigationProfile?.complete(profile);
+          setState(() {
+            _profile = profile;
+            _loading = false;
+          });
+        } catch (_) {
+          failed('your profile');
+          publish(() => _loading = false);
+        }
+      }(),
+      section('party invitations', () async {
+        final bookings = await bookingsRead;
+        if (!current()) return;
+        final party = await _loadParty(bookings).timeout(extraTimeout);
+        publish(() => _party = party);
+      }),
+      section('rating', () async {
+        final season = await loadActiveLeaderboardSeason(
+          widget.leaderboardRepository,
+        ).timeout(extraTimeout);
+        if (!current()) return;
+        publish(() {
+          if (_season?.id != season.id) {
+            _ratings = null;
+            _rating = null;
+          }
+          _season = season;
+        });
+        final repository = widget.leaderboardRepository;
+        if (repository is TrackLeaderboardRepository) {
+          final ratings = await (repository as TrackLeaderboardRepository)
+              .loadPlayerRatings(season: season)
+              .timeout(extraTimeout);
+          publish(() {
+            _ratings = ratings;
+            _rating = ratings.forTrack(_ratingTrack);
+          });
+        } else {
+          final rating = await repository
+              .loadCurrentPlayerRating(season)
+              .timeout(extraTimeout);
+          publish(() {
+            _ratings = null;
+            _rating = rating;
+          });
+        }
+      }),
+      section('available games', () async {
+        final cityRepository =
+            widget.cityRepository ??
+            (openQueue is SupabaseOpenQueueRepository
+                ? SupabaseFieldrushCityRepository()
+                : null);
+        final city = cityRepository == null
+            ? FieldrushCity.phoenix
+            : await cityRepository.loadPreferredCity().timeout(extraTimeout);
+        if (!current()) return;
+        final games =
+            await (openQueue is OpenQueueCityRepository
+                    ? (openQueue as OpenQueueCityRepository).listCityGames(
+                        city.id,
+                      )
+                    : openQueue is OpenQueueMarketRepository
+                    ? (openQueue as OpenQueueMarketRepository).listMarketGames(
+                        city.timezone,
+                      )
+                    : openQueue.listGames())
+                .timeout(extraTimeout);
+        publish(() {
+          _city = city;
+          _games = games;
+        });
+      }),
+      section('live games', () async {
+        final games = await openQueue.listFixtureGames().timeout(extraTimeout);
+        publish(() => _fixtureGames = games);
+      }),
+      section('clan games', () async {
+        final data = await Future.wait<Object?>([
+          widget.clanRepository.listClans(),
           widget.clanRepository.getMyClanMembership(),
-        ),
-        optional<MyClanMembership?>(
-          'fixture membership',
           widget.fixtureRepository.getMyClanMembership(),
-        ),
-        optional('clan games', widget.fixtureRepository.listFixtures()),
-        optional('live games', widget.openQueueRepository.listFixtureGames()),
-        if (widget.discoveryRepository != null)
-          optional('activity', widget.discoveryRepository!.notifications()),
-      ]);
-      if (!mounted || version != _loadVersion) return;
-      final profile = data[0] as PlayerProfile;
-      final bookings =
-          (data[2] as List<OpenQueueBooking>? ?? [])
-              .where(
-                (b) =>
-                    b.status.toUpperCase() == 'CONFIRMED' &&
-                    ![
-                      'CANCELLED',
-                      'FINAL',
-                    ].contains(b.game.status.toUpperCase()) &&
-                    !b.game.hasPendingOperationalResolution,
-              )
-              .toList()
-            ..sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
-      final membership = data[5] as ClanMembership?;
-      final clans = data[4] as List<Clan>? ?? [];
-      final fixtures = data[7] as List<Fixture>? ?? [];
-      final clan = clans.where((c) => c.id == membership?.clanId).firstOrNull;
-      final rosterRepo = widget.fixtureRepository;
-      final rosters = <String, FixtureReliabilityRoster>{};
-      if (clan != null && rosterRepo is FixtureReliabilityRosterRepository) {
+          widget.fixtureRepository.listFixtures(),
+        ]).timeout(extraTimeout);
+        if (!current()) return;
+        final clans = data[0] as List<Clan>;
+        final membership = data[1] as ClanMembership?;
+        final fixtures = data[3] as List<Fixture>;
+        final clan = clans.where((c) => c.id == membership?.clanId).firstOrNull;
+        publish(() {
+          _clan = clan;
+          _membership = data[2] as MyClanMembership?;
+          _fixtures = fixtures;
+          _rosters.clear();
+        });
+        final repository = widget.fixtureRepository;
+        if (clan == null || repository is! FixtureReliabilityRosterRepository) {
+          return;
+        }
         final candidates =
             fixtures
                 .where(
@@ -286,61 +365,23 @@ class _DashboardHomeState extends State<DashboardHome> {
               );
         await Future.wait([
           for (final fixture in candidates.take(3))
-            () async {
-              final roster = await optional(
-                'clan roster',
-                (rosterRepo as FixtureReliabilityRosterRepository)
-                    .getMyFixtureReliabilityRoster(fixture.id),
-              );
-              if (roster != null) rosters[fixture.id] = roster;
-            }(),
+            section('clan roster', () async {
+              final roster =
+                  await (repository as FixtureReliabilityRosterRepository)
+                      .getMyFixtureReliabilityRoster(fixture.id)
+                      .timeout(extraTimeout);
+              publish(() => _rosters[fixture.id] = roster);
+            }),
         ]);
-      }
-      final party = await _loadParty(bookings);
-      if (!mounted || version != _loadVersion) return;
-      navigationProfile?.complete(profile);
-      setState(() {
-        _profile = profile;
-        _city = city;
-        _ratings = data[1] is FieldrushPlayerRatings
-            ? data[1] as FieldrushPlayerRatings
-            : null;
-        _rating =
-            _ratings?.forTrack(_ratingTrack) ??
-            (data[1] is PlayerRatingLeaderboardEntry
-                ? data[1] as PlayerRatingLeaderboardEntry
-                : null);
-        _season = season;
-        _bookings = bookings;
-        _games = data[3] as List<OpenQueueGame>? ?? [];
-        _fixtureGames = data[8] as List<OpenQueueGame>? ?? [];
-        _fixtures = fixtures;
-        _clan = clan;
-        _membership = data[6] as MyClanMembership?;
-        _rosters
-          ..clear()
-          ..addAll(rosters);
-        _party = party;
-        _notifications = data.length > 9
-            ? data[9] as List<HomeNotification>? ?? []
-            : [];
-        if (failures.isNotEmpty) {
-          _error =
-              'Could not refresh ${failures.toSet().join(', ')}. Pull down to try again.';
-        }
-      });
-    } catch (error) {
-      if (mounted && version == _loadVersion) {
-        setState(
-          () => _error = userFacingError(
-            error,
-            fallback: 'We could not load your home feed.',
-          ),
-        );
-      }
-    } finally {
-      if (mounted && version == _loadVersion) setState(() => _loading = false);
-    }
+      }),
+      if (widget.discoveryRepository != null)
+        section('activity', () async {
+          final notifications = await widget.discoveryRepository!
+              .notifications()
+              .timeout(extraTimeout);
+          publish(() => _notifications = notifications);
+        }),
+    ]);
   }
 
   bool _isUpcomingClan(Fixture fixture) =>
@@ -354,6 +395,10 @@ class _DashboardHomeState extends State<DashboardHome> {
 
   Future<_PartyNotice?> _loadParty(List<OpenQueueBooking> bookings) async {
     final repo = widget.openQueueRepository;
+    Object? lastError;
+    var authoritativeReadSucceeded = false;
+    var fallbackReadCount = 0;
+    var fallbackReadFailed = false;
     if (repo is OpenQueuePartyNotificationRepository) {
       try {
         for (final notice
@@ -370,7 +415,9 @@ class _DashboardHomeState extends State<DashboardHome> {
             return _PartyNotice(booking, notice.inviter.displayName, notice.id);
           }
         }
-      } catch (_) {
+        authoritativeReadSucceeded = true;
+      } catch (error) {
+        lastError = error;
         /* The booking-scoped API is a rollout-safe fallback. */
       }
     }
@@ -379,6 +426,7 @@ class _DashboardHomeState extends State<DashboardHome> {
         try {
           final context = await (repo as OpenQueuePartyRepository)
               .getPartyContext(booking.gameId);
+          fallbackReadCount++;
           if (context.gameId == booking.gameId &&
               context.receivedInvites.isNotEmpty) {
             return _PartyNotice(
@@ -387,10 +435,17 @@ class _DashboardHomeState extends State<DashboardHome> {
               null,
             );
           }
-        } catch (_) {
+        } catch (error) {
+          lastError = error;
+          fallbackReadFailed = true;
           /* Invitations must not block the rest of Home. */
         }
       }
+    }
+    if (!authoritativeReadSucceeded &&
+        lastError != null &&
+        (fallbackReadCount == 0 || fallbackReadFailed)) {
+      throw lastError;
     }
     return null;
   }

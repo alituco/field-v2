@@ -214,8 +214,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      DashboardHome(
+    final pages = <WidgetBuilder>[
+      (_) => DashboardHome(
         ratingTrackController: _ratingTrack,
         activationTick: _homeActivationTick,
         profileRepository: _profileRepository,
@@ -230,7 +230,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onOpenProfile: () => _selectTab(4),
         onNavigateTab: _selectTab,
       ),
-      FixturesScreen(
+      (_) => FixturesScreen(
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
         clanRepository: _clanRepository,
@@ -239,12 +239,12 @@ class _HomeScreenState extends State<HomeScreen> {
         onPlay: _openSoloBooking,
         onOpenGame: _openSoloGame,
       ),
-      ClansScreen(
+      (_) => ClansScreen(
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         activationTick: _clansActivationTick,
       ),
-      LeaderboardScreen(
+      (_) => LeaderboardScreen(
         onFindGame: () => _openSoloBooking(null),
         ratingTrackController: _ratingTrack,
         clanRepository: _clanRepository,
@@ -254,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
         playerActivationTick: _playerRanksActivationTick,
         onOpenYou: () => _selectTab(4),
       ),
-      FieldrushYouScreen(
+      (_) => FieldrushYouScreen(
         ratingTrackController: _ratingTrack,
         activationTick: _youActivationTick,
         profileRepository: _profileRepository,
@@ -302,13 +302,71 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: _selectedIndex == 0 || _selectedIndex == 4
           ? FieldrushAuthTheme.cream
           : fieldBackground,
-      body: IndexedStack(index: _selectedIndex, children: pages),
+      body: HomeTabStack(
+        selectedIndex: _selectedIndex,
+        tabBuilders: pages,
+        onFirstMount: _tabRefresh.refreshed,
+      ),
       bottomNavigationBar: FieldBottomNav(
         selectedIndex: _selectedIndex,
         onSelected: _selectTab,
       ),
     );
   }
+}
+
+/// Mount each destination on its first visit, then keep its element/state in
+/// the same stack slot. Offstage visited pages still receive activation ticks;
+/// untouched destinations perform no repository reads during sign-in.
+class HomeTabStack extends StatefulWidget {
+  const HomeTabStack({
+    super.key,
+    required this.selectedIndex,
+    required this.tabBuilders,
+    this.onFirstMount,
+  }) : assert(selectedIndex >= 0 && selectedIndex < tabBuilders.length);
+
+  final int selectedIndex;
+  final List<WidgetBuilder> tabBuilders;
+  final ValueChanged<int>? onFirstMount;
+
+  @override
+  State<HomeTabStack> createState() => _HomeTabStackState();
+}
+
+class _HomeTabStackState extends State<HomeTabStack> {
+  final _visited = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _visitSelectedTab();
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeTabStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    assert(oldWidget.tabBuilders.length == widget.tabBuilders.length);
+    _visitSelectedTab();
+  }
+
+  void _visitSelectedTab() {
+    if (_visited.add(widget.selectedIndex)) {
+      widget.onFirstMount?.call(widget.selectedIndex);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => IndexedStack(
+    index: widget.selectedIndex,
+    children: [
+      for (var index = 0; index < widget.tabBuilders.length; index++)
+        if (_visited.contains(index))
+          Builder(builder: widget.tabBuilders[index])
+        else
+          const SizedBox.shrink(),
+    ],
+  );
 }
 
 class ModerationStatusNoticeContent extends StatelessWidget {
