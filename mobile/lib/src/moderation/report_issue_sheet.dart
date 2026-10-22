@@ -20,6 +20,7 @@ Future<ModerationReportReceipt?> showReportIssueSheet({
 }) {
   return showFieldrushModal<ModerationReportReceipt>(
     context: context,
+    dismissible: false,
     builder: (_) => ReportIssueSheet(
       repository: repository,
       subjectType: subjectType,
@@ -116,8 +117,12 @@ class _ReportIssueSheetState extends State<ReportIssueSheet> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      PopScope(canPop: !_isSubmitting, child: _buildForm(context));
+
+  Widget _buildForm(BuildContext context) {
     final categories = ModerationReportCategory.forSubject(widget.subjectType);
+
     return FieldrushModal(
       key: moderationReportSheetKey,
       eyebrow: 'Private report',
