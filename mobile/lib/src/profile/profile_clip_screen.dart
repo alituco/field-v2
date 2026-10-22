@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_toast.dart';
 import '../ui/fieldrush_video_player.dart';
 import '../ui/fieldrush_modal.dart';
@@ -875,13 +876,11 @@ class _ClipOwnerAvatar extends StatelessWidget {
       dimension: 29,
       child: ColoredBox(
         color: const Color(0xFFEAE1C5),
-        child: avatarUrl?.isNotEmpty == true
-            ? Image.network(
-                avatarUrl!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _label(),
-              )
-            : _label(),
+        child: FieldrushAvatarImage(
+          size: 29,
+          url: avatarUrl,
+          fallback: _label(),
+        ),
       ),
     ),
   );

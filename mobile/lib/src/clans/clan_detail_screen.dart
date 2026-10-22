@@ -13,6 +13,7 @@ import '../moderation/report_issue_sheet.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_modal.dart';
 import '../ui/fieldrush_toast.dart';
 import 'clan.dart';
@@ -165,6 +166,43 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
       fallback: 'Could not complete that action. Try again.',
     ),
   );
+
+  Future<void> _showExitError(Object error, {required bool archive}) async {
+    var description = userFacingError(
+      error,
+      fallback: archive
+          ? 'We couldn’t confirm that this clan was archived. Please try again.'
+          : 'We couldn’t confirm that you left this clan. Please try again.',
+    );
+    final message = description.toLowerCase();
+    if (archive && message.contains('active clan match')) {
+      description =
+          'Your clan still has an unfinished match. Cancel upcoming clan matches, '
+          'or ask a referee or admin to resolve live or past matches, then try again.';
+    } else if (archive && message.contains('only the clan owner')) {
+      description = 'Only the clan captain can archive this clan.';
+    } else if (archive && message.contains('already been deleted')) {
+      description =
+          'This clan has already been archived. Return to Clans and refresh.';
+    }
+    await showFieldrushModal<void>(
+      context: context,
+      builder: (sheetContext) => FieldrushModal(
+        key: const ValueKey('clan-exit-error'),
+        title: archive ? 'Couldn’t archive clan' : 'Couldn’t leave clan',
+        description: description,
+        eyebrow: 'Clan action',
+        actions: [
+          FilledButton(
+            key: const ValueKey('clan-exit-error-close'),
+            onPressed: () => Navigator.of(sheetContext).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<bool> _confirm(
     String title,
     String message,
@@ -499,7 +537,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
         Navigator.of(context).pop(true);
       }
     } catch (error) {
-      if (mounted) _showError(error);
+      if (mounted) await _showExitError(error, archive: archive);
     } finally {
       if (mounted) setState(() => _working = false);
     }
@@ -906,29 +944,19 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
                           : const Color(0xFFF2EFE3),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: member.avatarUrl == null
-                        ? Text(
-                            me ? 'YOU' : member.initials,
-                            style: clanTitle(
-                              me ? 10 : 13,
-                              color: me
-                                  ? Colors.white
-                                  : const Color(0xFF3C4A38),
-                            ),
-                          )
-                        : Image.network(
-                            member.avatarUrl!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, _, _) => Center(
-                              child: Text(
-                                member.initials,
-                                style: clanTitle(
-                                  13,
-                                  color: const Color(0xFF3C4A38),
-                                ),
-                              ),
-                            ),
+                    child: FieldrushAvatarImage(
+                      size: 38,
+                      url: member.avatarUrl,
+                      fallback: Center(
+                        child: Text(
+                          me ? 'YOU' : member.initials,
+                          style: clanTitle(
+                            me ? 10 : 13,
+                            color: me ? Colors.white : const Color(0xFF3C4A38),
                           ),
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 11),
                   Expanded(

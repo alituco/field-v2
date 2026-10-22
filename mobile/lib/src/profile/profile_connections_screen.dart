@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
@@ -772,13 +773,11 @@ class _ConnectionAvatar extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
       ),
       clipBehavior: Clip.antiAlias,
-      child: avatarUrl == null || avatarUrl.isEmpty
-          ? initials()
-          : Image.network(
-              avatarUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => initials(),
-            ),
+      child: FieldrushAvatarImage(
+        size: 38,
+        url: avatarUrl,
+        fallback: initials(),
+      ),
     );
   }
 }

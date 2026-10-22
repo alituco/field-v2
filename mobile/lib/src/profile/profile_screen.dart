@@ -26,6 +26,7 @@ import '../reliability/reliability_status_card.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_toast.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
@@ -2132,14 +2133,11 @@ class _ProfileAvatar extends StatelessWidget {
         ],
       ),
       child: ClipOval(
-        child: avatarUrl == null || avatarUrl.isEmpty
-            ? _AvatarInitials(profile: profile, size: size)
-            : Image.network(
-                avatarUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    _AvatarInitials(profile: profile, size: size),
-              ),
+        child: FieldrushAvatarImage(
+          size: size,
+          url: avatarUrl,
+          fallback: _AvatarInitials(profile: profile, size: size),
+        ),
       ),
     );
   }

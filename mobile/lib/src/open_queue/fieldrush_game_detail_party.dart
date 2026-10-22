@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
@@ -721,37 +722,25 @@ class _FieldrushGameDetailPartyState extends State<FieldrushGameDetailParty> {
         borderRadius: BorderRadius.circular(13),
       ),
       clipBehavior: Clip.antiAlias,
-      child: avatarUrl == null
-          ? Text(
-              isMe
-                  ? 'YOU'
-                  : initials.isEmpty
-                  ? 'F'
-                  : initials,
-              style: TextStyle(
-                fontFamily: isMe ? 'PlusJakartaSans' : 'Outfit',
-                fontSize: isMe ? 9 : 13,
-                fontWeight: FontWeight.w800,
-                color: isMe ? Colors.white : const Color(0xFF3C4A38),
-              ),
-            )
-          : Image.network(
-              avatarUrl,
-              width: 38,
-              height: 38,
-              fit: BoxFit.cover,
-              errorBuilder: (_, _, _) => Text(
-                isMe
-                    ? 'YOU'
-                    : initials.isEmpty
-                    ? 'F'
-                    : initials,
-                style: _text(
-                  13,
-                  color: isMe ? Colors.white : FieldrushAuthTheme.ink,
-                ),
-              ),
+      child: FieldrushAvatarImage(
+        size: 38,
+        url: avatarUrl,
+        fallback: Center(
+          child: Text(
+            isMe
+                ? 'YOU'
+                : initials.isEmpty
+                ? 'F'
+                : initials,
+            style: TextStyle(
+              fontFamily: isMe ? 'PlusJakartaSans' : 'Outfit',
+              fontSize: isMe ? 9 : 13,
+              fontWeight: FontWeight.w800,
+              color: isMe ? Colors.white : const Color(0xFF3C4A38),
             ),
+          ),
+        ),
+      ),
     );
   }
 }

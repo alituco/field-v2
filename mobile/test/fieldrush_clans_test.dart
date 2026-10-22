@@ -15,6 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _clan = Clan(
   id: 'desert',
@@ -331,6 +332,98 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'blocked clan archive keeps an actionable error open until dismissed',
+    (tester) async {
+      final repository = _Clans(owned: true)
+        ..archiveError = const PostgrestException(
+          message:
+              'Cancel every active clan match from Match Details before deleting this clan. Live matches must be resolved by the referee or Field admin.',
+          code: 'P0001',
+        );
+      var membershipChanges = 0;
+      await _pump(
+        tester,
+        ClanDetailScreen(
+          clan: _clan,
+          clanRepository: repository,
+          fixtureRepository: _Fixtures(),
+          currentMembership: repository.membership,
+          embedded: true,
+          onMembershipChanged: () async {
+            membershipChanges++;
+          },
+        ),
+      );
+      await tester.tap(find.byType(PopupMenuButton<String>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Archive clan'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('field-confirmation-confirm')),
+      );
+      await tester.pumpAndSettle();
+      expect(repository.archiveAttempts, 1);
+      expect(find.text('Couldn’t archive clan'), findsOneWidget);
+      expect(
+        find.textContaining('Your clan still has an unfinished match.'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('ask a referee or admin'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      expect(find.byKey(const ValueKey('clan-exit-error')), findsOneWidget);
+      expect(membershipChanges, 0);
+      expect(repository.membership, isNotNull);
+      await tester.tap(find.byKey(const ValueKey('clan-exit-error-close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('clan-exit-error')), findsNothing);
+      expect(find.text('Desert Rattlers'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'unexpected archive failure shows a safe explanation and allows another attempt',
+    (tester) async {
+      final repository = _Clans(owned: true)
+        ..archiveError = const PostgrestException(
+          message: 'column "internal_secret" does not exist',
+          code: '42703',
+        );
+      await _pump(
+        tester,
+        ClanDetailScreen(
+          clan: _clan,
+          clanRepository: repository,
+          fixtureRepository: _Fixtures(),
+          currentMembership: repository.membership,
+          embedded: true,
+        ),
+      );
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        await tester.tap(find.byType(PopupMenuButton<String>));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Archive clan'));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('field-confirmation-confirm')),
+        );
+        await tester.pumpAndSettle();
+        expect(repository.archiveAttempts, attempt);
+        expect(
+          find.text(
+            'We couldn’t confirm that this clan was archived. Please try again.',
+          ),
+          findsOneWidget,
+        );
+        expect(find.textContaining('internal_secret'), findsNothing);
+        await tester.tap(find.byKey(const ValueKey('clan-exit-error-close')));
+        await tester.pumpAndSettle();
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _pump(
@@ -407,6 +500,8 @@ class _Clans implements ClanRepository {
   final roleChanges = <({String profileId, bool makeLeader})>[];
   final removed = <String>[], transferred = <String>[];
   int creates = 0;
+  int archiveAttempts = 0;
+  Object? archiveError;
   String? createdTheme;
   @override
   Future<List<Clan>> listClans() async => clans;
@@ -456,6 +551,14 @@ class _Clans implements ClanRepository {
   @override
   Future<void> requestToJoinClan(String id) async {
     joined.add(id);
+  }
+
+  @override
+  Future<void> archiveClan(String id) async {
+    archiveAttempts++;
+    if (archiveError case final error?) throw error;
+    membership = null;
+    clans = [];
   }
 
   @override

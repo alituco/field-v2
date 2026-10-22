@@ -421,7 +421,7 @@ void main() {
         ),
       );
       expect(find.text('SEASON 1'), findsOneWidget);
-      expect(find.text('#7 in Phoenix ›'), findsOneWidget);
+      expect(find.text('#7 in Phoenix'), findsOneWidget);
       expect(find.text('SILVER'), findsOneWidget);
       expect(find.text('101 SR to Division 3'), findsOneWidget);
       expect(find.byKey(const ValueKey('home-rating-event-1')), findsNothing);
@@ -480,7 +480,7 @@ void main() {
           onTap: () {},
         ),
       );
-      expect(find.text('View ladder ›'), findsOneWidget);
+      expect(find.text('View divisions ›'), findsOneWidget);
       expect(find.textContaining('Phoenix'), findsNothing);
     },
   );
@@ -522,6 +522,42 @@ void main() {
     await tester.tap(find.byTooltip('Search players'));
     await tester.tap(find.byTooltip('Activity'));
     expect([profile, search, activity], [1, 1, 1]);
+  });
+
+  testWidgets('header shows division and SR without the provisional label', (
+    tester,
+  ) async {
+    const visibility = PlayerRatingVisibility(
+      lifetimeCountedMatches: 2,
+      seasonCountedMatches: 0,
+      ratingVisible: true,
+      provisional: true,
+      placementMatchesRemaining: 0,
+    );
+    final profile = _profile(matches: 0, visibility: visibility);
+    final leaderboardRating = _rating(visibility: visibility);
+
+    for (final rating in [null, leaderboardRating]) {
+      expect((rating ?? profile.playerRating!).provisional, isTrue);
+      await _pump(
+        tester,
+        FieldrushHomeHeader(
+          profile: profile,
+          rating: rating,
+          onProfile: () {},
+          onSearch: () {},
+          onActivity: () {},
+          hasUnread: false,
+          now: DateTime(2099, 6, 1, 19),
+        ),
+      );
+
+      expect(find.text('Evening, Sam'), findsOneWidget);
+      expect(find.text('Division 4 · 1199 skill rating'), findsOneWidget);
+      expect(find.textContaining('Provisional'), findsNothing);
+      expect(find.textContaining('Placement'), findsNothing);
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('every Home widget fits at 320px and text scale 1.4', (
@@ -877,6 +913,7 @@ PlayerProfile _profile({
 PlayerRatingLeaderboardEntry _rating({
   int rank = 7,
   String region = 'phoenix',
+  PlayerRatingVisibility? visibility,
 }) => PlayerRatingLeaderboardEntry(
   rank: rank,
   profileId: 'profile',
@@ -889,6 +926,7 @@ PlayerRatingLeaderboardEntry _rating({
   draws: 2,
   lastChange: 4,
   region: region,
+  visibility: visibility,
 );
 ProfileRatingEvent _event(int day) => ProfileRatingEvent(
   id: '$day',

@@ -20,6 +20,7 @@ import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability.dart';
 import '../reliability/reliability_repository.dart';
 import '../reliability/reliability_status_card.dart';
+import '../ranking/fieldrush_divisions_screen.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
 import 'dev_user_switcher_sheet.dart';
@@ -55,6 +56,7 @@ class FieldrushYouScreen extends StatefulWidget {
     this.onSwitchUser,
     this.isSigningOut = false,
     this.ratingTrackController,
+    this.onNavigateTab,
   });
 
   final ProfileRepository profileRepository;
@@ -74,6 +76,7 @@ class FieldrushYouScreen extends StatefulWidget {
   final Future<void> Function(String)? onSwitchUser;
   final bool isSigningOut;
   final ValueNotifier<RatingTrack>? ratingTrackController;
+  final ValueChanged<int>? onNavigateTab;
 
   @override
   State<FieldrushYouScreen> createState() => _FieldrushYouScreenState();
@@ -137,6 +140,32 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
         _rating = _ratings?.forTrack(track);
       });
     }
+  }
+
+  void _openDivisions() {
+    final navigator = Navigator.of(context);
+    navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushDivisionsScreen(
+          rating: _ratings?.forTrack(_ratingTrack) ?? _rating,
+          prediction: _ratings?.predictionFor(_ratingTrack),
+          track: _ratingTrack,
+          season: _season,
+          cityName: _ratings?.primaryCityName ?? _rating?.region,
+          selectedTab: 4,
+          onOpenRanks: () {
+            navigator.pop();
+            widget.onOpenRanks();
+          },
+          onNavigateTab: widget.onNavigateTab == null
+              ? null
+              : (index) {
+                  navigator.pop();
+                  widget.onNavigateTab!(index);
+                },
+        ),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -586,7 +615,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                             _openConnections(ProfileConnectionTab.following),
                         onFans: () =>
                             _openConnections(ProfileConnectionTab.fans),
-                        onRanks: widget.onOpenRanks,
+                        onRanks: _rating == null
+                            ? widget.onOpenRanks
+                            : _openDivisions,
                         onMatchHistory: _openHistory,
                         onClip: _openClip,
                         onAllClips: _openAllClips,

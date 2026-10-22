@@ -5,8 +5,9 @@ import type { RefereeFixture } from "@/lib/types";
 import { buildReviewResolution, resolutionExplanations, resolutionLabels, reviewEventLabels, toEventDraft, type EventDraft, type ReviewDraft, type ReviewState } from "@/lib/season-zero-review-ui";
 import styles from "./season-zero-operations.module.css";
 
-export function SeasonZeroRatingReviewPanel({ fixture, accessToken, onSaved }: {
+export function SeasonZeroRatingReviewPanel({ fixture, accessToken, onSaved, onEvidenceLoaded }: {
   fixture: RefereeFixture; accessToken: string; onSaved: () => void | Promise<void>;
+  onEvidenceLoaded?: (gameId: string, hasKickoff: boolean | null) => void;
 }) {
   const [state, setState] = useState<ReviewState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -17,18 +18,29 @@ export function SeasonZeroRatingReviewPanel({ fixture, accessToken, onSaved }: {
   const [confirmed, setConfirmed] = useState(false);
   const [conflict, setConflict] = useState(false);
   const request = useRef<{ content: string; id: string } | null>(null);
+  const loadSequence = useRef(0);
   const endpoint = `/api/referee/admin/solo-games/${fixture.id}/rating-review`;
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
+    onEvidenceLoaded?.(fixture.id, null);
     setLoading(true); setError(null);
     try {
       const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Could not load rating review.");
+      if (sequence !== loadSequence.current) return;
+      if (payload.state !== null && (!payload.state || payload.state.game_id !== fixture.id ||
+          !Number.isInteger(payload.state.revision) || payload.state.revision < 1 ||
+          !["LIVE", "REVIEW", "FINAL"].includes(payload.state.lifecycle) ||
+          !Array.isArray(payload.state.observed_roster) || !Array.isArray(payload.state.events))) {
+        throw new Error("Could not verify the match kickoff evidence. Refresh before reviewing this game.");
+      }
       setState(payload.state); setConflict(false);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "Could not load rating review."); }
-    finally { setLoading(false); }
-  }, [endpoint, accessToken]);
-  useEffect(() => { void load(); }, [load]);
+      onEvidenceLoaded?.(fixture.id, payload.state !== null);
+    } catch (failure) { if (sequence === loadSequence.current) { setState(null); setError(failure instanceof Error ? failure.message : "Could not load rating review."); } }
+    finally { if (sequence === loadSequence.current) setLoading(false); }
+  }, [endpoint, accessToken, fixture.id, onEvidenceLoaded]);
+  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, [load]);
 
   function edit() {
     if (!state) return;
@@ -81,7 +93,7 @@ export function SeasonZeroRatingReviewPanel({ fixture, accessToken, onSaved }: {
       {!draft ? <button className={styles.secondary} disabled={loading || saving} type="button" onClick={() => void load()}>Refresh rating evidence</button> : null}</header>
     <p className={styles.hint}>Review the actual result and participation. This form creates a new evidence revision and server-side replay; it never sets a player’s SR or adds replacement players.</p>
     {loading ? <p role="status">Loading rating evidence…</p> : null}
-    {!loading && !state && !error ? <p className={styles.hint}>No kickoff evidence exists yet. Before kickoff, use the ordinary cancellation and refund controls if needed.</p> : null}
+    {!loading && !state && !error ? <p className={styles.hint}>No kickoff was recorded. For an unresolved game, use “Review & resolve no data” or “Cancel game” to review the refund preview before confirming cancellation. Ratings stay unchanged.</p> : null}
     {state ? <>
       <dl className={styles.facts}><div><dt>Settlement</dt><dd>{settlementLabel}</dd></div><div><dt>Evidence revision</dt><dd>{state.revision}</dd></div><div><dt>Played clock</dt><dd>{state.elapsed_seconds} seconds</dd></div><div><dt>Outcome</dt><dd>{resolutionLabels[state.rating_status] ?? state.rating_status}</dd></div></dl>
       {state.adjudication_reason ? <p className={styles.hint}>Latest review reason: {state.adjudication_reason}</p> : null}

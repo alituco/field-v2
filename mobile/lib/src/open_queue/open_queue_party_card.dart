@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_modal.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
@@ -1680,26 +1681,19 @@ class _PartyInviteSheetState extends State<_PartyInviteSheet> {
       ),
       clipBehavior: Clip.antiAlias,
       alignment: Alignment.center,
-      child: player.avatarUrl == null
-          ? Text(
-              initials.isEmpty ? 'F' : initials,
-              style: FieldrushModal.titleStyle.copyWith(
-                fontSize: size == 46 ? 14 : 12,
-                color: muted
-                    ? const Color(0xFFA9A490)
-                    : const Color(0xFF3C4A38),
-              ),
-            )
-          : Image.network(
-              player.avatarUrl!,
-              fit: BoxFit.cover,
-              width: size,
-              height: size,
-              errorBuilder: (_, _, _) => Text(
-                initials.isEmpty ? 'F' : initials,
-                style: FieldrushModal.titleStyle.copyWith(fontSize: 12),
-              ),
+      child: FieldrushAvatarImage(
+        size: size,
+        url: player.avatarUrl,
+        fallback: Center(
+          child: Text(
+            initials.isEmpty ? 'F' : initials,
+            style: FieldrushModal.titleStyle.copyWith(
+              fontSize: size == 46 ? 14 : 12,
+              color: muted ? const Color(0xFFA9A490) : const Color(0xFF3C4A38),
             ),
+          ),
+        ),
+      ),
     );
   }
 }

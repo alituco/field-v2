@@ -219,6 +219,14 @@ test("independent staff and player account isolation is mandatory before deploym
   assert.doesNotMatch(seed, /select id, 'CI Admin', phone/);
 });
 
+test("unstarted Season 0 reviewed cancellations have mandatory full-schema regressions", () => {
+  const check = stepContaining(job("database"), "supabase/scripts/verify_unstarted_season_zero_resolution.sql");
+  assert.match(check, /set -euo pipefail/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.match(check, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true/);
+});
+
 test("configurable solo minimum and timing have mandatory full-schema regressions", () => {
   const source = job("database");
   for (const file of ["verify_configurable_solo_minimum.sql", "verify_solo_start_window.sql", "verify_solo_minimum_streaming.sql"]) {

@@ -66,6 +66,10 @@ export default function AdminGameDetailPage() {
   const [confirmFillBots, setConfirmFillBots] = useState(false);
   const [fillingBots, setFillingBots] = useState(false);
   const [resolveCase, setResolveCase] = useState(false);
+  const [kickoffEvidence, setKickoffEvidence] = useState<{ gameId: string; hasKickoff: boolean } | null>(null);
+  const receiveKickoffEvidence = useCallback((evidenceGameId: string, hasKickoff: boolean | null) => {
+    setKickoffEvidence(hasKickoff === null ? null : { gameId: evidenceGameId, hasKickoff });
+  }, []);
   const [retryRefund, setRetryRefund] =
     useState<AdminGameResolutionRefund | null>(null);
   const mounted = useRef(true);
@@ -211,6 +215,10 @@ export default function AdminGameDetailPage() {
     resolutionCase &&
     ["NO_DATA", "UNDER_REVIEW"].includes(resolutionCase.state),
   );
+  const unstartedSeasonZeroReview = seasonZero && needsResolution &&
+    ["OPEN", "FULL"].includes(fixture.status) &&
+    kickoffEvidence?.gameId === fixture.id && kickoffEvidence.hasKickoff === false;
+  const canReviewCase = !seasonZero || unstartedSeasonZeroReview;
   const displayedStatus = resolutionDisplayStatus(detail);
   const rosterReadiness = soloGameReadiness(fixture,
     detail.participants.matchKind === "SOLO" ? detail.participants.counts.registered : 0);
@@ -230,7 +238,7 @@ export default function AdminGameDetailPage() {
         <ResolutionCaseBanner
           caseData={resolutionCase}
           detail={detail}
-          onResolve={seasonZero ? undefined : () => setResolveCase(true)}
+          onResolve={canReviewCase ? () => setResolveCase(true) : undefined}
           onRetryRefund={setRetryRefund}
         />
       ) : null}
@@ -265,7 +273,7 @@ export default function AdminGameDetailPage() {
 
       <div className={styles.grid}>
         <div className={styles.mainColumn}>
-          {seasonZero ? <SeasonZeroRatingReviewPanel key={fixture.id} fixture={fixture} accessToken={accessToken} onSaved={async () => { await load(true); }} /> : null}
+          {seasonZero ? <SeasonZeroRatingReviewPanel key={fixture.id} fixture={fixture} accessToken={accessToken} onEvidenceLoaded={receiveKickoffEvidence} onSaved={async () => { await load(true); }} /> : null}
           {!seasonZero ? <section className={styles.card}>
             <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the playing squad, or change rating eligibility." />
             <div className={styles.reserveGrid}>
@@ -378,7 +386,7 @@ export default function AdminGameDetailPage() {
           <section className={styles.card}>
             <SectionHead eyebrow="ADMIN CONTROLS" title="Resolve game issues" detail="Every action requires a reason and is permanently audited." />
             <div className={styles.adminActions}>
-              {needsResolution && !seasonZero ? (
+              {needsResolution && canReviewCase ? (
                 <button
                   className={styles.primaryButton}
                   onClick={() => setResolveCase(true)}
@@ -409,15 +417,16 @@ export default function AdminGameDetailPage() {
               ) : null}
               <button
                 className={styles.dangerButton}
-                disabled={needsResolution || !canCancelGame(fixture.status)}
-                onClick={() => setCancelGame(true)}
+                disabled={(needsResolution && !unstartedSeasonZeroReview) || !canCancelGame(fixture.status)}
+                onClick={() => unstartedSeasonZeroReview ? setResolveCase(true) : setCancelGame(true)}
                 type="button"
               >
                 Cancel game
               </button>
             </div>
             <p className={styles.actionHint}>
-              {seasonZero ? "Use Rating review for Season 0 outcomes and timeline corrections. Payment and refund controls remain separate."
+              {unstartedSeasonZeroReview ? "No kickoff was recorded. Review cancellation to preview full refunds and close this unresolved game without adding a result or changing ratings."
+                : seasonZero ? "Use Rating review for Season 0 outcomes and timeline corrections. Payment and refund controls remain separate."
                 : needsResolution
                 ? "Use the no-data review so attendance, refunds, SR and strikes are decided together."
                 : "Admin cancellation gives every payer a full refund, including held reliability deposits. Card and digital wallet payments return to the original payment method."}
@@ -526,11 +535,12 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
-      {resolveCase && resolutionCase && !seasonZero ? (
+      {resolveCase && resolutionCase && canReviewCase ? (
         <ResolveMatchCaseDialog
           accessToken={accessToken}
           caseData={resolutionCase}
           detail={detail}
+          cancellationOnly={unstartedSeasonZeroReview}
           onClose={() => setResolveCase(false)}
           onSaved={async (savedNotice) => {
             setResolveCase(false);
@@ -989,10 +999,11 @@ function RetryResolutionRefundDialog({
   );
 }
 
-function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSaved }: {
+function ResolveMatchCaseDialog({ accessToken, caseData, detail, cancellationOnly = false, onClose, onSaved }: {
   accessToken: string;
   caseData: AdminGameResolutionCase;
   detail: AdminGameDetail;
+  cancellationOnly?: boolean;
   onClose: () => void;
   onSaved: (notice: string) => Promise<void>;
 }) {
@@ -1079,7 +1090,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
       if (!resolutionType) return;
       setPreviewing(true);
       try {
-        const payload = buildResolutionPayload(
+        const payload = cancellationOnly ? {} : buildResolutionPayload(
           resolutionType,
           homeScore,
           awayScore,
@@ -1121,7 +1132,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
     setSaving(true);
     setError(null);
     try {
-      const payload = buildResolutionPayload(
+      const payload = cancellationOnly ? {} : buildResolutionPayload(
         resolutionType,
         homeScore,
         awayScore,
@@ -1189,7 +1200,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
               Choose only what the evidence supports. “No data” is not itself a no-show, so no attendance or reliability consequence is assumed.
             </p>
             <div className={styles.outcomeGrid}>
-              {RESOLUTION_OUTCOMES.map((item) => (
+              {RESOLUTION_OUTCOMES.filter(item => !cancellationOnly || ["FIELD_OR_VENUE_CANCELLATION", "ADMINISTRATIVE_VOID"].includes(item.type)).map((item) => (
                 <button
                   aria-pressed={resolutionType === item.type}
                   className={resolutionType === item.type ? styles.selectedOutcome : ""}
@@ -1270,7 +1281,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
               />
             ) : null}
 
-            <details
+            {!cancellationOnly ? <details
               className={styles.advancedResolution}
               open={advanced}
               onToggle={(event) => setAdvanced(event.currentTarget.open)}
@@ -1329,7 +1340,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
                 Player attendance is selected by name above so the result and
                 rating history cannot be attached to an unknown lineup.
               </p>
-            </details>
+            </details> : <p className={styles.actionHint}>This game has no recorded kickoff. Cancellation returns all paid fees and held deposits to the original payers, with no SR change or new reliability penalty.</p>}
           </>
         ) : null}
 

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan.dart';
@@ -683,14 +684,11 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
                       : const Color(0xFFF2EFE3),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: player.avatarUrl != null
-                    ? Image.network(
-                        player.avatarUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            _searchBadge(player, initials),
-                      )
-                    : _searchBadge(player, initials),
+                child: FieldrushAvatarImage(
+                  size: 36,
+                  url: player.avatarUrl,
+                  fallback: _searchBadge(player, initials),
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
