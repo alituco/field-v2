@@ -1,3 +1,4 @@
+import { loadAllRows } from "@/lib/paginated-rows";
 import { NextRequest, NextResponse } from "next/server";
 import { isStaffAuthIdentity, normalizeStaffEmail } from "@/lib/staff-identities";
 
@@ -43,60 +44,54 @@ export async function GET(request: NextRequest) {
 
   try {
     const [
-      refereesResult,
-      fixturesResult,
-      assignmentsResult,
-      soloGamesResult,
-      soloAssignmentsResult,
+      refereesRows,
+      fixturesRows,
+      assignmentsRows,
+      soloGamesRows,
+      soloAssignmentsRows,
     ] = await Promise.all([
-      context.db
+      loadAllRows((from, to) => context.db
         .from("referee_profiles")
         .select("profile_id,auth_user_id,email,display_name,phone,role")
         .eq("is_active", true)
         .not("auth_user_id", "is", null)
         .not("email", "is", null)
-        .order("display_name"),
-      context.db
+        .order("display_name").order("profile_id").range(from, to)),
+      loadAllRows((from, to) => context.db
         .from("fixtures")
         .select(assignmentFixtureSelect)
         .in("status", ["OPEN", "SCHEDULED", "LIVE", "FINAL", "CANCELLED"])
         .not("away_clan_id", "is", null)
         .order("match_date")
-        .order("time_slot"),
-      context.db
+        .order("time_slot").order("id").range(from, to)),
+      loadAllRows((from, to) => context.db
         .from("fixture_referee_assignments")
-        .select("fixture_id,referee_id"),
-      context.db
+        .select("fixture_id,referee_id").order("fixture_id").range(from, to)),
+      loadAllRows((from, to) => context.db
         .from("open_queue_games")
         .select("id,status,venue,starts_at,ends_at,timezone")
         .in("status", ["OPEN", "FULL", "LIVE", "FINAL", "CANCELLED"])
-        .order("starts_at"),
-      context.db
+        .order("starts_at").order("id").range(from, to)),
+      loadAllRows((from, to) => context.db
         .from("open_queue_referee_assignments")
-        .select("game_id,referee_id"),
+        .select("game_id,referee_id").order("game_id").range(from, to)),
     ]);
 
-    if (refereesResult.error) throw refereesResult.error;
-    if (fixturesResult.error) throw fixturesResult.error;
-    if (assignmentsResult.error) throw assignmentsResult.error;
-    if (soloGamesResult.error) throw soloGamesResult.error;
-    if (soloAssignmentsResult.error) throw soloAssignmentsResult.error;
-
     const refereeByFixture = new Map(
-      (assignmentsResult.data ?? []).map((row) => [
+      assignmentsRows.map((row) => [
         String(row.fixture_id),
         String(row.referee_id),
       ]),
     );
     const refereeBySoloGame = new Map(
-      (soloAssignmentsResult.data ?? []).map((row) => [
+      soloAssignmentsRows.map((row) => [
         String(row.game_id),
         String(row.referee_id),
       ]),
     );
 
-    const readyReferees: NonNullable<typeof refereesResult.data> = [];
-    const candidates = refereesResult.data ?? [];
+    const readyReferees: typeof refereesRows = [];
+    const candidates = refereesRows;
     for (let offset = 0; offset < candidates.length; offset += 20) {
       const verified = await Promise.all(candidates.slice(offset, offset + 20).map(async row => {
         const { data, error } = await context.db.auth.admin.getUserById(String(row.auth_user_id));
@@ -114,13 +109,13 @@ export async function GET(request: NextRequest) {
         role: String(row.role) === "admin" ? "admin" : "referee",
       } satisfies RefereeListItem)),
       fixtures: [
-        ...(fixturesResult.data ?? []).map((row) =>
+        ...fixturesRows.map((row) =>
           normalizeAssignableFixture(
             row as Record<string, unknown>,
             refereeByFixture.get(String(row.id)) ?? null,
           )
         ),
-        ...(soloGamesResult.data ?? []).map((row) =>
+        ...soloGamesRows.map((row) =>
           normalizeAssignableSoloGame(
             row as Record<string, unknown>,
             refereeBySoloGame.get(String(row.id)) ?? null,

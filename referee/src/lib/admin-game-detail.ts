@@ -8,8 +8,8 @@ import {
   loadAdminGameReserves,
   type AdminGameReserve,
 } from "./admin-game-reserves";
-import { loadAdminOpenQueueGames } from "./open-queue-referee-data";
-import { loadAdminFixtures } from "./referee-data";
+import { loadAdminOpenQueueGame } from "./open-queue-referee-data";
+import { loadAdminFixture } from "./referee-data";
 import type { RefereeFixture } from "./types";
 import { adminGameCurrency, type AdminGameCurrency } from "./admin-game-money";
 import { refundRequiresManualReview } from "./payment-refunds";
@@ -149,8 +149,8 @@ export async function loadAdminGameDetail(
   matchId: string,
 ): Promise<AdminGameDetail> {
   const gamePromise = matchKind === "SOLO"
-    ? loadAdminOpenQueueGames(db)
-    : loadAdminFixtures(db);
+    ? loadAdminOpenQueueGame(db, matchId)
+    : loadAdminFixture(db, matchId);
   const assignmentTable = matchKind === "SOLO"
     ? "open_queue_referee_assignments"
     : "fixture_referee_assignments";
@@ -159,7 +159,7 @@ export async function loadAdminGameDetail(
   const reportKey = matchKind === "SOLO" ? "open_queue_game_id" : "fixture_id";
 
   const [
-    games,
+    fixture,
     participants,
     reserves,
     assignmentResult,
@@ -210,7 +210,6 @@ export async function loadAdminGameDetail(
     matchKind === "SOLO" ? loadAdminGameFormation(db, matchId) : Promise.resolve(null),
   ]);
 
-  const fixture = games.find((game) => game.id === matchId);
   if (!fixture) throw new Error(matchKind === "SOLO" ? "Solo game not found." : "Clan fixture not found.");
   if (assignmentResult.error) throw new Error(`Could not load referee: ${assignmentResult.error.message}`);
   if (auditResult.error) throw new Error(`Could not load game audit: ${auditResult.error.message}`);

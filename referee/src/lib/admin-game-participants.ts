@@ -1,3 +1,4 @@
+import { loadAllRows } from "./paginated-rows.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type AdminGameParticipantSide =
@@ -117,7 +118,7 @@ async function loadSoloGameParticipants(
   if (!game) throw new AdminGameNotFoundError("SOLO");
 
   const [bookingResult, attendanceResult] = await Promise.all([
-    db
+    loadAllRows((from, to) => db
       .from("open_queue_bookings")
       .select(`
         id,
@@ -137,8 +138,8 @@ async function loadSoloGameParticipants(
         )
       `)
       .eq("game_id", matchId)
-      .order("booked_at"),
-    db
+      .order("booked_at").order("id").range(from, to)),
+    loadAllRows((from, to) => db
       .from("match_attendance_records")
       .select(`
         id,
@@ -159,24 +160,15 @@ async function loadSoloGameParticipants(
         )
       `)
       .eq("match_kind", "SOLO")
-      .eq("open_queue_game_id", matchId),
+      .eq("open_queue_game_id", matchId).order("id").range(from, to)),
   ]);
-
-  if (bookingResult.error) {
-    throw new Error(`Could not load solo bookings: ${bookingResult.error.message}`);
-  }
-  if (attendanceResult.error) {
-    throw new Error(
-      `Could not load solo attendance roster: ${attendanceResult.error.message}`,
-    );
-  }
 
   return buildSoloGameParticipants({
     matchId,
     status: stringValue(game.status),
     capacity: integerValue(game.capacity, 12),
-    bookingRows: rows(bookingResult.data),
-    attendanceRows: rows(attendanceResult.data),
+    bookingRows: rows(bookingResult),
+    attendanceRows: rows(attendanceResult),
   });
 }
 
@@ -196,7 +188,7 @@ async function loadClanGameParticipants(
   if (!fixture) throw new AdminGameNotFoundError("CLAN");
 
   const [rosterResult, appearanceResult, attendanceResult] = await Promise.all([
-    db
+    loadAllRows((from, to) => db
       .from("fixture_reliability_roster_history")
       .select(`
         id,
@@ -213,8 +205,8 @@ async function loadClanGameParticipants(
         )
       `)
       .eq("fixture_id", matchId)
-      .order("confirmed_at"),
-    db
+      .order("confirmed_at").order("id").range(from, to)),
+    loadAllRows((from, to) => db
       .from("fixture_player_appearances")
       .select(`
         profile_id,
@@ -231,8 +223,8 @@ async function loadClanGameParticipants(
         )
       `)
       .eq("fixture_id", matchId)
-      .eq("played", true),
-    db
+      .eq("played", true).order("profile_id").range(from, to)),
+    loadAllRows((from, to) => db
       .from("match_attendance_records")
       .select(`
         id,
@@ -252,27 +244,17 @@ async function loadClanGameParticipants(
         )
       `)
       .eq("match_kind", "CLAN")
-      .eq("fixture_id", matchId),
+      .eq("fixture_id", matchId).order("id").range(from, to)),
   ]);
-
-  if (rosterResult.error) {
-    throw new Error(`Could not load planned clan roster: ${rosterResult.error.message}`);
-  }
-  if (appearanceResult.error) {
-    throw new Error(`Could not load actual clan lineup: ${appearanceResult.error.message}`);
-  }
-  if (attendanceResult.error) {
-    throw new Error(`Could not load clan attendance: ${attendanceResult.error.message}`);
-  }
 
   return buildClanGameParticipants({
     matchId,
     status: stringValue(fixture.status),
     homeClanId: stringValue(fixture.home_clan_id),
     awayClanId: nullableString(fixture.away_clan_id),
-    rosterRows: rows(rosterResult.data),
-    appearanceRows: rows(appearanceResult.data),
-    attendanceRows: rows(attendanceResult.data),
+    rosterRows: rows(rosterResult),
+    appearanceRows: rows(appearanceResult),
+    attendanceRows: rows(attendanceResult),
   });
 }
 

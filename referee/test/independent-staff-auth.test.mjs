@@ -1,3 +1,4 @@
+import { loadAllRows } from "../src/lib/paginated-rows.ts";
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -119,12 +120,13 @@ test('assignment choices include verified independent staff and sanitize optiona
   const rows = [staff, { ...staff, profile_id: 'unverified', auth_user_id: 'unverified-auth' }];
   const db = { from: table => {
     const chain = { select: () => chain, eq: () => chain, not: (...args) => { reads.push(args); return chain; },
-      in: () => chain, order: () => chain,
+      in: () => chain, order: () => chain, range: () => chain,
       then: resolve => resolve({ data: table === 'referee_profiles' ? rows : [], error: null }) };
     return chain;
   }, auth: { admin: { getUserById: async id => ({ data: { user: id === authId ? identity : { ...identity, id, email_confirmed_at: null } }, error: null }) } } };
   const api = load('../src/app/api/referee/assignments/route.ts', { 'next/server': { NextResponse: Response },
     '@/lib/staff-identities': identities,
+    '@/lib/paginated-rows': { loadAllRows },
     '@/lib/referee-session': { requireReferee: async () => ({ db, referee: { profileId: staffId, role: 'admin' } }),
       isRefereeContext: () => true, adminOnly: () => null },
   });

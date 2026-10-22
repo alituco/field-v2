@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { formatVenueDateTime } from "@/lib/admin-game-time";
+import { loadAllRows } from "@/lib/paginated-rows";
 import { OPEN_REPORT_STATUSES } from "@/lib/admin-moderation";
 import { paymentIntentAttention, paymentRefundAttention, refundNeedsAttention } from "@/lib/payment-refunds";
 import {
@@ -14,6 +16,11 @@ function rows(value: unknown): Row[] {
   return Array.isArray(value)
     ? value.filter((item): item is Row => Boolean(item) && typeof item === "object")
     : [];
+}
+
+async function allRows<T>(page: Parameters<typeof loadAllRows<T>>[0]) {
+  try { return { data: await loadAllRows(page), error: null }; }
+  catch (error) { return { data: null, error: { message: error instanceof Error ? error.message : String((error as Row)?.message ?? error) } }; }
 }
 
 function dateOnly(date: Date) {
@@ -40,8 +47,6 @@ export async function GET(request: NextRequest) {
     soloResult,
     fixtureAssignmentsResult,
     soloAssignmentsResult,
-    fixtureReservesResult,
-    soloReservesResult,
     fixtureBroadcastResult,
     soloBroadcastResult,
     paymentReconciliationResult,
@@ -80,32 +85,28 @@ export async function GET(request: NextRequest) {
       .eq("state", "PENDING_REVIEW")
       .order("created_at", { ascending: false })
       .limit(30),
-    context.db
+    allRows((from, to) => context.db
       .from("fixtures")
       .select("id,match_date,time_slot,venue,status")
       .in("status", ["OPEN", "SCHEDULED"])
       .gte("match_date", dateOnly(now))
-      .lte("match_date", dateOnly(twoWeeks)),
-    context.db
+      .lte("match_date", dateOnly(twoWeeks)).order("id").range(from, to)),
+    allRows((from, to) => context.db
       .from("open_queue_games")
-      .select("id,starts_at,venue,status")
+      .select("id,starts_at,timezone,venue,status")
       .in("status", ["OPEN", "FULL"])
       .gte("starts_at", nowIso)
-      .lte("starts_at", twoWeeks.toISOString()),
-    context.db.from("fixture_referee_assignments").select("fixture_id"),
-    context.db.from("open_queue_referee_assignments").select("game_id"),
-    context.db.from("match_reserve_assignments").select("fixture_id")
-      .eq("status", "ACTIVE").not("fixture_id", "is", null),
-    context.db.from("match_reserve_assignments").select("open_queue_game_id")
-      .eq("status", "ACTIVE").not("open_queue_game_id", "is", null),
-    context.db
+      .lte("starts_at", twoWeeks.toISOString()).order("id").range(from, to)),
+    allRows((from, to) => context.db.from("fixture_referee_assignments").select("fixture_id").order("fixture_id").range(from, to)),
+    allRows((from, to) => context.db.from("open_queue_referee_assignments").select("game_id").order("game_id").range(from, to)),
+    allRows((from, to) => context.db
       .from("fixture_broadcasts")
       .select("fixture_id,status,error_message,updated_at")
-      .in("status", ["ERROR", "PROCESSING"]),
-    context.db
+      .in("status", ["ERROR", "PROCESSING"]).order("fixture_id").range(from, to)),
+    allRows((from, to) => context.db
       .from("open_queue_broadcasts")
       .select("game_id,status,error_message,updated_at")
-      .in("status", ["ERROR", "PROCESSING"]),
+      .in("status", ["ERROR", "PROCESSING"]).order("game_id").range(from, to)),
     context.db
       .from("payment_intents")
       .select(
@@ -147,8 +148,6 @@ export async function GET(request: NextRequest) {
     soloResult,
     fixtureAssignmentsResult,
     soloAssignmentsResult,
-    fixtureReservesResult,
-    soloReservesResult,
     fixtureBroadcastResult,
     soloBroadcastResult,
     paymentReconciliationResult,
@@ -180,23 +179,11 @@ export async function GET(request: NextRequest) {
   const assignedSolo = new Set(
     rows(soloAssignmentsResult.data).map((row) => String(row.game_id)),
   );
-  const reservedFixtures = new Set(
-    rows(fixtureReservesResult.data).map((row) => String(row.fixture_id)),
-  );
-  const reservedSolo = new Set(
-    rows(soloReservesResult.data).map((row) => String(row.open_queue_game_id)),
-  );
   const unassignedFixtures = rows(fixtureResult.data).filter(
     (row) => !assignedFixtures.has(String(row.id)),
   );
   const unassignedSolo = rows(soloResult.data).filter(
     (row) => !assignedSolo.has(String(row.id)),
-  );
-  const fixturesWithoutReserve = rows(fixtureResult.data).filter(
-    (row) => !reservedFixtures.has(String(row.id)),
-  );
-  const soloWithoutReserve = rows(soloResult.data).filter(
-    (row) => !reservedSolo.has(String(row.id)),
   );
   const broadcastCandidates: Array<Row & { matchKind: "CLAN" | "SOLO" }> = [
     ...rows(fixtureBroadcastResult.data).map(
@@ -215,6 +202,16 @@ export async function GET(request: NextRequest) {
     refundNeedsAttention({ status: row.status, updated_at: row.updated_at }, now),
   );
   const resolutionCases = rows(resolutionCasesResult.data);
+
+  const resolutionSoloIds = resolutionCases.filter((row) => row.match_kind === "SOLO")
+    .map((row) => String(row.open_queue_game_id));
+  const resolutionGamesResult = resolutionSoloIds.length
+    ? await context.db.from("open_queue_games").select("id,timezone").in("id", resolutionSoloIds)
+    : { data: [], error: null };
+  if (resolutionGamesResult.error) {
+    return NextResponse.json({ error: `Could not load resolution timezones: ${resolutionGamesResult.error.message}` }, { status: 500 });
+  }
+  const resolutionTimezones = new Map(rows(resolutionGamesResult.data).map((row) => [String(row.id), row.timezone]));
 
   const attention = [
     ...resolutionCases.map((resolutionCase) => {
@@ -237,7 +234,7 @@ export async function GET(request: NextRequest) {
         title: state === "UNDER_REVIEW"
           ? `${matchKind === "CLAN" ? "Clan" : "Solo"} match is under review`
           : `${matchKind === "CLAN" ? "Clan" : "Solo"} match has no data`,
-        detail: `${String(resolutionCase.reason_code).replaceAll("_", " ")} · scheduled end ${new Date(String(resolutionCase.scheduled_end_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })}`,
+        detail: `${String(resolutionCase.reason_code).replaceAll("_", " ")} · scheduled end ${formatVenueDateTime(String(resolutionCase.scheduled_end_at), matchKind === "SOLO" ? resolutionTimezones.get(gameId) : "Asia/Bahrain")}`,
         createdAt: resolutionCase.detected_at,
         matchKind,
         gameId,
@@ -303,35 +300,11 @@ export async function GET(request: NextRequest) {
       kind: "GAME_MISSING_REFEREE",
       severity: game.status === "LIVE" ? "CRITICAL" : "HIGH",
       title: "Solo game has no referee",
-      detail: `${new Date(String(game.starts_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })} · ${game.venue}`,
+      detail: `${formatVenueDateTime(String(game.starts_at), game.timezone)} · ${game.venue}`,
       createdAt: null,
       matchKind: "SOLO",
       gameId: String(game.id),
       resolution: "ASSIGN_REFEREE",
-      dismissible: false,
-    })),
-    ...fixturesWithoutReserve.map((fixture) => ({
-      id: `fixture-reserve-${fixture.id}`,
-      kind: "GAME_MISSING_RESERVE",
-      severity: fixture.status === "LIVE" ? "CRITICAL" : "HIGH",
-      title: "Clan game has no reserve player",
-      detail: `${fixture.match_date} · ${fixture.time_slot} · ${fixture.venue}`,
-      createdAt: null,
-      matchKind: "CLAN",
-      gameId: String(fixture.id),
-      resolution: "ASSIGN_RESERVE",
-      dismissible: false,
-    })),
-    ...soloWithoutReserve.map((game) => ({
-      id: `solo-reserve-${game.id}`,
-      kind: "GAME_MISSING_RESERVE",
-      severity: game.status === "LIVE" ? "CRITICAL" : "HIGH",
-      title: "Solo game has no reserve player",
-      detail: `${new Date(String(game.starts_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })} · ${game.venue}`,
-      createdAt: null,
-      matchKind: "SOLO",
-      gameId: String(game.id),
-      resolution: "ASSIGN_RESERVE",
       dismissible: false,
     })),
     ...broadcastProblems.slice(0, 8).map((broadcast) => ({
@@ -368,7 +341,7 @@ export async function GET(request: NextRequest) {
   );
 
   const operationalAttention = forfeits.length + standaloneStoppages.length + unassignedFixtures.length +
-    unassignedSolo.length + fixturesWithoutReserve.length + soloWithoutReserve.length +
+    unassignedSolo.length +
     broadcastProblems.length + paymentReconciliations.length + paymentRefunds.length + resolutionCases.length;
   return NextResponse.json({
     metrics: {
