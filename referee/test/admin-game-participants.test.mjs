@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildClanGameParticipants,
+  loadAdminGameParticipants,
   buildSoloGameParticipants,
 } from "../src/lib/admin-game-participants.ts";
 
@@ -240,4 +241,35 @@ test("clan response keeps planned, actual, and removed rosters distinct", () => 
     actualAway: 1,
     removed: 1,
   });
+});
+
+
+test("a long cancellation history cannot hide the current solo roster after the REST row limit", async () => {
+  const bookings = Array.from({ length: 1214 }, (_, index) => ({
+    id: `booking-${String(index).padStart(4, "0")}`, game_id: "game", profile_id: `player-${index}`,
+    status: index < 1200 ? "CANCELLED" : "CONFIRMED", role: "MID", team: index % 2 ? "BLACK" : "WHITE",
+    booked_at: `2099-01-01T00:00:00Z`, profile: { display_name: `Player ${index}` },
+  }));
+  const pages = [];
+  const db = { from(table) {
+    const filters = [];
+    let range = [0, 999];
+    const chain = {
+      select() { return chain; },
+      eq(key, value) { filters.push((row) => row[key] === value); return chain; },
+      order() { return chain; },
+      range(from, to) { range = [from, to]; return chain; },
+      async maybeSingle() { return { data: { id: "game", status: "FULL", capacity: 14 }, error: null }; },
+      then(resolve, reject) {
+        pages.push({ table, from: range[0] });
+        const rows = table === "open_queue_bookings" ? bookings : [];
+        return Promise.resolve({ data: rows.filter((row) => filters.every((filter) => filter(row))).slice(range[0], range[1] + 1), error: null }).then(resolve, reject);
+      },
+    };
+    return chain;
+  } };
+  const roster = await loadAdminGameParticipants(db, "SOLO", "game");
+  assert.equal(roster.registeredPlayers.length, 14);
+  assert.equal(roster.withdrawnPlayers.length, 1200);
+  assert.ok(pages.some((page) => page.table === "open_queue_bookings" && page.from === 1000));
 });

@@ -509,6 +509,45 @@ void main() {
     expect(context.partyLockLeadLabel, '2 hours 15 minutes before kickoff');
   });
 
+  test(
+    'solo lobby aggregate is independent of individual rating visibility',
+    () {
+      final detail = OpenQueueMatchDetail.fromJson({
+        'game': {
+          'id': 'solo-detail',
+          'status': 'OPEN',
+          'starts_at': '2026-10-23T01:00:00Z',
+          'ends_at': '2026-10-23T02:00:00Z',
+        },
+        'lobby_average_sr': 1150.4,
+        'players': [
+          {
+            'id': 'placement-player',
+            'display_name': 'Placement Player',
+            'role': 'DEF',
+            'skill_rating': null,
+            'rating_at_match_start': null,
+            'rating_at_team_assignment': null,
+            'rating_visible': false,
+            'matches_played': 1,
+          },
+        ],
+      });
+      expect(detail.lobbyAverageSr, 1150);
+      expect(detail.players.single.displayedRating, isNull);
+      expect(
+        OpenQueueMatchDetail.fromJson({
+          'game': {
+            'id': 'legacy',
+            'starts_at': '2026-10-23T01:00:00Z',
+            'ends_at': '2026-10-23T02:00:00Z',
+          },
+        }).lobbyAverageSr,
+        isNull,
+      );
+    },
+  );
+
   test('solo match detail maps teams, clock, goals, and replay data', () {
     final detail = OpenQueueMatchDetail.fromJson({
       'id': 'solo-detail',

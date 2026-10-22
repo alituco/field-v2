@@ -270,6 +270,9 @@ export type RefereeFixture = {
   day: string;
   timeSlot: string;
   matchDate: string;
+  /** Absolute scheduled times, retained for timezone-safe sorting and filtering. */
+  startsAt?: string;
+  endsAt?: string;
   /** Venue timezone snapshot; present for solo games. */
   timezone?: string;
   /** Saved solo slot length; optional for older responses and clan fixtures. */

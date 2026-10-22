@@ -334,6 +334,56 @@ void main() {
   });
 
   testWidgets(
+    'leave confirmation describes server succession without guessing a name',
+    (tester) async {
+      final repository = _Clans(owned: true)
+        ..members = [
+          const ClanMember(
+            profileId: 'owner',
+            displayName: 'Alex P.',
+            role: 'owner',
+          ),
+          ClanMember(
+            profileId: 'newer-leader',
+            displayName: 'Sam K.',
+            role: 'leader',
+            joinedAt: DateTime.utc(2026, 8),
+          ),
+          ClanMember(
+            profileId: 'older-member',
+            displayName: 'Dana M.',
+            role: 'member',
+            joinedAt: DateTime.utc(2026, 7),
+          ),
+        ];
+      await _pump(
+        tester,
+        ClanDetailScreen(
+          clan: _clan,
+          clanRepository: repository,
+          fixtureRepository: _Fixtures(),
+          currentMembership: repository.membership,
+        ),
+      );
+      await tester.ensureVisible(find.text('Leave clan'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Leave clan'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text(
+          'Captaincy will pass to the longest-serving remaining member.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.text('Sam K. will become the captain.'), findsNothing);
+      expect(find.text('Dana M. will become the captain.'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('field-confirmation-cancel')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'blocked clan archive keeps an actionable error open until dismissed',
     (tester) async {
       final repository = _Clans(owned: true)

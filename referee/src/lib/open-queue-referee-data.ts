@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadRowsForIds } from "./paginated-rows";
 
 import type {
   BlueCard,
@@ -118,6 +119,16 @@ export async function loadAdminOpenQueueGames(
   );
 }
 
+export async function loadAdminOpenQueueGame(
+  db: SupabaseClient,
+  gameId: string,
+): Promise<RefereeFixture | null> {
+  const { data, error } = await db.from("open_queue_games")
+    .select(gameSelect).eq("id", gameId).maybeSingle();
+  if (error) throw error;
+  return (await hydrateOpenQueueRows(db, data ? [data] : [], false))[0] ?? null;
+}
+
 async function hydrateOpenQueueRows(
   db: SupabaseClient,
   rows: Record<string, unknown>[],
@@ -174,6 +185,8 @@ async function hydrateOpenQueueRows(
       timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,
       matchDate: zonedDate(startsAt, timezone),
       timezone,
+      startsAt,
+      endsAt,
       scheduledDurationSeconds: soloScheduledDurationSeconds(startsAt, endsAt),
       cancellationCode: nullableString(row.cancellation_code),
       cancellationReason: nullableString(row.cancellation_reason),
@@ -210,7 +223,7 @@ async function loadPlayers(
   db: SupabaseClient,
   gameIds: string[],
 ): Promise<GamePlayer[]> {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_bookings")
     .select(`
       id,
@@ -227,11 +240,10 @@ async function loadPlayers(
         avatar_url
       )
     `)
-    .in("game_id", gameIds)
+    .in("game_id", ids)
     .eq("status", "CONFIRMED")
-    .order("booked_at");
-
-  if (error) throw error;
+    .order("booked_at").order("id")
+    .range(from, to));
 
   return (data ?? []).map((row) => {
     const profile = asObject(row.profiles);
@@ -252,11 +264,10 @@ async function loadPlayers(
 
 async function loadClocks(db: SupabaseClient, gameIds: string[]) {
   const clocks = new Map<string, FixtureClock>();
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_clock_states")
     .select("game_id,status,started_at,accumulated_seconds,duration_seconds")
-    .in("game_id", gameIds);
-  if (error) throw error;
+    .in("game_id", ids).order("game_id").range(from, to));
 
   for (const row of data ?? []) {
     clocks.set(String(row.game_id), {
@@ -270,12 +281,11 @@ async function loadClocks(db: SupabaseClient, gameIds: string[]) {
 }
 
 async function loadGoals(db: SupabaseClient, gameIds: string[]) {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_goals")
     .select("id,game_id,team,profile_id,assist_profile_id,minute,created_at")
-    .in("game_id", gameIds)
-    .order("minute");
-  if (error) throw error;
+    .in("game_id", ids)
+    .order("minute").order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -289,14 +299,13 @@ async function loadGoals(db: SupabaseClient, gameIds: string[]) {
 }
 
 async function loadEvents(db: SupabaseClient, gameIds: string[]) {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_events")
     .select(
       "id,game_id,event_type,team,profile_id,assist_profile_id,blue_card_id,minute,second,note,created_at",
     )
-    .in("game_id", gameIds)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
+    .in("game_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -314,14 +323,13 @@ async function loadEvents(db: SupabaseClient, gameIds: string[]) {
 }
 
 async function loadBlueCards(db: SupabaseClient, gameIds: string[]) {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_blue_cards")
     .select(
       "id,game_id,team,profile_id,started_at,expires_at,duration_seconds,status,minute,second",
     )
-    .in("game_id", gameIds)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
+    .in("game_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),

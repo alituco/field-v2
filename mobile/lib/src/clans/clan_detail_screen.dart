@@ -505,15 +505,13 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
 
   Future<void> _leave({bool archive = false}) async {
     if (_working) return;
-    final successor = _members
-        .where((m) => m.profileId != _profileId)
-        .firstOrNull;
+    final hasRemainingMember = _members.any((member) => !member.isOwner);
     final message = archive
         ? 'This clan will be archived. Existing game and payment records are kept.'
         : _owner
-        ? successor == null
+        ? !hasRemainingMember
               ? 'A clan needs a captain. Archive it instead, or add another member before leaving.'
-              : '${successor.displayName} will become the captain.'
+              : 'Captaincy will pass to the longest-serving remaining member.'
         : 'You will leave this clan.';
     if (!await _confirm(
       archive ? 'Archive ${_clan.name}?' : 'Leave ${_clan.name}?',
@@ -523,7 +521,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
     )) {
       return;
     }
-    if (!mounted || (!archive && _owner && successor == null)) return;
+    if (!mounted || (!archive && _owner && !hasRemainingMember)) return;
     setState(() => _working = true);
     try {
       if (archive) {

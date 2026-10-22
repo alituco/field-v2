@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadRowsForIds } from "./paginated-rows";
 
 import type {
   BlueCard,
@@ -106,6 +107,16 @@ export async function loadAdminFixtures(
   return hydrateFixtureRows(db, fixtures ?? [], false);
 }
 
+export async function loadAdminFixture(
+  db: SupabaseClient,
+  fixtureId: string,
+): Promise<RefereeFixture | null> {
+  const { data, error } = await db.from("fixtures")
+    .select(fixtureSelect).eq("id", fixtureId).maybeSingle();
+  if (error) throw error;
+  return (await hydrateFixtureRows(db, data ? [data] : [], false))[0] ?? null;
+}
+
 async function hydrateFixtureRows(
   db: SupabaseClient,
   fixtures: Record<string, unknown>[],
@@ -188,13 +199,11 @@ async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
   const participantIds = new Map<string, string[]>();
   if (fixtureIds.length === 0) return participantIds;
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_player_appearances")
     .select("fixture_id,profile_id")
-    .in("fixture_id", fixtureIds)
-    .eq("played", true);
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .eq("played", true).order("fixture_id").order("profile_id").range(from, to));
 
   for (const row of data ?? []) {
     const fixtureId = String(row.fixture_id);
@@ -209,7 +218,7 @@ async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
 async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
   if (clanIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(clanIds, (ids, from, to) => db
     .from("clan_members")
     .select(
       `
@@ -224,11 +233,8 @@ async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
         )
       `,
     )
-    .in("clan_id", clanIds)
-    .is("left_at", null)
-    .order("role");
-
-  if (error) throw error;
+    .in("clan_id", ids)
+    .is("left_at", null).order("role").order("clan_id").order("profile_id").range(from, to));
 
   return (data ?? []).map((row) => {
     const profile = asObject(row.profiles);
@@ -248,14 +254,13 @@ async function loadClocks(db: SupabaseClient, fixtureIds: string[]) {
   const clocks = new Map<string, FixtureClock>();
   if (fixtureIds.length === 0) return clocks;
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_clock_states")
     .select(
       "fixture_id,status,started_at,accumulated_seconds,duration_seconds",
     )
-    .in("fixture_id", fixtureIds);
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("fixture_id").range(from, to));
 
   for (const row of data ?? []) {
     clocks.set(String(row.fixture_id), {
@@ -272,15 +277,13 @@ async function loadClocks(db: SupabaseClient, fixtureIds: string[]) {
 async function loadGoals(db: SupabaseClient, fixtureIds: string[]) {
   if (fixtureIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_scorers")
     .select(
       "id,fixture_id,clan_id,profile_id,assist_profile_id,minute,created_at",
     )
-    .in("fixture_id", fixtureIds)
-    .order("minute");
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("minute").order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -296,15 +299,13 @@ async function loadGoals(db: SupabaseClient, fixtureIds: string[]) {
 async function loadEvents(db: SupabaseClient, fixtureIds: string[]) {
   if (fixtureIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_events")
     .select(
       "id,fixture_id,event_type,clan_id,profile_id,assist_profile_id,blue_card_id,minute,second,note,created_at",
     )
-    .in("fixture_id", fixtureIds)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -324,15 +325,13 @@ async function loadEvents(db: SupabaseClient, fixtureIds: string[]) {
 async function loadBlueCards(db: SupabaseClient, fixtureIds: string[]) {
   if (fixtureIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_blue_cards")
     .select(
       "id,fixture_id,clan_id,profile_id,started_at,expires_at,duration_seconds,status,minute,second",
     )
-    .in("fixture_id", fixtureIds)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),

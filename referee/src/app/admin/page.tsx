@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { adminGameStartTimestamp } from "@/lib/admin-game-time";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
@@ -1642,7 +1643,7 @@ function CompactGameList({ games }: { games: RefereeFixture[] }) {
           </div>
           <div>
             <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
-            <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
+            <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}{game.timezone ? ` (${game.timezone})` : ""}</p>
           </div>
           <StatusBadge status={adminDisplayStatus(game)} />
         </article>
@@ -4926,24 +4927,6 @@ function isFinalAdminGame(fixture: RefereeFixture) {
   return ["FINAL", "CANCELLED"].includes(fixture.status);
 }
 
-function adminGameStartTimestamp(fixture: RefereeFixture) {
-  const dateMatch = fixture.matchDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const timeMatch = fixture.timeSlot.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (dateMatch && timeMatch) {
-    const [, year, month, day] = dateMatch;
-    const rawHour = Number(timeMatch[1]);
-    const minute = Number(timeMatch[2]);
-    const period = timeMatch[3].toUpperCase();
-    const hour = rawHour % 12 + (period === "PM" ? 12 : 0);
-    const timestamp = Date.parse(
-      `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00+03:00`,
-    );
-    if (Number.isFinite(timestamp)) return timestamp;
-  }
-
-  const fallback = Date.parse(`${fixture.matchDate}T12:00:00+03:00`);
-  return Number.isFinite(fallback) ? fallback : 0;
-}
 
 function sortScheduledAdminGames(left: RefereeFixture, right: RefereeFixture) {
   if (left.status === "LIVE" && right.status !== "LIVE") return -1;

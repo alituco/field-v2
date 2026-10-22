@@ -894,13 +894,9 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     final rated = detail.players
         .where((p) => p.displayedRating != null)
         .toList();
-    final average =
-        game.matchAverageSr ??
-        (rated.isEmpty
-            ? null
-            : (rated.map((p) => p.displayedRating!).reduce((a, b) => a + b) /
-                      rated.length)
-                  .round());
+    // Individual SR can remain private during placement. Only the server can
+    // calculate an average that includes those players.
+    final average = detail.lobbyAverageSr;
     final me = detail.players.where((p) => p.isMe).firstOrNull;
     final ratings = rated.map((p) => p.displayedRating!).toList()..sort();
     final assigned =
@@ -933,6 +929,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                       fit: BoxFit.scaleDown,
                       alignment: Alignment.centerLeft,
                       child: Text(
+                        key: const ValueKey('game-lobby-average-sr'),
                         average?.toString() ?? '—',
                         style: _display(54),
                       ),
@@ -955,16 +952,21 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 ],
               ),
               const SizedBox(height: 14),
-              if (ratings.isEmpty)
+              if (average == null)
                 Text(
-                  'Skill ratings appear when player ratings are available.',
+                  'Lobby average is currently unavailable.',
+                  style: _body(11, weight: FontWeight.w600),
+                )
+              else if (rated.length != detail.players.length || ratings.isEmpty)
+                Text(
+                  'Average of all confirmed players.',
                   style: _body(11, weight: FontWeight.w600),
                 )
               else ...[
                 _RatingRange(
                   minimum: ratings.first,
                   maximum: ratings.last,
-                  average: average!,
+                  average: average,
                   mine: me?.displayedRating,
                 ),
                 const SizedBox(height: 8),

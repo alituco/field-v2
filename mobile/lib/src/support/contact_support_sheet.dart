@@ -18,6 +18,9 @@ Future<SupportRequestReceipt?> showContactSupportSheet({
 }) {
   return showFieldrushModal<SupportRequestReceipt>(
     context: context,
+    // Keep explicit-close forms on screen so an in-flight request cannot
+    // lose its draft or retry receipt through a swipe or scrim dismissal.
+    dismissible: false,
     builder: (_) => ContactSupportSheet(
       key: surfaceKey,
       repository: repository,
@@ -106,7 +109,10 @@ class _ContactSupportSheetState extends State<ContactSupportSheet> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      PopScope(canPop: !_isSubmitting, child: _buildForm(context));
+
+  Widget _buildForm(BuildContext context) {
     final isSafety = _category == SupportRequestCategory.safety;
 
     return FieldrushModal(

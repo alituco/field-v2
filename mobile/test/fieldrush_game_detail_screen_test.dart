@@ -458,7 +458,7 @@ void main() {
     final repository = _Repository(_detail());
     await show(tester, repository);
     expect(
-      find.text('Skill ratings appear when player ratings are available.'),
+      find.text('Lobby average is currently unavailable.'),
       findsOneWidget,
     );
     await tester.tap(find.byKey(const ValueKey('game-tab-timeline')));
@@ -513,6 +513,94 @@ void main() {
     expect(find.text('Ada Player'), findsOneWidget);
     expect(find.text('1375'), findsOneWidget);
     expect(find.text('Sam Keeper'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  for (final visibleRating in [null, 1500]) {
+    testWidgets(
+      'lobby average includes hidden placement SR when visible rating is $visibleRating',
+      (tester) async {
+        await show(
+          tester,
+          _Repository(
+            _detail(
+              lobbyAverageSr: 1150,
+              players: [
+                const OpenQueuePlayer(
+                  id: 'placement-player',
+                  displayName: 'Placement Player',
+                  role: OpenQueueRole.defender,
+                  team: '',
+                  played: false,
+                  isMe: false,
+                ),
+                OpenQueuePlayer(
+                  id: 'other-player',
+                  displayName: 'Other Player',
+                  role: OpenQueueRole.attacker,
+                  team: '',
+                  played: false,
+                  isMe: false,
+                  ratingAtMatchStart: visibleRating,
+                ),
+              ],
+            ),
+          ),
+        );
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('game-lobby-average-sr')))
+              .data,
+          '1150',
+        );
+        expect(find.text('Average of all confirmed players.'), findsOneWidget);
+        expect(find.textContaining('lowest'), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets('missing lobby aggregate never falls back to visible players', (
+    tester,
+  ) async {
+    await show(
+      tester,
+      _Repository(
+        _detail(
+          players: const [
+            OpenQueuePlayer(
+              id: 'visible-player',
+              displayName: 'Visible Player',
+              role: OpenQueueRole.attacker,
+              team: '',
+              played: false,
+              isMe: false,
+              ratingAtMatchStart: 1500,
+            ),
+            OpenQueuePlayer(
+              id: 'hidden-player',
+              displayName: 'Hidden Player',
+              role: OpenQueueRole.defender,
+              team: '',
+              played: false,
+              isMe: false,
+            ),
+          ],
+        ),
+      ),
+    );
+    expect(
+      tester
+          .widget<Text>(find.byKey(const ValueKey('game-lobby-average-sr')))
+          .data,
+      '—',
+    );
+    expect(
+      find.text('Lobby average is currently unavailable.'),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -752,6 +840,7 @@ OpenQueueMatchDetail _detail({
   List<OpenQueuePlayer> players = const [],
   String? ratingStatus,
   String? ratingExplanation,
+  int? lobbyAverageSr,
 }) => OpenQueueMatchDetail(
   game: OpenQueueGame(
     id: 'game',
@@ -796,6 +885,7 @@ OpenQueueMatchDetail _detail({
   players: players,
   ratingStatus: ratingStatus,
   ratingExplanation: ratingExplanation,
+  lobbyAverageSr: lobbyAverageSr,
 );
 
 OpenQueueBooking _booking(OpenQueueGame game) => OpenQueueBooking(

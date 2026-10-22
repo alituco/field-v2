@@ -1,3 +1,4 @@
+import { formatVenueDateTime } from "./admin-game-time.ts";
 import type { createSupabaseAdmin } from "./supabase-admin";
 
 type AdminDb = ReturnType<typeof createSupabaseAdmin>;
@@ -107,7 +108,7 @@ export async function loadAdminReports(db: AdminDb, status?: string | null) {
       ? db.from("fixtures").select("id,home_clan_id,away_clan_id,match_date,time_slot,venue").in("id", fixtureIds)
       : Promise.resolve({ data: [], error: null }),
     soloIds.length
-      ? db.from("open_queue_games").select("id,starts_at,venue").in("id", soloIds)
+      ? db.from("open_queue_games").select("id,starts_at,timezone,venue").in("id", soloIds)
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (fixtureResult.error) {
@@ -153,7 +154,7 @@ export async function loadAdminReports(db: AdminDb, status?: string | null) {
     const matchLabel = fixture
       ? `${stringValue(homeClan?.tag) ?? "Home"} vs ${stringValue(awayClan?.tag) ?? "Away"} · ${String(fixture.match_date ?? "")}`
       : solo
-        ? `Solo match · ${new Date(String(solo.starts_at)).toLocaleString("en-BH", { timeZone: "Asia/Bahrain" })}`
+        ? `Solo match · ${formatVenueDateTime(String(solo.starts_at), solo.timezone)}`
         : null;
 
     return {

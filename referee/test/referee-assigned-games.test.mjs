@@ -28,8 +28,8 @@ function loadModule(url) {
   return exports;
 }
 
-const { loadRefereeOpenQueueGames } = loadModule(new URL("../src/lib/open-queue-referee-data.ts", import.meta.url));
-const { loadRefereeFixtures } = loadModule(new URL("../src/lib/referee-data.ts", import.meta.url));
+const { loadRefereeOpenQueueGames, loadAdminOpenQueueGame, loadAdminOpenQueueGames } = loadModule(new URL("../src/lib/open-queue-referee-data.ts", import.meta.url));
+const { loadRefereeFixtures, loadAdminFixture } = loadModule(new URL("../src/lib/referee-data.ts", import.meta.url));
 const REFEREE = "referee-one";
 
 function database(tables, failures = {}) {
@@ -58,6 +58,10 @@ function database(tables, failures = {}) {
         order(column, options = {}) { orders.push([column, options.ascending !== false]); return chain; },
         limit(count) { range = [0, count - 1]; return chain; },
         range(from, to) { range = [from, to]; return chain; },
+        async maybeSingle() {
+          const result = await chain;
+          return { ...result, data: result.data?.[0] ?? null };
+        },
         then(resolve, reject) {
           calls.push({ table, range: [...range] });
           const error = typeof failures[table] === "function"
@@ -189,3 +193,69 @@ for (const [label, loader, assignmentTable, idColumn, matchTable, rosterTable, m
     assert.equal(db.calls.some((call) => call.table === matchTable), false);
   });
 }
+
+
+test("admin detail loads a Solo game directly by ID outside age and list limits", async () => {
+  const latest = Array.from({ length: 301 }, (_, index) => solo(`recent-${index}`, "OPEN"));
+  const old = solo("old-final", "FINAL", "2000-01-01T23:30:00Z");
+  const db = database({ open_queue_games: [...latest, old] });
+  for (const id of ["recent-300", "old-final"]) {
+    const game = await loadAdminOpenQueueGame(db, id);
+    assert.equal(game.id, id);
+    assert.equal(game.startsAt, id === "old-final" ? old.starts_at : latest[300].starts_at);
+  }
+  assert.equal(await loadAdminOpenQueueGame(db, "missing"), null);
+});
+
+test("admin clan detail can load an older fixture awaiting opposition", async () => {
+  const pending = clan("old-pending", "OPEN", { match_date: "2000-01-01", away_clan_id: null, away_clan: null });
+  const db = database({ fixtures: [pending] });
+  const fixture = await loadAdminFixture(db, pending.id);
+  assert.equal(fixture.id, pending.id);
+  assert.equal(fixture.awayClan.name, "Opponent pending");
+  assert.equal(await loadAdminFixture(db, "missing"), null);
+});
+
+test("admin Solo hydration retains all 4,200 players across a capped 300-game list", async () => {
+  const games = Array.from({ length: 300 }, (_, index) => solo(`g-${String(index).padStart(3, "0")}`, "FULL"));
+  const bookings = games.flatMap((game) => Array.from({ length: 14 }, (_, index) => ({
+    id: `${game.id}-b-${index}`, game_id: game.id, profile_id: `${game.id}-p-${index}`,
+    status: "CONFIRMED", booked_at: "2099-01-01T00:00:00Z", team: index < 7 ? "WHITE" : "BLACK", profiles: { display_name: `Player ${index}` },
+  })));
+  const db = database({ open_queue_games: games, open_queue_bookings: bookings });
+  const results = await loadAdminOpenQueueGames(db);
+  assert.equal(results.length, 300);
+  assert.equal(results.reduce((sum, game) => sum + game.players.length, 0), 4200);
+  assert.ok(results.every((game) => game.players.length === 14));
+  assert.ok(db.calls.some((call) => call.table === "open_queue_bookings" && call.range[0] === 500));
+});
+
+test("single-match goals, events, blue cards and safety aggregates paginate beyond 1,000 rows", async () => {
+  const count = 1201;
+  const makeRows = (extra = {}) => Array.from({ length: count }, (_, index) => ({
+    id: `row-${String(index).padStart(4, "0")}`, game_id: "busy", created_at: "2099-01-01T00:00:00Z", ...extra,
+  }));
+  const db = database({
+    open_queue_games: [solo("busy", "LIVE")],
+    open_queue_bookings: [{ id: "booking", game_id: "busy", profile_id: "player", status: "CONFIRMED" }],
+    open_queue_goals: makeRows({ team: "WHITE", profile_id: "player" }),
+    open_queue_events: makeRows({ event_type: "GOAL", team: "WHITE" }),
+    open_queue_blue_cards: makeRows({ team: "WHITE", profile_id: "player" }),
+    moderation_reports: makeRows({ subject_type: "PLAYER", subject_profile_id: "player", status: "ACTIONED", priority: "HIGH" }),
+  });
+  const game = await loadAdminOpenQueueGame(db, "busy");
+  assert.equal(game.goals.length, count);
+  assert.equal(game.events.length, count);
+  assert.equal(game.blueCards.length, count);
+  assert.equal(game.riskContext.players[0].priorReports, count);
+  assert.equal(new Set(game.events.map((row) => row.id)).size, count);
+});
+
+test("a later hydration page failure remains an error", async () => {
+  const events = Array.from({ length: 501 }, (_, index) => ({ id: String(index), game_id: "busy" }));
+  const error = { message: "later page unavailable" };
+  const db = database({ open_queue_games: [solo("busy", "LIVE")], open_queue_events: events }, {
+    open_queue_events: ([from]) => from === 500 ? error : null,
+  });
+  await assert.rejects(loadAdminOpenQueueGame(db, "busy"), (actual) => actual === error);
+});

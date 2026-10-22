@@ -683,6 +683,7 @@ class OpenQueueMatchDetail {
     this.videoUrl,
     this.ratingStatus,
     this.ratingExplanation,
+    this.lobbyAverageSr,
   });
 
   final OpenQueueGame game;
@@ -694,6 +695,10 @@ class OpenQueueMatchDetail {
   final String? videoUrl;
   final String? ratingStatus;
   final String? ratingExplanation;
+
+  /// Server-calculated average for the entire confirmed roster, including
+  /// players whose individual placement rating is hidden.
+  final int? lobbyAverageSr;
 
   String? get viewerRatingStatus =>
       players.where((p) => p.isMe).firstOrNull?.ratingStatus ?? ratingStatus;
@@ -746,6 +751,7 @@ class OpenQueueMatchDetail {
       scorers: scorers,
       timeline: timeline,
       players: _openQueuePlayers(json['players']),
+      lobbyAverageSr: _asNullableRoundedInt(json['lobby_average_sr']),
       videoUrl: _nonEmptyString(json['video_url'] ?? gameJson['video_url']),
       ratingStatus: _nonEmptyString(
         json['rating_status'] ?? gameJson['rating_status'],
