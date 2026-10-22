@@ -97,7 +97,7 @@ if (command === 'node') {
   const names = ['stripe-payment', 'stripe-payment-webhook', 'stripe-payment-reconcile', 'fieldrush-delete-account',
     'fieldrush-push-dispatch', 'cloudflare-stream-webhook', 'profile-goal-clip', 'dev-phone-login', 'dev-switch-user', 'staging-admin-session'];
   if (!names.includes(name)) reject('Unexpected function deployment');
-  expect(['functions', 'deploy', name, '--project-ref', ref, ...(name === 'profile-goal-clip' ? [] : ['--no-verify-jwt']), '--yes']);
+  expect(['functions', 'deploy', name, '--project-ref', ref, '--use-api', ...(name === 'profile-goal-clip' ? [] : ['--no-verify-jwt']), '--yes']);
   fail('deploy:' + name);
   state.functions = [...new Set([...state.functions, name])];
   save();
@@ -222,6 +222,13 @@ for (const [label, present] of [
       const result = harness.run();
       assert.equal(result.status, 0, result.output);
       assert.match(result.output, /Supabase staging deployment completed/);
+      const functionDeployments = result.calls.filter(({ command, args }) =>
+        command === 'supabase' && args[0] === 'functions' && args[1] === 'deploy');
+      assert.equal(functionDeployments.length, 10);
+      for (const { args } of functionDeployments) {
+        assert.ok(args.includes('--use-api'), `${args[2]} must deploy without a local Docker bundler`);
+        assert.equal(args.includes('--no-verify-jwt'), args[2] !== 'profile-goal-clip');
+      }
       const deletions = unsetCalls(result);
       assert.equal(deletions.length, run === 0 && present.length ? 1 : 0);
       if (deletions.length) assert.deepEqual(deletions[0].args.slice(2, -3), present);

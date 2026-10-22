@@ -125,8 +125,11 @@ deploy_function() {
   local function_name="$1"
   shift
   echo "Deploying ${function_name} to ${target}."
+  # Bundle through Supabase's API so hosted deployment does not download a
+  # Docker Edge Runtime image on a separate, uncached CI runner.
   supabase functions deploy "$function_name" \
     --project-ref "$project_ref" \
+    --use-api \
     "$@" \
     --yes
 }
