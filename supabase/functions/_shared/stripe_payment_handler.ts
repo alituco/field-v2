@@ -799,19 +799,25 @@ async function stagingE2ECheckout(ctx: Context, body: Record<string, unknown>) {
     "FINALIZED",
   ]).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (existingError) throw existingError;
-  if (existing?.status === "FINALIZED") return intentResponse(existing);
-  const checkout = await quote(ctx.user, purpose, payload);
-  if (checkout.total_fils === 0) {
-    const { data, error } = await ctx.admin.rpc("finalize_free_checkout", {
-      profile_id_to_use: ctx.userId,
-      purpose_to_use: purpose,
-      payload_to_use: payload,
-    });
-    if (error) throw error;
-    return object(data) ?? {};
+  if (existing && canonicalJson(existing.payload) !== canonicalJson(payload)) {
+    throw new PaymentError(
+      "Finish the earlier checkout before changing your position.",
+      409,
+    );
   }
+  if (existing?.status === "FINALIZED") return intentResponse(existing);
   const id = existing?.id ?? crypto.randomUUID();
   if (!existing) {
+    const checkout = await quote(ctx.user, purpose, payload);
+    if (checkout.total_fils === 0) {
+      const { data, error } = await ctx.admin.rpc("finalize_free_checkout", {
+        profile_id_to_use: ctx.userId,
+        purpose_to_use: purpose,
+        payload_to_use: payload,
+      });
+      if (error) throw error;
+      return object(data) ?? {};
+    }
     const { error } = await ctx.admin.from("payment_intents").insert({
       id,
       profile_id: ctx.userId,
@@ -831,11 +837,37 @@ async function stagingE2ECheckout(ctx: Context, body: Record<string, unknown>) {
     });
     if (error) throw error;
   }
-  const { data, error } = await ctx.admin.rpc("finalize_payment_intent", {
-    intent_id_to_finalize: id,
-  });
-  if (error) throw error;
-  return object(data) ?? {};
+  // Capture is already durable. Recover only this intent, using its original
+  // quote, rather than preparing another simulated charge. The SQL finalizer
+  // is atomic/idempotent; these errors roll back its failed transaction.
+  // One retry stays within the player's checkout request/UI deadlines even
+  // when each database attempt reaches the eight-second REST timeout.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const { data, error } = await ctx.admin.rpc("finalize_payment_intent", {
+      intent_id_to_finalize: id,
+    });
+    if (!error) {
+      const result = object(data);
+      if (
+        result?.intent_id !== id ||
+        !["FINALIZED", "REQUIRES_REFUND", "REFUNDED"].includes(
+          String(result?.status),
+        )
+      ) throw new Error("Staging finalization returned an invalid result.");
+      return result;
+    }
+    const sqlstate = String(error.code ?? "");
+    const retryable = ["57014", "40001", "40P01"].includes(sqlstate);
+    // Never log database messages, payloads, credentials or provider details.
+    console.warn("Staging checkout finalization failed", {
+      sqlstate: /^[0-9A-Z]{5}$/.test(sqlstate) ? sqlstate : "unknown",
+      attempt,
+      retryable,
+    });
+    if (!retryable || attempt === 2) throw error;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 100));
+  }
+  throw new Error("Staging finalization did not complete.");
 }
 
 export const supportedWebhookEvents = new Set([

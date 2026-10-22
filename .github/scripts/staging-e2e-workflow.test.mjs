@@ -104,11 +104,13 @@ test("saved field permissions and location snapshots are checked before full sch
 
 test("recurring schedule permissions, idempotency and pitch conflicts are checked before full schema replay", () => {
   const source = job("database");
-  const check = stepContaining(source, "node supabase/scripts/test_game_schedules.mjs");
-  assert.match(check, /set -euo pipefail/);
-  assert.match(check, /PGLITE_MODULE=/);
-  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
-  assert.ok(source.indexOf("test_game_schedules.mjs") < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  for (const script of ["test_game_schedules.mjs", "test_solo_schedule_timezone_validation.mjs"]) {
+    const check = stepContaining(source, `node supabase/scripts/${script}`);
+    assert.match(check, /set -euo pipefail/);
+    assert.match(check, /PGLITE_MODULE=/);
+    assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+    assert.ok(source.indexOf(script) < source.indexOf("Replay migrations on a fresh local Supabase stack"));
+  }
 });
 
 test("price edits preserve captured quotes, paid bookings and refunds before full schema replay", () => {
@@ -122,7 +124,7 @@ test("price edits preserve captured quotes, paid bookings and refunds before ful
 
 test("single-game registration, activity dismissals, and safe checkout cleanup are checked before full schema replay", () => {
   const source = job("database");
-  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs", "test_unpaid_legacy_checkout_repair.mjs", "test_game_division_ranges.mjs", "test_game_formations.mjs", "test_staging_game_bots.mjs", "test_solo_rebooking.mjs", "test_profile_clip_recommendations.mjs"]) {
+  for (const script of ["test_single_active_game.mjs", "test_home_activity_dismissals.mjs", "test_e2e_checkout_cleanup.mjs", "test_unpaid_legacy_checkout_repair.mjs", "test_e2e_captured_checkout_reconciliation.mjs", "test_game_division_ranges.mjs", "test_game_formations.mjs", "test_staging_game_bots.mjs", "test_solo_rebooking.mjs", "test_profile_clip_recommendations.mjs"]) {
     const check = stepContaining(source, `node supabase/scripts/${script}`);
     assert.match(check, /set -euo pipefail/);
     assert.match(check, /PGLITE_MODULE=/);
