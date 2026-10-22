@@ -94,6 +94,7 @@ test("iOS cold builds have time for both mandatory flavors without changing the 
 test("the shared admin inbox navigation is verified before hosted deployments", () => {
   const source = job("referee");
   const browser = stepContaining(source, "npm run test:ui -- admin-inbox-navigation.spec.ts");
+  assert.match(browser, /admin-overview-timezone\.spec\.ts/);
   assert.match(browser, /admin-cities\.spec\.ts/);
   assert.match(browser, /admin-seasons\.spec\.ts/);
   assert.match(browser, /referee-finalization-diagnostics\.spec\.ts/);
@@ -327,6 +328,16 @@ test("privacy RPC volatility and real party context are checked on the full sche
   assert.match(verifier, /^rollback;/m);
   assert.match(verifier, /wrapper\.provolatile=original\.provolatile/);
   assert.match(verifier, /payload:=public\.get_open_queue_party_context\(game_id\)/);
+});
+
+test("career write protection and full lobby averages are verified against the effective database schema", () => {
+  const source = job("database");
+  const check = stepContaining(source, "supabase/scripts/verify_player_stats_and_lobby_average.sql");
+  assert.match(check, /docker exec -i supabase_db_field_v2/);
+  assert.match(check, /ON_ERROR_STOP=1/);
+  assert.match(check, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);
+  assert.doesNotMatch(check, /continue-on-error:|\|\|\s*true|secrets\./);
+  assert.ok(source.indexOf(check) > source.indexOf("Replay migrations on a fresh local Supabase stack"));
 });
 
 test("match corrections verify both historical protection and current-period rating replay", () => {
