@@ -55,6 +55,30 @@ try {
   const reserve="select reserve_broadcast_recovery_attachment($1,$2,$3,$4,$5) as value";
   const url=uid=>`https://customer-test.cloudflarestream.com/${uid}/manifest/video.m3u8`;
   const sync="select sync_broadcast_replay($1,$2,$3,$4,now(),$5,$6,$7) as value";
+  const interrupted = [], stopped = [];
+  for (const kind of ["SOLO","CLAN"]) {
+    const partial = await setup(kind);
+    await query(`update ${partial.broadcast} set stream_stopped_at=null where ${partial.fk}=$1`,[partial.id]);
+    interrupted.push({kind,...partial});
+    stopped.push(await setup(kind));
+  }
+  await db.exec(await readFile(new URL("../migrations/20261022000300_broadcast_replay_after_stop.sql",import.meta.url),"utf8"));
+  for (const f of interrupted) {
+    check(await value(`select status='STARTING' and replay_hls_url is null and recording_ready_at is null as value from ${f.broadcast} where ${f.fk}=$1`,[f.id]),`${f.kind} premature terminal state repaired`);
+    check(await value(`select video_url is null as value from ${f.table} where id=$1`,[f.id]),`${f.kind} premature official replay withdrawn`);
+    const requested=await value(`select stream_requested_at as value from ${f.broadcast} where ${f.fk}=$1`,[f.id]);
+    for (const state of ["STARTING","LIVE","STOPPING","PROCESSING"]) {
+      await query(`update ${f.broadcast} set status=$2 where ${f.fk}=$1`,[f.id,state]);
+      check(!(await value(sync,[f.kind,f.id,"old-video","partial-ready",requested,null,"live-input"])),`${f.kind} ready callback does not finalize ${state} before stop acknowledgement`);
+      check(await value(`select status=$2 and replay_hls_url is null as value from ${f.broadcast} where ${f.fk}=$1`,[f.id,state]),`${f.kind} rejected callback leaves lifecycle unchanged`);
+    }
+    await query(`update ${f.broadcast} set stream_stopped_at=now(),status='PROCESSING' where ${f.fk}=$1`,[f.id]);
+    check(await value(sync,[f.kind,f.id,"old-video","final-ready",requested,null,"live-input"]),`${f.kind} acknowledged stop permits final replay`);
+    check(await value(`select video_url='final-ready' as value from ${f.table} where id=$1`,[f.id]),`${f.kind} final replay publishes atomically`);
+  }
+  for (const f of stopped) {
+    check(await value(`select status='REPLAY_READY' and replay_hls_url='original-replay' as value from ${f.broadcast} where ${f.fk}=$1`,[f.id]),"migration preserves acknowledged replay");
+  }
   for(const kind of ["SOLO","CLAN"]) {
     const f=await setup(kind);
     await rejects(begin,[hash("wrong"),f.time],/expired or was disconnected/);
