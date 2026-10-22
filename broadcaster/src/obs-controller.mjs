@@ -653,7 +653,11 @@ export class ObsController {
     if (!this.connected) return { connected: false, streaming: false, recording: false, configured: false };
     const { stream, record } = await this._outputs();
     const current = await this._workspaceCurrent();
+    // Warnings describe current faults and block remote readiness. Historical
+    // recording recovery evidence must stay visible without stranding an
+    // otherwise healthy, idle laptop in the server's ERROR state.
     const warnings = [];
+    const advisories = [];
     if (!current) warnings.push("Select the Fieldrush OBS profile and scene collection.");
     let cameraAvailable = false;
     let microphoneAvailable = this.state.microphoneId === null;
@@ -668,7 +672,7 @@ export class ObsController {
     if (stream.outputActive && !record.outputActive) warnings.push("Streaming without a local backup. Check recording storage in OBS.");
     if (record.outputActive && record.outputPaused) warnings.push("The local backup is paused. Resume recording in OBS.");
     if (this.state.recordIntent || this.state.streamIntent) warnings.push("An OBS operation is awaiting confirmation. Keep this session open and check OBS before changing setup.");
-    if (this.state.unresolvedRecordings?.length) warnings.push("An earlier OBS session has an unconfirmed backup. Check its saved recovery details and original recording folder.");
+    if (this.state.unresolvedRecordings?.length) advisories.push("An earlier OBS session has an unconfirmed backup. Check its saved recovery details and original recording folder.");
     return {
       connected: true, streaming: stream.outputActive, recording: record.outputActive,
       testing: this.state.localTest === true || Boolean(this.state.testStream),
@@ -685,6 +689,7 @@ export class ObsController {
       droppedFrames: stream.outputSkippedFrames ?? 0,
       totalFrames: stream.outputTotalFrames ?? 0,
       warnings,
+      advisories,
     };
   }
 

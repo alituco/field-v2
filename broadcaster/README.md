@@ -50,6 +50,13 @@ the match/time/folder evidence for manual recovery instead of guessing a file;
 keep the backup folder and contact the organizer. This reset verification expects
 OBS installed at `/Applications/OBS.app`.
 
+A historical **unconfirmed backup** notice stays visible so its original file
+and recovery evidence are not forgotten. Once OBS has been verified idle, that
+notice alone does not mark the laptop as an error or disable Start Stream on
+the phone. Current faults—including disconnected devices, uncertain OBS
+operations, or a missing/paused current backup—still block readiness. No old
+recording or recovery metadata is deleted to make the laptop ready.
+
 ## Guided backup recovery
 
 After the match is FINAL and recording has stopped, choose **Recover a recording**

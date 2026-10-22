@@ -34,7 +34,10 @@ function render(next) {
   $('progress-panel').hidden = !state.progress; $('progress').textContent = state.progress || '';
   $('pause-upload').hidden = !state.canPauseUpload; $('pause-upload').disabled = false;
   $('restart-recovery').hidden = !state.hasRecovery;
-  const warning = state.outputUncertain ? 'OBS disconnected while video may still be running. Reconnect OBS before changing the match or closing Fieldrush.' : (status.warnings || []).join(' ');
+  const warning = [
+    ...(state.outputUncertain ? ['OBS disconnected while video may still be running. Reconnect OBS before changing the match or closing Fieldrush.'] : (status.warnings || [])),
+    ...(status.advisories || []),
+  ].join(' ');
   $('warning').textContent = warning; $('warning').hidden = !warning;
   $('devices-section').hidden = !status.connected;
   $('connect').textContent = status.connected ? 'Reconnect' : 'Connect OBS';
