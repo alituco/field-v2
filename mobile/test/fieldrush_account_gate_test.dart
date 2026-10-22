@@ -28,11 +28,16 @@ void main() {
     await auth.events.close();
   });
 
-  Future<void> showGate(WidgetTester tester, {bool settle = true}) async {
+  Future<void> showGate(
+    WidgetTester tester, {
+    bool settle = true,
+    GlobalKey<NavigatorState>? navigatorKey,
+  }) async {
     await tester.binding.setSurfaceSize(const Size(430, 1100));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
       MaterialApp(
+        navigatorKey: navigatorKey,
         home: FieldrushAccountGate(
           authRepository: auth,
           accountRepository: accounts,
@@ -299,6 +304,159 @@ void main() {
     expect(tester.element(nextUser), isNot(same(firstElement)));
     expect(find.text('AUTHENTICATED APP'), findsOneWidget);
     expect(moderation.calls, 2);
+  });
+
+  for (final trigger in [
+    'signout',
+    'another player',
+    'account restriction',
+    'pending deletion',
+    'unverified phone',
+    'refresh failure',
+    'auth stream failure',
+  ]) {
+    testWidgets('$trigger clears private pages and dialogs above the gate', (
+      tester,
+    ) async {
+      final navigator = GlobalKey<NavigatorState>();
+      await showGate(tester, navigatorKey: navigator);
+      unawaited(
+        navigator.currentState!.push<void>(
+          MaterialPageRoute(
+            builder: (_) => const Scaffold(body: Text('PRIVATE PLAYER A')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      unawaited(
+        showDialog<void>(
+          context: tester.element(find.text('PRIVATE PLAYER A')),
+          builder: (_) => const PopScope(
+            canPop: false,
+            child: AlertDialog(content: Text('PRIVATE CONFIRMATION')),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('PRIVATE CONFIRMATION'), findsOneWidget);
+
+      switch (trigger) {
+        case 'signout':
+          await auth.signOut();
+        case 'another player':
+          auth.signIn(userId: 'player-b');
+        case 'auth stream failure':
+          auth.events.addError(const AuthException('Session unavailable.'));
+        default:
+          if (trigger == 'account restriction') {
+            moderation.status = const ModerationStatus(
+              state: ModerationState.banned,
+              scope: ModerationScope.account,
+              message: 'Restricted for safety.',
+              endsAt: null,
+              warningCount: 0,
+            );
+          } else if (trigger == 'pending deletion') {
+            accounts.account = _account(status: 'deletion_pending');
+          } else if (trigger == 'unverified phone') {
+            accounts.account = _account(phoneVerified: false);
+          } else {
+            accounts.error = const AuthException('Refresh failed.');
+          }
+          auth.events.add(
+            AuthState(AuthChangeEvent.userUpdated, auth.currentSession),
+          );
+      }
+      await tester.pumpAndSettle();
+
+      expect(find.text('PRIVATE PLAYER A', skipOffstage: false), findsNothing);
+      expect(
+        find.text('PRIVATE CONFIRMATION', skipOffstage: false),
+        findsNothing,
+      );
+      expect(navigator.currentState!.canPop(), isFalse);
+      switch (trigger) {
+        case 'signout':
+        case 'unverified phone':
+          expect(find.byType(FieldrushAuthScreen), findsOneWidget);
+        case 'another player':
+          expect(
+            find.byKey(const ValueKey<String>('player-b')),
+            findsOneWidget,
+          );
+          expect(find.byKey(const ValueKey<String>('player-a')), findsNothing);
+        case 'account restriction':
+          expect(find.byType(RestrictedAccountScreen), findsOneWidget);
+        case 'pending deletion':
+          expect(find.text('Account deletion in progress'), findsOneWidget);
+        default:
+          expect(find.text('Could not load your account'), findsOneWidget);
+      }
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('same-player refresh preserves the private route stack', (
+    tester,
+  ) async {
+    final navigator = GlobalKey<NavigatorState>();
+    await showGate(tester, navigatorKey: navigator);
+    unawaited(
+      navigator.currentState!.push<void>(
+        MaterialPageRoute(
+          builder: (_) => const Scaffold(body: Text('PRIVATE PLAYER A')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final privateElement = tester.element(find.text('PRIVATE PLAYER A'));
+
+    for (final event in [
+      AuthChangeEvent.tokenRefreshed,
+      AuthChangeEvent.userUpdated,
+      AuthChangeEvent.signedIn,
+    ]) {
+      auth.events.add(AuthState(event, auth.currentSession));
+      await tester.pumpAndSettle();
+      expect(
+        tester.element(find.text('PRIVATE PLAYER A')),
+        same(privateElement),
+      );
+      expect(navigator.currentState!.canPop(), isTrue);
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('signout clears a restricted account support sheet', (
+    tester,
+  ) async {
+    moderation.status = const ModerationStatus(
+      state: ModerationState.banned,
+      scope: ModerationScope.account,
+      message: 'Restricted for safety.',
+      endsAt: null,
+      warningCount: 0,
+    );
+    final navigator = GlobalKey<NavigatorState>();
+    await showGate(tester, navigatorKey: navigator);
+    await tester.tap(
+      find.byKey(const Key('restricted-account-contact-support')),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('restricted-account-support-sheet')),
+      findsOneWidget,
+    );
+
+    await auth.signOut();
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('restricted-account-support-sheet')),
+      findsNothing,
+    );
+    expect(find.byType(FieldrushAuthScreen), findsOneWidget);
+    expect(navigator.currentState!.canPop(), isFalse);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
