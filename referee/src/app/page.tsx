@@ -15,6 +15,7 @@ import { formatPlayerSr, ratingTrackLabel } from "@/lib/open-queue-ratings";
 import { plannedMatchDurationSeconds } from "@/lib/match-duration";
 import { refereeMatchKey } from "@/lib/referee-assigned-matches";
 import { acknowledgeSoloGoalRequest, pendingSoloGoalRequest, prepareSoloGoalRequest, rejectSoloGoalRequest } from "@/lib/solo-goal-actions";
+import { acknowledgeClanGoalRequest, pendingClanGoalRequest, prepareClanGoalRequest, rejectClanGoalRequest } from "@/lib/clan-goal-actions";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   BlueCard,
@@ -142,11 +143,16 @@ export default function RefereePage() {
   }, [accessToken, loadGames]);
 
   const refreshPendingGoal = useCallback(() => {
-    if (!me || !activeFixture || activeFixture.matchKind !== "SOLO") { setPendingGoal(null); return; }
-    try { setPendingGoal(pendingSoloGoalRequest(me.profileId, activeFixture.id, window.sessionStorage) as FixtureActionBody | null); }
+    if (!me || !activeFixture) { setPendingGoal(null); return; }
+    const readPending = activeFixture.matchKind === "SOLO" ? pendingSoloGoalRequest : pendingClanGoalRequest;
+    try { setPendingGoal(readPending(me.profileId, activeFixture.id, window.sessionStorage) as FixtureActionBody | null); }
     catch { setError("The saved goal request could not be read. Ask an organizer to verify this match before recording another goal."); }
   }, [me, activeFixture]);
-  useEffect(refreshPendingGoal, [refreshPendingGoal]);
+  const refreshPendingGoalRef = useRef(refreshPendingGoal);
+  useEffect(() => {
+    refreshPendingGoalRef.current = refreshPendingGoal;
+    refreshPendingGoal();
+  }, [refreshPendingGoal]);
 
   useEffect(() => {
     if (!activeFixture) return;
@@ -250,8 +256,13 @@ export default function RefereePage() {
 
     try {
       const soloGoal = matchKind === "SOLO" && (body.action === "goal" || body.action === "remove_goal");
-      if (soloGoal && !me?.profileId) throw new Error("Refresh your referee session before recording a goal.");
-      const requestBody = soloGoal ? prepareSoloGoalRequest(me!.profileId, fixtureId, body, window.sessionStorage) : body;
+      const clanGoal = matchKind === "CLAN" && body.action === "goal";
+      const goalOperation = soloGoal || clanGoal;
+      if (goalOperation && !me?.profileId) throw new Error("Refresh your referee session before recording a goal.");
+      const prepareGoal = soloGoal ? prepareSoloGoalRequest : prepareClanGoalRequest;
+      const acknowledgeGoal = soloGoal ? acknowledgeSoloGoalRequest : acknowledgeClanGoalRequest;
+      const rejectGoal = soloGoal ? rejectSoloGoalRequest : rejectClanGoalRequest;
+      const requestBody = goalOperation ? prepareGoal(me!.profileId, fixtureId, body, window.sessionStorage) : body;
       const actionUrl = matchKind === "SOLO"
         ? `/api/referee/open-queue-games/${fixtureId}/action`
         : `/api/referee/fixtures/${fixtureId}/action`;
@@ -264,9 +275,9 @@ export default function RefereePage() {
         body: JSON.stringify(requestBody),
       });
       const payload = (await response.json()) as { error?: string; goalOperationRejected?: boolean };
-      if (soloGoal && payload.goalOperationRejected === true) rejectSoloGoalRequest(me!.profileId, fixtureId, window.sessionStorage);
+      if (goalOperation && payload.goalOperationRejected === true) rejectGoal(me!.profileId, fixtureId, window.sessionStorage);
       if (!response.ok) throw new Error(payload.error ?? "Action failed.");
-      if (soloGoal) acknowledgeSoloGoalRequest(me!.profileId, fixtureId, requestBody, payload, window.sessionStorage);
+      if (goalOperation) acknowledgeGoal(me!.profileId, fixtureId, requestBody, payload, window.sessionStorage);
       await loadGames();
       return true;
     } catch (actionError) {
@@ -276,7 +287,9 @@ export default function RefereePage() {
       return false;
     } finally {
       setSubmitting(null);
-      refreshPendingGoal();
+      // A retry can finish after the referee has selected a different match.
+      // Restore only that current match's receipt, never the old request's body.
+      refreshPendingGoalRef.current();
     }
   }
 
