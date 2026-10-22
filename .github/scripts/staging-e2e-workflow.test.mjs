@@ -395,7 +395,7 @@ test("backend deploy starts after fast app and database checks, not native build
 
 test("each Supabase caller installs the CLI on its own runner before first use", () => {
   for (const [id, firstUse] of [
-    ["database", "supabase start"],
+    ["database", "node .github/scripts/start-ci-supabase.mjs"],
     ["backend-staging", ".github/scripts/deploy-supabase.sh staging"],
     ["prepare-staging-e2e", ".github/scripts/configure-staging-e2e-auth.sh"],
   ]) {
@@ -408,6 +408,22 @@ test("each Supabase caller installs the CLI on its own runner before first use",
   const prepare = job("prepare-staging-e2e");
   assert.ok(prepare.indexOf("run: supabase --version") > prepare.indexOf("uses: supabase/setup-cli@"));
   assert.ok(prepare.indexOf("run: supabase --version") < prepare.indexOf("uses: actions/setup-java@"));
+});
+
+test("database startup recovery runs before every mandatory schema verification", () => {
+  const source = job("database");
+  const start = stepContaining(source, "name: Replay migrations on a fresh local Supabase stack");
+  assert.match(start, /run: node \.github\/scripts\/start-ci-supabase\.mjs/);
+  assert.doesNotMatch(start, /continue-on-error:|\|\|\s*true|--ignore-health-check|secrets\./);
+  for (const next of [
+    "supabase db lint --local --level error",
+    "supabase migration list --local",
+    "verify_rating_privacy_rpc_volatility.sql",
+    "verify_fieldrush_accounts.sql",
+  ]) {
+    assert.ok(source.indexOf(next) > source.indexOf(start));
+  }
+  assert.doesNotMatch(source, /^    continue-on-error:/m);
 });
 
 test("every planned journey has successful planned prerequisites despite skipped native jobs", () => {
