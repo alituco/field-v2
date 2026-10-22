@@ -29,6 +29,7 @@ import '../open_queue/open_queue_repository.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../ranking/fieldrush_divisions_screen.dart';
 import 'fieldrush_home_widgets.dart';
 import 'activity_revision.dart';
 import 'home_discovery_repository.dart';
@@ -155,6 +156,29 @@ class _DashboardHomeState extends State<DashboardHome> {
         _rating = _ratings?.forTrack(track);
       });
     }
+  }
+
+  void _openDivisions() {
+    final navigator = Navigator.of(context);
+    navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushDivisionsScreen(
+          rating: _ratings?.forTrack(_ratingTrack) ?? _rating,
+          prediction: _ratings?.predictionFor(_ratingTrack),
+          track: _ratingTrack,
+          season: _season,
+          cityName: _ratings?.primaryCityName ?? _rating?.region,
+          onOpenRanks: () {
+            navigator.pop();
+            widget.onOpenRanks();
+          },
+          onNavigateTab: (index) {
+            navigator.pop();
+            widget.onNavigateTab(index);
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _load() async {
@@ -704,7 +728,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                       track: _ratingTrack,
                       onTrack: _ratings == null ? null : _chooseRatingTrack,
                       season: _season,
-                      onTap: widget.onOpenRanks,
+                      onTap: _openDivisions,
                     ),
                   if (_party case final party?)
                     Padding(

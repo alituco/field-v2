@@ -267,6 +267,7 @@ class _HomeScreenState extends State<HomeScreen> {
         accountRepository: widget.accountRepository,
         settingsRepository: SupabaseYouSettingsRepository(),
         onOpenRanks: _openPlayerRanks,
+        onNavigateTab: _selectTab,
         profileSwitcherEnabled: widget.profileSwitcherEnabled,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,

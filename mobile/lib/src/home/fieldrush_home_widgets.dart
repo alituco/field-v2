@@ -1287,8 +1287,8 @@ class FieldrushHomeRating extends StatelessWidget {
         '';
     final rank = rating?.rank ?? 0;
     final rankLine = rank > 0
-        ? '#$rank${region.isEmpty ? '' : ' in ${_titleCase(region)}'} ›'
-        : 'View ladder ›';
+        ? '#$rank${region.isEmpty ? '' : ' in ${_titleCase(region)}'}'
+        : 'View divisions ›';
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
       child: Material(

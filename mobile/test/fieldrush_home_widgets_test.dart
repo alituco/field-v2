@@ -421,7 +421,7 @@ void main() {
         ),
       );
       expect(find.text('SEASON 1'), findsOneWidget);
-      expect(find.text('#7 in Phoenix ›'), findsOneWidget);
+      expect(find.text('#7 in Phoenix'), findsOneWidget);
       expect(find.text('SILVER'), findsOneWidget);
       expect(find.text('101 SR to Division 3'), findsOneWidget);
       expect(find.byKey(const ValueKey('home-rating-event-1')), findsNothing);
@@ -480,7 +480,7 @@ void main() {
           onTap: () {},
         ),
       );
-      expect(find.text('View ladder ›'), findsOneWidget);
+      expect(find.text('View divisions ›'), findsOneWidget);
       expect(find.textContaining('Phoenix'), findsNothing);
     },
   );

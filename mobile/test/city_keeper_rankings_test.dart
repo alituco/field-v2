@@ -19,8 +19,11 @@ import 'package:field/src/markets/fieldrush_city_repository.dart';
 import 'package:field/src/profile/fieldrush_city_picker.dart';
 import 'package:field/src/profile/fieldrush_player_profile.dart';
 import 'package:field/src/profile/fieldrush_you_widgets.dart';
+import 'package:field/src/profile/fieldrush_you_screen.dart';
+import 'package:field/src/profile/fieldrush_you_settings.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
+import 'package:field/src/ranking/fieldrush_divisions_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:flutter/material.dart';
@@ -368,7 +371,7 @@ void main() {
   );
 
   testWidgets(
-    'Home Keeper card opens Keeper ranks and shared role survives returning Home',
+    'Home Keeper card opens divisions before the ladder and preserves the shared role',
     (tester) async {
       final role = ValueNotifier(RatingTrack.outfield);
       addTearDown(role.dispose);
@@ -420,6 +423,17 @@ void main() {
       expect(role.value, RatingTrack.goalkeeper);
       await tester.tap(find.byKey(const ValueKey('home-rating-placement')));
       await tester.pumpAndSettle();
+      final divisions = tester.widget<FieldrushDivisionsScreen>(
+        find.byType(FieldrushDivisionsScreen),
+      );
+      expect(divisions.track, RatingTrack.goalkeeper);
+      expect(divisions.rating, same(_ratings.goalkeeper));
+      expect(divisions.cityName, 'Phoenix');
+      expect(divisions.selectedTab, 0);
+      expect(index, 0);
+      await tester.tap(find.byKey(const ValueKey('divisions-open-ranks')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushDivisionsScreen), findsNothing);
       expect(find.text('RANKED'), findsOneWidget);
       expect(repo.requests.last.$1, RatingTrack.goalkeeper);
       await tester.tap(find.text('Outfield'));
@@ -435,6 +449,164 @@ void main() {
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('Home ranked card opens divisions and back keeps Home selected', (
+    tester,
+  ) async {
+    var ranksOpened = 0;
+    final tabs = <int>[];
+    await _pump(
+      tester,
+      SizedBox(
+        height: 1100,
+        child: _dashboard(
+          onRanks: () => ranksOpened++,
+          onNavigateTab: tabs.add,
+        ),
+      ),
+    );
+    final card = find.byKey(const ValueKey('home-skill-rating'));
+    await tester.ensureVisible(card);
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    final screen = tester.widget<FieldrushDivisionsScreen>(
+      find.byType(FieldrushDivisionsScreen),
+    );
+    expect(screen.rating, same(_ratings.outfield));
+    expect(screen.track, RatingTrack.outfield);
+    expect(screen.prediction, isNull);
+    expect(screen.season, isNotNull);
+    expect(ranksOpened, 0);
+    Navigator.of(tester.element(find.byType(FieldrushDivisionsScreen))).pop();
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushDivisionsScreen), findsNothing);
+    expect(find.byType(DashboardHome), findsOneWidget);
+    expect(ranksOpened, 0);
+    expect(tabs, isEmpty);
+    await tester.tap(card);
+    await tester.pumpAndSettle();
+    tester
+        .widget<FieldrushDivisionsScreen>(find.byType(FieldrushDivisionsScreen))
+        .onNavigateTab!(1);
+    await tester.pumpAndSettle();
+    expect(tabs, [1]);
+    expect(find.byType(FieldrushDivisionsScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'You rank cards open divisions with the displayed role snapshot',
+    (tester) async {
+      for (final track in RatingTrack.values) {
+        final role = ValueNotifier(track);
+        addTearDown(role.dispose);
+        var ranksOpened = 0;
+        final tabs = <int>[];
+        await _pump(
+          tester,
+          _youScreen(
+            key: ValueKey(track),
+            role: role,
+            onRanks: () => ranksOpened++,
+            onNavigateTab: tabs.add,
+          ),
+        );
+        final card = find.byKey(
+          ValueKey(
+            track == RatingTrack.outfield
+                ? 'you-rating-ranked'
+                : 'you-rating-placement',
+          ),
+        );
+        await tester.ensureVisible(card);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        final screen = tester.widget<FieldrushDivisionsScreen>(
+          find.byType(FieldrushDivisionsScreen),
+        );
+        expect(screen.rating, same(_ratings.forTrack(track)));
+        expect(screen.track, track);
+        expect(screen.cityName, 'Phoenix');
+        expect(screen.selectedTab, 4);
+        expect(ranksOpened, 0);
+        if (track == RatingTrack.outfield) {
+          screen.onNavigateTab!(0);
+        } else {
+          await tester.tap(find.byKey(const ValueKey('divisions-open-ranks')));
+        }
+        await tester.pumpAndSettle();
+        expect(tabs, track == RatingTrack.outfield ? [0] : isEmpty);
+        expect(ranksOpened, track == RatingTrack.outfield ? 0 : 1);
+        expect(find.byType(FieldrushDivisionsScreen), findsNothing);
+        expect(role.value, track);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
+  testWidgets('You unavailable rating retains the ladder retry action', (
+    tester,
+  ) async {
+    var ranksOpened = 0;
+    await _pump(
+      tester,
+      _youScreen(
+        rankings: _Rankings(failRatings: true),
+        onRanks: () => ranksOpened++,
+      ),
+    );
+    final retry = find.byKey(const ValueKey('you-rating-unavailable'));
+    await tester.ensureVisible(retry);
+    await tester.tap(retry);
+    await tester.pumpAndSettle();
+    expect(ranksOpened, 1);
+    expect(find.byType(FieldrushDivisionsScreen), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'placement routes pass the owner prediction without revealing SR',
+    (tester) async {
+      final prediction = FieldrushPlacementPrediction(
+        skillRating: 1040,
+        countedMatches: 1,
+        lastChange: 40,
+      );
+      final ratings = FieldrushPlayerRatings(
+        outfield: _entry(matches: 1, sr: 1040, rank: 0),
+        goalkeeper: _ratings.goalkeeper,
+        placementPredictions: {RatingTrack.outfield: prediction},
+      );
+      for (final fromHome in [true, false]) {
+        final rankings = _Rankings(ratings: ratings);
+        await _pump(
+          tester,
+          fromHome
+              ? SizedBox(height: 1100, child: _dashboard(rankings: rankings))
+              : _youScreen(rankings: rankings),
+        );
+        final card = find.byKey(
+          ValueKey(fromHome ? 'home-rating-placement' : 'you-rating-placement'),
+        );
+        await tester.ensureVisible(card);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        final screen = tester.widget<FieldrushDivisionsScreen>(
+          find.byType(FieldrushDivisionsScreen),
+        );
+        expect(screen.rating, same(ratings.outfield));
+        expect(screen.rating!.ratingVisible, isFalse);
+        expect(screen.prediction, same(prediction));
+        expect(screen.track, RatingTrack.outfield);
+        expect(screen.cityName, 'phoenix');
+        Navigator.of(
+          tester.element(find.byType(FieldrushDivisionsScreen)),
+        ).pop();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
     },
   );
 
@@ -572,7 +744,9 @@ Future<void> _pump(
                 child: Material(
                   color: FieldrushAuthTheme.cream,
                   child:
-                      child is LeaderboardScreen || child is FieldrushCityPicker
+                      child is LeaderboardScreen ||
+                          child is FieldrushCityPicker ||
+                          child is FieldrushYouScreen
                       ? child
                       : SingleChildScrollView(child: child),
                 ),
@@ -616,6 +790,44 @@ Widget _you(FieldrushPlayerRatings ratings) => FieldrushYouContent(
   onWallet: () {},
   onPaymentMethods: () {},
   onSignOut: () {},
+);
+
+DashboardHome _dashboard({
+  _Rankings? rankings,
+  VoidCallback? onRanks,
+  ValueChanged<int>? onNavigateTab,
+}) => DashboardHome(
+  profileRepository: _Profiles(),
+  clanRepository: _Clans(),
+  fixtureRepository: _Fixtures(),
+  leaderboardRepository: rankings ?? _Rankings(),
+  openQueueRepository: _Queue(),
+  onOpenRanks: onRanks ?? () {},
+  onOpenClans: () {},
+  onOpenFixtures: () {},
+  onOpenProfile: () {},
+  onNavigateTab: onNavigateTab ?? (_) {},
+);
+
+FieldrushYouScreen _youScreen({
+  Key? key,
+  _Rankings? rankings,
+  ValueNotifier<RatingTrack>? role,
+  VoidCallback? onRanks,
+  ValueChanged<int>? onNavigateTab,
+}) => FieldrushYouScreen(
+  key: key,
+  profileRepository: _Profiles(),
+  leaderboardRepository: rankings ?? _Rankings(),
+  clanRepository: _Clans(),
+  fixtureRepository: _Fixtures(),
+  openQueueRepository: _Queue(),
+  settingsRepository: _Settings(),
+  ratingTrackController: role,
+  onOpenAccount: () async {},
+  onOpenRanks: onRanks ?? () {},
+  onNavigateTab: onNavigateTab,
+  onSignOut: () async {},
 );
 
 PlayerRatingLeaderboardEntry _entry({
@@ -665,12 +877,19 @@ const _profile = PlayerProfile(
 
 class _Rankings extends Fake
     implements LeaderboardRepository, TrackLeaderboardRepository {
+  _Rankings({this.ratings, this.failRatings = false});
+  final FieldrushPlayerRatings? ratings;
+  final bool failRatings;
   final requests = <(RatingTrack, String?)>[];
   @override
   Future<FieldrushPlayerRatings> loadPlayerRatings({
     required LeaderboardSeason season,
     String? profileId,
-  }) async => _ratings;
+  }) async {
+    if (failRatings) throw StateError('Rating service unavailable');
+    return ratings ?? _ratings;
+  }
+
   @override
   Future<PlayerRatingLeaderboardPage> loadRatingPage({
     required LeaderboardSeason season,
@@ -706,7 +925,21 @@ class _Cities extends Fake implements FieldrushCityRepository {
 
 class _Profiles extends Fake implements ProfileRepository {
   @override
+  String get currentUserId => 'me';
+  @override
   Future<PlayerProfile> getCurrentProfile() async => _profile;
+}
+
+class _Settings extends Fake implements YouSettingsRepository {
+  @override
+  Future<YouNotificationPreferences> loadNotifications() async =>
+      const YouNotificationPreferences();
+  @override
+  Future<YouWallet> loadWallet() async => YouWallet.fromJson({
+    'currency': 'USD',
+    'balance_fils': 0,
+    'balances': <Object>[],
+  });
 }
 
 class _Clans extends Fake implements ClanRepository {
