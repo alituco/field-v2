@@ -9,6 +9,15 @@ const startCommand = {
   rtmpsUrl: "rtmps://live.cloudflare.com:443/live/", streamKey: "test-stream-key",
   overlayUrl: `${origin}/broadcast/obs/game-1#token=private-test-token`,
 };
+const unresolvedRecording = {
+  sessionId: "earlier-output-session",
+  kind: "match",
+  target: { fixtureId: null, openQueueGameId: "earlier-game" },
+  recordingDirectory: "/Users/ref/Movies/Fieldrush",
+  recordingStartedAt: "2026-10-20T18:00:00.000Z",
+  attemptedAt: "2026-10-20T18:00:00.000Z",
+  possiblePath: null,
+};
 
 class FakeObs {
   constructor() {
@@ -418,8 +427,9 @@ test("bounded calls reconcile accepted actions even when OBS never returns the r
   assert.equal(controller.getState().target, null);
 });
 
-test("an uncertain inactive start retains the hold and never blindly sends another start", async () => {
-  const { controller, obs } = await setup({ callTimeoutMs: 5 });
+test("an uncertain current start remains blocking even with an earlier recovery advisory", async () => {
+  const { controller, obs } = await setup({ callTimeoutMs: 5,
+    savedState: { workspaceId, unresolvedRecordings: [unresolvedRecording] } });
   const original = obs.call.bind(obs);
   let attempts = 0;
   obs.call = async (type, args) => {
@@ -428,11 +438,15 @@ test("an uncertain inactive start retains the hold and never blindly sends anoth
   };
   await assert.rejects(controller.start(startCommand), /could not complete StartRecord/);
   assert.equal(controller.getState().recordIntent.action, "start");
+  const status = await controller.status();
+  assert.ok(status.warnings.some(warning => warning.includes("awaiting confirmation")));
+  assert.ok(status.advisories.some(advisory => advisory.includes("unconfirmed backup")));
   await assert.rejects(controller.start(startCommand), /no second start/);
   await assert.rejects(controller.stopCurrent(), /not confirmed the earlier start/);
   await assert.rejects(controller.configure({ cameraId: "osmo-usb", microphoneId: null, recordingDirectory: "/Users/ref/Movies" }), /Finish the current Fieldrush session/);
   assert.equal(attempts, 1);
   assert.equal(controller.getState().target.openQueueGameId, "game-1");
+  assert.deepEqual(controller.getState().unresolvedRecordings, [unresolvedRecording]);
   assert.equal(obs.calls.some((call) => call.type === "StartStream"), false);
 });
 
@@ -618,10 +632,42 @@ test("explicit Stop can release an unknown start only after a verified OBS proce
   assert.equal(state.unresolvedRecordings[0].recordingStartedAt, null);
   assert.equal(state.unresolvedRecordings[0].attemptedAt, attemptedAt);
   assert.equal(state.unresolvedRecordings[0].possiblePath, null);
-  assert.ok(stopped.warnings.some(warning => warning.includes("unconfirmed backup")));
+  assert.deepEqual(stopped.warnings, []);
+  assert.ok(stopped.advisories.some(advisory => advisory.includes("unconfirmed backup")));
+  const recoveryDetails = structuredClone(state.unresolvedRecordings);
   obs.call = original;
-  await controller.start(startCommand);
+  const nextMatch = { ...startCommand, openQueueGameId: "game-2",
+    overlayUrl: `${origin}/broadcast/obs/game-2#token=private-test-token` };
+  await controller.start(nextMatch);
   assert.equal(obs.streaming, true);
+  assert.equal(controller.getState().target.openQueueGameId, "game-2");
+  assert.deepEqual(controller.getState().unresolvedRecordings, recoveryDetails);
+  await controller.stopCurrent();
+  assert.deepEqual(controller.getState().unresolvedRecordings, recoveryDetails);
+  assert.equal(controller.getState().recordings[0].openQueueGameId, "game-2");
+});
+
+test("historical recovery advisories never hide current camera, microphone, or backup faults", async () => {
+  const cases = [
+    { fault: ({ obs }) => { obs.devices.camera = []; }, warning: /selected camera is disconnected/ },
+    { fault: ({ obs }) => { obs.devices.mic = []; }, warning: /selected microphone is disconnected/ },
+    { fault: ({ obs }) => { obs.streaming = true; }, warning: /Streaming without a local backup/ },
+    { fault: async ({ controller, obs }) => { await controller.start(startCommand); obs.streaming = false; },
+      warning: /local backup is recording, but the stream is offline/ },
+  ];
+  for (const { fault, warning } of cases) {
+    const context = await setup({ savedState: { workspaceId, unresolvedRecordings: [unresolvedRecording] } });
+    const healthy = await context.controller.status();
+    assert.deepEqual(healthy.warnings, []);
+    assert.equal(healthy.advisories.length, 1);
+    await fault(context);
+    const status = await context.controller.status();
+    assert.ok(status.warnings.some(message => warning.test(message)), warning.source);
+    assert.equal(status.warnings.some(message => message.includes("earlier OBS session")), false);
+    assert.equal(status.advisories.length, 1);
+    assert.match(status.advisories[0], /unconfirmed backup/);
+    assert.deepEqual(context.controller.getState().unresolvedRecordings, [unresolvedRecording]);
+  }
 });
 
 test("verified restart preserves metadata for a known-running backup instead of inventing a recovery file", async () => {

@@ -109,6 +109,36 @@ test('camera disconnected is reported not ready', async () => {
   const heartbeat = h.calls.find(call => call.pathname.endsWith('/heartbeat'));
   assert.equal(heartbeat.body.obsConnected, false); assert.equal(heartbeat.body.errorMessage, 'Camera disconnected');
 });
+test('historical backup advisories keep a healthy heartbeat ready without hiding recovery details', async () => {
+  const advisories = ['An earlier OBS session has an unconfirmed backup. Check its saved recovery details and original recording folder.'];
+  const h = harness({ status: { warnings: [], advisories } });
+  await h.client.tick();
+  const heartbeat = h.calls.find(call => call.pathname.endsWith('/heartbeat'));
+  assert.equal(heartbeat.body.obsConnected, true);
+  assert.equal(heartbeat.body.errorMessage, null);
+  assert.equal(heartbeat.body.obsStreaming, false);
+  assert.deepEqual((await h.obs.status()).advisories, advisories);
+  assert.ok(h.calls.some(call => call.pathname.endsWith('/commands')));
+  assert.equal(h.client.error, null);
+});
+test('current faults still reach the blocking heartbeat error even alongside historical advisories', async () => {
+  const advisory = 'An earlier OBS session has an unconfirmed backup.';
+  for (const status of [
+    { cameraAvailable: false, warnings: ['The selected camera is disconnected or unavailable.'] },
+    { microphoneAvailable: false, warnings: ['The selected microphone is disconnected or unavailable.'] },
+    { warnings: ['An OBS operation is awaiting confirmation. Keep this session open and check OBS before changing setup.'] },
+    { warnings: ['Streaming without a local backup. Check recording storage in OBS.'] },
+    { warnings: ['The local backup is paused. Resume recording in OBS.'] },
+    { error: 'OBS connection failed.', warnings: [] },
+  ]) {
+    const h = harness({ status: { ...status, advisories: [advisory] } });
+    await h.client.tick();
+    const heartbeat = h.calls.find(call => call.pathname.endsWith('/heartbeat'));
+    assert.equal(heartbeat.body.obsConnected, status.cameraAvailable !== false && status.microphoneAvailable !== false);
+    assert.equal(heartbeat.body.errorMessage, status.error ?? status.warnings.join(' '));
+    assert.doesNotMatch(heartbeat.body.errorMessage, /earlier OBS session/);
+  }
+});
 test('failed OBS operation is acknowledged as failed and no secret reaches diagnostics', async () => {
   const h = harness({ command: { id: 'bad', action: 'START_STREAM', openQueueGameId: matchId } });
   h.obs.start = async () => { throw new Error('rtmps://live.example/SECRET ' + 'x'.repeat(43)); };
