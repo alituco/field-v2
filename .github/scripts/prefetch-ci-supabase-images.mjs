@@ -10,7 +10,7 @@ export const PINNED_CLI_VERSION = "2.105.0";
 export const PINNED_KONG_TAG = "2.8.1";
 export const RETRY_DELAYS_MS = Object.freeze([30_000, 60_000, 90_000]);
 const primaryRegistry = "ghcr.io";
-const mirrorRegistry = "public.ecr.aws";
+const imageRegistries = Object.freeze([primaryRegistry, "public.ecr.aws", "docker.io"]);
 const requiredSources = new Map([
   ["supabase/postgres", "postgres"],
   ["supabase/gotrue", "gotrue"],
@@ -18,6 +18,19 @@ const requiredSources = new Map([
   ["supabase/realtime", "realtime"],
   ["supabase/storage-api", "storage-api"],
 ]);
+// Docker Hub uses the original upstream namespaces from the pinned CLI's
+// Dockerfile. GHCR and ECR mirror all of them under /supabase/ instead.
+const dockerHubSources = new Map([
+  ...[...requiredSources].map(([source, name]) => [name, source]),
+  ["kong", "library/kong"],
+]);
+
+function imageAtRegistry(canonical, registry) {
+  const image = canonical.slice(`${primaryRegistry}/supabase/`.length);
+  if (registry !== "docker.io") return `${registry}/supabase/${image}`;
+  const [name, tag] = image.split(":");
+  return `${registry}/${dockerHubSources.get(name)}:${tag}`;
+}
 
 export function parseCiSupabaseImages(stdout) {
   let rows;
@@ -109,24 +122,28 @@ export async function prefetchCiSupabaseImages({
   // Realtime and Storage are required by initSchema15 even though their
   // long-running services are excluded. Download every bootstrap image BEFORE
   // start can initialize a schema or apply any application migration.
+  let preferredRegistry = 0;
   for (const canonical of images) {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
-      const mirror = attempt % 2 === 1;
-      const image = mirror ? canonical.replace(primaryRegistry, mirrorRegistry) : canonical;
+      const registryIndex = (preferredRegistry + attempt) % imageRegistries.length;
+      const image = imageAtRegistry(canonical, imageRegistries[registryIndex]);
       log(`Prefetching local Supabase image ${image} (${attempt + 1}/4).`);
       const pull = await execute("docker", ["pull", image]);
       if (succeeded(pull)) {
-        if (mirror) {
+        if (image !== canonical) {
           // The CLI checks its canonical image name in Docker's local cache.
           // Alias the same official image/tag; do not change the CLI registry.
           const tagged = await execute("docker", ["tag", image, canonical]);
           if (!succeeded(tagged)) return exitStatus(tagged);
         }
+        // Continue with the working registry instead of hitting the same two
+        // throttled registries again for every remaining bootstrap image.
+        preferredRegistry = registryIndex;
         break;
       }
       if (attempt === RETRY_DELAYS_MS.length || !isDockerPullRateLimit(pull)) return exitStatus(pull);
       const wait = RETRY_DELAYS_MS[attempt];
-      log(`Image download was rate-limited. Trying the alternate official registry in ${wait / 1000}s.`);
+      log(`Image download was rate-limited. Trying the next official registry in ${wait / 1000}s.`);
       await sleep(wait);
     }
   }

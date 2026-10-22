@@ -25,6 +25,15 @@ const expected = [
 ];
 const success = (stdout = "") => ({ status: 0, signal: null, stdout, stderr: "" });
 const limited = { status: 1, signal: null, stderr: "Error response from daemon: toomanyrequests: retry-after: 27.06µs, allowed: 44000/minute" };
+const ecrLimited = { status: 1, signal: null, stderr: "Error response from daemon: toomanyrequests: Data limit exceeded" };
+const hubImages = [
+  "docker.io/supabase/postgres:17.6.1.132",
+  "docker.io/supabase/gotrue:v2.189.0",
+  "docker.io/postgrest/postgrest:v14.12",
+  "docker.io/supabase/realtime:v2.103.2",
+  "docker.io/supabase/storage-api:v1.60.4",
+  "docker.io/library/kong:2.8.1",
+];
 
 function harness(options = {}) {
   const calls = [];
@@ -97,14 +106,53 @@ test("Realtime 429 is resolved before schema initialization using the exact ECR 
   assert.ok(!fixture.calls.some(call => call.args[0] === "start"));
 });
 
-test("one image has four total alternating downloads and at most 30/60/90 seconds of backoff", async () => {
+test("GHCR and ECR throttling falls back to Docker Hub and reuses it for all six pinned images", async () => {
+  const fixture = harness({ pulls: [limited, ecrLimited, success()] });
+  assert.equal(await prefetchCiSupabaseImages(fixture.options), 0);
+  assert.deepEqual(fixture.calls.slice(2, 4), [
+    { command: "docker", args: ["pull", expected[0]] },
+    { command: "docker", args: ["pull", "public.ecr.aws/supabase/postgres:17.6.1.132"] },
+  ]);
+  assert.deepEqual(fixture.calls.slice(4), hubImages.flatMap((image, index) => [
+    { command: "docker", args: ["pull", image] },
+    { command: "docker", args: ["tag", image, expected[index]] },
+  ]));
+  assert.deepEqual(fixture.waits, [30_000, 60_000]);
+  assert.ok(!fixture.calls.some(call => call.args[0] === "start"));
+});
+
+test("a working ECR mirror is reused instead of retrying throttled GHCR for every image", async () => {
+  const fixture = harness({ pulls: [limited, success()] });
+  assert.equal(await prefetchCiSupabaseImages(fixture.options), 0);
+  assert.deepEqual(fixture.calls.slice(3), expected.flatMap(canonical => {
+    const image = canonical.replace("ghcr.io", "public.ecr.aws");
+    return [
+      { command: "docker", args: ["pull", image] },
+      { command: "docker", args: ["tag", image, canonical] },
+    ];
+  }));
+  assert.deepEqual(fixture.waits, [30_000]);
+});
+
+test("one image has four total downloads across three registries and at most 30/60/90 seconds of backoff", async () => {
   const fixture = harness({ pulls: [limited, limited, limited, success()] });
   assert.equal(await prefetchCiSupabaseImages(fixture.options), 0);
   assert.deepEqual(fixture.calls.slice(2, 6).map(call => call.args[1]), [
-    expected[0], "public.ecr.aws/supabase/postgres:17.6.1.132", expected[0], "public.ecr.aws/supabase/postgres:17.6.1.132",
+    expected[0], "public.ecr.aws/supabase/postgres:17.6.1.132", hubImages[0], expected[0],
   ]);
   assert.deepEqual(fixture.waits, [30_000, 60_000, 90_000]);
-  assert.equal(fixture.calls.filter(call => call.args[0] === "tag").length, 1);
+  assert.equal(fixture.calls.filter(call => call.args[0] === "tag").length, 0);
+});
+
+test("a non-rate Docker Hub failure and a failed cache alias stop without retrying or starting the schema", async () => {
+  const failed = harness({ pulls: [limited, ecrLimited, { status: 18, stderr: "Error response from daemon: manifest unknown" }] });
+  assert.equal(await prefetchCiSupabaseImages(failed.options), 18);
+  assert.equal(failed.calls.length, 5);
+  assert.deepEqual(failed.waits, [30_000, 60_000]);
+  const tag = harness({ pulls: [limited, ecrLimited, success()], tag: { status: 23, stderr: "tag failed" } });
+  assert.equal(await prefetchCiSupabaseImages(tag.options), 23);
+  assert.equal(tag.calls.length, 6);
+  assert.deepEqual(tag.waits, [30_000, 60_000]);
 });
 
 test("exhausted download throttling preserves the last exit and never continues to other images or start", async () => {
