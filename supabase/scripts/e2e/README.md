@@ -90,6 +90,36 @@ deno run --allow-env --allow-net --allow-read \
 Run cleanup from an `always()`/`finally` step so an interrupted UI test does not
 leave active games or unresolved E2E queues.
 
+### Captured synthetic checkout recovery (operator only)
+
+Cleanup deliberately refuses to expire captured payments. If an interrupted run
+left an unlinked `STAGING_E2E/CAPTURED` checkout for its now-cancelled **Match**
+fixture, an authorized database operator can use the separate local command
+below. This is never run by CI, cleanup or deployment. It rejects Stripe/legacy
+payments, real/unmarked users, other runs, live games, linked bookings and
+non-staging database connections. It never restores retired staff access.
+
+Use Node 22.18+ and `psql`. Provide `SUPABASE_DB_URL` privately (the exact staging
+direct or pooler PostgreSQL URL), `SUPABASE_URL` and `FIELD_ENVIRONMENT=staging`.
+Do not paste connection URLs/passwords into shell history or commit them.
+
+```sh
+node supabase/scripts/e2e/reconcile_captured_checkout.mjs \
+  --run=<failed-run-and-attempt> --intent=<exact-intent-uuid> \
+  --player=<exact-player-uuid> --game=<exact-game-uuid> \
+  --creator=<exact-fixture-staff-actor-uuid>
+```
+
+By default it executes the guarded normal finalizer in a transaction and rolls
+it back. After reviewing that dry run, repeat the same selectors with `--apply`
+and `--confirm=RECONCILE_STAGING_E2E:<failed-run-and-attempt>:<exact-intent-uuid>`.
+All guards and finalization run under database locks in one transaction. Commit
+requires a single, full, completed **synthetic** refund from the normal finalizer;
+no Stripe operation is made and no payment is deleted/expired. Its ordinary
+refund reference and reason are durable reconciliation evidence. Repeating the
+exact command verifies that evidence without creating another refund. Unknown
+outcomes fail closed and require private database diagnostics before retrying.
+
 To validate the safety configuration without writing data:
 
 ```sh
