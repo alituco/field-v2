@@ -470,10 +470,7 @@ jobs:
           node supabase/scripts/test_season_zero_migration_chain.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
-        run: >-
-          supabase start
-          --exclude
-          studio,imgproxy,mailpit,logflare,vector,realtime,storage-api,edge-runtime,postgres-meta,supavisor
+        run: node .github/scripts/start-ci-supabase.mjs
 
       - name: Lint the local database
         run: supabase db lint --local --level error
