@@ -75,6 +75,22 @@ test("all six baseline checks are independently plan-gated after preflight", () 
   assert.match(job("flutter-ios"), /flutter build ios/);
 });
 
+test("iOS cold builds have time for both mandatory flavors without changing the release gate", () => {
+  const source = job("flutter-ios");
+  assert.match(source, /^    name: Flutter iOS flavor builds$/m);
+  assert.match(source, /^    timeout-minutes: 60$/m);
+  assert.doesNotMatch(source, /continue-on-error:|^    strategy:|secrets\./m);
+  const staging = stepContaining(source, "name: Build iOS staging simulator flavor");
+  assert.match(staging, /flutter build ios\s+--simulator\s+--debug\s+--flavor staging/);
+  assert.match(staging, /--dart-define=APP_ENV=staging/);
+  assert.match(staging, /--dart-define=DEV=true/);
+  const production = stepContaining(source, "name: Build iOS production release flavor");
+  assert.match(production, /flutter build ios\s+--release\s+--no-codesign\s+--flavor production/);
+  assert.match(production, /--dart-define=APP_ENV=production/);
+  assert.match(production, /--dart-define=DEV=false/);
+  assert.ok(needs("deploy-staging").includes("flutter-ios"));
+});
+
 test("the shared admin inbox navigation is verified before hosted deployments", () => {
   const source = job("referee");
   const browser = stepContaining(source, "npm run test:ui -- admin-inbox-navigation.spec.ts");

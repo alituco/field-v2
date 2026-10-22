@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:field/src/clans/clan.dart';
 import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
@@ -9,6 +11,9 @@ import 'package:field/src/home/home_discovery_repository.dart';
 import 'package:field/src/home/home_discovery_screen.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
+import 'package:field/src/leaderboard/fieldrush_seasons.dart';
+import 'package:field/src/markets/fieldrush_city.dart';
+import 'package:field/src/markets/fieldrush_city_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
@@ -325,6 +330,226 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text("You're all caught up."), findsOneWidget);
   });
+
+  testWidgets(
+    'a booked invitation opens while season, city, fixtures and activity remain pending',
+    (tester) async {
+      final ranks = _PendingSeasons();
+      final city = _PendingCity();
+      final fixtures = _PendingFixtures();
+      final discovery = _PendingDiscovery();
+      final invited = _booking(_game('invited'));
+      final queue = _Invites(bookings: [invited]);
+      await _pump(
+        tester,
+        queue,
+        ranks: ranks,
+        city: city,
+        fixtures: fixtures,
+        discovery: discovery,
+      );
+
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-solo-booking-booking-invited')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+      await tapAfterScroll(
+        tester,
+        find.descendant(
+          of: find.byKey(const ValueKey('home-party-invite-invited')),
+          matching: find.byType(FilledButton),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushGameDetailScreen>(
+              find.byType(FieldrushGameDetailScreen),
+            )
+            .gameId,
+        invited.gameId,
+      );
+      await tester.scrollUntilVisible(find.text('Accept'), 250);
+      expect(find.text('Accept'), findsOneWidget);
+
+      // These never completed while the real invitation was opened. Resolve
+      // only after assertions to retire their bounded-read timers in the test.
+      ranks.pending.complete(_catalog());
+      city.pending.complete(FieldrushCity.phoenix);
+      fixtures.pending.complete([]);
+      discovery.pending.complete([]);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('slow rating and profile history do not gate core Home data', (
+    tester,
+  ) async {
+    final ranks = _PendingRating();
+    final profiles = _SummaryProfiles();
+    await _pump(
+      tester,
+      _Invites(bookings: [_booking(_game('invited'))]),
+      ranks: ranks,
+      profiles: profiles,
+    );
+    expect(profiles.summaryReads, 1);
+    expect(profiles.fullReads, 0);
+    expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+    await tester.drag(
+      find.byKey(const Key('fieldrush-home-scroll')),
+      const Offset(0, -650),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('home-party-invite-invited')),
+      findsOneWidget,
+    );
+    ranks.pending.complete(
+      await _Ranks(false).loadCurrentPlayerRating(activeLeaderboardSeason),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'late responses from an older Home refresh never replace newer sections',
+    (tester) async {
+      final oldProfile = Completer<PlayerProfile>();
+      final newProfile = Completer<PlayerProfile>();
+      final oldBookings = Completer<List<OpenQueueBooking>>();
+      final newBookings = Completer<List<OpenQueueBooking>>();
+      final profiles = _ControlledProfiles([
+        oldProfile.future,
+        newProfile.future,
+      ]);
+      final queue = _ControlledBookings([
+        oldBookings.future,
+        newBookings.future,
+      ]);
+      await _pump(tester, queue, profiles: profiles);
+      await _pump(tester, queue, profiles: profiles, tick: 1);
+      newProfile.complete(
+        const PlayerProfile(
+          id: 'profile',
+          displayName: 'Newer Player',
+          username: 'newer',
+          bio: '',
+          followingCount: 0,
+          fansCount: 0,
+          appearances: 0,
+          goals: 0,
+          assists: 0,
+          highlights: [],
+          career: [],
+        ),
+      );
+      newBookings.complete([_booking(_game('newer'))]);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Newer'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-solo-booking-booking-newer')),
+        findsOneWidget,
+      );
+      oldProfile.complete(_profile);
+      oldBookings.complete([_booking(_game('older'))]);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Newer'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-solo-booking-booking-newer')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('home-solo-booking-booking-older')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('refresh failures retain an existing booking and invitation', (
+    tester,
+  ) async {
+    final queue = _FailingRefreshInvites(
+      bookings: [_booking(_game('invited'))],
+    );
+    final profiles = _FailingRefreshProfiles();
+    await _pump(tester, queue, profiles: profiles);
+    queue.fails = true;
+    profiles.fails = true;
+    await _pump(tester, queue, profiles: profiles, tick: 1);
+    expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('home-solo-booking-booking-invited')),
+      findsOneWidget,
+    );
+    await tester.drag(
+      find.byKey(const Key('fieldrush-home-scroll')),
+      const Offset(0, -650),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('home-party-invite-invited')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Could not refresh'), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'a stalled core profile read ends in a retryable error, never an endless skeleton',
+    (tester) async {
+      final pending = Completer<PlayerProfile>();
+      await _pump(
+        tester,
+        _Queue(),
+        profiles: _ControlledProfiles([pending.future, Future.value(_profile)]),
+      );
+      expect(
+        find.byKey(const ValueKey('home-loading-skeleton')),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.textContaining('your profile'), findsOneWidget);
+      pending.complete(_profile);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushHomeHeader), findsNothing);
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a stalled booking read reports an error and ignores a late response',
+    (tester) async {
+      final pending = Completer<List<OpenQueueBooking>>();
+      await _pump(tester, _ControlledBookings([pending.future]));
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byKey(const Key('fieldrush-home-scroll')),
+        const Offset(0, -650),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Could not refresh bookings'), findsOneWidget);
+      pending.complete([_booking(_game('late'))]);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 Future<void> _pump(
@@ -334,6 +559,10 @@ Future<void> _pump(
   bool ratingFails = false,
   PlayerProfile profile = _profile,
   HomeDiscoveryRepository? discovery,
+  ProfileRepository? profiles,
+  LeaderboardRepository? ranks,
+  FieldrushCityRepository? city,
+  FixtureRepository? fixtures,
 }) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
@@ -344,10 +573,11 @@ Future<void> _pump(
       home: Scaffold(
         body: DashboardHome(
           activationTick: tick,
-          profileRepository: _Profiles(profile),
+          profileRepository: profiles ?? _Profiles(profile),
           clanRepository: _Clans(),
-          fixtureRepository: _Fixtures(),
-          leaderboardRepository: _Ranks(ratingFails),
+          fixtureRepository: fixtures ?? _Fixtures(),
+          leaderboardRepository: ranks ?? _Ranks(ratingFails),
+          cityRepository: city,
           openQueueRepository: queue,
           discoveryRepository: discovery,
           onOpenClans: () {},
@@ -443,6 +673,40 @@ class _Profiles extends Fake implements ProfileRepository {
   Future<PlayerProfile> getCurrentProfile() async => profile;
 }
 
+class _SummaryProfiles extends _Profiles implements ProfileSummaryRepository {
+  _SummaryProfiles() : super(_profile);
+  int summaryReads = 0;
+  int fullReads = 0;
+  @override
+  Future<PlayerProfile> getCurrentProfileSummary() async {
+    summaryReads++;
+    return profile;
+  }
+
+  @override
+  Future<PlayerProfile> getCurrentProfile() {
+    fullReads++;
+    throw StateError('Full profile history must not be requested by Home.');
+  }
+}
+
+class _ControlledProfiles extends _Profiles {
+  _ControlledProfiles(this.responses) : super(_profile);
+  final List<Future<PlayerProfile>> responses;
+  @override
+  Future<PlayerProfile> getCurrentProfile() => responses.removeAt(0);
+}
+
+class _FailingRefreshProfiles extends _Profiles {
+  _FailingRefreshProfiles() : super(_profile);
+  bool fails = false;
+  @override
+  Future<PlayerProfile> getCurrentProfile() async {
+    if (fails) throw StateError('Profile temporarily unavailable');
+    return profile;
+  }
+}
+
 class _Ranks extends Fake implements LeaderboardRepository {
   _Ranks(this.fails);
   final bool fails;
@@ -465,6 +729,46 @@ class _Ranks extends Fake implements LeaderboardRepository {
       region: 'phoenix',
     );
   }
+}
+
+class _PendingSeasons extends _Ranks implements SeasonLeaderboardRepository {
+  _PendingSeasons() : super(false);
+  final pending = Completer<FieldrushSeasonCatalog>();
+  @override
+  Future<FieldrushSeasonCatalog> loadSeasons() => pending.future;
+}
+
+class _PendingRating extends _Ranks {
+  _PendingRating() : super(false);
+  final pending = Completer<PlayerRatingLeaderboardEntry>();
+  @override
+  Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
+    LeaderboardSeason season,
+  ) => pending.future;
+}
+
+FieldrushSeasonCatalog _catalog() => FieldrushSeasonCatalog(
+  seasons: [activeLeaderboardSeason],
+  currentSeasonId: activeLeaderboardSeason.id,
+  today: DateTime.parse(activeLeaderboardSeason.startsOn),
+);
+
+class _PendingCity extends Fake implements FieldrushCityRepository {
+  final pending = Completer<FieldrushCity>();
+  @override
+  Future<FieldrushCity> loadPreferredCity() => pending.future;
+}
+
+class _PendingFixtures extends _Fixtures {
+  final pending = Completer<List<Fixture>>();
+  @override
+  Future<List<Fixture>> listFixtures() => pending.future;
+}
+
+class _PendingDiscovery extends _Discovery {
+  final pending = Completer<List<HomeNotification>>();
+  @override
+  Future<List<HomeNotification>> notifications() => pending.future;
 }
 
 class _Queue extends Fake implements OpenQueueRepository {
@@ -519,6 +823,30 @@ class _Invites extends _Queue implements OpenQueuePartyRepository {
                 },
               ],
       });
+}
+
+class _ControlledBookings extends _Queue {
+  _ControlledBookings(this.responses);
+  final List<Future<List<OpenQueueBooking>>> responses;
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() =>
+      responses.removeAt(0);
+}
+
+class _FailingRefreshInvites extends _Invites {
+  _FailingRefreshInvites({super.bookings});
+  bool fails = false;
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
+    if (fails) throw StateError('Bookings temporarily unavailable');
+    return bookings;
+  }
+
+  @override
+  Future<OpenQueuePartyContext> getPartyContext(String id) {
+    if (fails) throw StateError('Invitations temporarily unavailable');
+    return super.getPartyContext(id);
+  }
 }
 
 class _MarketQueue extends _Queue implements OpenQueueMarketRepository {

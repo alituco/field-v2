@@ -65,6 +65,12 @@ abstract interface class ProfileClipRecommendationsRepository {
   });
 }
 
+/// Identity-only snapshot for navigation/Home. Loading an avatar and greeting
+/// must not wait for clips, career history, follow counts or rating history.
+abstract interface class ProfileSummaryRepository {
+  Future<PlayerProfile> getCurrentProfileSummary();
+}
+
 extension ProfileClipRecommendationsAccess on ProfileRepository {
   Future<List<ProfileClipRecommendation>> getClipRecommendations({
     required String highlightId,
@@ -80,7 +86,10 @@ extension ProfileClipRecommendationsAccess on ProfileRepository {
 }
 
 class SupabaseProfileRepository
-    implements ProfileRepository, ProfileClipRecommendationsRepository {
+    implements
+        ProfileRepository,
+        ProfileClipRecommendationsRepository,
+        ProfileSummaryRepository {
   SupabaseProfileRepository({SupabaseClient? client})
     : _injectedClient = client;
 
@@ -295,6 +304,29 @@ class SupabaseProfileRepository
     await _ensureProfile(user);
 
     return _getProfile(user.id);
+  }
+
+  @override
+  Future<PlayerProfile> getCurrentProfileSummary() async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw const AuthException('You need to sign in again.');
+    }
+    final profile = await _loadProfile(user.id);
+    return PlayerProfile(
+      id: user.id,
+      displayName: profile.displayName,
+      username: profile.username,
+      bio: profile.bio,
+      avatarUrl: profile.avatarUrl,
+      followingCount: 0,
+      fansCount: 0,
+      appearances: 0,
+      goals: 0,
+      assists: 0,
+      highlights: const [],
+      career: const [],
+    );
   }
 
   @override
