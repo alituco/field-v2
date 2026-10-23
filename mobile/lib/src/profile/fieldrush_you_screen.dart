@@ -615,9 +615,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                             _openConnections(ProfileConnectionTab.following),
                         onFans: () =>
                             _openConnections(ProfileConnectionTab.fans),
-                        onRanks: _rating == null
-                            ? widget.onOpenRanks
-                            : _openDivisions,
+                        onRanks: _openDivisions,
                         onMatchHistory: _openHistory,
                         onClip: _openClip,
                         onAllClips: _openAllClips,
