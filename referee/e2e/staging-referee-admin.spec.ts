@@ -128,8 +128,15 @@ test("referee runs the match and admin sees player-created requests", async ({
     timeout: 30_000,
   });
   await expect(page.locator(".result-locked-note")).toContainText(
-    "Final result saved. Admin corrections remain fully audited.",
+    "Final result saved. Use Reopen match if play needs to continue.",
   );
+  const reopenMatch = page.locator("details.timer-end-disclosure");
+  await expect(reopenMatch.locator("summary")).toHaveText("Reopen match");
+  await reopenMatch.locator("summary").click();
+  await expect(reopenMatch.getByRole("button", {
+    name: "Confirm reopen match",
+    exact: true,
+  })).toBeEnabled();
 
   await expectAdminApiMarkers(
     page,
