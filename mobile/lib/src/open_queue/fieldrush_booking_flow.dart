@@ -5,7 +5,7 @@ import '../ui/field_loading.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
-import '../fixtures/fixture.dart';
+import '../core/read_timeout.dart';
 import '../home/field_bottom_nav.dart';
 import '../markets/fieldrush_city.dart';
 import '../markets/fieldrush_city_repository.dart';
@@ -78,6 +78,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
   bool _openingActiveGame = false;
   List<OpenQueueGame> _games = [];
   bool _loading = true;
+  bool _hasLoaded = false;
+  bool _availabilityReady = false;
   String? _error;
   int _generation = 0;
   final _scrollController = ScrollController();
@@ -116,7 +118,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
   Future<void> _load() async {
     final generation = ++_generation;
     setState(() {
-      _loading = true;
+      _loading = !_hasLoaded;
+      _availabilityReady = false;
       _error = null;
     });
     try {
@@ -128,7 +131,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               : null);
       final preferredCity = cityRepository == null
           ? FieldrushCity.phoenix
-          : await cityRepository.loadPreferredCity();
+          : await cityRepository.loadPreferredCity().timeout(fieldReadTimeout);
       if (!mounted || generation != _generation) return;
       final cityId = widget.initialGame?.marketCityId ?? preferredCity.id;
       final timezone = widget.initialGame?.timezone ?? preferredCity.timezone;
@@ -141,16 +144,12 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               )
             : repository.listGames(),
         repository.getMyUpcomingBookings(),
-      ]);
+      ]).timeout(fieldReadTimeout);
       if (!mounted || generation != _generation) return;
       final bookings = result[1] as List<OpenQueueBooking>;
       final activeBooking = bookings.where((booking) {
-        final game = booking.game;
         return booking.status == 'CONFIRMED' &&
-            !['CANCELLED', 'FINAL'].contains(game.status) &&
-            (game.status == 'LIVE' ||
-                (game.operationalState != MatchOperationalState.noData &&
-                    game.endsAt.isAfter(_now)));
+            booking.game.isActiveReservation;
       }).firstOrNull;
       final bookedIds = bookings.map((b) => b.gameId).toSet();
       final games =
@@ -165,6 +164,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               .toList()
             ..sort((a, b) => a.startsAt.compareTo(b.startsAt));
       setState(() {
+        _hasLoaded = true;
+        _availabilityReady = true;
         _activeBooking = activeBooking;
         _games = games;
         final selected = _selectedGame;
@@ -228,7 +229,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
   Future<void> _checkout() async {
     final game = _selectedGame;
     final role = _selectedRole;
-    if (_loading ||
+    if (!_availabilityReady ||
+        _loading ||
         _activeBooking != null ||
         game == null ||
         role == null ||
@@ -883,7 +885,9 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
       const SizedBox(height: 14),
       FilledButton(
         key: const ValueKey('booking-continue-payment'),
-        onPressed: _selectedRole == null ? null : _checkout,
+        onPressed: !_availabilityReady || _selectedRole == null
+            ? null
+            : _checkout,
         child: const Text('Continue to payment'),
       ),
       const SizedBox(height: 9),

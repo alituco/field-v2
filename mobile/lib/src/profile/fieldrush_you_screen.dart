@@ -8,6 +8,7 @@ import '../auth/fieldrush_account.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan_repository.dart';
 import '../core/user_facing_error.dart';
+import '../core/read_timeout.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
@@ -93,6 +94,14 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   YouWallet? _wallet;
   LeaderboardSeason _season = activeLeaderboardSeason;
   bool _loading = true;
+  bool _profileDetailsReady = false;
+  bool _profileDetailsLoading = true;
+  String? _requestUserId;
+  bool _ratingLoading = true;
+  bool _reliabilityLoading = true;
+  bool _walletLoading = true;
+  bool _notificationsLoading = true;
+  final Set<String> _failedSections = {};
   Object? _error;
   int _loadVersion = 0;
   bool _openingGame = false;
@@ -113,7 +122,24 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       widget.ratingTrackController?.addListener(_syncRatingTrack);
       _syncRatingTrack();
     }
-    if (oldWidget.activationTick != widget.activationTick) _load();
+    final userChanged =
+        _requestUserId != widget.profileRepository.currentUserId;
+    if (userChanged) {
+      _profile = null;
+      _profileDetailsReady = false;
+      _account = null;
+      _rating = null;
+      _ratings = null;
+      _reliability = null;
+      _notifications = null;
+      _wallet = null;
+    }
+    if (userChanged ||
+        oldWidget.profileRepository != widget.profileRepository ||
+        oldWidget.accountRepository != widget.accountRepository ||
+        oldWidget.activationTick != widget.activationTick) {
+      _load();
+    }
   }
 
   @override
@@ -170,69 +196,125 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
 
   Future<void> _load() async {
     final version = ++_loadVersion;
+    final repository = widget.profileRepository;
+    final userId = _requestUserId = repository.currentUserId;
     final navigationProfile = FieldNavigationProfileScope.beginRead(context);
     setState(() {
-      // A refresh must not replace an already loaded rank/profile with a
-      // skeleton on every navigation. First load still uses the full skeleton.
       _loading = _profile == null;
+      _profileDetailsLoading = !_profileDetailsReady;
+      _ratingLoading = _rating == null;
+      _reliabilityLoading = _reliability == null;
+      _walletLoading = _wallet == null;
+      _notificationsLoading = _notifications == null;
       _error = null;
+      _failedSections.clear();
     });
-    Future<T?> optional<T>(Future<T> future) async {
+    bool current() =>
+        mounted &&
+        version == _loadVersion &&
+        identical(widget.profileRepository, repository) &&
+        repository.currentUserId == userId;
+    Future<void> section<T>(
+      String label,
+      Future<T> Function() request,
+      void Function(T) receive, {
+      VoidCallback? finished,
+    }) async {
       try {
-        return await future;
-      } catch (_) {
-        return null;
+        final value = await request().timeout(fieldReadTimeout);
+        if (current()) setState(() => receive(value));
+      } catch (error) {
+        if (current()) {
+          setState(() {
+            if (label != 'your profile' || _profile == null) {
+              _failedSections.add(label);
+            }
+            if (label == 'your profile' || label == 'profile details') {
+              _error = error;
+            }
+          });
+        }
+      } finally {
+        if (current() && finished != null) setState(finished);
       }
     }
 
-    try {
-      final season = await loadActiveLeaderboardSeason(
-        widget.leaderboardRepository,
-      );
-      if (!mounted || version != _loadVersion) return;
-      final data = await Future.wait<Object?>([
-        widget.profileRepository.getCurrentProfile(),
-        optional(
-          widget.leaderboardRepository is TrackLeaderboardRepository
-              ? (widget.leaderboardRepository as TrackLeaderboardRepository)
-                    .loadPlayerRatings(season: season)
-              : widget.leaderboardRepository.loadCurrentPlayerRating(season),
+    // Identity, rank and optional settings publish independently. A slow wallet
+    // or notifications request must not hide a completed profile or SR update.
+    await Future.wait<void>([
+      if (repository is ProfileSummaryRepository)
+        section(
+          'your profile',
+          (repository as ProfileSummaryRepository).getCurrentProfileSummary,
+          (profile) {
+            if (!_profileDetailsReady) {
+              navigationProfile?.complete(profile);
+              _profile = profile;
+              _loading = false;
+            }
+          },
         ),
-        widget.accountRepository == null
-            ? Future<FieldrushAccount?>.value()
-            : optional(widget.accountRepository!.loadAccount()),
-        widget.reliabilityRepository == null
-            ? Future<ReliabilityStatus?>.value()
-            : optional(widget.reliabilityRepository!.getMyStatus()),
-        optional(widget.settingsRepository.loadNotifications()),
-        optional(widget.settingsRepository.loadWallet()),
-      ]);
-      if (!mounted || version != _loadVersion) return;
-      navigationProfile?.complete(data[0] as PlayerProfile);
-      setState(() {
-        _profile = data[0] as PlayerProfile;
-        _ratings = data[1] is FieldrushPlayerRatings
-            ? data[1] as FieldrushPlayerRatings
-            : null;
-        _rating =
-            _ratings?.forTrack(_ratingTrack) ??
-            (data[1] is PlayerRatingLeaderboardEntry
-                ? data[1] as PlayerRatingLeaderboardEntry
-                : null);
-        _account = data[2] as FieldrushAccount?;
-        _reliability = data[3] as ReliabilityStatus?;
-        _notifications = data[4] as YouNotificationPreferences?;
-        _wallet = data[5] as YouWallet?;
-        _season = season;
-        _loading = false;
-      });
-    } catch (error) {
-      if (!mounted || version != _loadVersion) return;
-      setState(() {
-        _loading = false;
-        _error = error;
-      });
-    }
+      section(
+        'profile details',
+        widget.profileRepository.getCurrentProfile,
+        (profile) {
+          navigationProfile?.complete(profile);
+          _profile = profile;
+          _profileDetailsReady = true;
+          _failedSections.remove('your profile');
+        },
+        finished: () {
+          _loading = false;
+          _profileDetailsLoading = false;
+        },
+      ),
+      section(
+        'rating',
+        () async {
+          final season = await loadActiveLeaderboardSeason(
+            widget.leaderboardRepository,
+          ).timeout(fieldReadTimeout);
+          final repository = widget.leaderboardRepository;
+          final Object rating = repository is TrackLeaderboardRepository
+              ? await (repository as TrackLeaderboardRepository)
+                    .loadPlayerRatings(season: season)
+              : await repository.loadCurrentPlayerRating(season);
+          return (season: season, rating: rating);
+        },
+        (value) {
+          _season = value.season;
+          _ratings = value.rating is FieldrushPlayerRatings
+              ? value.rating as FieldrushPlayerRatings
+              : null;
+          _rating =
+              _ratings?.forTrack(_ratingTrack) ??
+              (value.rating is PlayerRatingLeaderboardEntry
+                  ? value.rating as PlayerRatingLeaderboardEntry
+                  : null);
+        },
+        finished: () => _ratingLoading = false,
+      ),
+      if (widget.accountRepository case final repository?)
+        section('account', repository.loadAccount, (value) => _account = value),
+      section(
+        'reliability',
+        () async => await widget.reliabilityRepository?.getMyStatus(),
+        (value) => _reliability = value,
+        finished: () => _reliabilityLoading = false,
+      ),
+      section(
+        'notification settings',
+        widget.settingsRepository.loadNotifications,
+        (value) => _notifications = value,
+        finished: () => _notificationsLoading = false,
+      ),
+      section(
+        'wallet',
+        widget.settingsRepository.loadWallet,
+        (value) => _wallet = value,
+        finished: () => _walletLoading = false,
+      ),
+    ]);
   }
 
   String get _cityLabel {
@@ -324,7 +406,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
 
   void _openHistory() {
     final profile = _profile;
-    if (profile == null) return;
+    if (profile == null || !_profileDetailsReady) return;
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (historyContext) => FieldrushMatchHistoryScreen(
@@ -346,11 +428,15 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
     _openingGame = true;
     try {
       final detail = game.isSolo
-          ? await widget.openQueueRepository.getMatchDetail(game.id)
+          ? await widget.openQueueRepository
+                .getMatchDetail(game.id)
+                .timeout(fieldReadTimeout)
           : null;
       final fixture = game.isSolo
           ? null
-          : await widget.fixtureRepository.getFixture(game.id);
+          : await widget.fixtureRepository
+                .getFixture(game.id)
+                .timeout(fieldReadTimeout);
       if (!mounted ||
           !historyContext.mounted ||
           ModalRoute.of(historyContext)?.isCurrent != true) {
@@ -568,24 +654,36 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                     physics: const AlwaysScrollableScrollPhysics(),
                     padding: const EdgeInsets.only(bottom: 132),
                     children: [
-                      if (_error != null)
+                      if (_failedSections.isNotEmpty)
                         Padding(
                           padding: const EdgeInsets.all(16),
-                          child: Text(
-                            'Could not refresh your profile. Pull down to retry.',
-                            style: const TextStyle(
-                              color: FieldrushAuthTheme.danger,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Could not refresh ${_failedSections.join(', ')}.',
+                                style: const TextStyle(
+                                  color: FieldrushAuthTheme.danger,
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _load,
+                                child: const Text('Retry'),
+                              ),
+                            ],
                           ),
                         ),
                       FieldrushYouContent(
                         profile: profile,
+                        profileDetailsLoading: _profileDetailsLoading,
+                        profileDetailsUnavailable:
+                            !_profileDetailsReady && !_profileDetailsLoading,
                         rating: _rating,
                         ratings: _ratings,
                         track: _ratingTrack,
                         onTrack: _ratings == null ? null : _chooseRatingTrack,
-                        ratingLoading: _loading,
-                        ratingUnavailable: !_loading && _rating == null,
+                        ratingLoading: _ratingLoading,
+                        ratingUnavailable: !_ratingLoading && _rating == null,
                         recentResults:
                             _ratings?.eventsFor(_ratingTrack) ??
                             fieldrushSeasonResults(
@@ -600,11 +698,11 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                                 true &&
                             !_account!.emailVerified,
                         reliability: _reliability,
-                        reliabilityLoading: _loading,
+                        reliabilityLoading: _reliabilityLoading,
                         reliabilityUnavailable:
-                            !_loading && _reliability == null,
-                        walletLabel: _loading ? 'Loading…' : _walletLabel,
-                        notificationLabel: _loading
+                            !_reliabilityLoading && _reliability == null,
+                        walletLabel: _walletLoading ? 'Loading…' : _walletLabel,
+                        notificationLabel: _notificationsLoading
                             ? 'Loading…'
                             : _notifications == null
                             ? 'Unavailable'

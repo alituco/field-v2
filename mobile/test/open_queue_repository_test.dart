@@ -1,3 +1,4 @@
+import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -53,7 +54,7 @@ void main() {
       expect(result.last.game.confirmedCount, 12);
     });
 
-    test('removes scored, played, cancelled, and cancelled-booking rows', () {
+    test('retains delayed starts but removes terminal and scored rows', () {
       final valid = _game(
         id: 'valid',
         startsAt: now.add(const Duration(hours: 4)),
@@ -64,8 +65,8 @@ void main() {
         whiteScore: 2,
         blackScore: 1,
       );
-      final played = _game(
-        id: 'played',
+      final delayed = _game(
+        id: 'delayed',
         startsAt: now.subtract(const Duration(minutes: 1)),
       );
       final cancelled = _game(
@@ -84,16 +85,18 @@ void main() {
         bookings: [
           _booking(id: 'valid-booking', game: valid),
           _booking(id: 'scored-booking', game: scored),
-          _booking(id: 'played-booking', game: played),
+          _booking(id: 'delayed-booking', game: delayed),
           _booking(id: 'cancelled-game-booking', game: cancelled),
           _booking(id: 'final-game-booking', game: finalGame),
           _booking(id: 'cancelled-booking', game: valid, status: 'CANCELLED'),
         ],
-        games: [valid, scored, played, cancelled, finalGame],
+        games: [valid, scored, delayed, cancelled, finalGame],
       );
 
-      expect(result, hasLength(1));
-      expect(result.single.id, 'valid-booking');
+      expect(result.map((booking) => booking.id), [
+        'delayed-booking',
+        'valid-booking',
+      ]);
     });
 
     test('retains own reservation outside the first 40 discovery games', () {
@@ -124,6 +127,7 @@ void main() {
       final past = _game(
         id: 'past',
         startsAt: now.subtract(const Duration(days: 1)),
+        operationalState: MatchOperationalState.noData,
       );
       final result = hydrateUpcomingOpenQueueBookings(
         now: now,
@@ -150,6 +154,57 @@ void main() {
         ],
       );
       expect(result, isEmpty);
+    });
+
+    test('live reservations survive the scheduled end until resolved', () {
+      final live = _game(
+        id: 'live',
+        status: 'LIVE',
+        startsAt: now.subtract(const Duration(hours: 2)),
+        whiteScore: 0,
+        blackScore: 1,
+      );
+      final booking = _booking(id: 'live-booking', game: live);
+      expect(
+        hydrateUpcomingOpenQueueBookings(
+          bookings: [booking],
+          games: [],
+          now: now,
+        ),
+        hasLength(1),
+      );
+      for (final status in ['FINAL', 'CANCELLED']) {
+        expect(
+          hydrateUpcomingOpenQueueBookings(
+            bookings: [booking],
+            games: [
+              _game(id: live.id, startsAt: live.startsAt, status: status),
+            ],
+            now: now,
+          ),
+          isEmpty,
+        );
+      }
+      for (final state in [
+        MatchOperationalState.noData,
+        MatchOperationalState.underReview,
+      ]) {
+        expect(
+          hydrateUpcomingOpenQueueBookings(
+            bookings: [booking],
+            games: [
+              _game(
+                id: live.id,
+                startsAt: live.startsAt,
+                status: 'LIVE',
+                operationalState: state,
+              ),
+            ],
+            now: now,
+          ),
+          isEmpty,
+        );
+      }
     });
   });
 
@@ -225,10 +280,12 @@ OpenQueueGame _game({
   int? blackScore,
   DateTime? teamAssignmentAt,
   int? teamAssignmentLeadMinutes,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
 }) {
   return OpenQueueGame(
     id: id,
     status: status,
+    operationalState: operationalState,
     venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),

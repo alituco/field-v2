@@ -73,7 +73,8 @@ class DashboardHome extends StatefulWidget {
   State<DashboardHome> createState() => _DashboardHomeState();
 }
 
-class _DashboardHomeState extends State<DashboardHome> {
+class _DashboardHomeState extends State<DashboardHome>
+    with WidgetsBindingObserver {
   PlayerProfile? _profile;
   PlayerRatingLeaderboardEntry? _rating;
   FieldrushPlayerRatings? _ratings;
@@ -92,15 +93,22 @@ class _DashboardHomeState extends State<DashboardHome> {
   String? _error;
   int _loadVersion = 0;
   int _bookingsReadGeneration = 0;
+  int _fixturesReadGeneration = 0;
+  int _ratingsReadGeneration = 0;
+  int _gameReadVersion = 0;
+  int _bookingsSnapshotVersion = 0;
+  int _fixturesSnapshotVersion = 0;
   bool _activityOpen = false;
   StreamSubscription<void>? _partySubscription;
-  Timer? _assignmentRefreshTimer;
-  bool _readingAssignments = false;
+  Timer? _gameRefreshTimer;
+  bool _refreshingCurrentGame = false;
+  int _idleRefreshTicks = 0;
   FieldrushCity _city = FieldrushCity.phoenix;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _ratingTrack = widget.ratingTrackController?.value ?? RatingTrack.outfield;
     widget.ratingTrackController?.addListener(_syncRatingTrack);
     fieldrushCityRevision.addListener(_load);
@@ -110,20 +118,18 @@ class _DashboardHomeState extends State<DashboardHome> {
       (_) => _openRequestedActivity(),
     );
     _load();
-    _assignmentRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
-      if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) return;
-      final lifecycle = WidgetsBinding.instance.lifecycleState;
-      if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
-      final now = DateTime.now();
-      if (_bookings.any(
-        (booking) =>
-            booking.assignedTeam == null &&
-            (booking.game.status == 'OPEN' || booking.game.status == 'FULL') &&
-            booking.game.teamAssignmentAt != null &&
-            !now.isBefore(booking.game.teamAssignmentAt!) &&
-            !booking.game.hasPendingOperationalResolution,
-      )) {
-        unawaited(_refreshTeamAssignments());
+    _gameRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (!_canRefreshCurrentGame) return;
+      final active =
+          _bookings.isNotEmpty ||
+          _fixtureGames.any(
+            (game) => game.hasMyBooking && game.isActiveReservation,
+          );
+      // Keep completed/reopened matches and SR current too, without polling
+      // an idle Home as frequently as a player's active game.
+      if (active || ++_idleRefreshTicks >= 3) {
+        _idleRefreshTicks = 0;
+        unawaited(_refreshCurrentGame());
       }
     });
     final repo = widget.openQueueRepository;
@@ -149,13 +155,32 @@ class _DashboardHomeState extends State<DashboardHome> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.ratingTrackController?.removeListener(_syncRatingTrack);
     fieldrushActivityRevision.removeListener(_load);
     fieldrushActivityOpenRequested.removeListener(_openRequestedActivity);
     _partySubscription?.cancel();
-    _assignmentRefreshTimer?.cancel();
+    _gameRefreshTimer?.cancel();
     fieldrushCityRevision.removeListener(_load);
     super.dispose();
+  }
+
+  bool get _canRefreshCurrentGame {
+    if (!mounted ||
+        !TickerMode.valuesOf(context).enabled ||
+        !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return false;
+    }
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    return lifecycle == null || lifecycle == AppLifecycleState.resumed;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && _canRefreshCurrentGame) {
+      _idleRefreshTicks = 0;
+      unawaited(_refreshCurrentGame());
+    }
   }
 
   void _syncRatingTrack() {
@@ -206,47 +231,109 @@ class _DashboardHomeState extends State<DashboardHome> {
           .where(
             (booking) =>
                 booking.status.toUpperCase() == 'CONFIRMED' &&
-                ![
-                  'CANCELLED',
-                  'FINAL',
-                ].contains(booking.game.status.toUpperCase()) &&
-                !booking.game.hasPendingOperationalResolution,
+                booking.game.isActiveReservation,
           )
           .toList()
         ..sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
 
-  Future<void> _refreshTeamAssignments() async {
-    if (_readingAssignments ||
-        !mounted ||
-        !TickerMode.valuesOf(context).enabled ||
-        !(ModalRoute.of(context)?.isCurrent ?? false)) {
+  Future<void> _refreshCurrentGame() async {
+    if (_refreshingCurrentGame || !_canRefreshCurrentGame) {
       return;
     }
-    final lifecycle = WidgetsBinding.instance.lifecycleState;
-    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
-    _readingAssignments = true;
+    _refreshingCurrentGame = true;
     final version = _loadVersion;
-    final bookingGeneration = ++_bookingsReadGeneration;
-    try {
-      final rows = await widget.openQueueRepository
-          .getMyUpcomingBookings()
-          .timeout(const Duration(seconds: 12));
-      if (mounted &&
-          version == _loadVersion &&
-          bookingGeneration == _bookingsReadGeneration) {
-        setState(() => _bookings = _activeBookings(rows));
+    final bookingsGeneration = ++_bookingsReadGeneration;
+    final fixturesGeneration = ++_fixturesReadGeneration;
+    final ratingsGeneration = ++_ratingsReadGeneration;
+    final gameVersion = ++_gameReadVersion;
+    bool current() => mounted && version == _loadVersion;
+    Future<void> section(Future<void> Function() read) async {
+      try {
+        await read();
+      } catch (_) {
+        // Preserve usable content during a transient failure. Pull-to-refresh
+        // exposes errors; automatic refreshes retry without interrupting play.
       }
-    } catch (_) {
-      // Keep the last confirmed booking visible; the next tick or pull refresh
-      // can recover without replacing the whole Home screen with a loader.
+    }
+
+    try {
+      await Future.wait<void>([
+        section(() async {
+          final rows = await widget.openQueueRepository
+              .getMyUpcomingBookings()
+              .timeout(const Duration(seconds: 12));
+          if (current() && bookingsGeneration == _bookingsReadGeneration) {
+            setState(() {
+              _bookings = _activeBookings(rows);
+              _bookingsSnapshotVersion = gameVersion;
+            });
+          }
+        }),
+        section(() async {
+          final games = await widget.openQueueRepository
+              .listFixtureGames()
+              .timeout(const Duration(seconds: 12));
+          if (current() && fixturesGeneration == _fixturesReadGeneration) {
+            setState(() {
+              _fixtureGames = games;
+              _fixturesSnapshotVersion = gameVersion;
+            });
+          }
+        }),
+        section(
+          () => _loadRatings(
+            () => current() && ratingsGeneration == _ratingsReadGeneration,
+          ),
+        ),
+      ]);
     } finally {
-      _readingAssignments = false;
+      _refreshingCurrentGame = false;
+    }
+  }
+
+  Future<void> _loadRatings(bool Function() current) async {
+    const timeout = Duration(seconds: 12);
+    final season = await loadActiveLeaderboardSeason(
+      widget.leaderboardRepository,
+    ).timeout(timeout);
+    if (!current()) return;
+    setState(() {
+      if (_season?.id != season.id) {
+        _ratings = null;
+        _rating = null;
+      }
+      _season = season;
+    });
+    final repository = widget.leaderboardRepository;
+    if (repository is TrackLeaderboardRepository) {
+      final ratings = await (repository as TrackLeaderboardRepository)
+          .loadPlayerRatings(season: season)
+          .timeout(timeout);
+      if (current()) {
+        setState(() {
+          _ratings = ratings;
+          _rating = ratings.forTrack(_ratingTrack);
+        });
+      }
+    } else {
+      final rating = await repository
+          .loadCurrentPlayerRating(season)
+          .timeout(timeout);
+      if (current()) {
+        setState(() {
+          _ratings = null;
+          _rating = rating;
+        });
+      }
     }
   }
 
   Future<void> _load() async {
     final version = ++_loadVersion;
     final bookingGeneration = ++_bookingsReadGeneration;
+    final fixturesGeneration = ++_fixturesReadGeneration;
+    final ratingsGeneration = ++_ratingsReadGeneration;
+    final gameVersion = ++_gameReadVersion;
     final navigationProfile = FieldNavigationProfileScope.beginRead(context);
     setState(() {
       // Keep a valid feed visible while refreshing it in the background.
@@ -272,11 +359,15 @@ class _DashboardHomeState extends State<DashboardHome> {
       });
     }
 
-    Future<void> section(String label, Future<void> Function() read) async {
+    Future<void> section(
+      String label,
+      Future<void> Function() read, {
+      bool Function()? stillCurrent,
+    }) async {
       try {
         await read();
       } catch (_) {
-        failed(label);
+        if (stillCurrent?.call() ?? true) failed(label);
       }
     }
 
@@ -289,7 +380,10 @@ class _DashboardHomeState extends State<DashboardHome> {
             .timeout(coreTimeout);
         final bookings = _activeBookings(rows);
         if (!bookingsCurrent()) return null;
-        publish(() => _bookings = bookings);
+        publish(() {
+          _bookings = bookings;
+          _bookingsSnapshotVersion = gameVersion;
+        });
         return bookings;
       } catch (_) {
         if (!bookingsCurrent()) return null;
@@ -329,37 +423,13 @@ class _DashboardHomeState extends State<DashboardHome> {
           if (bookingsCurrent()) rethrow;
         }
       }),
-      section('rating', () async {
-        final season = await loadActiveLeaderboardSeason(
-          widget.leaderboardRepository,
-        ).timeout(extraTimeout);
-        if (!current()) return;
-        publish(() {
-          if (_season?.id != season.id) {
-            _ratings = null;
-            _rating = null;
-          }
-          _season = season;
-        });
-        final repository = widget.leaderboardRepository;
-        if (repository is TrackLeaderboardRepository) {
-          final ratings = await (repository as TrackLeaderboardRepository)
-              .loadPlayerRatings(season: season)
-              .timeout(extraTimeout);
-          publish(() {
-            _ratings = ratings;
-            _rating = ratings.forTrack(_ratingTrack);
-          });
-        } else {
-          final rating = await repository
-              .loadCurrentPlayerRating(season)
-              .timeout(extraTimeout);
-          publish(() {
-            _ratings = null;
-            _rating = rating;
-          });
-        }
-      }),
+      section(
+        'rating',
+        () => _loadRatings(
+          () => current() && ratingsGeneration == _ratingsReadGeneration,
+        ),
+        stillCurrent: () => ratingsGeneration == _ratingsReadGeneration,
+      ),
       section('available games', () async {
         final cityRepository =
             widget.cityRepository ??
@@ -386,10 +456,21 @@ class _DashboardHomeState extends State<DashboardHome> {
           _games = games;
         });
       }),
-      section('live games', () async {
-        final games = await openQueue.listFixtureGames().timeout(extraTimeout);
-        publish(() => _fixtureGames = games);
-      }),
+      section(
+        'live games',
+        () async {
+          final games = await openQueue.listFixtureGames().timeout(
+            extraTimeout,
+          );
+          if (fixturesGeneration == _fixturesReadGeneration) {
+            publish(() {
+              _fixtureGames = games;
+              _fixturesSnapshotVersion = gameVersion;
+            });
+          }
+        },
+        stillCurrent: () => fixturesGeneration == _fixturesReadGeneration,
+      ),
       section('clan games', () async {
         final data = await Future.wait<Object?>([
           widget.clanRepository.listClans(),
@@ -715,14 +796,38 @@ class _DashboardHomeState extends State<DashboardHome> {
   }
 
   List<_UpcomingHomeGame> get _upcoming {
+    // A successful current fixture read can update a cached booking even when
+    // the supplemental booking request stalls. Older feeds cannot undo a newer
+    // reservation or a newly reopened game.
+    final currentGames = _fixturesSnapshotVersion > _bookingsSnapshotVersion
+        ? {for (final game in _fixtureGames) game.id: game}
+        : <String, OpenQueueGame>{};
+    final bookings = _activeBookings([
+      for (final booking in _bookings)
+        booking.copyWith(
+          game:
+              booking.game.status == 'LIVE' &&
+                  const [
+                    'OPEN',
+                    'FULL',
+                  ].contains(currentGames[booking.gameId]?.status)
+              ? null
+              : currentGames[booking.gameId],
+        ),
+    ]);
     final list = <_UpcomingHomeGame>[
-      for (final booking in _bookings) _UpcomingHomeGame.solo(booking),
-      for (final game in _fixtureGames)
-        if (game.myBookingId != null &&
-            game.status.toUpperCase() == 'LIVE' &&
-            !game.hasPendingOperationalResolution &&
-            !_bookings.any((b) => b.gameId == game.id))
-          _UpcomingHomeGame.live(game),
+      for (final booking in bookings)
+        if (booking.game.status == 'LIVE')
+          _UpcomingHomeGame.live(booking.game)
+        else
+          _UpcomingHomeGame.solo(booking),
+      if (_fixturesSnapshotVersion > _bookingsSnapshotVersion)
+        for (final game in _fixtureGames)
+          if (game.myBookingId != null &&
+              game.status.toUpperCase() == 'LIVE' &&
+              !game.hasPendingOperationalResolution &&
+              !bookings.any((b) => b.gameId == game.id))
+            _UpcomingHomeGame.live(game),
       for (final fixture in _fixtures)
         if (_clan != null &&
             (fixture.homeClanId == _clan!.id ||
@@ -807,8 +912,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                       onTap: () => _openUpcoming(first),
                       onSeeTeam: () =>
                           _openBooking(first.booking!, focusLineup: true),
-                      onAssignmentDue: () =>
-                          unawaited(_refreshTeamAssignments()),
+                      onAssignmentDue: () => unawaited(_refreshCurrentGame()),
                     )
                   else if (first?.fixture != null)
                     _clanCard(first!)

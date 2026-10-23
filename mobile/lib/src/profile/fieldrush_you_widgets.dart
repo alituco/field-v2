@@ -149,6 +149,8 @@ class FieldrushYouContent extends StatefulWidget {
   const FieldrushYouContent({
     super.key,
     required this.profile,
+    this.profileDetailsLoading = false,
+    this.profileDetailsUnavailable = false,
     this.rating,
     this.ratings,
     this.track = RatingTrack.outfield,
@@ -183,6 +185,8 @@ class FieldrushYouContent extends StatefulWidget {
   });
 
   final PlayerProfile profile;
+  final bool profileDetailsLoading;
+  final bool profileDetailsUnavailable;
   final PlayerRatingLeaderboardEntry? rating;
   final FieldrushPlayerRatings? ratings;
   final RatingTrack track;
@@ -225,6 +229,8 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
   @override
   Widget build(BuildContext context) {
     final rating = widget.rating;
+    final detailsReady =
+        !widget.profileDetailsLoading && !widget.profileDetailsUnavailable;
     final recordAvailable =
         !widget.ratingLoading && !widget.ratingUnavailable && rating != null;
     final ranked = recordAvailable && rating.ratingVisible;
@@ -301,7 +307,8 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
               Expanded(
                 child: _PeopleCard(
                   key: const ValueKey('you-following'),
-                  count: widget.profile.followingCount,
+                  count: detailsReady ? widget.profile.followingCount : null,
+                  loading: widget.profileDetailsLoading,
                   label: 'FOLLOWING',
                   onTap: widget.onFollowing,
                 ),
@@ -310,7 +317,8 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
               Expanded(
                 child: _PeopleCard(
                   key: const ValueKey('you-fans'),
-                  count: widget.profile.fansCount,
+                  count: detailsReady ? widget.profile.fansCount : null,
+                  loading: widget.profileDetailsLoading,
                   label: 'FANS',
                   onTap: widget.onFans,
                 ),
@@ -340,10 +348,10 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
               losses: rating.losses,
               played: rating.matchesPlayed,
               actionKey: const ValueKey('you-match-history'),
-              onTap: widget.onMatchHistory,
+              onTap: detailsReady ? widget.onMatchHistory : null,
             ),
           ),
-        if (ranked) ...[
+        if (ranked && (detailsReady || widget.ratings != null)) ...[
           Padding(
             padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
             child: Column(
@@ -369,12 +377,24 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
             ),
           ),
         ],
-        FieldrushProfileClips(
-          highlights: widget.profile.highlights,
-          onClip: widget.onClip,
-          onAllClips: widget.onAllClips,
-          emptyMessage: 'Open the replay of a finished match and tap Clip.',
-        ),
+        if (!detailsReady)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            child: Text(
+              widget.profileDetailsLoading
+                  ? 'Loading match history and clips…'
+                  : 'Match history and clips unavailable. Retry to load them.',
+              key: const ValueKey('you-profile-details-status'),
+              style: _jakarta(12, color: _muted),
+            ),
+          )
+        else
+          FieldrushProfileClips(
+            highlights: widget.profile.highlights,
+            onClip: widget.onClip,
+            onAllClips: widget.onAllClips,
+            emptyMessage: 'Open the replay of a finished match and tap Clip.',
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 22, 16, 0),
           child: _WhiteCard(
@@ -387,7 +407,7 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
                   _SettingRow(
                     key: const ValueKey('you-match-history'),
                     label: 'Match history',
-                    onTap: widget.onMatchHistory,
+                    onTap: detailsReady ? widget.onMatchHistory : null,
                   ),
                 _SettingRow(
                   key: const ValueKey('you-account-details'),
@@ -612,10 +632,12 @@ class _PeopleCard extends StatelessWidget {
   const _PeopleCard({
     super.key,
     required this.count,
+    this.loading = false,
     required this.label,
     required this.onTap,
   });
-  final int count;
+  final int? count;
+  final bool loading;
   final String label;
   final VoidCallback onTap;
 
@@ -628,7 +650,13 @@ class _PeopleCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('$count', style: _outfit(30, color: const Color(0xFF24472C))),
+            if (loading)
+              const _SkeletonBlock(width: 40, height: 31.5)
+            else
+              Text(
+                count == null ? '—' : '$count',
+                style: _outfit(30, color: const Color(0xFF24472C)),
+              ),
             const SizedBox(height: 5),
             Text(
               '$label ›',
@@ -1096,7 +1124,7 @@ class FieldrushMatchRecordCard extends StatelessWidget {
   final int played;
   final bool resultsKnown;
   final Key? actionKey;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

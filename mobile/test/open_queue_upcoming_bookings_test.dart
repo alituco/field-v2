@@ -159,15 +159,31 @@ void main() {
     {'status': 'CANCELLED'},
     {'status': 'FINAL'},
     {'white_score': 1, 'black_score': 0},
-    {'starts_at': '2000-01-01T00:00:00Z'},
+    {'operational_state': 'NO_DATA'},
+    {'operational_state': 'UNDER_REVIEW'},
   ]) {
     test(
-      'canonical detail excludes no-longer-upcoming game: $invalid',
+      'canonical detail excludes resolved or invalid active game: $invalid',
       () async {
         detailGames['own-game'] = {..._game('own-game'), ...invalid};
         expect(await repository.getMyUpcomingBookings(), isEmpty);
       },
     );
+  }
+
+  for (final status in ['OPEN', 'FULL', 'LIVE']) {
+    test('past kickoff retains a confirmed $status reservation', () async {
+      detailGames['own-game'] = {
+        ..._game('own-game'),
+        'status': status,
+        'starts_at': '2000-01-01T00:00:00Z',
+      };
+      final booking = (await repository.getMyUpcomingBookings()).single;
+      expect(booking.id, 'booking-own-game');
+      expect(booking.game.status, status);
+      expect(booking.game.isActiveReservation, isTrue);
+      expect(booking.game.isUpcomingReservation, isFalse);
+    });
   }
 
   test(

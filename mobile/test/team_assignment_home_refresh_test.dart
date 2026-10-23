@@ -18,6 +18,187 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'assigned games refresh on resume and through live, final and reopen',
+    (tester) async {
+      final queue = _Queue()..bookings = [_booking(team: 'BLACK')];
+      final ratings = _Ratings();
+      await _show(tester, queue, ratings: ratings);
+      final reads = queue.bookingReads;
+      final ratingReads = ratings.reads;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      queue.bookings = [_booking(team: 'BLACK', status: 'LIVE')];
+      queue.fixtureGames = [queue.bookings.single.game];
+      await tester.pump(const Duration(minutes: 2));
+      expect(queue.bookingReads, reads);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(find.text('Your game is live'), findsOneWidget);
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      expect(ratings.reads, ratingReads + 1);
+
+      queue.bookings = [];
+      queue.fixtureGames = [_booking(team: 'BLACK', status: 'FINAL').game];
+      ratings.rating = 1236;
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pumpAndSettle();
+      expect(find.text('Your game is live'), findsNothing);
+      expect(find.byType(FieldrushQuickGameCard), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushHomeRating>(find.byType(FieldrushHomeRating))
+            .rating
+            ?.skillRating,
+        1236,
+      );
+
+      queue.bookings = [_booking(team: 'BLACK', status: 'LIVE')];
+      queue.fixtureGames = [queue.bookings.single.game];
+      await tester.pump(const Duration(seconds: 60));
+      await tester.pumpAndSettle();
+      expect(find.text('Your game is live'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('delayed start retains the confirmed booking and assigned team', (
+    tester,
+  ) async {
+    final booking = _booking(team: 'BLACK', late: true);
+    final queue = _Queue()
+      ..bookings = hydrateUpcomingOpenQueueBookings(
+        bookings: [booking],
+        games: [],
+      )
+      ..fixtureGames = [booking.game];
+    await _show(tester, queue);
+    expect(_hero(tester).booking.id, booking.id);
+    expect(_hero(tester).booking.assignedTeam, 'BLACK');
+    expect(find.byType(FieldrushQuickGameCard), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'current fixture result removes stale booking while its read is pending',
+    (tester) async {
+      final queue = _Queue();
+      final ratings = _Ratings();
+      await _show(tester, queue, ratings: ratings);
+      final pending = Completer<List<OpenQueueBooking>>();
+      queue.nextBookingRead = pending.future;
+      queue.fixtureGames = [_booking(team: 'BLACK', status: 'FINAL').game];
+      ratings.rating = 1236;
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pump();
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      expect(find.byType(FieldrushQuickGameCard), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushHomeRating>(find.byType(FieldrushHomeRating))
+            .rating
+            ?.skillRating,
+        1236,
+      );
+      final reads = queue.bookingReads;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(
+        queue.bookingReads,
+        reads,
+        reason: 'resume coalesces with the existing refresh',
+      );
+      pending.complete([]);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'completed booking is not resurrected by a stale live fixture feed',
+    (tester) async {
+      final queue = _Queue()
+        ..bookings = [_booking(team: 'BLACK', status: 'LIVE')]
+        ..fixtureGames = [_booking(team: 'BLACK', status: 'LIVE').game];
+      await _show(tester, queue);
+      final pending = Completer<List<OpenQueueGame>>();
+      queue.bookings = [];
+      queue.nextFixtureRead = pending.future;
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pump();
+      expect(find.text('Your game is live'), findsNothing);
+      pending.complete([_booking(team: 'BLACK', status: 'LIVE').game]);
+      await tester.pumpAndSettle();
+      expect(find.text('Your game is live'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'fresh live booking is not downgraded by a stale pregame fixture feed',
+    (tester) async {
+      final queue = _Queue()
+        ..bookings = [_booking(team: 'BLACK')]
+        ..fixtureGames = [_booking(team: 'BLACK').game];
+      await _show(tester, queue);
+      final pending = Completer<List<OpenQueueGame>>();
+      queue.bookings = [_booking(team: 'BLACK', status: 'LIVE')];
+      queue.nextFixtureRead = pending.future;
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pump();
+      expect(find.text('Your game is live'), findsOneWidget);
+      pending.complete([_booking(team: 'BLACK').game]);
+      await tester.pumpAndSettle();
+      expect(find.text('Your game is live'), findsOneWidget);
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'reopened live booking wins over a same-batch final fixture snapshot',
+    (tester) async {
+      final queue = _Queue()..bookings = [];
+      await _show(tester, queue);
+      queue.bookings = [_booking(team: 'BLACK', status: 'LIVE')];
+      queue.fixtureGames = [_booking(team: 'BLACK', status: 'FINAL').game];
+      await tester.pump(const Duration(seconds: 60));
+      await tester.pumpAndSettle();
+      expect(find.text('Your game is live'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
+    'older full-load failures cannot replace a successful automatic refresh',
+    (tester) async {
+      final queue = _Queue()..bookings = [_booking(team: 'BLACK')];
+      final ratings = _Ratings();
+      await _show(tester, queue, ratings: ratings);
+      final oldFixtures = Completer<List<OpenQueueGame>>();
+      final oldRating = Completer<PlayerRatingLeaderboardEntry>();
+      queue.nextFixtureRead = oldFixtures.future;
+      ratings.nextRead = oldRating.future;
+      await _show(tester, queue, tick: 1, ratings: ratings);
+      ratings.rating = 1236;
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      oldFixtures.completeError(StateError('Old fixture failure'));
+      oldRating.completeError(StateError('Old rating failure'));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byKey(const Key('fieldrush-home-scroll')),
+        const Offset(0, -1800),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Could not refresh'), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   for (final fails in [false, true]) {
     testWidgets(
       'new assignment read supersedes older full-load ${fails ? 'failure' : 'success'}',
@@ -170,6 +351,7 @@ Future<void> _show(
   _Queue queue, {
   int tick = 0,
   bool enabled = true,
+  _Ratings? ratings,
 }) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
@@ -185,7 +367,7 @@ Future<void> _show(
             profileRepository: _Profiles(),
             clanRepository: _Clans(),
             fixtureRepository: _Fixtures(),
-            leaderboardRepository: _Ratings(),
+            leaderboardRepository: ratings ?? _Ratings(),
             openQueueRepository: queue,
             onOpenRanks: () {},
             onOpenClans: () {},
@@ -200,13 +382,19 @@ Future<void> _show(
   await tester.pumpAndSettle();
 }
 
-OpenQueueBooking _booking({String? team}) {
+OpenQueueBooking _booking({
+  String? team,
+  String status = 'OPEN',
+  bool late = false,
+}) {
   final now = DateTime.now();
   final game = OpenQueueGame(
     id: 'game',
-    status: 'OPEN',
+    status: status,
     venue: 'Phoenix Sports Park',
-    startsAt: now.add(const Duration(hours: 2)),
+    startsAt: late
+        ? now.subtract(const Duration(minutes: 1))
+        : now.add(const Duration(hours: 2)),
     endsAt: now.add(const Duration(hours: 3)),
     timezone: 'America/Phoenix',
     priceFils: 10000,
@@ -243,6 +431,8 @@ class _Queue extends Fake
   Future<OpenQueuePartyContext>? nextPartyRead;
   int bookingReads = 0;
   int partyReads = 0;
+  List<OpenQueueGame> fixtureGames = [];
+  Future<List<OpenQueueGame>>? nextFixtureRead;
 
   @override
   Future<List<OpenQueueBooking>> getMyUpcomingBookings() {
@@ -272,7 +462,11 @@ class _Queue extends Fake
   Future<List<OpenQueueGame>> listGames() async => [];
 
   @override
-  Future<List<OpenQueueGame>> listFixtureGames() async => [];
+  Future<List<OpenQueueGame>> listFixtureGames() {
+    final next = nextFixtureRead;
+    nextFixtureRead = null;
+    return next ?? Future.value(fixtureGames);
+  }
 }
 
 class _Profiles extends Fake implements ProfileRepository {
@@ -293,22 +487,31 @@ class _Profiles extends Fake implements ProfileRepository {
 }
 
 class _Ratings extends Fake implements LeaderboardRepository {
+  int reads = 0;
+  int rating = 1200;
+  Future<PlayerRatingLeaderboardEntry>? nextRead;
   @override
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
     LeaderboardSeason season,
-  ) async => const PlayerRatingLeaderboardEntry(
-    rank: 0,
-    profileId: 'me',
-    displayName: 'Dana',
-    username: 'dana',
-    skillRating: 1200,
-    matchesPlayed: 0,
-    wins: 0,
-    draws: 0,
-    losses: 0,
-    lastChange: 0,
-    region: 'phoenix',
-  );
+  ) async {
+    reads++;
+    final pending = nextRead;
+    nextRead = null;
+    if (pending != null) return pending;
+    return PlayerRatingLeaderboardEntry(
+      rank: 0,
+      profileId: 'me',
+      displayName: 'Dana',
+      username: 'dana',
+      skillRating: rating,
+      matchesPlayed: 0,
+      wins: 0,
+      draws: 0,
+      losses: 0,
+      lastChange: 0,
+      region: 'phoenix',
+    );
+  }
 }
 
 class _Clans extends Fake implements ClanRepository {

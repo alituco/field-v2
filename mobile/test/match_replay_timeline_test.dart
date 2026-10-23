@@ -6,6 +6,136 @@ void main() {
   final start = DateTime.utc(2026, 10, 19, 18);
 
   test(
+    'removed goal retains audit score then reverses only its linked goal',
+    () {
+      final fixture = _fixture(
+        broadcast: FixtureBroadcast(
+          status: 'REPLAY_READY',
+          streamStartedAt: start,
+        ),
+        awayScore: 1,
+        events: [
+          _event(
+            'replacement',
+            'GOAL',
+            seconds: 237,
+            side: 'away',
+            occurred: start.add(const Duration(seconds: 260)),
+            playerId: 'me',
+            goalId: 'valid',
+          ),
+          _event(
+            'removed',
+            'DISALLOWED_GOAL',
+            seconds: 132,
+            side: 'away',
+            occurred: start.add(const Duration(seconds: 132)),
+            playerId: 'me',
+            goalId: 'removed-goal',
+            isGoalValid: false,
+          ),
+          _event(
+            'correction',
+            'CORRECTION',
+            seconds: 224,
+            side: 'away',
+            occurred: start.add(const Duration(seconds: 247)),
+            goalId: 'removed-goal',
+          ),
+          _event(
+            'reopen',
+            'CORRECTION',
+            seconds: 237,
+            occurred: start.add(const Duration(seconds: 280)),
+            note: 'Reopened',
+          ),
+          _event(
+            'duplicate-correction',
+            'CORRECTION',
+            seconds: 237,
+            occurred: start.add(const Duration(seconds: 290)),
+            goalId: 'removed-goal',
+          ),
+        ],
+      );
+      final replay = MatchReplayTimeline.fromFixture(
+        fixture,
+        currentUserId: 'me',
+      );
+      expect(replay.moments.map((m) => m.awayScore), [1, 0, 1, 1, 1]);
+      expect(replay.moments.first.description, 'Goal disallowed');
+      expect(replay.moments.first.isGoal, isFalse);
+      expect(replay.moments.where((m) => m.isMeGoal).map((m) => m.event.id), [
+        'replacement',
+      ]);
+      expect(fixture.highlightMoments.map((m) => m.event.id), ['replacement']);
+    },
+  );
+
+  test('linked correction removes own goal credit from the opposite side', () {
+    final replay = MatchReplayTimeline.fromFixture(
+      _fixture(
+        events: [
+          _event(
+            'own',
+            'OWN_GOAL',
+            seconds: 1,
+            side: 'home',
+            goalId: 'own-goal',
+          ),
+          _event(
+            'undo',
+            'CORRECTION',
+            seconds: 2,
+            side: 'home',
+            goalId: 'own-goal',
+          ),
+          _event('ordinary', 'CORRECTION', seconds: 3, side: 'home'),
+        ],
+      ),
+    );
+    expect(replay.moments.map((m) => m.awayScore), [1, 0, 0]);
+    expect(replay.moments.map((m) => m.homeScore), [0, 0, 0]);
+    expect(replay.moments.any((m) => m.isMeGoal || m.isGoal), isFalse);
+  });
+
+  test(
+    'correction before tied original cannot make a negative or resurrected score',
+    () {
+      final replay = MatchReplayTimeline.fromFixture(
+        _fixture(
+          events: [
+            _event(
+              'undo',
+              'CORRECTION',
+              seconds: 2,
+              side: 'away',
+              goalId: 'goal',
+            ),
+            _event('goal', 'GOAL', seconds: 2, side: 'away', goalId: 'goal'),
+          ],
+        ),
+      );
+      expect(replay.moments.map((m) => m.awayScore), [0, 0]);
+    },
+  );
+
+  test(
+    'public event JSON preserves server goal validity and correction identity',
+    () {
+      final event = FixtureTimelineEvent.fromJson({
+        'id': 'removed',
+        'event_type': 'DISALLOWED_GOAL',
+        'goal_id': 'goal',
+        'is_goal_valid': false,
+      });
+      expect(event.goalId, 'goal');
+      expect(event.isGoalValid, isFalse);
+      expect(event.isCreditedGoal, isFalse);
+    },
+  );
+
+  test(
     'wall time includes pre-kickoff recording and prefers actual occurrence',
     () {
       final projection = MatchReplayTimeline.fromFixture(
@@ -416,6 +546,8 @@ FixtureTimelineEvent _event(
   String? playerId,
   String? assistId,
   String? note,
+  String? goalId,
+  bool? isGoalValid,
 }) => FixtureTimelineEvent(
   id: id,
   fixtureId: 'match',
@@ -428,4 +560,6 @@ FixtureTimelineEvent _event(
   profileId: playerId,
   assistProfileId: assistId,
   note: note,
+  goalId: goalId,
+  isGoalValid: isGoalValid,
 );

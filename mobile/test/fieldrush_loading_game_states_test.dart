@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:field/src/core/read_timeout.dart';
 import 'package:field/src/fixtures/fieldrush_fixture_page.dart';
 import 'package:field/src/leaderboard/fieldrush_leaderboard_widgets.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
@@ -27,6 +28,15 @@ void main() {
     expect(tester.takeException(), isNull);
     // A slow server must not leave an animation scheduling frames forever.
     expect(tester.binding.hasScheduledFrame, isFalse);
+  }
+
+  Future<void> disposePendingRead(WidgetTester tester) async {
+    // These visual tests intentionally hold the request open. Dispose the view
+    // before letting its read deadline expire so no timeout timer is left behind.
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(fieldReadTimeout);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
   }
 
   testWidgets('fixtures skeleton resolves into a real empty state', (
@@ -89,7 +99,7 @@ void main() {
       FieldrushGameDetailScreen(repository: _PendingGames(), gameId: 'game'),
     );
     expect(find.byType(FieldrushGameLoading), findsOneWidget);
-    await tester.pumpWidget(const SizedBox()); // Dispose refresh timer.
+    await disposePendingRead(tester);
   });
 
   testWidgets('position flow uses placeholders before availability arrives', (
@@ -97,6 +107,7 @@ void main() {
   ) async {
     await show(tester, FieldrushBookingFlow(repository: _PendingGames()));
     expect(find.byType(FieldLoadingContent), findsOneWidget);
+    await disposePendingRead(tester);
   });
 
   testWidgets('checkout keeps price shape and cannot pay before a quote', (
@@ -115,6 +126,7 @@ void main() {
       find.byKey(const ValueKey('open-queue-confirm-payment')),
     );
     expect(pay.onPressed, isNull);
+    await disposePendingRead(tester);
   });
 }
 

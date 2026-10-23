@@ -20,6 +20,56 @@ const _payKey = ValueKey('open-queue-confirm-payment');
 
 void main() {
   testWidgets(
+    'stalled price lookup times out and retries without creating a payment',
+    (tester) async {
+      final pending = Completer<OpenQueueBookingCostPreview>();
+      final repository = _Repository()..quoteBarrier = pending;
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('Retry price check'), findsOneWidget);
+      expect(_payButton(tester).onPressed, isNull);
+      expect(repository.embeddedBookCalls, 0);
+      expect(sessions.created, isEmpty);
+      repository.quoteBarrier = null;
+      await tester.ensureVisible(find.text('Retry price check'));
+      await tester.tap(find.text('Retry price check'));
+      await tester.pumpAndSettle();
+      expect(sessions.created, hasLength(1));
+      expect(repository.embeddedBookCalls, 0);
+      final stale = await (_Repository()..price = 99000).previewBookingCost(
+        gameId: repository.game.id,
+        role: OpenQueueRole.attacker,
+      );
+      pending.complete(stale);
+      await tester.pumpAndSettle();
+      expect(find.text(r'$99.00'), findsNothing);
+      expect(sessions.created, hasLength(1));
+    },
+  );
+
+  testWidgets(
+    'failed position requote retains old price but cannot pay against it',
+    (tester) async {
+      final repository = _Repository();
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions, choosePosition: true);
+      await tester.tap(find.byKey(const ValueKey('checkout-position-DEF')));
+      await tester.pumpAndSettle();
+      sessions.current.select();
+      await tester.pump();
+      expect(_payButton(tester).onPressed, isNotNull);
+      repository.quoteFails = true;
+      await tester.tap(find.byKey(const ValueKey('checkout-position-ATT')));
+      await tester.pumpAndSettle();
+      expect(find.text(r'$13.00'), findsWidgets);
+      expect(_payButton(tester).onPressed, isNull);
+      expect(repository.embeddedBookCalls, 0);
+    },
+  );
+
+  testWidgets(
     'Join previews actual available pricing without selecting or booking a spot',
     (tester) async {
       final repository = _Repository()..game = _game(keeperSpots: 0);
@@ -225,6 +275,29 @@ void main() {
       expect(_payButton(tester).onPressed, isNull);
     },
   );
+
+  for (final status in ['OPEN', 'FULL']) {
+    testWidgets(
+      'delayed $status game prevents a new checkout after its scheduled end',
+      (tester) async {
+        final current = _game(
+          status: status,
+          start: DateTime.now().subtract(const Duration(hours: 3)),
+        );
+        final repository = _Repository()..recoveredBooking = _booking(current);
+        final sessions = _Sessions();
+        await _openCheckout(tester, repository, sessions, choosePosition: true);
+        expect(
+          find.textContaining('already have an upcoming or active game'),
+          findsOneWidget,
+        );
+        expect(repository.quoteCalls, 0);
+        expect(repository.embeddedBookCalls, 0);
+        expect(sessions.created, isEmpty);
+        expect(_payButton(tester).onPressed, isNull);
+      },
+    );
+  }
 
   for (final status in ['REQUIRES_REFUND', 'REFUNDED']) {
     for (final submitted in [false, true]) {
@@ -1379,6 +1452,7 @@ class _Repository
   int price = 13000;
   int? preparedAmountFils;
   bool quoteFails = false;
+  Completer<OpenQueueBookingCostPreview>? quoteBarrier;
   bool collectOnBook = true;
   String returnedStatus = 'CONFIRMED';
   String policyVersionId = 'policy-1';
@@ -1403,6 +1477,7 @@ class _Repository
   }) async {
     quoteCalls++;
     quotedRoles.add(role);
+    if (quoteBarrier != null) return quoteBarrier!.future;
     if (quoteFails) throw StateError('Price unavailable');
     return OpenQueueBookingCostPreview(
       currency: 'USD',
@@ -1502,26 +1577,31 @@ class _Repository
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-OpenQueueGame _game({int keeperSpots = 2, int defenderSpots = 5}) =>
-    OpenQueueGame(
-      id: 'embedded-checkout-game',
-      status: 'OPEN',
-      venue: 'Reach 11 Fields',
-      startsAt: _now.add(const Duration(days: 2, hours: 3, minutes: 30)),
-      endsAt: _now.add(const Duration(days: 2, hours: 4, minutes: 30)),
-      timezone: 'America/Phoenix',
-      currency: 'USD',
-      priceFils: 13000,
-      ageLabel: '18+',
-      capacity: 14,
-      confirmedCount: 3,
-      spots: {
-        OpenQueueRole.goalkeeper: keeperSpots,
-        OpenQueueRole.defender: defenderSpots,
-        OpenQueueRole.attacker: 4,
-      },
-      teamAssignmentLeadMinutes: 180,
-    );
+OpenQueueGame _game({
+  int keeperSpots = 2,
+  int defenderSpots = 5,
+  String status = 'OPEN',
+  DateTime? start,
+}) => OpenQueueGame(
+  id: 'embedded-checkout-game',
+  status: status,
+  venue: 'Reach 11 Fields',
+  startsAt: start ?? _now.add(const Duration(days: 2, hours: 3, minutes: 30)),
+  endsAt: (start ?? _now.add(const Duration(days: 2, hours: 3, minutes: 30)))
+      .add(const Duration(hours: 1)),
+  timezone: 'America/Phoenix',
+  currency: 'USD',
+  priceFils: 13000,
+  ageLabel: '18+',
+  capacity: 14,
+  confirmedCount: 3,
+  spots: {
+    OpenQueueRole.goalkeeper: keeperSpots,
+    OpenQueueRole.defender: defenderSpots,
+    OpenQueueRole.attacker: 4,
+  },
+  teamAssignmentLeadMinutes: 180,
+);
 
 OpenQueueBooking _booking(OpenQueueGame game, {String status = 'CONFIRMED'}) =>
     OpenQueueBooking(

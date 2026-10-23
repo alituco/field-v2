@@ -102,24 +102,53 @@ class MatchReplayTimeline {
 
     var homeScore = 0;
     var awayScore = 0;
+    final removedGoalIds = {
+      for (final entry in source)
+        if (entry.type == 'CORRECTION' && entry.event.goalId != null)
+          entry.event.goalId!,
+    };
+    final countedGoals = <String, bool>{};
+    final correctedGoalIds = <String>{};
     Duration? halftimePosition;
     final moments = <MatchReplayMoment>[];
     for (final entry in source) {
       final event = entry.event;
       final type = entry.type;
       final correction = event.note?.trim().toLowerCase() == 'admin correction';
-      final isGoal = (type == 'GOAL' || type == 'OWN_GOAL') && !correction;
+      final removed =
+          event.isGoalValid == false ||
+          type == 'DISALLOWED_GOAL' ||
+          (event.goalId != null && removedGoalIds.contains(event.goalId));
+      final recordedGoal =
+          (type == 'GOAL' || type == 'OWN_GOAL' || type == 'DISALLOWED_GOAL') &&
+          !correction;
+      final isGoal = recordedGoal && !removed;
       final side = _homeSide(fixture, event.clanId);
       // An own-goal event belongs to the offending player's side; its score
       // is credited to the opposing side. Current GOAL rows already identify
       // the side receiving the goal and are left unchanged.
       final isHome = type == 'OWN_GOAL' && side != null ? !side : side == true;
-      if (isGoal && side != null) {
+      // Retain the score shown at the time of the original decision, then
+      // reverse that exact goal when its linked correction is reached. An
+      // unrelated correction (for example reopening a match) changes no score.
+      final linkedRemoval =
+          event.goalId != null && removedGoalIds.contains(event.goalId);
+      if (recordedGoal &&
+          side != null &&
+          (!removed || linkedRemoval) &&
+          !correctedGoalIds.contains(event.goalId)) {
         if (isHome) {
           homeScore++;
         } else {
           awayScore++;
         }
+        if (event.goalId != null) countedGoals[event.goalId!] = isHome;
+      }
+      if (type == 'CORRECTION' && event.goalId != null) {
+        correctedGoalIds.add(event.goalId!);
+        final countedHome = countedGoals.remove(event.goalId);
+        if (countedHome == true) homeScore--;
+        if (countedHome == false) awayScore--;
       }
       if (halftimePosition == null && _isHalftime(entry, halftime)) {
         halftimePosition = entry.position;
@@ -145,7 +174,9 @@ class MatchReplayTimeline {
               type != 'OWN_GOAL' &&
               currentUserId != null &&
               event.assistProfileId == currentUserId,
-          description: _description(event, halftime),
+          description: removed && recordedGoal
+              ? 'Goal disallowed'
+              : _description(event, halftime),
         ),
       );
     }

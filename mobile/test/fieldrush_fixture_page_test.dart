@@ -591,6 +591,77 @@ void main() {
     expect(repository.bookCalls, 0);
   });
 
+  for (final fromPlay in [false, true]) {
+    testWidgets(
+      'returning from ${fromPlay ? 'Play' : 'a game'} keeps cards usable during a pending refresh',
+      (tester) async {
+        final repository = _Repository(upcoming: [_game('exact')]);
+        final navigator = GlobalKey<NavigatorState>();
+        var gameOpens = 0;
+        Future<void> openRoute() async {
+          await navigator.currentState!.push<void>(
+            MaterialPageRoute(
+              builder: (_) => const Scaffold(body: Text('Active game route')),
+            ),
+          );
+        }
+
+        await _pump(
+          tester,
+          repository,
+          navigatorKey: navigator,
+          onOpen: (_) {
+            gameOpens++;
+            return openRoute();
+          },
+          onPlay: (_) => openRoute(),
+        );
+        if (fromPlay) {
+          await tester.tap(find.byKey(const ValueKey('fixtures-play-action')));
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('play-solo-choice')));
+        } else {
+          await tester.tap(find.byKey(const ValueKey('solo-fixture-exact')));
+        }
+        await tester.pumpAndSettle();
+        expect(find.text('Active game route'), findsOneWidget);
+        final hiddenCard = find.byType(
+          FieldrushFixtureCard,
+          skipOffstage: false,
+        );
+        expect(tester.widget<FieldrushFixtureCard>(hiddenCard).onOpen, isNull);
+
+        final bookings = Completer<List<OpenQueueBooking>>();
+        repository.bookingResponse = bookings;
+        navigator.currentState!.pop();
+        await tester.pumpAndSettle();
+        expect(repository.fixtureCalls, 2);
+        expect(bookings.isCompleted, isFalse);
+        expect(
+          tester
+              .widget<FieldrushFixtureCard>(find.byType(FieldrushFixtureCard))
+              .onOpen,
+          isNotNull,
+          reason:
+              'A completed navigation must not lock visible cards while bookings refresh.',
+        );
+        await tester.tap(find.byKey(const ValueKey('solo-fixture-exact')));
+        await tester.pumpAndSettle();
+        expect(find.text('Active game route'), findsOneWidget);
+        expect(gameOpens, fromPlay ? 1 : 2);
+        expect(tester.widget<FieldrushFixtureCard>(hiddenCard).onOpen, isNull);
+
+        bookings.complete(const []);
+        await tester.pumpAndSettle();
+        // Finishing the prior route's refresh must not unlock the new route.
+        expect(tester.widget<FieldrushFixtureCard>(hiddenCard).onOpen, isNull);
+        navigator.currentState!.pop();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   testWidgets(
     'Play opens mode sheet and Solo starts the flow without booking',
     (tester) async {
@@ -1104,6 +1175,7 @@ Future<void> _pump(
   double width = 390,
   double scale = 1,
   GlobalKey? boundaryKey,
+  GlobalKey<NavigatorState>? navigatorKey,
   FieldrushCityRepository? cityRepository,
 }) async {
   tester.view.devicePixelRatio = 1;
@@ -1112,6 +1184,7 @@ Future<void> _pump(
   addTearDown(tester.view.resetPhysicalSize);
   await tester.pumpWidget(
     MaterialApp(
+      navigatorKey: navigatorKey,
       builder: (context, child) => MediaQuery(
         data: MediaQuery.of(
           context,

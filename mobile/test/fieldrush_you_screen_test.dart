@@ -1,4 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+// Supabase exposes this worker for injection; no real isolate is needed in a widget test.
+// ignore: depend_on_referenced_packages
+import 'package:yet_another_json_isolate/yet_another_json_isolate.dart';
 
 import 'package:field/src/auth/fieldrush_account.dart';
 import 'package:field/src/clans/clan_repository.dart';
@@ -21,6 +28,162 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'optional wallet timeout keeps profile and rating, then retries without losing cached balance',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(600, 2600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final pending = Completer<YouWallet>();
+      final settings = _PendingSettings()..pendingWallet = pending;
+      final profiles = _Profiles();
+      final ratings = _Ratings();
+      await tester.pumpWidget(
+        _app(profiles: profiles, ratings: ratings, settings: settings),
+      );
+      await tester.pump();
+      expect(find.text('Ali A.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-loading')), findsNothing);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not refresh wallet.'), findsOneWidget);
+      expect(find.text(r'$13.00'), findsNothing);
+      settings.pendingWallet = null;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.text(r'$13.00'), findsOneWidget);
+      final refresh = Completer<YouWallet>();
+      settings.pendingWallet = refresh;
+      await tester.pumpWidget(
+        _app(
+          profiles: profiles,
+          ratings: ratings,
+          settings: settings,
+          activationTick: 1,
+        ),
+      );
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text(r'$13.00'), findsOneWidget);
+      expect(find.text('Could not refresh wallet.'), findsOneWidget);
+      pending.complete(
+        YouWallet(
+          primaryBalance: const FieldWalletBalance(
+            currency: 'USD',
+            balanceFils: 99000,
+          ),
+          balances: const [],
+        ),
+      );
+      await tester.pump();
+      expect(find.text(r'$99.00'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'real repository summary shows identity and SR while profile extras stall',
+    (tester) async {
+      final pending = Completer<http.Response>();
+      final requests = <String>[];
+      final client = SupabaseClient(
+        'https://fieldrush-tests.invalid',
+        'test-anon-key',
+        isolate: _ImmediateJsonWorker(),
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((request) async {
+          requests.add(request.url.path);
+          if (request.url.path == '/rest/v1/profiles') {
+            return http.Response(
+              jsonEncode({
+                'id': 'viewer',
+                'display_name': 'Viewer Name',
+                'username': 'viewer',
+                'bio': '',
+              }),
+              200,
+              headers: {'content-type': 'application/json'},
+              request: request,
+            );
+          }
+          return pending.future;
+        }),
+      );
+      addTearDown(() => tester.runAsync(client.dispose));
+      await tester.runAsync(
+        () => client.auth.recoverSession(jsonEncode(_testSession('viewer'))),
+      );
+      await tester.pumpWidget(
+        _app(profiles: SupabaseProfileRepository(client: client)),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Viewer Name'), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+      expect(find.text('Loading match history and clips…'), findsOneWidget);
+      expect(requests.any((path) => path != '/rest/v1/profiles'), isTrue);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('Viewer Name'), findsOneWidget);
+      expect(
+        find.text('Match history and clips unavailable. Retry to load them.'),
+        findsOneWidget,
+      );
+      expect(find.text('Could not refresh profile details.'), findsOneWidget);
+      expect(
+        find.text('Open the replay of a finished match and tap Clip.'),
+        findsNothing,
+      );
+      await tester.pumpWidget(const SizedBox());
+      pending.complete(
+        http.Response('[]', 200, headers: {'content-type': 'application/json'}),
+      );
+      await tester.pump();
+    },
+  );
+
+  testWidgets(
+    'an account change discards late profile and wallet responses from the previous player',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(600, 2600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final profiles = _ChangingUserProfiles();
+      final oldWallet = Completer<YouWallet>();
+      final settings = _PendingSettings()..pendingWallet = oldWallet;
+      final ratings = _Ratings();
+      await tester.pumpWidget(
+        _app(profiles: profiles, ratings: ratings, settings: settings),
+      );
+      await tester.pump();
+      profiles.userId = 'new';
+      settings.pendingWallet = null;
+      await tester.pumpWidget(
+        _app(
+          profiles: profiles,
+          ratings: ratings,
+          settings: settings,
+          activationTick: 1,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('New Player'), findsOneWidget);
+      profiles.oldProfile.complete(_profile(name: 'Old Player'));
+      oldWallet.complete(
+        YouWallet(
+          primaryBalance: const FieldWalletBalance(
+            currency: 'USD',
+            balanceFils: 99000,
+          ),
+          balances: const [],
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Old Player'), findsNothing);
+      expect(find.text('New Player'), findsOneWidget);
+      expect(find.text(r'$13.00'), findsOneWidget);
+      expect(find.text(r'$99.00'), findsNothing);
+    },
+  );
+
   testWidgets('You only offers email verification when delivery is enabled', (
     tester,
   ) async {
@@ -274,6 +437,7 @@ void main() {
     await tester.pumpAndSettle();
     final historyButton = find.byKey(const ValueKey('you-match-history'));
     await tester.ensureVisible(historyButton);
+    await tester.pumpAndSettle();
     await tester.tap(historyButton);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('you-history-older-solo')));
@@ -290,6 +454,40 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('stalled history match read times out and can be opened again', (
+    tester,
+  ) async {
+    final pending = Completer<OpenQueueMatchDetail>();
+    final queue = _Queue(response: pending, detail: _matchDetail());
+    await tester.pumpWidget(
+      _app(
+        profiles: _Profiles(games: [_historyGame()]),
+        queue: queue,
+      ),
+    );
+    await tester.pumpAndSettle();
+    final historyButton = find.byKey(const ValueKey('you-match-history'));
+    await tester.ensureVisible(historyButton);
+    await tester.pumpAndSettle();
+    await tester.tap(historyButton);
+    await tester.pumpAndSettle();
+    final game = find.byKey(const ValueKey('you-history-older-solo'));
+    await tester.tap(game);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushMatchHistoryScreen), findsOneWidget);
+    expect(find.byType(FieldrushGameDetailScreen), findsNothing);
+    queue.response = null;
+    await tester.tap(game);
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+    pending.complete(_matchDetail());
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('match history remains reachable during a rating outage', (
     tester,
   ) async {
@@ -303,6 +501,7 @@ void main() {
     expect(find.text('Rating unavailable'), findsOneWidget);
     final historyButton = find.byKey(const ValueKey('you-match-history'));
     await tester.ensureVisible(historyButton);
+    await tester.pumpAndSettle();
     await tester.tap(historyButton);
     await tester.pumpAndSettle();
     expect(find.byType(FieldrushMatchHistoryScreen), findsOneWidget);
@@ -327,6 +526,7 @@ void main() {
     await tester.pumpAndSettle();
     final historyButton = find.byKey(const ValueKey('you-match-history'));
     await tester.ensureVisible(historyButton);
+    await tester.pumpAndSettle();
     await tester.tap(historyButton);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('you-history-older-solo')));
@@ -374,6 +574,7 @@ void main() {
     await tester.pumpAndSettle();
     final historyButton = find.byKey(const ValueKey('you-match-history'));
     await tester.ensureVisible(historyButton);
+    await tester.pumpAndSettle();
     await tester.tap(historyButton);
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('you-history-older-solo')));
@@ -485,7 +686,7 @@ void main() {
 }
 
 Widget _app({
-  _Profiles? profiles,
+  ProfileRepository? profiles,
   _Ratings? ratings,
   _Settings? settings,
   FieldrushAccountRepository? accounts,
@@ -604,7 +805,7 @@ class _Fixtures implements FixtureRepository {
 
 class _Queue implements OpenQueueRepository {
   _Queue({this.response, this.detail});
-  final Completer<OpenQueueMatchDetail>? response;
+  Completer<OpenQueueMatchDetail>? response;
   final OpenQueueMatchDetail? detail;
   final List<String> requested = [];
 
@@ -737,3 +938,50 @@ ProfileRatingEvent _event(String id, String date, {String gameId = 'game'}) =>
       ratingChange: 11,
       ratingAfter: 1199,
     );
+
+class _PendingSettings extends _Settings {
+  Completer<YouWallet>? pendingWallet;
+  @override
+  Future<YouWallet> loadWallet() => pendingWallet?.future ?? super.loadWallet();
+}
+
+Map<String, dynamic> _testSession(String id) {
+  final expires =
+      DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
+      1000;
+  String encoded(Object value) =>
+      base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+  return {
+    'access_token':
+        '${encoded({'alg': 'HS256', 'typ': 'JWT'})}.${encoded({'sub': id, 'exp': expires})}.test',
+    'refresh_token': 'test-refresh',
+    'token_type': 'bearer',
+    'expires_in': 3600,
+    'user': {
+      'id': id,
+      'aud': 'authenticated',
+      'role': 'authenticated',
+      'created_at': '2026-10-01T00:00:00Z',
+      'app_metadata': {},
+      'user_metadata': {},
+    },
+  };
+}
+
+class _ImmediateJsonWorker extends Fake implements YAJsonIsolate {
+  @override
+  Future<dynamic> decode(String value) async => jsonDecode(value);
+  @override
+  Future<String> encode(Object? value) async => jsonEncode(value);
+}
+
+class _ChangingUserProfiles extends _Profiles {
+  String userId = 'old';
+  final oldProfile = Completer<PlayerProfile>();
+  @override
+  String get currentUserId => userId;
+  @override
+  Future<PlayerProfile> getCurrentProfile() => userId == 'old'
+      ? oldProfile.future
+      : Future.value(_profile(name: 'New Player'));
+}
