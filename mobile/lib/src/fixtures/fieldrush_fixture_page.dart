@@ -321,12 +321,15 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
           ),
         );
       }
-      if (mounted) await _load();
     } catch (error) {
       _showRouteError(error);
+      return;
     } finally {
       if (mounted) setState(() => _opening = false);
     }
+    // Navigation has finished. Keep cached cards usable while the independent
+    // feeds refresh; a slow bookings read must not silently swallow the next tap.
+    if (mounted) await _load();
   }
 
   Future<void> _openGame(OpenQueueGame game) async {
@@ -355,12 +358,13 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
           ),
         );
       }
-      if (mounted) await _load();
     } catch (error) {
       _showRouteError(error);
+      return;
     } finally {
       if (mounted) setState(() => _opening = false);
     }
+    if (mounted) await _load();
   }
 
   void _showRouteError(Object error) {
