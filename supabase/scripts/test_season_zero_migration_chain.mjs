@@ -6,6 +6,10 @@
 // managed extensions, network delivery, live production data, or concurrency.
 // PGLITE_MODULE=/tmp/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite \
 //   node supabase/scripts/test_season_zero_migration_chain.mjs
+// Optional rollout proof: BEFORE_MIGRATION=YYYYMMDDHHMMSS and
+// BEFORE_MIGRATION_SQL_FILE=path seed rows immediately before that migration.
+// The isolated seed transaction is committed so subsequent migrations see it;
+// REPLAY_SQL_FILE can assert the resulting backfill after the complete replay.
 import {readFile,readdir} from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import assert from 'node:assert/strict';
@@ -16,11 +20,17 @@ const db=new PGlite();
 const migrationDirectory=new URL('../migrations/',import.meta.url);
 const through=process.env.THROUGH_MIGRATION||'20261014002200';
 const runSqlVerifiers=process.env.RUN_SQL_VERIFIERS==='1';
+const beforeMigration=process.env.BEFORE_MIGRATION;
+const beforeMigrationSqlFile=process.env.BEFORE_MIGRATION_SQL_FILE;
 const managedExtensionSubstitutions=[];
 let applied=0;
 let current='managed Supabase contract bootstrap';
 let currentSql='';
 try {
+  assert.equal(Boolean(beforeMigration),Boolean(beforeMigrationSqlFile),
+    'BEFORE_MIGRATION and BEFORE_MIGRATION_SQL_FILE must be supplied together');
+  if(beforeMigration) assert.match(beforeMigration,/^\d{14}$/,
+    'BEFORE_MIGRATION must be a complete 14-digit migration timestamp');
   await db.exec(`
     create role anon; create role authenticated; create role service_role bypassrls;
     create role authenticator; create role supabase_admin; create role supabase_auth_admin;
@@ -70,7 +80,17 @@ try {
     set timezone='UTC';
   `);
   const files=(await readdir(migrationDirectory)).filter(file=>/^\d{14}_.*\.sql$/.test(file)&&file.slice(0,14)<=through).sort();
+  if(beforeMigration) assert.ok(files.some(file=>file.slice(0,14)===beforeMigration),
+    'BEFORE_MIGRATION must identify a migration included in this replay');
   for(const file of files) {
+    if(file.slice(0,14)===beforeMigration) {
+      current=`before ${file}: ${beforeMigrationSqlFile}`;
+      currentSql=await readFile(beforeMigrationSqlFile,'utf8');
+      await db.exec('begin');
+      try { await db.exec(currentSql); await db.exec('commit'); }
+      catch(error) { await db.exec('rollback'); throw error; }
+      console.log(`BEFORE-MIGRATION SQL PASS ${current}`);
+    }
     current=file;
     currentSql=await readFile(new URL(file,migrationDirectory),'utf8');
     currentSql=currentSql.replace(/create\s+extension\s+if\s+not\s+exists\s+(pg_cron|pg_net|supabase_vault)(?:\s+with\s+schema\s+\w+)?\s*;/gi,(statement,name)=>{

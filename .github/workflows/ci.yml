@@ -459,6 +459,17 @@ jobs:
             REPLAY_SQL_FILE=supabase/scripts/verify_legacy_solo_resume.sql \
             node supabase/scripts/test_season_zero_migration_chain.mjs
 
+      - name: Verify existing Solo bookings across the arrival migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            THROUGH_MIGRATION=20261022999999 \
+            BEFORE_MIGRATION=20261022000700 \
+            BEFORE_MIGRATION_SQL_FILE=supabase/scripts/seed_solo_arrival_before_migration.sql \
+            REPLAY_SQL_FILE=supabase/scripts/assert_solo_arrival_backfill.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+
       - name: Verify prospective Season 0 rating math, evidence, replay, privacy, and transfers
         shell: bash
         run: |
@@ -564,6 +575,10 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_team_assignment_notice_contract.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_solo_arrival_contract.sql
 
       - name: Verify injury evidence for audited early solo matches
         shell: bash
