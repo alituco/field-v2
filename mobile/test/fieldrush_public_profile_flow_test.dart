@@ -1,5 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 
+import 'package:field/src/leaderboard/fieldrush_rating_tracks.dart';
+import 'package:field/src/leaderboard/leaderboard.dart';
+import 'package:field/src/moderation/report_issue_sheet.dart';
 import 'package:field/src/profile/fieldrush_player_profile.dart';
 import 'package:field/src/profile/fieldrush_match_history_screen.dart';
 import 'package:field/src/profile/fieldrush_you_widgets.dart';
@@ -15,8 +19,239 @@ import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+// Supabase's injected worker keeps this widget test independent of real isolates.
+// ignore: depend_on_referenced_packages
+import 'package:yet_another_json_isolate/yet_another_json_isolate.dart';
 
 void main() {
+  testWidgets(
+    'real public identity and reporting survive a stalled legacy rating read',
+    (tester) async {
+      final stalled = Completer<http.Response>();
+      http.Request? stalledRequest;
+      var holdRating = true;
+      final client = SupabaseClient(
+        'https://fieldrush-tests.invalid',
+        'test-anon-key',
+        isolate: _ImmediateJsonWorker(),
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          Object? payload = [];
+          if (path.endsWith('/profiles')) {
+            payload = {
+              'id': 'other',
+              'display_name': 'Other Player',
+              'username': 'other',
+              'bio': '',
+            };
+          } else if (path.endsWith('/get_player_rating_history')) {
+            if (holdRating) {
+              stalledRequest = request;
+              return stalled.future;
+            }
+            payload = null;
+          } else if (path.endsWith('/clan_members')) {
+            payload = null;
+          } else if (path.endsWith('/profile_follows') &&
+              request.url.queryParameters.containsKey('following_id') &&
+              request.url.queryParameters.containsKey('follower_id')) {
+            payload = {'follower_id': 'viewer'};
+          } else if (path.endsWith('/list_profile_previous_games')) {
+            payload = [
+              {
+                'match_id': 'played',
+                'match_type': 'SOLO',
+                'played_at': '2026-10-01T18:00:00Z',
+                'venue': 'Field',
+                'home_score': 1,
+                'away_score': 0,
+                'player_side': 'WHITE',
+                'player_role': 'DEF',
+              },
+            ];
+          } else if (path.endsWith('/open_queue_games')) {
+            payload = [
+              {'id': 'played', 'timezone': 'America/Phoenix'},
+            ];
+          }
+          return http.Response(
+            jsonEncode(payload),
+            200,
+            headers: {
+              'content-type': 'application/json',
+              if (request.headers['prefer']?.contains('count=exact') == true)
+                'content-range': '*/0',
+            },
+            request: request,
+          );
+        }),
+      );
+      addTearDown(() => tester.runAsync(client.dispose));
+      await tester.runAsync(
+        () => client.auth.recoverSession(jsonEncode(_session())),
+      );
+      await _pump(
+        tester,
+        SupabaseProfileRepository(client: client),
+        ratings: _Ratings(),
+      );
+      await tester.pumpAndSettle();
+      var content = _content(tester);
+      expect(content.profile.id, 'other');
+      expect(content.profile.displayName, 'Other Player');
+      expect(content.ratings, isNotNull);
+      expect(content.onFollow, isNull);
+      expect(find.byKey(const ValueKey('player-follow')), findsNothing);
+      expect(find.byKey(const ValueKey('player-match-record')), findsNothing);
+      expect(find.byKey(const ValueKey('player-clan')), findsNothing);
+      expect(find.byKey(const ValueKey('player-clips')), findsNothing);
+      expect(find.text('Loading player details…'), findsOneWidget);
+      content.onReport!();
+      await tester.pumpAndSettle();
+      expect(find.byType(ReportIssueSheet), findsOneWidget);
+      expect(
+        tester
+            .widget<ReportIssueSheet>(find.byType(ReportIssueSheet))
+            .subjectId,
+        'other',
+      );
+      Navigator.of(tester.element(find.byType(ReportIssueSheet))).pop();
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(_content(tester).profile.displayName, 'Other Player');
+      expect(
+        find.text('Player details unavailable. Try again to load them.'),
+        findsOneWidget,
+      );
+      holdRating = false;
+      await tester.ensureVisible(find.byKey(const ValueKey('player-retry')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-retry')));
+      await tester.pumpAndSettle();
+      content = _content(tester);
+      expect(content.profile.playedCount, 1);
+      expect(content.isFollowing, isTrue);
+      expect(content.onFollow, isNotNull);
+      expect(content.detailsUnavailable, isFalse);
+      expect(find.byKey(const ValueKey('player-refresh-error')), findsNothing);
+      stalled.complete(http.Response('null', 200, request: stalledRequest));
+      await tester.pumpAndSettle();
+      expect(_content(tester).profile.playedCount, 1);
+      expect(_content(tester).isFollowing, isTrue);
+    },
+  );
+
+  testWidgets(
+    'independent rating response survives a completed follow action',
+    (tester) async {
+      final repository = _SummaryRepository();
+      final ratings = _Ratings()..pending = Completer<FieldrushPlayerRatings>();
+      await _pump(tester, repository, ratings: ratings);
+      await tester.pumpAndSettle();
+      expect(_content(tester).ratingLoading, isTrue);
+      await tester.tap(find.text('Follow'));
+      await tester.pumpAndSettle();
+      expect(repository.following, isTrue);
+      ratings.pending!.complete(_ratings());
+      await tester.pumpAndSettle();
+      expect(_content(tester).ratings, isNotNull);
+      expect(_content(tester).isFollowing, isTrue);
+      expect(_content(tester).ratingLoading, isFalse);
+    },
+  );
+
+  testWidgets(
+    'an old viewer follow failure cannot replace the new viewer profile',
+    (tester) async {
+      final old = _SummaryRepository()..mutation = Completer<void>();
+      await _pump(tester, old);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Follow'));
+      await tester.pumpAndSettle();
+      final next = _SummaryRepository()..following = true;
+      await _pump(tester, next);
+      await tester.pumpAndSettle();
+      old.mutation!.completeError(StateError('Old request failed'));
+      await tester.pumpAndSettle();
+      expect(_content(tester).isFollowing, isTrue);
+      expect(_content(tester).followBusy, isFalse);
+      expect(find.byType(FieldrushToast), findsNothing);
+    },
+  );
+
+  for (final selectOutfield in [false, true]) {
+    testWidgets(
+      'keeper default is independent of rating arrival; explicit selection $selectOutfield',
+      (tester) async {
+        final repository = _SummaryRepository()
+          ..load = Completer<PlayerProfile>();
+        await _pump(tester, repository, ratings: _Ratings());
+        await tester.pumpAndSettle();
+        expect(_content(tester).ratings, isNotNull);
+        if (selectOutfield) _content(tester).onTrack!(RatingTrack.outfield);
+        repository.load!.complete(
+          _profile('other', games: [_historyGame('keeper', role: 'GK')]),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          _content(tester).track,
+          selectOutfield ? RatingTrack.outfield : RatingTrack.goalkeeper,
+        );
+      },
+    );
+  }
+
+  testWidgets(
+    'rating timeout keeps cached details and retries without resetting following',
+    (tester) async {
+      final repository = _SummaryRepository()..following = true;
+      final ratings = _Ratings()..pending = Completer<FieldrushPlayerRatings>();
+      await _pump(tester, repository, ratings: ratings);
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(_content(tester).isFollowing, isTrue);
+      expect(_content(tester).ratingUnavailable, isTrue);
+      ratings.pending = null;
+      await tester.ensureVisible(find.byKey(const ValueKey('player-retry')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('player-retry')));
+      await tester.pumpAndSettle();
+      expect(_content(tester).ratings, isNotNull);
+      expect(_content(tester).isFollowing, isTrue);
+    },
+  );
+
+  for (final newId in ['other', 'new-player']) {
+    testWidgets(
+      'new profile context $newId never reuses old FutureBuilder data',
+      (tester) async {
+        await _pump(tester, _SummaryRepository()..following = true);
+        await tester.pumpAndSettle();
+        expect(_content(tester).isFollowing, isTrue);
+        final next = _SummaryRepository()
+          ..summary = Completer<PlayerProfile>()
+          ..load = Completer<PlayerProfile>();
+        await _pump(tester, next, id: newId);
+        await tester.pumpAndSettle();
+        expect(find.byType(FieldrushPlayerProfileContent), findsNothing);
+        expect(find.byKey(const ValueKey('player-report')), findsNothing);
+        next.summary!.complete(_profile(newId));
+        await tester.pumpAndSettle();
+        expect(_content(tester).profile.id, newId);
+        expect(_content(tester).onFollow, isNull);
+        next.load!.complete(_profile(newId));
+        await tester.pumpAndSettle();
+        expect(_content(tester).isFollowing, isFalse);
+      },
+    );
+  }
+
   testWidgets('public profile has skeletons until its own data arrives', (
     tester,
   ) async {
@@ -359,7 +594,8 @@ void main() {
 
 Future<void> _pump(
   WidgetTester tester,
-  _Repository repository, {
+  ProfileRepository repository, {
+  TrackLeaderboardRepository? ratings,
   String id = 'other',
   OpenQueueRepository? matches,
 }) => tester.pumpWidget(
@@ -367,6 +603,7 @@ Future<void> _pump(
     home: ProfileScreen(
       profileId: id,
       profileRepository: repository,
+      ratingRepository: ratings,
       openQueueRepository: matches,
     ),
   ),
@@ -481,4 +718,85 @@ class _Matches extends Fake implements OpenQueueRepository {
 
   @override
   Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => const [];
+}
+
+FieldrushPlayerProfileContent _content(WidgetTester tester) =>
+    tester.widget<FieldrushPlayerProfileContent>(
+      find.byType(FieldrushPlayerProfileContent),
+    );
+
+class _SummaryRepository extends _Repository
+    implements PublicProfileSummaryRepository {
+  Completer<PlayerProfile>? summary;
+  @override
+  Future<PlayerProfile> getProfileSummary(String profileId) async =>
+      summary == null ? _profile(profileId) : summary!.future;
+}
+
+class _Ratings extends Fake implements TrackLeaderboardRepository {
+  Completer<FieldrushPlayerRatings>? pending;
+  @override
+  Future<FieldrushPlayerRatings> loadPlayerRatings({
+    LeaderboardSeason? season,
+    String? profileId,
+  }) async => pending == null ? _ratings() : pending!.future;
+}
+
+FieldrushPlayerRatings _ratings() => const FieldrushPlayerRatings(
+  outfield: PlayerRatingLeaderboardEntry(
+    rank: 1,
+    profileId: 'other',
+    displayName: 'Other Player',
+    username: 'other',
+    skillRating: 1250,
+    matchesPlayed: 2,
+    wins: 2,
+    losses: 0,
+    draws: 0,
+    lastChange: 25,
+    region: 'phoenix',
+  ),
+  goalkeeper: PlayerRatingLeaderboardEntry(
+    rank: 1,
+    profileId: 'other',
+    displayName: 'Other Player',
+    username: 'other',
+    skillRating: 1300,
+    matchesPlayed: 2,
+    wins: 2,
+    losses: 0,
+    draws: 0,
+    lastChange: 30,
+    region: 'phoenix',
+  ),
+);
+
+Map<String, dynamic> _session() {
+  final expires =
+      DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/
+      1000;
+  String encoded(Object value) =>
+      base64Url.encode(utf8.encode(jsonEncode(value))).replaceAll('=', '');
+  return {
+    'access_token':
+        '${encoded({'alg': 'HS256', 'typ': 'JWT'})}.${encoded({'sub': 'viewer', 'exp': expires})}.test',
+    'refresh_token': 'test-refresh',
+    'token_type': 'bearer',
+    'expires_in': 3600,
+    'user': {
+      'id': 'viewer',
+      'aud': 'authenticated',
+      'role': 'authenticated',
+      'created_at': '2026-10-01T00:00:00Z',
+      'app_metadata': {},
+      'user_metadata': {},
+    },
+  };
+}
+
+class _ImmediateJsonWorker extends Fake implements YAJsonIsolate {
+  @override
+  Future<dynamic> decode(String value) async => jsonDecode(value);
+  @override
+  Future<String> encode(Object? value) async => jsonEncode(value);
 }

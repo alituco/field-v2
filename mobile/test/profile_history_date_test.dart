@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:field/src/profile/fieldrush_match_history_screen.dart';
@@ -62,83 +63,88 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  for (final fails in [false, true]) {
-    test(
-      'optional timezone metadata ${fails ? 'outage' : 'batch'} preserves core profile',
-      () async {
-        final metadataRequests = <http.Request>[];
-        final client = SupabaseClient(
-          'https://fieldrush-tests.invalid',
-          'test-anon-key-not-a-secret',
-          authOptions: const AuthClientOptions(autoRefreshToken: false),
-          httpClient: MockClient((request) async {
-            final path = request.url.path;
-            Object? payload;
-            var status = 200;
-            if (path.endsWith('/profiles')) {
-              payload = {
-                'id': 'player',
-                'display_name': 'Dana',
-                'username': 'dana',
-                'bio': '',
-              };
-            } else if (path.endsWith('/list_profile_previous_games')) {
-              payload = [
-                _jsonGame('phoenix'),
-                _jsonGame('phoenix'),
-                _jsonGame('clan', type: 'CLAN'),
-              ];
-            } else if (path.endsWith('/open_queue_games')) {
-              metadataRequests.add(request);
-              status = fails ? 403 : 200;
-              payload = fails
-                  ? {'message': 'Optional metadata unavailable'}
-                  : [
-                      {'id': 'phoenix', 'timezone': 'America/Phoenix'},
-                    ];
-            } else if (path.endsWith('/clan_members') ||
-                path.endsWith('/get_player_rating_history')) {
-              payload = null;
-            } else {
-              payload = [];
-            }
-            return http.Response(
-              jsonEncode(payload),
-              status,
-              headers: {
-                'content-type': 'application/json',
-                if (request.headers['prefer']?.contains('count=exact') == true)
-                  'content-range': '*/0',
-              },
-              request: request,
-            );
-          }),
+  for (final mode in ['batch', 'outage', 'timeout']) {
+    final fails = mode == 'outage';
+    test('optional timezone metadata $mode preserves core profile', () async {
+      final metadataRequests = <http.Request>[];
+      final heldMetadata = Completer<http.Response>();
+      final client = SupabaseClient(
+        'https://fieldrush-tests.invalid',
+        'test-anon-key-not-a-secret',
+        authOptions: const AuthClientOptions(autoRefreshToken: false),
+        httpClient: MockClient((request) async {
+          final path = request.url.path;
+          Object? payload;
+          var status = 200;
+          if (path.endsWith('/profiles')) {
+            payload = {
+              'id': 'player',
+              'display_name': 'Dana',
+              'username': 'dana',
+              'bio': '',
+            };
+          } else if (path.endsWith('/list_profile_previous_games')) {
+            payload = [
+              _jsonGame('phoenix'),
+              _jsonGame('phoenix'),
+              _jsonGame('clan', type: 'CLAN'),
+            ];
+          } else if (path.endsWith('/open_queue_games')) {
+            metadataRequests.add(request);
+            if (mode == 'timeout') return heldMetadata.future;
+            status = fails ? 403 : 200;
+            payload = fails
+                ? {'message': 'Optional metadata unavailable'}
+                : [
+                    {'id': 'phoenix', 'timezone': 'America/Phoenix'},
+                  ];
+          } else if (path.endsWith('/clan_members') ||
+              path.endsWith('/get_player_rating_history')) {
+            payload = null;
+          } else {
+            payload = [];
+          }
+          return http.Response(
+            jsonEncode(payload),
+            status,
+            headers: {
+              'content-type': 'application/json',
+              if (request.headers['prefer']?.contains('count=exact') == true)
+                'content-range': '*/0',
+            },
+            request: request,
+          );
+        }),
+      );
+      addTearDown(client.dispose);
+      final profile = await SupabaseProfileRepository(
+        client: client,
+      ).getProfile('player');
+      if (mode == 'timeout') {
+        heldMetadata.complete(
+          http.Response('[]', 200, request: metadataRequests.single),
         );
-        addTearDown(client.dispose);
-        final profile = await SupabaseProfileRepository(
-          client: client,
-        ).getProfile('player');
-        expect(profile.displayName, 'Dana');
-        expect(profile.previousGames, hasLength(3));
-        expect(metadataRequests, hasLength(1));
-        expect(
-          metadataRequests.single.url.queryParameters['select'],
-          'id,timezone,open_queue_events(occurred_at)',
-        );
-        expect(
-          metadataRequests.single.url.queryParameters['id'],
-          'in.("phoenix")',
-        );
-        expect(
-          profile.previousGames.first.localPlayedAt,
-          fails ? isNull : DateTime.utc(2026, 10, 31, 19),
-        );
-        expect(
-          profile.previousGames.last.localPlayedAt,
-          DateTime.utc(2026, 11, 1, 5),
-        );
-      },
-    );
+      }
+      expect(profile.displayName, 'Dana');
+      expect(profile.previousGames, hasLength(3));
+      expect(metadataRequests, hasLength(1));
+      expect(
+        metadataRequests.single.url.queryParameters['select'],
+        'id,timezone,open_queue_events(occurred_at)',
+      );
+      expect(
+        metadataRequests.single.url.queryParameters['id'],
+        'in.("phoenix")',
+      );
+      expect(
+        profile.previousGames.first.localPlayedAt,
+        mode != 'batch' ? isNull : DateTime.utc(2026, 10, 31, 19),
+      );
+      expect(
+        profile.previousGames.last.localPlayedAt,
+        DateTime.utc(2026, 11, 1, 5),
+      );
+    });
   }
 }
 
