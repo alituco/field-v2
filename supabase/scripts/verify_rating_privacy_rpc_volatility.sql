@@ -1,6 +1,6 @@
 -- Run after 20261014002200. Every identity, game, booking, terms snapshot and
 -- claim change is transaction-local and rolled back. Do not disable triggers
--- or remove locking from the real party context implementation for this test.
+-- or bypass the real party context's lazy terms initialization for this test.
 begin;
 
 create function pg_temp.privacy_rpc_expect(condition boolean,message text)
@@ -81,7 +81,7 @@ begin
   perform pg_temp.privacy_rpc_expect(
     (select provolatile='v' and position('ensure_match_reliability_terms' in prosrc)>0
      from pg_proc where oid=alias_oid),
-    'the real party original still uses the locking reliability terms helper');
+    'the real party original retains the locking reliability terms fallback');
   perform pg_temp.privacy_rpc_expect(
     has_function_privilege('authenticated',wrapper_oid,'EXECUTE')
       and has_function_privilege('service_role',wrapper_oid,'EXECUTE')
@@ -134,7 +134,8 @@ begin
     'loading existing committed terms retains the exact policy snapshot');
 
   -- Normal creation already exercised new-term binding. Repeat the app's read
-  -- with the committed snapshot: this still requires the helper's row locks.
+  -- with the committed snapshot. Existing matching terms need no write lock;
+  -- missing or stale terms still require the authoritative locking helper.
   -- Do not delete/rebuild terms to simulate a legacy fixture, because doing so
   -- would erase append-only attendance audit evidence even for a free booking.
   execute 'set local role authenticated';
@@ -145,7 +146,7 @@ begin
       and payload->>'policy_version_id'=terms_after.policy_version_id::text
       and (payload->>'party_lock_at')::timestamptz=terms_after.party_lock_at
       and (payload->>'team_assignment_at')::timestamptz=terms_after.team_assignment_at,
-    'repeated public RPC loads preserve the snapshot and return authoritative locked values');
+    'repeated public RPC loads preserve the snapshot and return authoritative stored values');
 
   perform set_config('request.jwt.claim.sub',outsider::text,true);
   execute 'set local role authenticated';

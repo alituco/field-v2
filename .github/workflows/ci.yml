@@ -491,6 +491,21 @@ jobs:
           THROUGH_MIGRATION=20261023000200 \
             REPLAY_SQL_FILE=supabase/scripts/verify_credited_replay_goals.sql \
             node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261023000300 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_party_context_read_lock.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+
+      - name: Verify party context reads do not wait for game writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for candidate in "$(pg_config --bindir)" /usr/lib/postgresql/*/bin; do
+            if [[ -x "$candidate/postgres" && -x "$candidate/initdb" ]]; then
+              export PG_BINDIR="$candidate"
+              break
+            fi
+          done
+          node supabase/scripts/test_party_context_read_lock.mjs
 
       - name: Authenticate read-only container downloads
         shell: bash
@@ -562,6 +577,10 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_credited_replay_goals.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_party_context_read_lock.sql
           docker exec -i supabase_db_field_v2 \
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             <supabase/scripts/verify_atomic_clan_goals.sql
