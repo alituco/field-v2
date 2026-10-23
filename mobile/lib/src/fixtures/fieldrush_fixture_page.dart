@@ -71,8 +71,13 @@ class FieldrushFixturePage extends StatefulWidget {
 
 class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   List<OpenQueueGame> _games = const [];
+  List<OpenQueueGame> _fixtureGames = const [];
+  List<OpenQueueGame> _discoveryGames = const [];
+  List<OpenQueueBooking> _bookings = const [];
+  final _sourceVersions = <String, int>{};
   Set<String> _bookedIds = const {};
   DateTime? _selectedDate;
+  int _dateSelectionVersion = 0;
   bool _loading = true;
   bool _hasLoaded = false;
   bool _opening = false;
@@ -119,57 +124,73 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   @override
   void didUpdateWidget(covariant FieldrushFixturePage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final repositoryChanged = oldWidget.repository != widget.repository;
+    if (repositoryChanged) {
+      // Repository replacement can mean another signed-in player. Keep cached
+      // booking flags only for refreshes of the same repository/session.
+      _fixtureGames = const [];
+      _discoveryGames = const [];
+      _bookings = const [];
+      _sourceVersions.clear();
+      _games = const [];
+      _bookedIds = const {};
+      _selectedDate = null;
+      _hasLoaded = false;
+      _city = FieldrushCity.phoenix;
+      _browsingCityId = null;
+    }
     if (oldWidget.activationTick != widget.activationTick ||
-        oldWidget.repository != widget.repository) {
+        repositoryChanged) {
       _load();
     }
   }
 
   Future<void> _load() async {
     final version = ++_loadVersion;
+    final repository = widget.repository;
+    final cityRepository = _cityRepository;
+    final browsingCity = _cities
+        .where((value) => value.id == _browsingCityId)
+        .firstOrNull;
+    var city = browsingCity ?? _city;
+    var cities = _cities;
+    var cityReady = cityRepository == null || browsingCity != null;
+    var pendingFeeds = 3;
+    var preserveSelection = _hasLoaded && _selectedDate != null;
+    final selectionVersion = _dateSelectionVersion;
+    final failures = <String>{};
+    const readTimeout = Duration(seconds: 12);
+    bool current() => mounted && version == _loadVersion;
+
     setState(() {
       _loading = !_hasLoaded;
       _error = null;
     });
-    try {
-      final repository = widget.repository;
-      var city = _city;
-      var cities = _cities;
-      final cityRepository = _cityRepository;
-      if (cityRepository != null) {
-        final cityData = await Future.wait<dynamic>([
-          cityRepository.loadPreferredCity(),
-          cityRepository.listCities(),
-        ]);
-        if (!mounted || version != _loadVersion) return;
-        cities = (cityData[1] as List<FieldrushCity>)
-            .where((value) => value.active)
-            .toList();
-        city =
-            cities.where((value) => value.id == _browsingCityId).firstOrNull ??
-            cityData[0] as FieldrushCity;
-      }
-      final results = await Future.wait<dynamic>([
-        repository.listFixtureGames(),
-        repository is OpenQueueCityRepository
-            ? (repository as OpenQueueCityRepository).listCityGames(city.id)
-            : repository is OpenQueueMarketRepository
-            ? (repository as OpenQueueMarketRepository).listMarketGames(
-                city.timezone,
-              )
-            : repository.listGames(),
-        repository.getMyUpcomingBookings(),
-      ]);
-      if (!mounted || version != _loadVersion) return;
-      final bookings = (results[2] as List<OpenQueueBooking>)
-          .where((booking) => booking.status == 'CONFIRMED')
-          .toList();
-      // Keep market discovery independent from the all-market history feed.
-      // Fixture rows then win because they contain the live/history match data.
+
+    void publish() {
+      if (!current() || !cityReady) return;
+      // Keep each source until its replacement succeeds. A delayed bookings
+      // read must not hide LIVE fixtures, or erase cached games on refresh.
+      // Current responses beat all cached fallbacks. Among current sources,
+      // fixture rows win because they contain the live/history match data.
+      final sources = <String, Iterable<OpenQueueGame>>{
+        'bookings': _bookings.map((booking) => booking.game),
+        'available games': _discoveryGames,
+        'fixtures': _fixtureGames,
+      };
+      final priority = sources.keys.toList();
+      final orderedSources = sources.entries.toList()
+        ..sort((a, b) {
+          final freshness = (_sourceVersions[a.key] ?? 0).compareTo(
+            _sourceVersions[b.key] ?? 0,
+          );
+          return freshness != 0
+              ? freshness
+              : priority.indexOf(a.key).compareTo(priority.indexOf(b.key));
+        });
       final byId = <String, OpenQueueGame>{
-        for (final booking in bookings) booking.gameId: booking.game,
-        for (final game in results[1] as List<OpenQueueGame>) game.id: game,
-        for (final game in results[0] as List<OpenQueueGame>) game.id: game,
+        for (final source in orderedSources)
+          for (final game in source.value) game.id: game,
       };
       final games =
           byId.values
@@ -184,30 +205,97 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
               return time == 0 ? a.id.compareTo(b.id) : time;
             });
       setState(() {
-        _hasLoaded = true;
+        if (_city.id != city.id) {
+          _selectedDate = null;
+          preserveSelection = false;
+        }
         _city = city;
-        _cities = cities;
+        _cities = [
+          ...cities,
+          if (!cities.any((value) => value.id == city.id)) city,
+        ];
         _games = games;
-        _bookedIds = {for (final booking in bookings) booking.gameId};
+        _bookedIds = {for (final booking in _bookings) booking.gameId};
+        // Empty results are only conclusive after all three feeds finish.
+        _loading = games.isEmpty && pendingFeeds > 0;
+        if (!_loading) _hasLoaded = true;
+        _error = failures.isEmpty
+            ? null
+            : 'Could not refresh ${failures.join(', ')}. Please try again.';
         final dates = _dates;
-        if (!dates.contains(_selectedDate)) {
+        if ((!preserveSelection && _dateSelectionVersion == selectionVersion) ||
+            !dates.contains(_selectedDate)) {
           _selectedDate =
               dates.where((date) => !date.isBefore(_today)).firstOrNull ??
               dates.lastOrNull;
         }
       });
-    } catch (error) {
-      if (mounted && version == _loadVersion) {
-        setState(
-          () => _error = userFacingError(
-            error,
-            fallback: 'We could not load fixtures. Please try again.',
-          ),
-        );
-      }
-    } finally {
-      if (mounted && version == _loadVersion) setState(() => _loading = false);
     }
+
+    Future<void> read<T>(
+      String label,
+      Future<T> Function() request,
+      void Function(T) receive, {
+      bool feed = true,
+    }) async {
+      try {
+        final result = await request().timeout(readTimeout);
+        if (current()) {
+          receive(result);
+          if (feed) _sourceVersions[label] = version;
+        }
+      } catch (_) {
+        if (current()) failures.add(label);
+      } finally {
+        if (feed) pendingFeeds--;
+        publish();
+      }
+    }
+
+    publish();
+    final cityRead = () async {
+      if (cityReady) return;
+      try {
+        city = await cityRepository!.loadPreferredCity().timeout(readTimeout);
+      } catch (_) {
+        // Retain the last known city while making the failed preference read
+        // retryable. The global feeds can still show games for that city.
+        if (current()) failures.add('your city');
+      } finally {
+        cityReady = true;
+        publish();
+      }
+    }();
+
+    await Future.wait<void>([
+      read('fixtures', repository.listFixtureGames, (rows) {
+        _fixtureGames = rows;
+      }),
+      read('bookings', repository.getMyUpcomingBookings, (rows) {
+        _bookings = rows
+            .where((booking) => booking.status == 'CONFIRMED')
+            .toList();
+      }),
+      if (cityRepository != null)
+        read('city options', cityRepository.listCities, (rows) {
+          cities = rows.where((value) => value.active).toList();
+        }, feed: false),
+      () async {
+        await cityRead;
+        if (!current()) return;
+        await read(
+          'available games',
+          () => repository is OpenQueueCityRepository
+              ? (repository as OpenQueueCityRepository).listCityGames(city.id)
+              : repository is OpenQueueMarketRepository
+              ? (repository as OpenQueueMarketRepository).listMarketGames(
+                  city.timezone,
+                )
+              : repository.listGames(),
+          (rows) => _discoveryGames = rows,
+        );
+      }(),
+    ]);
   }
 
   Future<void> _play([OpenQueueGame? game]) async {
@@ -386,7 +474,6 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                               onSelected: (id) {
                                 if (id == _city.id) return;
                                 _browsingCityId = id;
-                                _selectedDate = null;
                                 _load();
                               },
                               child: SizedBox(
@@ -479,7 +566,7 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                       rows: 3,
                     ),
                   )
-                else if (_error != null)
+                else if (_error != null && _games.isEmpty)
                   _FixtureState(
                     title: 'Fixtures unavailable',
                     message: _error!,
@@ -492,6 +579,20 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                         '${_city.displayName} fixtures will appear here as soon as games are scheduled.',
                   )
                 else ...[
+                  if (_error != null)
+                    Padding(
+                      key: const ValueKey('fixtures-refresh-error'),
+                      padding: const EdgeInsets.fromLTRB(20, 12, 12, 0),
+                      child: Row(
+                        children: [
+                          Expanded(child: Text(_error!, style: _jakarta(12))),
+                          TextButton(
+                            onPressed: _load,
+                            child: const Text('Try again'),
+                          ),
+                        ],
+                      ),
+                    ),
                   const SizedBox(height: 12),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -499,8 +600,10 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
                       dates: _dates,
                       selected: selected!,
                       today: _today,
-                      onSelected: (date) =>
-                          setState(() => _selectedDate = date),
+                      onSelected: (date) => setState(() {
+                        _dateSelectionVersion++;
+                        _selectedDate = date;
+                      }),
                     ),
                   ),
                   const SizedBox(height: 20),

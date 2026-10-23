@@ -729,6 +729,308 @@ void main() {
     },
   );
 
+  testWidgets('a pending bookings read does not hide a live fixture', (
+    tester,
+  ) async {
+    final bookings = Completer<List<OpenQueueBooking>>();
+    final repository = _Repository(fixtures: [_game('live', status: 'LIVE')])
+      ..bookingResponse = bookings;
+    await _pump(tester, repository);
+    expect(find.byKey(const ValueKey('solo-fixture-live')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixtures-loading-skeleton')),
+      findsNothing,
+    );
+
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('solo-fixture-live')), findsOneWidget);
+    expect(find.textContaining('Could not refresh bookings'), findsOneWidget);
+    expect(find.text('No games yet'), findsNothing);
+
+    repository.bookingResponse = null;
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('fixtures-refresh-error')), findsNothing);
+    bookings.complete([]);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a stalled city lookup falls back with a retryable notice', (
+    tester,
+  ) async {
+    final cities = _PendingCitiesRepository();
+    await _pump(
+      tester,
+      _Repository(fixtures: [_game('live', status: 'LIVE')]),
+      cityRepository: cities,
+    );
+    expect(
+      find.byKey(const ValueKey('fixtures-loading-skeleton')),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('solo-fixture-live')), findsOneWidget);
+    expect(find.text('Phoenix, AZ'), findsOneWidget);
+    expect(find.textContaining('your city'), findsOneWidget);
+    expect(find.text('Try again'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixtures-loading-skeleton')),
+      findsNothing,
+    );
+
+    // A timed-out response must not change the city after the fallback renders.
+    cities.preferred.complete(_CitiesRepository.newYork);
+    cities.options.complete([_CitiesRepository.newYork]);
+    await tester.pumpAndSettle();
+    expect(find.text('Phoenix, AZ'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('city options do not delay the preferred city fixtures', (
+    tester,
+  ) async {
+    final cities = _PendingCitiesRepository()
+      ..preferred.complete(_CitiesRepository.newYork);
+    await _pump(
+      tester,
+      _Repository(
+        fixtures: [
+          _game(
+            'new-york-live',
+            status: 'LIVE',
+            marketCityId: 'new-york',
+            timezone: 'America/New_York',
+          ),
+        ],
+      ),
+      cityRepository: cities,
+    );
+    expect(
+      find.byKey(const ValueKey('solo-fixture-new-york-live')),
+      findsOneWidget,
+    );
+    expect(find.text('New York, NY'), findsOneWidget);
+    cities.options.complete([FieldrushCity.phoenix, _CitiesRepository.newYork]);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'a failed feed and pending sibling keep a successful game visible',
+    (tester) async {
+      final bookings = Completer<List<OpenQueueBooking>>();
+      final repository = _Repository(fixtures: [_game('live', status: 'LIVE')])
+        ..failDiscovery = true
+        ..bookingResponse = bookings;
+      await _pump(tester, repository);
+      expect(find.byKey(const ValueKey('solo-fixture-live')), findsOneWidget);
+      expect(
+        find.textContaining('Could not refresh available games'),
+        findsOneWidget,
+      );
+      expect(find.text('Fixtures unavailable'), findsNothing);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('solo-fixture-live')), findsOneWidget);
+      expect(find.textContaining('bookings'), findsOneWidget);
+      expect(find.text('No games yet'), findsNothing);
+      bookings.complete([]);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('failed refresh preserves its cached rows and offers retry', (
+    tester,
+  ) async {
+    final repository = _Repository(fixtures: [_game('cached', status: 'LIVE')]);
+    await _pump(tester, repository);
+    repository.fail = true;
+    await _pump(tester, repository, activation: 1);
+    expect(find.byKey(const ValueKey('solo-fixture-cached')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('fixtures-refresh-error')),
+      findsOneWidget,
+    );
+    expect(find.text('Fixtures unavailable'), findsNothing);
+    repository.fail = false;
+    repository.fixtures = [_game('fresh', status: 'LIVE')];
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('solo-fixture-fresh')), findsOneWidget);
+    expect(find.byKey(const ValueKey('solo-fixture-cached')), findsNothing);
+    expect(find.byKey(const ValueKey('fixtures-refresh-error')), findsNothing);
+  });
+
+  for (final stalled in [false, true]) {
+    testWidgets(
+      'fresh discovery overrides ${stalled ? 'pending' : 'failed'} cached fixture data',
+      (tester) async {
+        final repository = _Repository(fixtures: [_game('same-game')]);
+        await _pump(tester, repository);
+        expect(find.text('Join game'), findsOneWidget);
+        final pending = Completer<List<OpenQueueGame>>();
+        repository.fail = !stalled;
+        repository.fixtureResponse = stalled ? pending : null;
+        repository.upcoming = [
+          _game('same-game', status: 'FULL', confirmedCount: 14),
+        ];
+        await _pump(tester, repository, activation: 1);
+        expect(
+          find.byKey(const ValueKey('solo-fixture-same-game')),
+          findsOneWidget,
+        );
+        expect(find.text('0 SPOTS LEFT'), findsOneWidget);
+        expect(find.text('Join game'), findsNothing);
+        if (stalled) {
+          pending.complete([
+            _game('same-game', status: 'LIVE', white: 2, black: 1),
+          ]);
+          await tester.pumpAndSettle();
+          expect(find.text('LIVE'), findsWidgets);
+          expect(find.text('White'), findsOneWidget);
+          expect(find.text('0 SPOTS LEFT'), findsNothing);
+        } else {
+          // Starting another retry must not briefly restore the older OPEN
+          // fixture while the latest successful discovery remains cached.
+          final retry = Completer<List<OpenQueueGame>>();
+          repository.discoveryResponse = retry;
+          await _pump(tester, repository, activation: 2);
+          expect(find.text('0 SPOTS LEFT'), findsOneWidget);
+          expect(find.text('Join game'), findsNothing);
+          retry.complete(repository.upcoming);
+          await tester.pumpAndSettle();
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('superseded pending reads cannot overwrite a newer refresh', (
+    tester,
+  ) async {
+    final oldFixtures = Completer<List<OpenQueueGame>>();
+    final repository = _Repository()..fixtureResponse = oldFixtures;
+    await _pump(tester, repository);
+    repository.fixtureResponse = null;
+    repository.fixtures = [_game('current', status: 'LIVE')];
+    await _pump(tester, repository, activation: 1);
+    expect(find.byKey(const ValueKey('solo-fixture-current')), findsOneWidget);
+    oldFixtures.complete([_game('stale')]);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('solo-fixture-current')), findsOneWidget);
+    expect(find.byKey(const ValueKey('solo-fixture-stale')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('replacing the repository clears cached games and bookings', (
+    tester,
+  ) async {
+    final first = _Repository(bookings: [_booking(_game('old-player'))]);
+    await _pump(tester, first);
+    expect(
+      find.byKey(const ValueKey('solo-fixture-old-player')),
+      findsOneWidget,
+    );
+    final bookings = Completer<List<OpenQueueBooking>>();
+    final replacement = _Repository()
+      ..fail = true
+      ..bookingResponse = bookings;
+    await _pump(tester, replacement);
+    expect(find.byKey(const ValueKey('solo-fixture-old-player')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('fixtures-loading-skeleton')),
+      findsOneWidget,
+    );
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('solo-fixture-old-player')), findsNothing);
+    expect(find.text('Fixtures unavailable'), findsOneWidget);
+    expect(find.text('No games yet'), findsNothing);
+    bookings.complete([]);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'city selection immediately filters cached rows during a stalled refresh',
+    (tester) async {
+      final repository = _CityGamesRepository(
+        fixtures: [
+          _game('phoenix-live', status: 'LIVE', marketCityId: 'phoenix'),
+          _game(
+            'new-york-live',
+            status: 'LIVE',
+            marketCityId: 'new-york',
+            timezone: 'America/New_York',
+          ),
+        ],
+      );
+      final cities = _CitiesRepository();
+      await _pump(tester, repository, cityRepository: cities);
+      expect(
+        find.byKey(const ValueKey('solo-fixture-new-york-live')),
+        findsOneWidget,
+      );
+      final fixtures = Completer<List<OpenQueueGame>>();
+      final discovery = Completer<List<OpenQueueGame>>();
+      final bookings = Completer<List<OpenQueueBooking>>();
+      repository.fixtureResponse = fixtures;
+      repository.discoveryResponse = discovery;
+      repository.bookingResponse = bookings;
+      await tester.tap(find.byKey(const ValueKey('fixtures-city-picker')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Phoenix, AZ'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('solo-fixture-phoenix-live')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('solo-fixture-new-york-live')),
+        findsNothing,
+      );
+      expect(find.text('Phoenix, AZ'), findsOneWidget);
+      fixtures.complete(repository.fixtures);
+      discovery.complete([]);
+      bookings.complete([]);
+      await tester.pumpAndSettle();
+      expect(cities.savedCities, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a date chosen while loading survives a later discovery response',
+    (tester) async {
+      final discovery = Completer<List<OpenQueueGame>>();
+      final repository = _Repository(
+        fixtures: [
+          _game(
+            'history',
+            status: 'FINAL',
+            start: DateTime.utc(2026, 10, 8, 3),
+          ),
+          _game('later', start: DateTime.utc(2026, 10, 14, 3)),
+        ],
+      )..discoveryResponse = discovery;
+      await _pump(tester, repository);
+      await tester.tap(find.byKey(const ValueKey('fixtures-date-2026-10-07')));
+      await tester.pumpAndSettle();
+      discovery.complete([_game('next')]);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('solo-fixture-history')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('solo-fixture-next')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('compact width and enlarged text do not overflow', (
     tester,
   ) async {
@@ -902,11 +1204,14 @@ class _Repository implements OpenQueueRepository, OpenQueueMarketRepository {
   List<OpenQueueGame> upcoming;
   List<OpenQueueBooking> bookings;
   bool fail = false;
+  bool failDiscovery = false;
   int bookCalls = 0;
   int fixtureCalls = 0;
   int listGamesCalls = 0;
   String? marketRequested;
   Completer<List<OpenQueueGame>>? fixtureResponse;
+  Completer<List<OpenQueueGame>>? discoveryResponse;
+  Completer<List<OpenQueueBooking>>? bookingResponse;
   @override
   Future<List<OpenQueueGame>> listFixtureGames() async {
     fixtureCalls++;
@@ -918,7 +1223,8 @@ class _Repository implements OpenQueueRepository, OpenQueueMarketRepository {
   @override
   Future<List<OpenQueueGame>> listMarketGames(String timezone) async {
     marketRequested = timezone;
-    return upcoming;
+    if (failDiscovery) throw StateError('offline');
+    return discoveryResponse?.future ?? upcoming;
   }
 
   @override
@@ -928,7 +1234,8 @@ class _Repository implements OpenQueueRepository, OpenQueueMarketRepository {
   }
 
   @override
-  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => bookings;
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async =>
+      bookingResponse?.future ?? bookings;
   @override
   Future<OpenQueueBooking> bookGame({
     required OpenQueueGame game,
@@ -954,13 +1261,13 @@ class _UnusedFixtureRepository implements FixtureRepository {
 
 class _CityGamesRepository extends _Repository
     implements OpenQueueCityRepository {
-  _CityGamesRepository({super.upcoming});
+  _CityGamesRepository({super.fixtures, super.upcoming});
   String? requestedCity;
   @override
   Future<List<OpenQueueGame>> listCityGames(String cityId) async {
     requestedCity = cityId;
     // Return mixed rows deliberately to verify the defensive client filter too.
-    return upcoming;
+    return discoveryResponse?.future ?? upcoming;
   }
 }
 
@@ -985,4 +1292,15 @@ class _CitiesRepository implements FieldrushCityRepository {
     savedCities.add(id);
     return id == 'new-york' ? newYork : FieldrushCity.phoenix;
   }
+}
+
+class _PendingCitiesRepository extends _CitiesRepository {
+  final preferred = Completer<FieldrushCity>();
+  final options = Completer<List<FieldrushCity>>();
+
+  @override
+  Future<FieldrushCity> loadPreferredCity() => preferred.future;
+
+  @override
+  Future<List<FieldrushCity>> listCities() => options.future;
 }

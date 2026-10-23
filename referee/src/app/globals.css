@@ -434,7 +434,7 @@
   display: inline-block;
   padding: 6px 10px;
   cursor: pointer;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 800;
   list-style: none;
   text-decoration: underline;
@@ -457,7 +457,7 @@
 }
 
 .timer-end-disclosure span {
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 700;
 }
 

@@ -35,6 +35,7 @@ type ActionBody = {
     | "blue_card"
     | "expire_blue_card"
     | "finish"
+    | "reopen"
     | "report"
     | "check_in_player"
     | "remove_check_in"

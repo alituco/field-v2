@@ -55,6 +55,27 @@ executes the referee/admin workflow, verifies Postgres afterward, and cleans
 mutable test state. It is guarded for the exact Field Staging project and must
 not be pointed at production.
 
+## Ending and reopening a Solo match
+
+Apply `20261023000100_referee_finish_and_reopen.sql` before deploying the updated
+referee app. Assigned referees can end an active Season 0 Solo match while its
+clock is running or paused, including before the planned duration. Ending early
+saves the score and playing evidence without awarding SR or a rated appearance;
+the existing full-duration SR eligibility rule is unchanged.
+
+Open the completed match and choose **Reopen match** to continue. The score,
+roster, and recorded playing time remain intact, and the clock stays paused until
+the referee chooses **Resume**. Reopening withdraws the previous SR result and
+holds later results that depend on it; ending the match again replays those
+results without duplicate awards. Each transition checks the current revision
+and records an audit entry. A player's other active booking or checkout must be
+resolved before reopening. Cancelled matches and organizer-reviewed decisions
+remain under organizer control. Historical legacy and clan match workflows are
+unchanged.
+
+Ending a match still requests the usual delayed broadcast stop. Reopening the
+match does not reopen that broadcast; a stopped stream remains ended.
+
 ## Saved fields and solo games
 
 Apply `20261011000100_saved_fields_and_game_locations.sql` to the target

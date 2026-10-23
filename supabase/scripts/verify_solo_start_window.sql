@@ -141,7 +141,21 @@ begin
     'normal S0 kickoff does not require or manufacture a legacy admin test-start audit');
   perform pg_temp.window_expect(public.finalize_match_attendance_internal('SOLO',early_game,referee_id)=0,'early actual match does not finalize attendance before actual grace');
   perform pg_temp.window_expect(not exists(select 1 from public.current_match_attendance_records where open_queue_game_id=early_game and outcome='NO_SHOW'),'no early no-shows');
-  perform pg_temp.window_reject(format('select public.referee_finish_season_zero_match(%L,%L,%L,1)',referee_id,early_game,gen_random_uuid()),'agreed playing duration');
+  if to_regprocedure('public.referee_reopen_season_zero_match(uuid,uuid,uuid,integer)') is null then
+    perform pg_temp.window_reject(format('select public.referee_finish_season_zero_match(%L,%L,%L,1)',referee_id,early_game,gen_random_uuid()),'agreed playing duration');
+  else
+    -- Exercise the newer permission without consuming the live fixture used by
+    -- the injury checks below. The subtransaction deliberately rolls it back.
+    begin
+      result:=public.referee_finish_season_zero_match(referee_id,early_game,gen_random_uuid(),1);
+      if result->>'rating_status' is distinct from 'unranked' or result->>'settlement_status' is distinct from 'NOT_RATED' then
+        raise exception 'An early referee finish must preserve the shortened-game SR rule.';
+      end if;
+      raise exception 'Rollback the early-finish probe.' using errcode='ZX001';
+    exception when sqlstate 'ZX001' then null;
+    end;
+    perform pg_temp.window_expect((select status='LIVE' from public.open_queue_games where id=early_game),'early finish succeeds without bypassing the existing SR duration rule; probe rolled back');
+  end if;
   select profile_id into player from public.open_queue_bookings where game_id=early_game order by id limit 1;
   update public.open_queue_clock_states set status='ENDED',started_at=null where game_id=early_game;
   perform pg_temp.window_reject(format('select public.referee_record_verified_injury(%L,''SOLO'',%L,%L,true,false,true)',referee_id,early_game,player),'from kickoff');

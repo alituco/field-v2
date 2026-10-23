@@ -54,6 +54,35 @@ test("finish must acknowledge the exact game, final state and settled status", a
   assert.deepEqual(await runSeasonZeroAction(db, "actor", "game", { action: "finish" }), { seasonZeroState: state });
 });
 
+test("reopening sends the confirmed revision and request ID with the authenticated referee", async () => {
+  const calls = [];
+  const state = { game_id: "game", revision: 8, lifecycle: "LIVE", settlement_status: "HELD", rating_status: "pending_review" };
+  const db = { rpc: async (name, args) => {
+    calls.push({ name, args });
+    return { data: name === "get_season_zero_match_state" ? { game_id: "game", revision: 7 } : state, error: null };
+  } };
+  assert.deepEqual(await runSeasonZeroAction(db, "verified-referee", "game", {
+    action: "reopen", actor_referee_id: "spoof", expectedRevision: 6, requestId: "same-reopen-request",
+  }), { seasonZeroState: state });
+  assert.deepEqual(calls[1], { name: "referee_reopen_season_zero_match", args: {
+    actor_referee_id: "verified-referee", game_id_to_use: "game", request_id_to_use: "same-reopen-request", expected_revision: 6,
+  } });
+});
+
+test("reopening rejects missing or inconsistent acknowledgements without retrying a write", async () => {
+  for (const data of [null, { game_id: "other", revision: 8, lifecycle: "LIVE" },
+    { game_id: "game", revision: 8, lifecycle: "FINAL", settlement_status: "HELD", rating_status: "pending_review" },
+    { game_id: "game", revision: 8, lifecycle: "LIVE", settlement_status: "RATED", rating_status: "completed" },
+    { game_id: "game", revision: 8, lifecycle: "LIVE", settlement_status: "HELD", rating_status: "completed" }]) {
+    let writes = 0;
+    const db = { rpc: async name => name === "get_season_zero_match_state"
+      ? { data: { game_id: "game", revision: 7 }, error: null }
+      : (++writes, { data, error: null }) };
+    await assert.rejects(runSeasonZeroAction(db, "referee", "game", { action: "reopen" }), /not acknowledged/);
+    assert.equal(writes, 1);
+  }
+});
+
 test("rebalance sends booked identities and explicit consent, never client ratings or roles", async () => {
   const body = { action: "rebalance", requestId: "request", reason: "Both players consented", moves: [
     { profile_id: "player", to_team: "BLACK", consented: true, skill_rating: 9000, role: "GK" },

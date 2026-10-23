@@ -8,6 +8,7 @@ export type SeasonZeroMatchState = {
   lifecycle: "LIVE" | "REVIEW" | "FINAL";
   rating_status: string;
   settlement_status: "UNSETTLED" | "RATED" | "NOT_RATED" | "HELD";
+  referee_can_reopen?: boolean;
   elapsed_seconds: number;
   scheduled_seconds: number;
   server_now: string;
@@ -87,7 +88,7 @@ export async function runSeasonZeroAction(db: SupabaseClient, actorId: string, g
     return { rebalance: data };
   }
   const input = seasonZeroActionInput(body);
-  if (!input && body.action !== "finish") return null;
+  if (!input && body.action !== "finish" && body.action !== "reopen") return null;
   const state = await loadSeasonZeroState(db, actorId, gameId);
   const revision = body.expectedRevision ?? state?.revision ?? 0;
   if (!Number.isInteger(revision) || Number(revision) < 0) throw new Error("Refresh the match before recording this action.");
@@ -98,9 +99,14 @@ export async function runSeasonZeroAction(db: SupabaseClient, actorId: string, g
   };
   const { data, error } = body.action === "finish"
     ? await db.rpc("referee_finish_season_zero_match", common)
+    : body.action === "reopen"
+      ? await db.rpc("referee_reopen_season_zero_match", common)
     : await db.rpc("referee_season_zero_action", { ...common, action_input: input });
   if (error) throw new Error(`Could not record match action: ${error.message}`);
   assertSeasonZeroAcknowledgement(data, gameId, body.action === "finish");
+  if (body.action === "reopen" && (data.lifecycle !== "LIVE" || data.settlement_status !== "HELD" || data.rating_status !== "pending_review")) {
+    throw new Error("Reopening was not acknowledged. Refresh its state before retrying.");
+  }
   return { seasonZeroState: data };
 }
 
