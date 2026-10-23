@@ -139,6 +139,7 @@ export function normalizeMatchReliabilityContext(
     checkInDeadlineAt: nullableString(
       root.check_in_deadline_at ?? root.checkin_deadline_at,
     ),
+    lateCutoffInclusive: booleanValue(root.late_cutoff_inclusive),
     noShowCutoffAt: nullableString(root.no_show_cutoff_at),
     reserveActivationMinutesAfterKickoff: integerValue(
       root.reserve_activation_minutes_after_kickoff,

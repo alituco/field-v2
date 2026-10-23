@@ -59,8 +59,8 @@ type FieldSection = {
 };
 
 const FIELD_TOOLTIPS: Record<string, string> = {
-  "attendance.checkInOpenLeadMinutes": "How long before kickoff the app begins reminding players to arrive. Referees can still check players in earlier.",
-  "attendance.checkInLeadMinutes": "Players checked in after this point are recorded as late. The referee remains able to check them in.",
+  "attendance.checkInOpenLeadMinutes": "Arrival reminder for matches using the general attendance policy. Upcoming solo games use their saved arrival target. Referees can check players in earlier.",
+  "attendance.checkInLeadMinutes": "Controls solo booking and cancellation availability, and the on-time deadline for matches using the general attendance policy. Upcoming solo games have a separate saved late-arrival cutoff.",
   "attendance.noShowGraceMinutes": "A missing player becomes a no-show this many minutes after kickoff.",
   "attendance.strikeLifetimeDays": "How long a reliability strike remains active before it expires.",
   "attendance.appealWindowHours": "How long a player or clan has to appeal an attendance decision.",
@@ -70,7 +70,7 @@ const FIELD_TOOLTIPS: Record<string, string> = {
   "solo.highestCrossedOnly": "If one incident crosses several strike thresholds, apply only the strongest newly reached consequence.",
   "solo.outcomes.onTime.strikes": "Reliability strikes applied after an on-time appearance. Normally zero.",
   "solo.outcomes.onTime.refundBps": "Booking-fee refund after an on-time appearance. This does not control returning a reliability deposit.",
-  "solo.outcomes.late.strikes": "Reliability strikes applied when the referee checks a player in after the deadline.",
+  "solo.outcomes.late.strikes": "Default strikes for a late arrival. Upcoming solo games use their saved arrival rule, which applies one strike when the referee records a late arrival.",
   "solo.outcomes.late.refundBps": "Booking-fee refund for a late arrival.",
   "solo.outcomes.noShow.strikes": "Reliability strikes applied when the player is still missing after the grace period.",
   "solo.outcomes.noShow.refundBps": "Booking-fee refund for a no-show.",
@@ -104,11 +104,11 @@ const FIELD_TOOLTIPS: Record<string, string> = {
 const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "attendance-clock",
-    title: "Attendance clock",
-    detail: "The referee can start check-in at any time. Server time still decides whether an arrival is on time, late, or a no-show.",
+    title: "Booking and attendance timing",
+    detail: "Referees record when players arrived. Upcoming solo games show their saved arrival target and late cutoff; the settings below also control booking deadlines and general attendance rules.",
     fields: [
       numberField("attendance.checkInOpenLeadMinutes", "Arrival reminder begins", "min before kickoff", 0, 10_080),
-      numberField("attendance.checkInLeadMinutes", "Check-in deadline", "min before kickoff", 0, 1_440),
+      numberField("attendance.checkInLeadMinutes", "Booking / general arrival deadline", "min before kickoff", 0, 1_440),
       numberField("attendance.noShowGraceMinutes", "No-show cutoff", "min after kickoff", 0, 180),
       numberField("attendance.strikeLifetimeDays", "Strike lifetime", "days", 1, 3_650),
       numberField("attendance.appealWindowHours", "Appeal window", "hours", 1, 720),

@@ -233,6 +233,8 @@ export type MatchReliabilityContext = {
   policyVersionId: string | null;
   kickoffAt: string | null;
   checkInDeadlineAt: string | null;
+  /** New Solo arrival contract includes the exact deadline in late arrivals. */
+  lateCutoffInclusive?: boolean;
   noShowCutoffAt: string | null;
   reserveActivationMinutesAfterKickoff: number;
   reserveActivationAt: string | null;
