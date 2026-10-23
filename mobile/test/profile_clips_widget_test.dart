@@ -372,7 +372,9 @@ void main() {
         downloader: _FakeGoalClipDownloader(),
       );
       await tester.tap(find.byKey(const ValueKey('profile-clip-options')));
-      await tester.pumpAndSettle();
+      // Initialization is held, so the video loader keeps animating.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       video.completeInitialization();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 20));

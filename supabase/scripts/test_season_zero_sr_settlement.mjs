@@ -59,6 +59,9 @@ async function fullSnapshot() {
     'revisions',(select jsonb_agg(to_jsonb(r) order by id) from fieldrush_rating_private.season_zero_settlement_revisions r),
     'requests',(select jsonb_agg(to_jsonb(r) order by request_id) from fieldrush_rating_private.season_zero_action_requests r),
     'clock',(select jsonb_agg(to_jsonb(c) order by game_id) from public.open_queue_clock_states c),
+    'bookings',(select jsonb_agg(to_jsonb(b) order by id) from public.open_queue_bookings b),
+    'audit',(select jsonb_agg(to_jsonb(a) order by game_id,revision) from fieldrush_rating_private.season_zero_match_revisions a),
+    'match_events',(select jsonb_agg(to_jsonb(e) order by id) from public.open_queue_events e),
     'games',(select jsonb_agg(to_jsonb(g) order by id) from public.open_queue_games g))`);
 }
 async function rejectsAtomically(fn, error) {
@@ -343,7 +346,84 @@ try {
     for (const role of ['anon','authenticated']) await check("select has_function_privilege($1,$2,'EXECUTE')",false,[role,`public.${fn}`]);
     await check("select has_function_privilege('service_role',$1,'EXECUTE')",true,[`public.${fn}`]);
   }
-  console.log(`PASS: ${checks} settlement checks: exact awards, separate pools, finish idempotency, chronological dependent correction, lifetime count/reveal rollback, transitive holds, forfeit 599/600, late-entry correction, atomic persistence rollback, fixed legacy awards, no reset, immutable audit and authorization.`);
+  // The appended migration changes referee lifecycle permission only. Existing
+  // rating math and the full-duration SR eligibility rule stay unchanged.
+  const reopenPeople = people.map(p=>({...p,id:randomUUID()}));
+  for (const p of reopenPeople) {
+    await db.query('insert into public.profiles values($1)',[p.id]);
+    for(const t of ['OUTFIELD','GOALKEEPER']) await db.query('insert into public.fieldrush_player_rating_tracks(profile_id,rating_track,skill_rating,matches_played) values($1,$2,1000,1)',[p.id,t]);
+  }
+  const historical=await game(reopenPeople); await start(historical,reopenPeople.map(p=>p.id)); await advance(historical,3600); await finish(historical);
+  await db.exec(await source('20261023000100_referee_finish_and_reopen.sql'));
+  const reopen=(id,rev,request=randomUUID(),actor=referee)=>scalar('select public.referee_reopen_season_zero_match($1,$2,$3,$4)',[actor,id,request,rev]);
+  const historicalReopen=await reopen(historical,2);
+  assert.equal(historicalReopen.audit.final_clock_state,'PAUSED'); checks++;
+  assert.equal(historicalReopen.events.length,1); checks++;
+  assert.equal(historicalReopen.played_seconds,3600); checks++;
+  await finish(historical,3);
+  const baseline = await track(reopenPeople[0]);
+  const early=await game(reopenPeople); await start(early,reopenPeople.map(p=>p.id)); await advance(early,300);
+  await db.query('insert into public.open_queue_goals(game_id,team,profile_id) values($1,$2,$3)',[early,reopenPeople[0].team,reopenPeople[0].id]);
+  const finishRequest=randomUUID(); const earlyResult=await finish(early,1,finishRequest);
+  assert.equal(earlyResult.rating_status,'unranked'); checks++;
+  assert.equal(earlyResult.settlement_status,'NOT_RATED'); checks++;
+  assert.equal(earlyResult.referee_can_reopen,true); checks++;
+  assert.equal(earlyResult.audit.final_clock_state,'PAUSED'); checks++;
+  assert.deepEqual(await track(reopenPeople[0]),baseline); checks++;
+  assert.deepEqual(await finish(early,999,finishRequest),earlyResult); checks++;
+  await check('select count(*)::integer from public.player_rating_events where source_id=$1',0,[early]);
+  await rejectsAtomically(()=>reopen(early,2,randomUUID(),outsider),/not assigned/);
+  await rejectsAtomically(()=>reopen(early,1),/changed match/);
+  await rejectsAtomically(()=>reopen(early,2,finishRequest),/another action/);
+  const reopenRequest=randomUUID(); const resumed=await reopen(early,2,reopenRequest);
+  assert.equal(resumed.lifecycle,'LIVE'); checks++;
+  assert.equal(resumed.settlement_status,'HELD'); checks++;
+  assert.equal(resumed.referee_can_reopen,false); checks++;
+  assert.deepEqual(resumed.events,earlyResult.events); checks++;
+  assert.deepEqual(resumed.observed_roster,earlyResult.observed_roster); checks++;
+  assert.equal(resumed.elapsed_seconds,earlyResult.played_seconds); checks++;
+  await check("select status='PAUSED' and started_at is null and accumulated_seconds=$2 from public.open_queue_clock_states where game_id=$1",true,[early,earlyResult.played_seconds]);
+  await check("select status='LIVE' and white_score=1 and black_score=0 from public.open_queue_games where id=$1",true,[early]);
+  assert.deepEqual(await reopen(early,999,reopenRequest),resumed); checks++;
+  await rejectsAtomically(()=>reopen(early,3),/Only a referee-ended/);
+  await action(early,3,{action:'RESUME'}); await advance(early,3600);
+  const rated=await finish(early,4);
+  assert.equal(rated.settlement_status,'RATED'); checks++;
+  assert.equal(rated.events.length,3); checks++;
+  await check('select count(*)::integer from public.player_rating_events where source_id=$1',14,[early]);
+  const dependent=await game(reopenPeople); await start(dependent,reopenPeople.map(p=>p.id)); await advance(dependent,3600); await finish(dependent);
+  const ratedTrack=await track(reopenPeople[0]);
+  await db.exec(`create function public.test_reopen_persistence_failure() returns trigger language plpgsql as $$ begin
+    if old.profile_id='${reopenPeople[0].id}'::uuid then raise exception 'Simulated reopen persistence failure'; end if; return new; end $$;
+    create trigger test_reopen_persistence_failure before update on public.fieldrush_player_rating_tracks
+      for each row execute function public.test_reopen_persistence_failure();`);
+  await rejectsAtomically(()=>reopen(early,5),/Simulated reopen persistence failure/);
+  await db.exec('drop trigger test_reopen_persistence_failure on public.fieldrush_player_rating_tracks');
+  await reopen(early,5);
+  await check('select count(*)::integer from public.player_rating_events where source_id in ($1,$2)',0,[early,dependent]);
+  await check("select settlement_status from fieldrush_rating_private.season_zero_matches where game_id=$1",'HELD',[dependent]);
+  assert.deepEqual(await track(reopenPeople[0]),baseline); checks++;
+  // Finishing while paused uses the same verified playing seconds, without
+  // inventing elapsed wall time or another rated appearance.
+  await finish(early,6);
+  assert.deepEqual(await track(reopenPeople[0]),ratedTrack); checks++;
+  await check('select count(*)::integer from public.player_rating_events where source_id in ($1,$2)',28,[early,dependent]);
+  await check("select count(*)::integer from fieldrush_rating_private.season_zero_match_revisions where game_id=$1 and action='REOPEN'",2,[early]);
+  await resolve(early,7,{status:'unranked',winner:null,reason:'Organizer decision remains protected from referee reopening.'});
+  await check("select public.get_season_zero_match_state($1,$2)->>'referee_can_reopen'",'false',[referee,early]);
+  await rejectsAtomically(()=>reopen(early,8),/organizer-reviewed/);
+  const zero=await game(reopenPeople); await start(zero,reopenPeople.map(p=>p.id));
+  // A deterministic first-second test: zero can finish without fabricating a
+  // minimum second of playing evidence or passing the rated-contribution guard.
+  await db.query("update public.open_queue_clock_states set started_at=clock_timestamp()+interval '1 hour',accumulated_seconds=0 where game_id=$1",[zero]);
+  const zeroResult=await finish(zero);
+  assert.equal(zeroResult.played_seconds,0); checks++;
+  assert.equal(zeroResult.settlement_status,'NOT_RATED'); checks++;
+  await reopen(zero,2); await action(zero,3,{action:'RESUME'}); await advance(zero,599); await finish(zero,4);
+  await check("select rating_status from fieldrush_rating_private.season_zero_matches where game_id=$1",'unranked',[zero]);
+  for(const role of ['anon','authenticated']) await check("select has_function_privilege($1,'public.referee_reopen_season_zero_match(uuid,uuid,uuid,integer)','EXECUTE')",false,[role]);
+  await check("select has_function_privilege('service_role','public.referee_reopen_season_zero_match(uuid,uuid,uuid,integer)','EXECUTE')",true);
+  console.log(`PASS: ${checks} settlement checks: exact awards, separate pools, finish idempotency, chronological dependent correction, lifetime count/reveal rollback, transitive holds, forfeit 599/600, late-entry correction, atomic persistence rollback, fixed legacy awards, no reset, immutable audit, early finish, referee reopen, dependent SR rollback/re-award and authorization.`);
 } catch (error) {
   console.error(error.message);
   if (error.where) console.error(error.where);

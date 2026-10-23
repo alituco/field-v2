@@ -8,6 +8,7 @@ import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
 import { SeasonZeroParticipationPanel } from "@/components/season-zero-participation-panel";
 import { SeasonZeroRebalancePanel } from "@/components/season-zero-rebalance-panel";
+import { SeasonZeroLifecycleControls } from "@/components/season-zero-lifecycle-controls";
 import { SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
 import { isStaffBrowserSession, STAFF_SIGN_IN_REQUIRED } from "@/lib/staff-browser-session";
 import { soloMinimumHint, soloStarterLineupReady } from "@/lib/solo-game-readiness";
@@ -586,6 +587,9 @@ function GamesView({
         fixture={activeFixture}
         submitting={submitting}
         onRunAction={onRunAction}
+        accessToken={accessToken}
+        onLifecycleAction={onSafetyAction}
+        onRefresh={onRefresh}
       />
 
       {resolutionLocked ? (
@@ -787,7 +791,9 @@ function GamesView({
       {activeFixture.status === "FINAL" && !resolutionLocked ? (
         <div className="result-locked-note">
           <span aria-hidden="true">✓</span>
-          Final result saved. Admin corrections remain fully audited.
+          {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY
+            ? "Final result saved. Use Reopen match if play needs to continue."
+            : "Final result saved. Admin corrections remain fully audited."}
         </div>
       ) : null}
         </div>
@@ -1685,6 +1691,9 @@ function TimerPanel({
   onRunAction,
   compact = false,
   canAdminister = false,
+  accessToken,
+  onLifecycleAction,
+  onRefresh,
 }: {
   fixture: RefereeFixture;
   submitting: string | null;
@@ -1693,6 +1702,9 @@ function TimerPanel({
   ) => Promise<void>;
   compact?: boolean;
   canAdminister?: boolean;
+  accessToken: string;
+  onLifecycleAction: (body: FixtureActionBody) => Promise<boolean>;
+  onRefresh: () => void;
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
   const seasonZero = fixture.ratingPolicyId === SEASON_ZERO_POLICY;
@@ -1956,7 +1968,11 @@ function TimerPanel({
           Admin test start: all booked players must be checked in. The early team reveal and completion are audited.
         </p>
       ) : null}
-      {fixture.status === "LIVE" && !resolutionLocked && (status === "RUNNING" || status === "PAUSED") ? (
+      {seasonZero && !resolutionLocked && ["LIVE", "FINAL"].includes(fixture.status) ? (
+        <SeasonZeroLifecycleControls key={`${fixture.id}-${fixture.status}`} fixture={fixture}
+          accessToken={accessToken} submitting={submitting} onAction={onLifecycleAction} onRefresh={onRefresh} />
+      ) : null}
+      {!seasonZero && fixture.status === "LIVE" && !resolutionLocked && (status === "RUNNING" || status === "PAUSED") ? (
         <details className="timer-end-disclosure">
           <summary>End match</summary>
           <div>
@@ -1972,7 +1988,6 @@ function TimerPanel({
           </div>
         </details>
       ) : null}
-      {fixture.status === "FINAL" && seasonZero ? <p className="timer-start-note">Time, participation, and result corrections require an audited organizer review.</p> : null}
       {fixture.status === "FINAL" && !resolutionLocked && !seasonZero && compact ? (
         <details className="clock-editor clock-editor-disclosure">
           <summary>

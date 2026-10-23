@@ -4,7 +4,7 @@ import { completedPlayingDuration, waitForPlayingDuration } from "../e2e/support
 
 const payload = (elapsed = 0) => ({ state: { game_id: "match", lifecycle: "LIVE", scheduled_seconds: 1800, elapsed_seconds: elapsed } });
 
-test("normal S0 finish requires the full saved duration, not just the appearance minimum", () => {
+test("the rated S0 journey waits for the full saved duration, not just the appearance minimum", () => {
   for (const seconds of [0, 600, 1799]) assert.equal(completedPlayingDuration(payload(seconds), "match"), false);
   for (const seconds of [1800, 1810]) assert.equal(completedPlayingDuration(payload(seconds), "match"), true);
 });

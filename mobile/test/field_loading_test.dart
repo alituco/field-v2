@@ -55,11 +55,67 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
       expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(
+        tester
+            .widget<CircularProgressIndicator>(
+              find.byType(CircularProgressIndicator),
+            )
+            .value,
+        .75,
+      );
     },
   );
 
   testWidgets(
-    'pull refresh retains data and shows a skeleton until completion',
+    'compact activity indicators stay circular and announce loading once',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: Row(
+              children: [
+                SizedBox.square(
+                  dimension: 12,
+                  child: FieldLoadingIndicator(label: 'Loading preview'),
+                ),
+                SizedBox.square(
+                  dimension: 18,
+                  child: FieldLoadingIndicator(label: 'Sending report'),
+                ),
+                FieldLoadingIndicator(label: 'Refreshing games'),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byType(FieldSkeleton), findsNothing);
+      final indicators = find.byType(CircularProgressIndicator);
+      expect(indicators, findsNWidgets(3));
+      expect(tester.getSize(indicators.at(0)), const Size.square(12));
+      expect(tester.getSize(indicators.at(1)), const Size.square(18));
+      expect(tester.getSize(indicators.at(2)), const Size.square(20));
+      for (final label in [
+        'Loading preview',
+        'Sending report',
+        'Refreshing games',
+      ]) {
+        final indicator = find.bySemanticsLabel(label);
+        expect(indicator, findsOneWidget);
+        expect(
+          tester.getSemantics(indicator).getSemanticsData().value,
+          isEmpty,
+        );
+      }
+      expect(tester.binding.hasScheduledFrame, isTrue);
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'pull refresh retains data and shows a spinner until completion',
     (tester) async {
       final completion = Completer<void>();
       var calls = 0;
@@ -84,15 +140,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
       expect(calls, 1);
       expect(
-        find.byKey(const ValueKey('field-refresh-skeleton')),
+        find.byKey(const ValueKey('field-refresh-indicator')),
         findsOneWidget,
       );
       expect(find.text('Existing game'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
       completion.complete();
       await tester.pumpAndSettle();
       expect(
-        find.byKey(const ValueKey('field-refresh-skeleton')),
+        find.byKey(const ValueKey('field-refresh-indicator')),
         findsNothing,
       );
       expect(find.text('Existing game'), findsOneWidget);
@@ -100,17 +156,17 @@ void main() {
     },
   );
 
-  test('app-owned loaders cannot reintroduce rotating spinners', () {
+  test('app-owned loaders use the shared loading components', () {
     final prohibited = RegExp(
       r'\b(?:CircularProgressIndicator|CupertinoActivityIndicator|RefreshIndicator)\s*\(',
     );
     final files = Directory('lib').listSync(recursive: true).whereType<File>();
     for (final file in files.where((file) => file.path.endsWith('.dart'))) {
+      if (file.path == 'lib/src/ui/field_loading.dart') continue;
       expect(
         prohibited.hasMatch(file.readAsStringSync()),
         isFalse,
-        reason:
-            '${file.path} must use a content skeleton or clear action label.',
+        reason: '${file.path} must use a shared loading component.',
       );
     }
   });

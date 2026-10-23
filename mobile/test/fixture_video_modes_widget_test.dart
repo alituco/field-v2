@@ -259,7 +259,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(find.text('Cancel clan match'));
-      await tester.pumpAndSettle();
+      // The cancellation action stays busy until its confirmation closes.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       expect(find.byType(FieldrushModal), findsOneWidget);
       expect(find.text('Original payment method'), findsOneWidget);
       var confirm = tester.widget<FilledButton>(
@@ -290,7 +292,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(repository.cancelledReasons, isEmpty);
       await tester.tap(find.text('Cancel clan match'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       await tester.enterText(
         find.byKey(const ValueKey('clan-cancellation-reason')),
         '  Not enough players  ',
