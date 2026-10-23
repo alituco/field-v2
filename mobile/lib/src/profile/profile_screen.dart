@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -7,6 +9,7 @@ import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../core/read_timeout.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
@@ -90,6 +93,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
   FieldrushPlayerRatings? _ratings;
   RatingTrack _ratingTrack = RatingTrack.outfield;
   int _profileLoadVersion = 0;
+  int _viewedLoadVersion = 0;
+  bool _viewedTrackSelected = false;
+  String? _viewerId;
+  bool _viewedDetailsReady = false;
+  bool _viewedDetailsLoading = true;
+  bool _viewedRatingLoading = true;
+  final Set<String> _viewedReadErrors = {};
 
   bool get _isCurrentProfile => widget.profileId == null;
   bool get _canManageProfile =>
@@ -123,6 +133,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<PlayerProfile> _loadProfile() async {
     final version = ++_profileLoadVersion;
+    _viewerId = widget.profileRepository.currentUserId;
+    if (!_isCurrentProfile) return _loadViewedProfile(version);
     final profile = _isCurrentProfile
         ? await widget.profileRepository.getCurrentProfile()
         : await widget.profileRepository.getProfile(widget.profileId!);
@@ -154,12 +166,100 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return profile;
   }
 
+  Future<PlayerProfile> _loadViewedProfile(int version) async {
+    final viewedVersion = ++_viewedLoadVersion;
+    final repository = widget.profileRepository;
+    final profileId = widget.profileId!;
+    final viewerId = _viewerId = repository.currentUserId;
+    final ratingRepository =
+        widget.ratingRepository ??
+        (repository is SupabaseProfileRepository
+            ? SupabaseLeaderboardRepository()
+            : null);
+    _viewedDetailsLoading = !_viewedDetailsReady;
+    _viewedRatingLoading = _ratings == null && ratingRepository != null;
+    _viewedReadErrors.clear();
+    bool current() =>
+        mounted &&
+        viewedVersion == _viewedLoadVersion &&
+        identical(widget.profileRepository, repository) &&
+        widget.profileId == profileId &&
+        repository.currentUserId == viewerId;
+    void failed(String section, Object error) {
+      if (!current()) return;
+      // Section names only: never put profile IDs or response payloads in logs.
+      debugPrint('Public profile $section read failed: ${error.runtimeType}');
+      if (error is TimeoutException &&
+          error.message?.startsWith('Profile read timed out;') == true) {
+        debugPrint(error.message!);
+      }
+      setState(() => _viewedReadErrors.add(section));
+    }
+
+    final details = repository.getProfile(profileId).timeout(fieldReadTimeout);
+    unawaited(() async {
+      try {
+        final profile = await details;
+        if (!current() || version != _profileLoadVersion) return;
+        setState(() {
+          _latestProfile = profile;
+          _viewedDetailsReady = true;
+          if (!_viewedTrackSelected) {
+            _ratingTrack = profile.playedPosition == 'GK'
+                ? RatingTrack.goalkeeper
+                : RatingTrack.outfield;
+          }
+        });
+      } catch (error) {
+        if (version == _profileLoadVersion) failed('details', error);
+      } finally {
+        if (current()) setState(() => _viewedDetailsLoading = false);
+      }
+    }());
+    if (ratingRepository != null) {
+      unawaited(() async {
+        try {
+          final ratings = await (() async {
+            final season = await loadActiveLeaderboardSeason(ratingRepository);
+            return ratingRepository.loadPlayerRatings(
+              season: season,
+              profileId: profileId,
+            );
+          })().timeout(fieldReadTimeout);
+          if (current()) setState(() => _ratings = ratings);
+        } catch (error) {
+          failed('rating', error);
+        } finally {
+          if (current()) setState(() => _viewedRatingLoading = false);
+        }
+      }());
+    }
+    try {
+      final profile = repository is PublicProfileSummaryRepository
+          ? await (repository as PublicProfileSummaryRepository)
+                .getProfileSummary(profileId)
+                .timeout(fieldReadTimeout)
+          : await details;
+      if (current() && !_viewedDetailsReady) _latestProfile = profile;
+      return current() ? _latestProfile ?? profile : profile;
+    } catch (error) {
+      failed('identity', error);
+      if (current() && _latestProfile != null) return _latestProfile!;
+      rethrow;
+    }
+  }
+
   @override
   void didUpdateWidget(covariant ProfileScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.profileId != widget.profileId ||
-        oldWidget.profileRepository != widget.profileRepository) {
+        oldWidget.profileRepository != widget.profileRepository ||
+        _viewerId != widget.profileRepository.currentUserId) {
       _latestProfile = null;
+      _ratings = null;
+      _viewedDetailsReady = false;
+      _viewedTrackSelected = false;
+      _ratingTrack = RatingTrack.outfield;
       _isUpdatingFollow = false;
       _profileFuture = _loadProfile();
     }
@@ -168,6 +268,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _refresh() async {
     if (_isUpdatingFollow) return;
     final request = _loadProfile();
+    setState(() {});
     final version = _profileLoadVersion;
     try {
       final profile = await request;
@@ -185,7 +286,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _toggleViewedFollow() async {
     final profile = _latestProfile;
-    if (_isUpdatingFollow || !_canReportProfile || profile == null) return;
+    if (_isUpdatingFollow ||
+        !_canReportProfile ||
+        profile == null ||
+        !_viewedDetailsReady) {
+      return;
+    }
+    final repository = widget.profileRepository;
+    final viewerId = repository.currentUserId;
+    final viewedVersion = _viewedLoadVersion;
+    bool current() =>
+        mounted &&
+        widget.profileId == profile.id &&
+        identical(widget.profileRepository, repository) &&
+        repository.currentUserId == viewerId &&
+        viewedVersion == _viewedLoadVersion;
     final next = profile.copyWith(isFollowedByMe: !profile.isFollowedByMe);
     setState(() {
       // A read started before this write must not overwrite its confirmed state.
@@ -196,12 +311,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
     try {
       if (profile.isFollowedByMe) {
-        await widget.profileRepository.unfollowProfile(profile.id);
+        await repository.unfollowProfile(profile.id);
       } else {
-        await widget.profileRepository.followProfile(profile.id);
+        await repository.followProfile(profile.id);
       }
     } catch (error) {
-      if (!mounted || widget.profileId != profile.id) return;
+      if (!mounted || !current()) return;
       setState(() {
         _latestProfile = profile;
         _profileFuture = Future.value(profile);
@@ -214,7 +329,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       );
     } finally {
-      if (mounted && widget.profileId == profile.id) {
+      if (current()) {
         setState(() => _isUpdatingFollow = false);
       }
     }
@@ -747,13 +862,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 if (!_isUpdatingFollow) Navigator.of(context).pop();
               }
 
-              if (!snapshot.hasData && !snapshot.hasError) {
+              if (_latestProfile == null &&
+                  (snapshot.connectionState != ConnectionState.done ||
+                      !snapshot.hasError)) {
                 return SingleChildScrollView(
                   key: const ValueKey('profile-loading'),
                   child: FieldrushPlayerProfileLoadingContent(onBack: back),
                 );
               }
-              if (snapshot.hasError || !snapshot.hasData) {
+              if (_latestProfile == null) {
                 return ListView(
                   key: const ValueKey('profile-error'),
                   padding: const EdgeInsets.all(20),
@@ -795,7 +912,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   ],
                 );
               }
-              final profile = snapshot.data!;
+              final profile = _latestProfile!;
               return FieldRefreshIndicator(
                 color: FieldrushAuthTheme.forest,
                 onRefresh: _refresh,
@@ -807,6 +924,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     FieldrushPlayerProfileContent(
                       profile: profile,
                       ratings: _ratings,
+                      detailsLoading: _viewedDetailsLoading,
+                      detailsUnavailable:
+                          !_viewedDetailsReady && !_viewedDetailsLoading,
+                      ratingLoading: _viewedRatingLoading,
                       ratingUnavailable:
                           _ratings == null &&
                           (widget.ratingRepository != null ||
@@ -815,10 +936,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       track: _ratingTrack,
                       onTrack: _ratings == null
                           ? null
-                          : (track) => setState(() => _ratingTrack = track),
+                          : (track) => setState(() {
+                              _viewedTrackSelected = true;
+                              _ratingTrack = track;
+                            }),
                       isFollowing: profile.isFollowedByMe,
                       followBusy: _isUpdatingFollow,
-                      onFollow: _canReportProfile ? _toggleViewedFollow : null,
+                      onFollow: _canReportProfile && _viewedDetailsReady
+                          ? _toggleViewedFollow
+                          : null,
                       onReport: _canReportProfile ? _reportProfile : null,
                       onOpenClan: profile.clan == null
                           ? null
@@ -828,11 +954,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             ),
                       onBack: _isUpdatingFollow ? null : back,
                       positionLabel: profile.playedPositionLabel,
-                      onMatchHistory: () => _openPublicHistory(profile),
-                      onClip: _openHighlight,
+                      onMatchHistory: _viewedDetailsReady
+                          ? () => _openPublicHistory(profile)
+                          : null,
+                      onClip: _viewedDetailsReady ? _openHighlight : null,
                       onAllClips: () => _openAllClips(profile),
                       recentResults: profile.lastFiveResults,
                       trailingChildren: [
+                        if (_viewedReadErrors.isNotEmpty)
+                          Padding(
+                            key: const ValueKey('player-refresh-error'),
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  'Some player details could not refresh.',
+                                ),
+                                TextButton(
+                                  key: const ValueKey('player-retry'),
+                                  onPressed: _refresh,
+                                  child: const Text('Try again'),
+                                ),
+                              ],
+                            ),
+                          ),
                         Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: Wrap(

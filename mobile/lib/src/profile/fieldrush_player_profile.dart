@@ -63,6 +63,9 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     this.track = RatingTrack.outfield,
     this.onTrack,
     this.ratingUnavailable = false,
+    this.ratingLoading = false,
+    this.detailsLoading = false,
+    this.detailsUnavailable = false,
   });
 
   final PlayerProfile profile;
@@ -82,6 +85,11 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
   final RatingTrack track;
   final ValueChanged<RatingTrack>? onTrack;
   final bool ratingUnavailable;
+  final bool ratingLoading;
+  final bool detailsLoading;
+  final bool detailsUnavailable;
+
+  bool get _detailsReady => !detailsLoading && !detailsUnavailable;
 
   PlayerRatingLeaderboardEntry? get _trackRating => ratings?.forTrack(track);
 
@@ -97,6 +105,7 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
           profile: profile,
           ratingOverride: _trackRating,
           unavailable: ratingUnavailable,
+          loading: ratingLoading,
           roleTabs: onTrack == null
               ? null
               : FieldrushRatingRoleTabs(
@@ -110,10 +119,11 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
           positionLabel: positionLabel,
           isFollowing: isFollowing,
           followBusy: followBusy,
+          followKnown: _detailsReady,
           onFollow: onFollow,
         ),
       ),
-      if (onMatchHistory != null)
+      if (_detailsReady && onMatchHistory != null)
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: Builder(
@@ -142,30 +152,42 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
             },
           ),
         ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: _LastFive(
-          results: ratings == null
-              ? recentResults
-              : ratings!
-                    .eventsFor(track)
-                    .take(5)
-                    .map(
-                      (event) => switch (event.result) {
-                        'WIN' => ProfileGameOutcome.win,
-                        'LOSS' => ProfileGameOutcome.loss,
-                        'DRAW' => ProfileGameOutcome.draw,
-                        _ => null,
-                      },
-                    )
-                    .toList(),
+      if (!_detailsReady)
+        Padding(
+          key: const ValueKey('player-details-status'),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+          child: Text(
+            detailsLoading
+                ? 'Loading player details…'
+                : 'Player details unavailable. Try again to load them.',
+          ),
         ),
-      ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: _PlayerClan(clan: profile.clan, onTap: onOpenClan),
-      ),
-      if (onClip != null)
+      if (_detailsReady || ratings != null)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: _LastFive(
+            results: ratings == null
+                ? recentResults
+                : ratings!
+                      .eventsFor(track)
+                      .take(5)
+                      .map(
+                        (event) => switch (event.result) {
+                          'WIN' => ProfileGameOutcome.win,
+                          'LOSS' => ProfileGameOutcome.loss,
+                          'DRAW' => ProfileGameOutcome.draw,
+                          _ => null,
+                        },
+                      )
+                      .toList(),
+          ),
+        ),
+      if (_detailsReady)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: _PlayerClan(clan: profile.clan, onTap: onOpenClan),
+        ),
+      if (_detailsReady && onClip != null)
         FieldrushProfileClips(
           key: const ValueKey('player-clips'),
           highlights: profile.highlights,
@@ -257,6 +279,8 @@ class _PlayerRatingCard extends StatelessWidget {
     this.ratingOverride,
     this.roleTabs,
     this.unavailable = false,
+    this.loading = false,
+    this.followKnown = true,
   });
   final PlayerProfile profile;
   final String? positionLabel;
@@ -266,6 +290,8 @@ class _PlayerRatingCard extends StatelessWidget {
   final PlayerRatingLeaderboardEntry? ratingOverride;
   final Widget? roleTabs;
   final bool unavailable;
+  final bool loading;
+  final bool followKnown;
 
   @override
   Widget build(BuildContext context) {
@@ -291,7 +317,9 @@ class _PlayerRatingCard extends StatelessWidget {
         : divisionFromRating(rating.skillRating!).number;
     final palette = _palettes[division] ?? _placementPalette;
     final light = division == 3 || division == 4;
-    final heading = rating == null
+    final heading = loading
+        ? 'LOADING RATING'
+        : rating == null
         ? 'RATING UNAVAILABLE'
         : placement
         ? 'PLACEMENT'
@@ -313,7 +341,9 @@ class _PlayerRatingCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(24),
         child: DecoratedBox(
           key: ValueKey(
-            rating == null
+            loading
+                ? 'player-rating-loading'
+                : rating == null
                 ? 'player-rating-unavailable'
                 : placement
                 ? 'player-rating-placement'
@@ -450,7 +480,9 @@ class _PlayerRatingCard extends StatelessWidget {
                       final largeText =
                           MediaQuery.textScalerOf(context).scale(40) > 60;
                       final score = Semantics(
-                        label: rating == null
+                        label: loading
+                            ? 'Skill rating loading'
+                            : rating == null
                             ? 'Skill rating unavailable'
                             : placement
                             ? 'Skill rating hidden until placement is complete'
@@ -478,13 +510,15 @@ class _PlayerRatingCard extends StatelessWidget {
                                 ),
                         ),
                       );
-                      final follow = _FollowButton(
-                        isFollowing: isFollowing,
-                        busy: followBusy,
-                        onPressed: onFollow,
-                        palette: palette,
-                        light: light,
-                      );
+                      final follow = !followKnown
+                          ? const SizedBox.shrink()
+                          : _FollowButton(
+                              isFollowing: isFollowing,
+                              busy: followBusy,
+                              onPressed: onFollow,
+                              palette: palette,
+                              light: light,
+                            );
                       if (constraints.maxWidth < 285 ||
                           MediaQuery.textScalerOf(context).scale(12) > 15) {
                         return Column(

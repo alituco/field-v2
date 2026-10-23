@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -72,6 +73,11 @@ abstract interface class ProfileSummaryRepository {
   Future<PlayerProfile> getCurrentProfileSummary();
 }
 
+/// Public identity can render while optional statistics and clips are loading.
+abstract interface class PublicProfileSummaryRepository {
+  Future<PlayerProfile> getProfileSummary(String profileId);
+}
+
 extension ProfileClipRecommendationsAccess on ProfileRepository {
   Future<List<ProfileClipRecommendation>> getClipRecommendations({
     required String highlightId,
@@ -90,7 +96,8 @@ class SupabaseProfileRepository
     implements
         ProfileRepository,
         ProfileClipRecommendationsRepository,
-        ProfileSummaryRepository {
+        ProfileSummaryRepository,
+        PublicProfileSummaryRepository {
   SupabaseProfileRepository({SupabaseClient? client})
     : _injectedClient = client;
 
@@ -304,7 +311,7 @@ class SupabaseProfileRepository
 
     await _ensureProfile(user).timeout(fieldReadTimeout);
 
-    return _getProfile(user.id).timeout(fieldReadTimeout);
+    return _getProfile(user.id);
   }
 
   @override
@@ -313,9 +320,18 @@ class SupabaseProfileRepository
     if (user == null) {
       throw const AuthException('You need to sign in again.');
     }
-    final profile = await _loadProfile(user.id).timeout(fieldReadTimeout);
+    return getProfileSummary(user.id);
+  }
+
+  @override
+  Future<PlayerProfile> getProfileSummary(String profileId) async {
+    final id = profileId.trim();
+    if (id.isEmpty) {
+      throw ArgumentError.value(profileId, 'profileId', 'Profile is required.');
+    }
+    final profile = await _loadProfile(id).timeout(fieldReadTimeout);
     return PlayerProfile(
-      id: user.id,
+      id: id,
       displayName: profile.displayName,
       username: profile.username,
       bio: profile.bio,
@@ -336,19 +352,32 @@ class SupabaseProfileRepository
     if (id.isEmpty) {
       throw ArgumentError.value(profileId, 'profileId', 'Profile is required.');
     }
-    return _getProfile(id).timeout(fieldReadTimeout);
+    return _getProfile(id);
   }
 
   Future<PlayerProfile> _getProfile(String profileId) async {
-    final results = await Future.wait<dynamic>([
-      _loadProfile(profileId),
-      _loadCurrentClan(profileId),
-      _loadConnectionCounts(profileId),
-      _loadHighlights(profileId),
-      _loadCareer(profileId),
-      _loadPreviousGames(profileId),
-      _loadPlayerRating(profileId),
-    ]).timeout(fieldReadTimeout);
+    final pending = <String>{};
+    Future<T> part<T>(String name, Future<T> request) {
+      pending.add(name);
+      return request.whenComplete(() => pending.remove(name));
+    }
+
+    final results =
+        await Future.wait<dynamic>([
+          part('identity', _loadProfile(profileId)),
+          part('clan', _loadCurrentClan(profileId)),
+          part('connections', _loadConnectionCounts(profileId)),
+          part('clips', _loadHighlights(profileId)),
+          part('career', _loadCareer(profileId)),
+          part('history', _loadPreviousGames(profileId)),
+          part('rating', _loadPlayerRating(profileId)),
+        ]).timeout(
+          fieldReadTimeout,
+          onTimeout: () => throw TimeoutException(
+            'Profile read timed out; pending sections: ${pending.join(', ')}',
+            fieldReadTimeout,
+          ),
+        );
     final profile = results[0] as _ProfileRow;
     final clan = results[1] as ProfileClan?;
     final connectionCounts = results[2] as _ConnectionCounts;
@@ -824,16 +853,20 @@ class SupabaseProfileRepository
     final actualStarts = <String, DateTime>{};
     // The historical RPC does not return timezone. Fetch only public game
     // metadata in bounded batches, without changing its database signature.
-    // Date metadata is optional: an outage must not hide the whole profile.
+    // Date metadata has one shared budget across all batches. An outage must
+    // not spend the full profile deadline on optional enrichment.
+    final metadataTimer = Stopwatch()..start();
     for (var start = 0; start < soloIds.length; start += 100) {
       final end = start + 100 < soloIds.length ? start + 100 : soloIds.length;
+      final remaining = const Duration(seconds: 4) - metadataTimer.elapsed;
+      if (remaining <= Duration.zero) break;
       try {
         final metadata = await _client
             .from('open_queue_games')
             .select('id,timezone,open_queue_events(occurred_at)')
             .inFilter('id', soloIds.sublist(start, end))
             .eq('open_queue_events.event_type', 'MATCH_STARTED')
-            .timeout(fieldReadTimeout);
+            .timeout(remaining);
         for (final row in metadata) {
           final timezone = row['timezone'];
           if (timezone is String && timezone.trim().isNotEmpty) {
@@ -859,6 +892,7 @@ class SupabaseProfileRepository
         }
       } catch (_) {
         // The screen labels unknown solo dates rather than guessing a market.
+        break;
       }
     }
     return [
