@@ -119,6 +119,106 @@ void main() {
     await _dispose(tester);
   });
 
+  testWidgets('rejected OTP keeps its error on the code screen', (
+    tester,
+  ) async {
+    final repo = _AccountRepository()
+      ..verifyError = const AuthException('Expired code', code: 'otp_expired');
+    await _pump(tester, repo);
+    await _phone(tester);
+    await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+    await _tap(tester, 'fieldrush-continue');
+    expect(
+      find.text('That code has expired. Request a new one.'),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('fieldrush-code')), findsOneWidget);
+    expect(find.byKey(const Key('fieldrush-signing-in')), findsNothing);
+    expect(find.textContaining('Your number was verified'), findsNothing);
+    await _dispose(tester);
+  });
+
+  for (final returningPlayer in [true, false]) {
+    testWidgets(
+      'verified ${returningPlayer ? 'returning' : 'new'} player sees a skeleton while the account loads',
+      (tester) async {
+        final pending = Completer<FieldrushAccount>();
+        final repo = _AccountRepository()..nextLoad = () => pending.future;
+        if (returningPlayer) {
+          repo.account = FieldrushAccount(
+            draft: _completeDraft,
+            phone: '+16025550148',
+            phoneVerified: true,
+            completed: true,
+          );
+        }
+        var completed = 0;
+        await _pump(tester, repo, onCompleted: () => completed++);
+        await _phone(tester);
+        await tester.enterText(
+          find.byKey(const Key('fieldrush-code')),
+          '123456',
+        );
+        await _tap(tester, 'fieldrush-continue');
+
+        for (var second = 0; second < 3; second++) {
+          await tester.pump(const Duration(seconds: 1));
+          expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+          expect(find.textContaining('Your number was verified'), findsNothing);
+          expect(find.byKey(const Key('fieldrush-code')), findsNothing);
+          expect(find.text('What’s your\nname?'), findsNothing);
+          expect(completed, 0);
+        }
+
+        pending.complete(repo.account);
+        await tester.pumpAndSettle();
+        expect(repo.verifiedCodes, ['123456']);
+        expect(completed, returningPlayer ? 1 : 0);
+        expect(
+          find.byKey(const Key('fieldrush-signing-in')),
+          returningPlayer ? findsOneWidget : findsNothing,
+        );
+        expect(
+          find.text('What’s your\nname?'),
+          returningPlayer ? findsNothing : findsOneWidget,
+        );
+        await _dispose(tester);
+      },
+    );
+  }
+
+  testWidgets(
+    'failed verified-account load shows recovery and retries in a skeleton',
+    (tester) async {
+      final firstRead = Completer<FieldrushAccount>();
+      final retry = Completer<FieldrushAccount>();
+      final repo = _AccountRepository()..nextLoad = () => firstRead.future;
+      await _pump(tester, repo);
+      await _phone(tester);
+      await tester.enterText(find.byKey(const Key('fieldrush-code')), '123456');
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+      expect(find.textContaining('Your number was verified'), findsNothing);
+
+      firstRead.completeError(TimeoutException('Could not load account'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('fieldrush-signing-in')), findsNothing);
+      expect(find.text('Finish signing in'), findsOneWidget);
+      expect(find.textContaining('Your number was verified'), findsOneWidget);
+
+      repo.nextLoad = () => retry.future;
+      await _tap(tester, 'fieldrush-continue');
+      expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+      expect(find.textContaining('Your number was verified'), findsNothing);
+      expect(repo.verifiedCodes, ['123456']);
+      retry.complete(repo.account);
+      await tester.pumpAndSettle();
+      expect(find.text('What’s your\nname?'), findsOneWidget);
+      expect(repo.verifiedCodes, ['123456']);
+      await _dispose(tester);
+    },
+  );
+
   testWidgets(
     'different number in unfinished phone signup needs explicit switch consent',
     (tester) async {
@@ -773,9 +873,11 @@ class _AccountRepository implements FieldrushAccountRepository {
   int loadFailures = 0;
   Object? sendError;
   Object? recoveryError;
+  Object? verifyError;
   Object? saveError;
   Object? switchError;
   Future<void> Function()? onSwitch;
+  Future<FieldrushAccount> Function()? nextLoad;
   final List<String> switchedPhones = [];
   String? blockedUsername;
 
@@ -787,7 +889,7 @@ class _AccountRepository implements FieldrushAccountRepository {
       loadFailures--;
       throw TimeoutException('Could not load account');
     }
-    return account;
+    return nextLoad == null ? account : nextLoad!();
   }
 
   @override
@@ -844,6 +946,7 @@ class _AccountRepository implements FieldrushAccountRepository {
   @override
   Future<void> verifyPhoneCode(String phone, String token) async {
     verifiedCodes.add(token);
+    if (verifyError != null) throw verifyError!;
   }
 
   @override

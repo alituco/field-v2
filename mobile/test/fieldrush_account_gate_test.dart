@@ -137,6 +137,47 @@ void main() {
   });
 
   testWidgets(
+    'phone login keeps its skeleton through delayed account and moderation reads',
+    (tester) async {
+      auth.session = null;
+      accounts.onVerified = () => auth.signIn();
+      final pendingAccount = Completer<FieldrushAccount>();
+      final pendingModeration = Completer<ModerationStatus>();
+      accounts.nextLoad = () => pendingAccount.future;
+      moderation.nextLoad = () => pendingModeration.future;
+      await showGate(tester);
+      await logInWithPhone(tester);
+      await verifyLoginCode(tester);
+
+      for (var second = 0; second < 3; second++) {
+        await tester.pump(const Duration(seconds: 1));
+        expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+        expect(find.textContaining('Your number was verified'), findsNothing);
+        expect(find.byKey(const Key('fieldrush-code')), findsNothing);
+        expect(find.text('AUTHENTICATED APP'), findsNothing);
+      }
+      expect(accounts.loadCalls, 2);
+      expect(moderation.calls, 0);
+
+      pendingAccount.complete(accounts.account);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(find.byKey(const Key('fieldrush-signing-in')), findsOneWidget);
+      expect(find.textContaining('Your number was verified'), findsNothing);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+
+      pendingModeration.complete(const ModerationStatus.active());
+      await tester.pumpAndSettle();
+      expect(find.text('AUTHENTICATED APP'), findsOneWidget);
+      expect(find.byType(FieldrushAuthScreen), findsNothing);
+      expect(accounts.verifiedCodes, ['123456']);
+      expect(accounts.completionCalls, 0);
+      expect(accounts.draftSaves, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'returning phone login waits for moderation without signup review',
     (tester) async {
       auth.session = null;
