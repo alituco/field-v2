@@ -365,7 +365,7 @@ void main() {
       tester,
       FieldrushOpenNights(games: [_game()], now: now, onGame: (_) {}),
     );
-    expect(find.text('CHECK IN · 8:00 PM'), findsOneWidget);
+    expect(find.text('8:00 PM'), findsOneWidget);
     expect(find.textContaining('8:30'), findsNothing);
   });
 

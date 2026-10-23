@@ -1,15 +1,67 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:field/src/auth/auth_repository.dart';
 import 'package:field/src/auth/fieldrush_account.dart';
 import 'package:field/src/auth/fieldrush_auth_screen.dart';
 import 'package:field/src/auth/fieldrush_phone_field.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  final captureDirectory = Platform.environment['FIELDRUSH_AUTH_CAPTURE_DIR'];
+  if (captureDirectory != null) {
+    testWidgets('capture synthetic welcome and account review', (tester) async {
+      for (final font in ['Outfit', 'PlusJakartaSans']) {
+        await (FontLoader(
+          font,
+        )..addFont(rootBundle.load('assets/fonts/$font.ttf'))).load();
+      }
+      await (FontLoader(
+        'MaterialIcons',
+      )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+      Future<void> capture(String name) async {
+        await tester.pumpAndSettle();
+        final boundary = tester.renderObject<RenderRepaintBoundary>(
+          find.byKey(const Key('fieldrush-auth-screenshot')),
+        );
+        await tester.runAsync(() async {
+          await Directory(captureDirectory).create(recursive: true);
+          final image = await boundary.toImage(pixelRatio: 2);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          await File(
+            '$captureDirectory/$name.png',
+          ).writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+      }
+
+      final repo = _AccountRepository();
+      await _pump(tester, repo, size: const Size(390, 1100));
+      await capture('signup-welcome');
+      await _dispose(tester);
+      await _pump(
+        tester,
+        repo,
+        size: const Size(390, 1100),
+        account: FieldrushAccount(
+          phone: '+16025550148',
+          phoneVerified: true,
+          draft: _completeDraft,
+          ratingInitialized: true,
+        ),
+      );
+      await tester.ensureVisible(find.byKey(const Key('fieldrush-continue')));
+      await capture('signup-review');
+      await _dispose(tester);
+    });
+  }
+
   test('phone parsing supports international numbers and defaults to US', () {
     expect(normalizeFieldrushPhone('(602) 555-0148'), '+16025550148');
     expect(normalizeFieldrushPhone('+44 7400 123456'), '+447400123456');
@@ -445,7 +497,7 @@ void main() {
     await _dispose(tester);
   });
 
-  testWidgets('full signup saves draft and cannot complete without consent', (
+  testWidgets('full signup completes from account review without a checkbox', (
     tester,
   ) async {
     final repo = _AccountRepository();
@@ -491,10 +543,16 @@ void main() {
     await _tap(tester, 'fieldrush-continue');
     expect(repo.savedDrafts.last.skillAssessment, SkillAssessment.intermediate);
     expect(find.text('Look\nright?'), findsOneWidget);
-    await _tap(tester, 'fieldrush-continue');
     expect(repo.completedCount, 0);
-    expect(find.textContaining('Read and accept'), findsOneWidget);
-    await _tap(tester, 'fieldrush-accept-policies');
+    expect(find.byType(CheckboxListTile), findsNothing);
+    expect(find.byKey(const Key('fieldrush-accept-policies')), findsNothing);
+    final agreement = tester.widget<Text>(
+      find.byKey(const Key('fieldrush-review-agreement')),
+    );
+    expect(
+      agreement.textSpan!.toPlainText(),
+      'By creating an account, you agree to our Terms and Privacy Policy.',
+    );
     await _tap(tester, 'fieldrush-continue');
     expect(repo.completedCount, 1);
     expect(repo.account.draft.skillAssessment, SkillAssessment.intermediate);
@@ -800,11 +858,14 @@ Future<void> _pump(
         ).copyWith(textScaler: TextScaler.linear(scale)),
         child: child!,
       ),
-      home: FieldrushAuthScreen(
-        authRepository: auth ?? _AuthRepository(),
-        accountRepository: repo,
-        account: account,
-        onOnboardingCompleted: onCompleted ?? () {},
+      home: RepaintBoundary(
+        key: const Key('fieldrush-auth-screenshot'),
+        child: FieldrushAuthScreen(
+          authRepository: auth ?? _AuthRepository(),
+          accountRepository: repo,
+          account: account,
+          onOnboardingCompleted: onCompleted ?? () {},
+        ),
       ),
     ),
   );
