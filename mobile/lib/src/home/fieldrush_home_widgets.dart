@@ -10,6 +10,7 @@ import '../leaderboard/leaderboard.dart';
 import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../open_queue/open_queue.dart';
+import '../open_queue/fieldrush_check_in_notice.dart';
 import '../open_queue/team_assignment_notice.dart';
 import '../profile/profile.dart';
 import '../ranking/player_rating_visibility.dart';
@@ -381,8 +382,16 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 const SizedBox(height: 14),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Text(
+                    'CHECK IN',
+                    style: _jakarta(10.5, color: _green, tracking: 1.26),
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: _KickoffTime(
-                    date: game.localStartsAt,
+                    date: game.localDisplayStartsAt,
                     size: 52,
                     color: const Color(0xFF24472C),
                   ),
@@ -391,13 +400,15 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: Text(
-                    '${_dateLabel(game.localStartsAt)} · $spots ${spots == 1 ? 'spot' : 'spots'} left for you',
+                    '${_dateLabel(game.localDisplayStartsAt)} · $spots ${spots == 1 ? 'spot' : 'spots'} left for you',
                     style: _jakarta(
                       12,
                       color: _green,
                     ).copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
+                const SizedBox(height: 12),
+                FieldrushCheckInNotice(game: game),
               ],
               const SizedBox(height: 14),
               SizedBox(
@@ -472,7 +483,7 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                   child: Text(
                     game == null
                         ? 'Play'
-                        : 'Play ${_weekday(game.localStartsAt.weekday)} · ${game.priceLabel}',
+                        : 'Play ${_weekday(game.localDisplayStartsAt.weekday)} · ${game.priceLabel}',
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -652,14 +663,14 @@ class _OpenNightRow extends StatelessWidget {
           );
           return Row(
             children: [
-              _DateTile(date: game.localStartsAt, size: 42),
+              _DateTile(date: game.localDisplayStartsAt, size: 42),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${_clock(game.localStartsAt)} · Solo',
+                      'CHECK IN · ${game.displayTimeLabel}',
                       style: _outfit(14),
                     ),
                     const SizedBox(height: 6),
@@ -794,8 +805,16 @@ class FieldrushSoloHero extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                _HeroKickoff(date: game.localStartsAt, venue: game.venue),
+                _HeroKickoff(
+                  date: game.localDisplayStartsAt,
+                  venue: game.venue,
+                  checkIn: game.isUpcoming,
+                ),
                 const SizedBox(height: 18),
+                if (game.isUpcoming) ...[
+                  FieldrushCheckInNotice(game: game),
+                  const SizedBox(height: 18),
+                ],
                 Container(
                   padding: const EdgeInsets.fromLTRB(15, 14, 15, 15),
                   decoration: BoxDecoration(
@@ -889,18 +908,35 @@ class FieldrushSoloHero extends StatelessWidget {
 }
 
 class _HeroKickoff extends StatelessWidget {
-  const _HeroKickoff({required this.date, required this.venue});
+  const _HeroKickoff({
+    required this.date,
+    required this.venue,
+    this.checkIn = false,
+  });
   final DateTime date;
   final String venue;
+  final bool checkIn;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final time = _KickoffTime(
-        date: date,
-        size: 56,
-        color: Colors.white,
-        periodColor: _lime,
+      final time = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (checkIn) ...[
+            Text(
+              'CHECK IN',
+              style: _jakarta(10.5, color: _lime, tracking: 1.26),
+            ),
+            const SizedBox(height: 7),
+          ],
+          _KickoffTime(
+            date: date,
+            size: 56,
+            color: Colors.white,
+            periodColor: _lime,
+          ),
+        ],
       );
       final meta = Text(
         '${_dateLabel(date).toUpperCase()}\n$venue',
@@ -1087,11 +1123,13 @@ class FieldrushAlsoBooked extends StatelessWidget {
     required this.startsAt,
     required this.onTap,
     this.gameTimezone = 'UTC',
+    this.isCheckIn = false,
   });
   final String title;
   final DateTime startsAt;
   final VoidCallback onTap;
   final String gameTimezone;
+  final bool isCheckIn;
 
   @override
   Widget build(BuildContext context) {
@@ -1119,6 +1157,13 @@ class FieldrushAlsoBooked extends StatelessWidget {
                     children: [
                       Text('ALSO BOOKED', style: _jakarta(9.5, tracking: 1.14)),
                       const SizedBox(height: 7),
+                      if (isCheckIn) ...[
+                        Text(
+                          'CHECK IN',
+                          style: _jakarta(9, color: _green, tracking: 1.08),
+                        ),
+                        const SizedBox(height: 5),
+                      ],
                       Text('${_clock(date)} · $title', style: _outfit(13.5)),
                     ],
                   ),

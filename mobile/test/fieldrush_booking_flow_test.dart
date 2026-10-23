@@ -131,7 +131,7 @@ void main() {
     expect(repository.bookCalls, 0);
   });
 
-  testWidgets('Saturday game keeps its configured kickoff and 90-minute slot', (
+  testWidgets('Saturday game shows check-in while keeping its 90-minute slot', (
     tester,
   ) async {
     // Sunday UTC is still Saturday evening at the Phoenix field.
@@ -154,7 +154,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('STEP 3 OF 3'), findsOneWidget);
     expect(find.text('SAT, 6 JUN'), findsOneWidget);
-    expect(find.text('SOLO SLOT · 6:15 PM'), findsOneWidget);
+    expect(find.text('CHECK-IN · 5:45 PM'), findsOneWidget);
+    expect(find.textContaining('6:15 PM'), findsNothing);
+    expect(
+      find.textContaining('Check in before 6:05 PM.', findRichText: true),
+      findsOneWidget,
+    );
     expect(find.text('Reach 11 Fields · 90 min'), findsOneWidget);
     expect(find.text('7v7'), findsOneWidget);
     expect(repository.bookCalls, 0);

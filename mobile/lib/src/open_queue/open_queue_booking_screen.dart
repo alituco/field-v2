@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'fieldrush_check_in_notice.dart';
 
 import 'package:flutter/material.dart';
 
@@ -478,10 +479,16 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               ],
               const SizedBox(height: 12),
               _BookingMatchDayCard(booking: booking),
+              if (game.isUpcoming) ...[
+                const SizedBox(height: 12),
+                FieldrushCheckInNotice(game: game),
+              ],
               if (widget.repository
                   is OpenQueueReliabilityLookupRepository) ...[
                 const SizedBox(height: 12),
                 ReliabilityDeadlineNotice(
+                  timezone: game.timezone,
+                  showDeadline: !game.isUpcoming,
                   includeNoShowCutoff: true,
                   load: () =>
                       (widget.repository
@@ -518,8 +525,8 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                   children: [
                     _bookingRow(
                       Icons.schedule_rounded,
-                      'KICKOFF',
-                      game.timeLabel,
+                      game.isUpcoming ? 'CHECK-IN' : 'KICKOFF',
+                      game.isUpcoming ? game.displayTimeLabel : game.timeLabel,
                     ),
                     const Divider(height: 1, color: fieldGray100),
                     _bookingRow(
@@ -758,7 +765,7 @@ class _BookingMatchDayCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      game.prominentDateLabel,
+                      game.displayProminentDateLabel,
                       style: TextStyle(
                         color: isClose ? fieldEmerald800 : fieldGray900,
                         fontSize: isClose ? 16 : 14,

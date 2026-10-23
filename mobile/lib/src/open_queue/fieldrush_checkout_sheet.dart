@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'fieldrush_check_in_notice.dart';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -108,7 +109,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
               _paymentSession?.hasSelection == true));
 
   String get _longDateLabel {
-    final date = _game.localStartsAt;
+    final date = _game.localDisplayStartsAt;
     const weekdays = [
       'Monday',
       'Tuesday',
@@ -800,7 +801,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                   'FRI',
                   'SAT',
                   'SUN',
-                ][_game.localStartsAt.weekday - 1],
+                ][_game.localDisplayStartsAt.weekday - 1],
                 style: bookingText(
                   9.5,
                   bold: true,
@@ -809,7 +810,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
               ),
               const SizedBox(height: 5),
               Text(
-                '${_game.localStartsAt.day}',
+                '${_game.localDisplayStartsAt.day}',
                 style: bookingHeading(25, color: Colors.white),
               ),
             ],
@@ -820,7 +821,9 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(_game.startTimeLabel, style: bookingHeading(26)),
+              Text(_game.displayTimeLabel, style: bookingHeading(26)),
+              if (_game.isUpcoming)
+                Text('CHECK-IN', style: bookingText(10, bold: true)),
               const SizedBox(height: 7),
               Text(
                 _longDateLabel,
@@ -907,6 +910,10 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                   ),
                   const SizedBox(height: 8),
                   _gameSummary(),
+                  if (_game.isUpcoming) ...[
+                    const SizedBox(height: 12),
+                    FieldrushCheckInNotice(game: _game),
+                  ],
                   const SizedBox(height: 18),
                   Text('YOUR POSITION', style: bookingText(10, bold: true)),
                   const SizedBox(height: 9),

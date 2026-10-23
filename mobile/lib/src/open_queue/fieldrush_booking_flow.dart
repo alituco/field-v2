@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'fieldrush_check_in_notice.dart';
 
 import '../ui/field_loading.dart';
 
@@ -431,7 +432,11 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
         const SizedBox(height: 18),
         Text(booking.game.venue, style: bookingHeading(16)),
         const SizedBox(height: 5),
-        Text(booking.game.prominentDateLabel, style: bookingText(12)),
+        Text(booking.game.displayProminentDateLabel, style: bookingText(12)),
+        Text(
+          '${booking.game.isUpcoming ? 'Check-in ' : ''}${booking.game.displayTimeLabel}',
+          style: bookingText(12),
+        ),
         const SizedBox(height: 18),
         SizedBox(
           width: double.infinity,
@@ -728,47 +733,58 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
         onTap: () => _pick(game, anyPosition: anyPosition),
         child: Padding(
           padding: const EdgeInsets.all(14),
-          child: Row(
+          child: Column(
             children: [
-              BookingDateBadge(game: game),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(game.startTimeLabel, style: bookingHeading(16)),
-                    Text(game.venue, style: bookingText(11)),
-                    const SizedBox(height: 5),
-                    Text(
-                      '${anyPosition ? 'Out of position' : 'Your spot'} · ${bookingRoleName(role)}',
-                      style: bookingText(11),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              Row(
                 children: [
-                  Text(
-                    game.priceLabel,
-                    style: bookingText(
-                      12,
-                      color: FieldrushAuthTheme.ink,
-                      bold: true,
+                  BookingDateBadge(game: game),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Check-in ${game.displayTimeLabel}',
+                          style: bookingHeading(16),
+                        ),
+                        Text(game.venue, style: bookingText(11)),
+                        const SizedBox(height: 5),
+                        Text(
+                          '${anyPosition ? 'Out of position' : 'Your spot'} · ${bookingRoleName(role)}',
+                          style: bookingText(11),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  Text(
-                    '$count ${count == 1 ? 'spot' : 'spots'}',
-                    style: bookingText(
-                      10,
-                      color: FieldrushAuthTheme.forest,
-                      bold: true,
-                    ),
+                  const SizedBox(width: 6),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        game.priceLabel,
+                        style: bookingText(
+                          12,
+                          color: FieldrushAuthTheme.ink,
+                          bold: true,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '$count ${count == 1 ? 'spot' : 'spots'}',
+                        style: bookingText(
+                          10,
+                          color: FieldrushAuthTheme.forest,
+                          bold: true,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
+              if (game.isUpcoming) ...[
+                const SizedBox(height: 12),
+                FieldrushCheckInNotice(game: game),
+              ],
             ],
           ),
         ),
@@ -794,7 +810,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               runSpacing: 8,
               children: [
                 Text(
-                  'SOLO SLOT · ${game.startTimeLabel}',
+                  'CHECK-IN · ${game.displayTimeLabel}',
                   style: bookingText(
                     11,
                     color: FieldrushAuthTheme.forest,
@@ -812,7 +828,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
               ],
             ),
             const SizedBox(height: 14),
-            Text(game.calendarDateLabel, style: bookingHeading(28)),
+            Text(game.displayCalendarDateLabel, style: bookingHeading(28)),
             const SizedBox(height: 8),
             Text(
               '${game.venue} · ${game.endsAt.difference(game.startsAt).inMinutes} min',
@@ -821,6 +837,10 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
             if (game.locationLabel case final String address) ...[
               const SizedBox(height: 6),
               Text(address, style: bookingText(12)),
+            ],
+            if (game.isUpcoming) ...[
+              const SizedBox(height: 12),
+              FieldrushCheckInNotice(game: game),
             ],
             const Divider(height: 32, color: FieldrushAuthTheme.border),
             if (_selectedRole != null)
@@ -922,13 +942,18 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              booking.game.calendarDateLabel.toUpperCase(),
+              booking.game.displayCalendarDateLabel.toUpperCase(),
               style: bookingText(10, bold: true),
             ),
             const SizedBox(height: 10),
-            Text(booking.game.startTimeLabel, style: bookingHeading(34)),
+            Text(booking.game.displayTimeLabel, style: bookingHeading(34)),
+            Text('CHECK-IN', style: bookingText(10, bold: true)),
             const SizedBox(height: 9),
             Text(booking.game.venue, style: bookingText(12)),
+            if (booking.game.isUpcoming) ...[
+              const SizedBox(height: 12),
+              FieldrushCheckInNotice(game: booking.game),
+            ],
             if (booking.game.locationLabel case final String address) ...[
               const SizedBox(height: 6),
               Text(address, style: bookingText(12)),

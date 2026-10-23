@@ -488,7 +488,8 @@ void main() {
         find.byKey(const ValueKey('fixtures-date-2026-10-11')),
         findsNothing,
       );
-      expect(find.textContaining('8:00 PM'), findsOneWidget);
+      expect(find.textContaining('Check-in 7:30 PM'), findsOneWidget);
+      expect(find.textContaining('8:00 PM'), findsNothing);
       expect(find.text('Sat, Oct 10'), findsOneWidget);
       expect(find.textContaining('BHD'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('fixtures-next-day')));
@@ -504,6 +505,39 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('midnight kickoff groups upcoming arrival on the previous day', (
+    tester,
+  ) async {
+    final midnight = DateTime.utc(2026, 10, 11, 7, 10);
+    final repository = _Repository(
+      fixtures: [
+        _game('upcoming-midnight', start: midnight),
+        _game('final-midnight', start: midnight, status: 'FINAL'),
+      ],
+    );
+    await _pump(tester, repository);
+    expect(
+      find.byKey(const ValueKey('solo-fixture-upcoming-midnight')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Check-in 11:40 PM'), findsOneWidget);
+    expect(find.text('Sat, Oct 10'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('solo-fixture-final-midnight')),
+      findsNothing,
+    );
+
+    await tester.tap(find.byKey(const ValueKey('fixtures-date-2026-10-11')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('solo-fixture-final-midnight')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('12:10 AM'), findsOneWidget);
+    expect(find.textContaining('Check-in '), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('empty fixtures invent neither dates nor scheduled games', (
     tester,

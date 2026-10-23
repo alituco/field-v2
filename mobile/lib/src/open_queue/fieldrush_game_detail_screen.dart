@@ -22,6 +22,7 @@ import '../ui/fieldrush_toast.dart';
 import '../ui/fieldrush_video_player.dart';
 import 'fieldrush_game_detail_party.dart';
 import 'fieldrush_game_loading.dart';
+import 'fieldrush_check_in_notice.dart';
 import 'open_queue.dart';
 import 'open_queue_repository.dart';
 import 'team_assignment_notice.dart';
@@ -609,7 +610,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     final upcoming = status == 'OPEN' || status == 'FULL';
     final available = game.supportedRoles.any(game.canBook);
     final count = game.confirmedCount;
-    final time = game.startTimeLabel.split(' ');
+    final time = game.displayTimeLabel.split(' ');
     final team = game.hasActiveTeamAssignment
         ? game.myBookingTeam ?? _booking?.assignedTeam
         : null;
@@ -636,6 +637,10 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (upcoming) ...[
+                  Text('CHECK IN', style: _body(10.5, color: _lime)),
+                  const SizedBox(height: 8),
+                ],
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -665,7 +670,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                       child: Padding(
                         padding: const EdgeInsets.only(bottom: 4),
                         child: Text(
-                          '${game.calendarDateLabel}\n${game.venue.isEmpty ? 'Venue to be confirmed' : game.venue}',
+                          '${game.displayCalendarDateLabel}\n${game.venue.isEmpty ? 'Venue to be confirmed' : game.venue}',
                           style: _body(11.5, color: _light),
                         ),
                       ),
@@ -681,6 +686,10 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                   ),
                 ],
                 const SizedBox(height: 18),
+                if (upcoming && !game.hasPendingOperationalResolution) ...[
+                  FieldrushCheckInNotice(game: game),
+                  const SizedBox(height: 18),
+                ],
                 Container(
                   padding: const EdgeInsets.all(15),
                   decoration: BoxDecoration(
@@ -798,11 +807,6 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                           Text(
                             game.minimumPlayersProgressLabel,
                             style: _body(11, color: _light),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            'At kickoff and during play: ${game.requiredMinimumPlayers} actual players total, with at least one on each team.',
-                            style: _body(10.5, color: _light),
                           ),
                           const SizedBox(height: 12),
                         ],
@@ -1352,7 +1356,7 @@ class FieldrushGameRosterScreen extends StatelessWidget {
             _DetailHeader(
               title: 'Players',
               subtitle:
-                  '${detail.game.calendarDateLabel} · ${detail.game.startTimeLabel}',
+                  '${detail.game.displayCalendarDateLabel} · ${detail.game.isUpcoming ? 'Check-in ' : ''}${detail.game.displayTimeLabel}',
               trailing: Text(
                 '${detail.game.confirmedCount}/${detail.game.capacity}',
                 style: _display(22),

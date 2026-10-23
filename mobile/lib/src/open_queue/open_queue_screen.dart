@@ -561,7 +561,7 @@ class _QueueBookedGameRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${game.prominentDateLabel} · ${game.startTimeLabel}',
+                      '${game.displayProminentDateLabel} · ${game.isUpcoming ? 'Check-in ' : ''}${game.displayTimeLabel}',
                       style: const TextStyle(
                         color: fieldGray900,
                         fontSize: 13,

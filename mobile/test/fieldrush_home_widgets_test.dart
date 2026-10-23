@@ -328,12 +328,108 @@ void main() {
     );
     expect(find.text('WAITING ON 5'), findsOneWidget);
     expect(find.text('9/14 in', findRichText: true), findsOneWidget);
-    expect(find.text('8:30'), findsOneWidget);
+    expect(find.text('CHECK IN'), findsOneWidget);
+    expect(find.text('8:00'), findsOneWidget);
+    expect(find.text('8:30'), findsNothing);
+    expect(
+      find.textContaining('Check in before 8:20 PM.', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        'Arriving at or after this time is 1 strike.',
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
     expect(find.textContaining('THU, 4 JUN'), findsOneWidget);
     expect(find.textContaining('assigned White or Black'), findsOneWidget);
     expect(find.text('WEAR WHITE'), findsNothing);
     expect(find.textContaining('Streak'), findsNothing);
     expect(find.textContaining('streak'), findsNothing);
+  });
+
+  testWidgets('Home discovery cards show arrival and hide the kickoff clock', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      FieldrushQuickGameCard(games: [_game()], now: now, onPlay: (_, _) {}),
+    );
+    await tester.tap(find.byKey(const ValueKey('home-position-DEF')));
+    await tester.pump();
+    expect(find.text('CHECK IN'), findsOneWidget);
+    expect(find.text('8:00'), findsOneWidget);
+    expect(find.text('8:30'), findsNothing);
+    await _pump(
+      tester,
+      FieldrushOpenNights(games: [_game()], now: now, onGame: (_) {}),
+    );
+    expect(find.text('CHECK IN · 8:00 PM'), findsOneWidget);
+    expect(find.textContaining('8:30'), findsNothing);
+  });
+
+  testWidgets('Home arrival date can precede the kickoff date', (tester) async {
+    await _pump(
+      tester,
+      FieldrushSoloHero(
+        booking: _booking(_game(startsAt: DateTime.utc(2099, 6, 5, 7, 10))),
+        onTap: () {},
+      ),
+    );
+    expect(find.text('11:40'), findsOneWidget);
+    expect(find.textContaining('THU, 4 JUN'), findsOneWidget);
+    expect(find.text('12:10'), findsNothing);
+  });
+
+  testWidgets('quick picker CTA follows the arrival date across midnight', (
+    tester,
+  ) async {
+    final game = _game(startsAt: DateTime.utc(2099, 6, 5, 7, 10));
+    await _pump(
+      tester,
+      FieldrushQuickGameCard(games: [game], now: now, onPlay: (_, _) {}),
+    );
+    await tester.tap(find.byKey(const ValueKey('home-position-DEF')));
+    await tester.pump();
+    expect(find.text('11:40'), findsOneWidget);
+    expect(find.textContaining('Thu, 4 Jun'), findsOneWidget);
+    expect(find.textContaining('Play Thursday'), findsOneWidget);
+    expect(find.textContaining('Play Friday'), findsNothing);
+    expect(find.text('12:10'), findsNothing);
+  });
+
+  testWidgets(
+    'Home live hero keeps its real start without an arrival warning',
+    (tester) async {
+      await _pump(
+        tester,
+        FieldrushSoloHero(
+          booking: _booking(_game(status: 'LIVE')),
+          onTap: () {},
+        ),
+      );
+      expect(find.text('8:30'), findsOneWidget);
+      expect(find.text('CHECK IN'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('fieldrush-check-in-notice')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets('large-text Home hero arrival and warning fit at 320px', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      FieldrushSoloHero(booking: _booking(_game()), onTap: () {}),
+      width: 320,
+      scale: 2,
+    );
+    expect(find.text('CHECK IN'), findsOneWidget);
+    expect(find.text('8:00'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('team ticket appears only for an active assigned team', (
@@ -493,17 +589,36 @@ void main() {
         FieldrushAlsoBooked(
           key: const ValueKey('second-booking'),
           title: 'Solo game',
-          startsAt: DateTime.utc(2099, 6, 5, 3, 30),
+          startsAt: _game().displayStartsAt,
           gameTimezone: 'America/Phoenix',
+          isCheckIn: true,
           onTap: () => opened = true,
         ),
       );
       expect(find.text('4'), findsOneWidget);
-      expect(find.text('8:30 PM · Solo game'), findsOneWidget);
-      await tester.tap(find.text('8:30 PM · Solo game'));
+      expect(find.text('CHECK IN'), findsOneWidget);
+      expect(find.text('8:00 PM · Solo game'), findsOneWidget);
+      expect(find.textContaining('8:30'), findsNothing);
+      await tester.tap(find.text('8:00 PM · Solo game'));
       expect(opened, isTrue);
     },
   );
+
+  testWidgets('secondary clan booking retains its own supplied time', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      FieldrushAlsoBooked(
+        title: 'Clan game',
+        startsAt: _game().startsAt,
+        gameTimezone: 'America/Phoenix',
+        onTap: () {},
+      ),
+    );
+    expect(find.text('8:30 PM · Clan game'), findsOneWidget);
+    expect(find.text('CHECK IN'), findsNothing);
+  });
 
   testWidgets(
     'rating is real season and rank with chronological last five results',

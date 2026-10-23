@@ -201,7 +201,17 @@ void main() {
     expect(find.text('Next Week Arena'), findsOneWidget);
     expect(find.text('BEST MATCHES FOR YOU'), findsOneWidget);
     expect(find.text('MORE GAMES YOU CAN JOIN'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Using your backup positions'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Using your backup positions'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Join as Defender').first,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Join as Defender'), findsWidgets);
     expect(find.textContaining('waitlist', findRichText: true), findsNothing);
   });

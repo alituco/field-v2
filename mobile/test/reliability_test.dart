@@ -175,7 +175,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('ARRIVAL DEADLINE'), findsOneWidget);
+    expect(find.text('CHECK-IN DEADLINE'), findsOneWidget);
     expect(find.textContaining('no app check-in is needed'), findsOneWidget);
     expect(
       find.textContaining('Missing players are finalized'),
@@ -183,6 +183,82 @@ void main() {
     );
     expect(find.widgetWithText(ButtonStyleButton, 'Check in'), findsNothing);
   });
+
+  for (final venue in [
+    (timezone: 'America/Phoenix', deadline: '9:45 AM', cutoff: '10:10 AM'),
+    (timezone: 'Asia/Bahrain', deadline: '7:45 PM', cutoff: '8:10 PM'),
+  ]) {
+    testWidgets(
+      'check-in deadline respects ${venue.timezone} and saved policy',
+      (tester) async {
+        final context = MatchReliabilityContext.fromJson({
+          'check_in_deadline_at': '2026-07-21T16:45:00Z',
+          'no_show_cutoff_at': '2026-07-21T17:10:00Z',
+        });
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: ReliabilityDeadlineNotice(
+                load: () async => context,
+                timezone: venue.timezone,
+                includeNoShowCutoff: true,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('Check-in deadline: ${venue.deadline}.'),
+          findsOneWidget,
+        );
+        expect(
+          find.text('Missing players are finalized at ${venue.cutoff}.'),
+          findsOneWidget,
+        );
+        expect(find.textContaining('Kickoff'), findsNothing);
+        expect(find.textContaining('1 strike'), findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'supplemental attendance information does not repeat the arrival panel',
+    (tester) async {
+      final context = MatchReliabilityContext.fromJson({
+        'check_in_deadline_at': '2026-07-21T16:45:00Z',
+        'no_show_cutoff_at': '2026-07-21T17:10:00Z',
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ReliabilityDeadlineNotice(
+              load: () async => context,
+              timezone: 'America/Phoenix',
+              showDeadline: false,
+              includeNoShowCutoff: true,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('CHECK-IN DEADLINE'), findsNothing);
+      expect(find.textContaining('9:45 AM'), findsNothing);
+      expect(
+        find.byKey(const ValueKey('reliability-check-in-deadline')),
+        findsNothing,
+      );
+      expect(
+        find.text('The referee records attendance; no app check-in is needed.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text('Missing players are finalized at 10:10 AM.'),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test('appeal categories use the active policy contract codes', () {
     expect(

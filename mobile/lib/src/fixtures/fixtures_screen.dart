@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../open_queue/fieldrush_check_in_notice.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
@@ -72,12 +74,16 @@ class LegacyFixturesScreen extends StatefulWidget {
     required this.openQueueRepository,
     this.clanRepository,
     this.onNavigateTab,
+    this.timezone,
+    this.now,
   });
 
   final FixtureRepository fixtureRepository;
   final OpenQueueRepository openQueueRepository;
   final ClanRepository? clanRepository;
   final ValueChanged<int>? onNavigateTab;
+  final String? timezone;
+  final DateTime? now;
 
   @override
   State<LegacyFixturesScreen> createState() => _FixturesScreenState();
@@ -91,6 +97,13 @@ class _FixturesScreenState extends State<LegacyFixturesScreen> {
   DateTime? _selectedMatchDate;
   bool _isLoading = true;
   String? _errorText;
+
+  DateTime get _today => _dateOnly(
+    gameLocalDateTime(
+      widget.now ?? DateTime.now(),
+      widget.timezone ?? _soloGames.firstOrNull?.timezone ?? 'Asia/Bahrain',
+    ),
+  );
 
   @override
   void initState() {
@@ -118,7 +131,7 @@ class _FixturesScreenState extends State<LegacyFixturesScreen> {
         _fixtures = fixtures;
         _soloGames = soloGames;
         _myClanMembership = results[2] as MyClanMembership?;
-        _selectedMatchDate ??= _defaultMatchDate(matches);
+        _selectedMatchDate ??= _defaultMatchDate(matches, today: _today);
       });
     } catch (error) {
       if (!mounted) return;
@@ -138,7 +151,8 @@ class _FixturesScreenState extends State<LegacyFixturesScreen> {
   List<_FixtureFeedItem> get _matches =>
       _fixtureFeedItems(_fixtures, _soloGames);
 
-  List<DateTime> get _calendarDates => _matchCalendarDates(_matches);
+  List<DateTime> get _calendarDates =>
+      _matchCalendarDates(_matches, today: _today);
 
   List<_FixtureFeedItem> get _selectedDateMatches {
     final selectedDate = _selectedMatchDate;
@@ -267,21 +281,28 @@ class _FixturesScreenState extends State<LegacyFixturesScreen> {
       if (!mounted) return;
       await Navigator.of(context).push<bool>(
         MaterialPageRoute<bool>(
-          builder: (_) => FixtureDetailScreen(
-            fixture: detail.toFixture(),
-            fixtureRepository: widget.fixtureRepository,
-            clanRepository: widget.clanRepository,
-            myClanMembership: null,
-            sourceLabel: 'SOLO',
-            showTeamRatings: false,
-            playerRatingUpdate: detail.viewerRatingUpdate,
-            refreshFixture: () async {
-              final next = await widget.openQueueRepository.getMatchDetail(
-                game.id,
-              );
-              return next.toFixture();
-            },
-          ),
+          builder: (_) => detail.game.isUpcoming
+              ? FieldrushGameDetailScreen(
+                  repository: widget.openQueueRepository,
+                  gameId: game.id,
+                  initialDetail: detail,
+                  onNavigateTab: widget.onNavigateTab,
+                  onJoin: _openSoloGame,
+                )
+              : FixtureDetailScreen(
+                  fixture: detail.toFixture(),
+                  fixtureRepository: widget.fixtureRepository,
+                  clanRepository: widget.clanRepository,
+                  myClanMembership: null,
+                  sourceLabel: 'SOLO',
+                  showTeamRatings: false,
+                  playerRatingUpdate: detail.viewerRatingUpdate,
+                  refreshFixture: () async {
+                    final next = await widget.openQueueRepository
+                        .getMatchDetail(game.id);
+                    return next.toFixture();
+                  },
+                ),
         ),
       );
       if (mounted) await _load();
@@ -778,7 +799,7 @@ class _SoloFixtureSheet extends StatelessWidget {
         !game.hasMyBooking &&
         !game.isFull &&
         game.startsAt.isAfter(DateTime.now());
-    final startsAt = game.localStartsAt;
+    final startsAt = game.localDisplayStartsAt;
     final maxHeight = MediaQuery.sizeOf(context).height * 0.90;
 
     return SafeArea(
@@ -852,7 +873,7 @@ class _SoloFixtureSheet extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '${_longDateLabel(DateTime(startsAt.year, startsAt.month, startsAt.day))} · ${game.timeLabel}',
+                '${_longDateLabel(DateTime(startsAt.year, startsAt.month, startsAt.day))} · ${game.isUpcoming ? 'Check-in ' : ''}${game.isUpcoming ? game.displayTimeLabel : game.timeLabel}',
                 style: const TextStyle(
                   color: fieldGray500,
                   fontSize: 14,
@@ -860,6 +881,10 @@ class _SoloFixtureSheet extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 18),
+              if (game.isUpcoming) ...[
+                FieldrushCheckInNotice(game: game),
+                const SizedBox(height: 18),
+              ],
               if (game.hasPendingOperationalResolution) ...[
                 Container(
                   key: const ValueKey('solo-operational-state-callout'),
@@ -1242,11 +1267,13 @@ class _StatePanel extends StatelessWidget {
   }
 }
 
-DateTime? _defaultMatchDate(List<_FixtureFeedItem> matches) {
-  final calendarDates = _matchCalendarDates(matches);
+DateTime? _defaultMatchDate(
+  List<_FixtureFeedItem> matches, {
+  required DateTime today,
+}) {
+  final calendarDates = _matchCalendarDates(matches, today: today);
   if (calendarDates.isEmpty) return null;
 
-  final today = _bahrainToday();
   final actualDates = <String, DateTime>{
     for (final match in matches)
       _dateKey(match.matchDate): _dateOnly(match.matchDate),
@@ -1261,9 +1288,11 @@ DateTime? _defaultMatchDate(List<_FixtureFeedItem> matches) {
   );
 }
 
-List<DateTime> _matchCalendarDates(List<_FixtureFeedItem> matches) {
+List<DateTime> _matchCalendarDates(
+  List<_FixtureFeedItem> matches, {
+  required DateTime today,
+}) {
   final datesByKey = <String, DateTime>{};
-  final today = _bahrainToday();
 
   for (final match in matches) {
     final date = _dateOnly(match.matchDate);
@@ -1303,6 +1332,12 @@ List<_FixtureFeedItem> _fixtureFeedItems(
     for (final game in soloGames) _FixtureFeedItem.solo(game),
   ];
   matches.sort((left, right) {
+    if (left.soloGame != null && right.soloGame != null) {
+      final kickoff = left.soloGame!.startsAt.compareTo(
+        right.soloGame!.startsAt,
+      );
+      if (kickoff != 0) return kickoff;
+    }
     final date = left.matchDate.compareTo(right.matchDate);
     if (date != 0) return date;
     final time = left.sortMinutes.compareTo(right.sortMinutes);
@@ -1331,7 +1366,7 @@ class _FixtureFeedItem {
   DateTime get matchDate {
     final clanFixture = fixture;
     if (clanFixture != null) return _dateOnly(clanFixture.matchDate);
-    final startsAt = soloGame!.bahrainStartsAt;
+    final startsAt = soloGame!.localDisplayStartsAt;
     return DateTime(startsAt.year, startsAt.month, startsAt.day);
   }
 
@@ -1363,11 +1398,6 @@ FixtureStatus _soloFixtureStatus(OpenQueueGame game) {
 
 String _soloStatusLabel(OpenQueueGame game) {
   return game.statusLabel.toUpperCase();
-}
-
-DateTime _bahrainToday() {
-  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
-  return DateTime(now.year, now.month, now.day);
 }
 
 bool _isEnabledMatchDay(DateTime date) {

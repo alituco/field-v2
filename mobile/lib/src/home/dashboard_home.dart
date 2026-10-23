@@ -825,7 +825,9 @@ class _DashboardHomeState extends State<DashboardHome> {
                     FieldrushAlsoBooked(
                       key: ValueKey('home-also-booked-${item.id}'),
                       title: item.label,
-                      startsAt: item.startsAt,
+                      startsAt:
+                          item.booking?.game.displayStartsAt ?? item.startsAt,
+                      isCheckIn: item.booking?.game.isUpcoming ?? false,
                       gameTimezone:
                           item.booking?.game.timezone ??
                           item.liveGame?.timezone ??
@@ -862,7 +864,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                         ),
                         title: '${party.inviter} invited you to a party',
                         body:
-                            'Your booked game · ${party.booking.game.startTimeLabel}',
+                            'Your booked game · ${party.booking.game.isUpcoming ? 'Check-in ' : ''}${party.booking.game.displayTimeLabel}',
                         action: 'View invitation',
                         onTap: _openParty,
                       ),

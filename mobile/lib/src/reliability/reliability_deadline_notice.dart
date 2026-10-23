@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../clans/clan_widgets.dart';
+import '../open_queue/open_queue.dart';
 import 'reliability.dart';
 
 class ReliabilityDeadlineNotice extends StatefulWidget {
@@ -8,10 +9,14 @@ class ReliabilityDeadlineNotice extends StatefulWidget {
     super.key,
     required this.load,
     this.includeNoShowCutoff = false,
+    this.timezone = 'Asia/Bahrain',
+    this.showDeadline = true,
   });
 
   final Future<MatchReliabilityContext?> Function() load;
   final bool includeNoShowCutoff;
+  final String timezone;
+  final bool showDeadline;
 
   @override
   State<ReliabilityDeadlineNotice> createState() =>
@@ -28,11 +33,41 @@ class _ReliabilityDeadlineNoticeState extends State<ReliabilityDeadlineNotice> {
       builder: (context, snapshot) {
         final reliability = snapshot.data;
         final deadline = reliability?.checkInDeadlineAt;
-        final kickoff = reliability?.kickoffAt;
-        if (deadline == null || kickoff == null) {
+        if (deadline == null) {
           return const SizedBox.shrink();
         }
         final cutoff = reliability?.noShowCutoffAt;
+        if (!widget.showDeadline) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'The referee records attendance; no app check-in is needed.',
+                  style: TextStyle(
+                    color: fieldGray500,
+                    fontSize: 11,
+                    height: 1.35,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (widget.includeNoShowCutoff && cutoff != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Missing players are finalized at ${_clock(cutoff, widget.timezone)}.',
+                    style: const TextStyle(
+                      color: fieldGray500,
+                      fontSize: 10,
+                      height: 1.35,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          );
+        }
         return Container(
           key: const ValueKey('reliability-check-in-deadline'),
           width: double.infinity,
@@ -64,7 +99,7 @@ class _ReliabilityDeadlineNoticeState extends State<ReliabilityDeadlineNotice> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     const Text(
-                      'ARRIVAL DEADLINE',
+                      'CHECK-IN DEADLINE',
                       style: TextStyle(
                         color: Color(0xFFB45309),
                         fontSize: 9,
@@ -74,7 +109,7 @@ class _ReliabilityDeadlineNoticeState extends State<ReliabilityDeadlineNotice> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      'Arrive by ${_clock(deadline)}. The referee records attendance—no app check-in is needed. Kickoff is ${_clock(kickoff)}.',
+                      'Check-in deadline: ${_clock(deadline, widget.timezone)}. The referee records attendance; no app check-in is needed.',
                       style: const TextStyle(
                         color: fieldGray900,
                         fontSize: 13,
@@ -85,7 +120,7 @@ class _ReliabilityDeadlineNoticeState extends State<ReliabilityDeadlineNotice> {
                     if (widget.includeNoShowCutoff && cutoff != null) ...[
                       const SizedBox(height: 4),
                       Text(
-                        'Missing players are finalized at ${_clock(cutoff)}. Kickoff is not delayed.',
+                        'Missing players are finalized at ${_clock(cutoff, widget.timezone)}.',
                         style: const TextStyle(
                           color: fieldGray500,
                           fontSize: 10,
@@ -105,10 +140,10 @@ class _ReliabilityDeadlineNoticeState extends State<ReliabilityDeadlineNotice> {
   }
 }
 
-String _clock(DateTime value) {
-  final bahrain = value.toUtc().add(const Duration(hours: 3));
-  final hour = bahrain.hour % 12 == 0 ? 12 : bahrain.hour % 12;
-  final minute = bahrain.minute.toString().padLeft(2, '0');
-  final period = bahrain.hour >= 12 ? 'PM' : 'AM';
+String _clock(DateTime value, String timezone) {
+  final local = gameLocalDateTime(value, timezone);
+  final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+  final minute = local.minute.toString().padLeft(2, '0');
+  final period = local.hour >= 12 ? 'PM' : 'AM';
   return '$hour:$minute $period';
 }
