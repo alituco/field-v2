@@ -76,6 +76,12 @@ void main() {
     expect(video.value.isPlaying, isFalse);
   }
 
+  Future<void> pumpPendingTransition(WidgetTester tester) async {
+    // An operation that has not completed keeps its spinner animating.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
   testWidgets(
     'saving blocks dismissal and duplicate flows then returns to caller',
     (tester) async {
@@ -87,7 +93,7 @@ void main() {
         'Top corner',
       );
       await tester.tap(find.byKey(const ValueKey('save-goal-clip')));
-      await tester.pumpAndSettle();
+      await pumpPendingTransition(tester);
       expect(
         find.byKey(const ValueKey('match-clip-processing')),
         findsOneWidget,
@@ -100,13 +106,13 @@ void main() {
       expect(profiles.saved.single.endSeconds, 60);
 
       await tester.binding.handlePopRoute();
-      await tester.pumpAndSettle();
+      await pumpPendingTransition(tester);
       expect(
         find.byKey(const ValueKey('match-clip-processing')),
         findsOneWidget,
       );
       await openEditor();
-      await tester.pumpAndSettle();
+      await pumpPendingTransition(tester);
       expect(profiles.saved, hasLength(1));
       profiles.save.complete(_savedClip);
       await tester.pumpAndSettle();
@@ -128,7 +134,7 @@ void main() {
     (tester) async {
       await launchEditor(tester);
       await tester.tap(find.byKey(const ValueKey('custom-clip-download')));
-      await tester.pumpAndSettle();
+      await pumpPendingTransition(tester);
       expect(
         find.byKey(const ValueKey('match-clip-processing')),
         findsOneWidget,
@@ -187,11 +193,11 @@ void main() {
             ),
           ),
         );
-        await tester.pumpAndSettle();
         if (saveToProfile) {
-          await tester.tap(find.byKey(const ValueKey('save-goal-clip')));
           await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const ValueKey('save-goal-clip')));
         }
+        await pumpPendingTransition(tester);
         await tester.pump(const Duration(minutes: 2, seconds: 59));
         expect(
           find.byKey(const ValueKey('match-clip-processing')),

@@ -29,7 +29,7 @@ class FieldSkeleton extends StatelessWidget {
   );
 }
 
-/// Compact placeholder for an icon-sized async control or media preview.
+/// Circular activity indicator for an async control or media preview.
 /// Full sections should use content-shaped placeholders instead.
 class FieldLoadingIndicator extends StatelessWidget {
   const FieldLoadingIndicator({super.key, this.label = 'Loading', this.color});
@@ -41,22 +41,17 @@ class FieldLoadingIndicator extends StatelessWidget {
   Widget build(BuildContext context) => Semantics(
     label: label,
     liveRegion: true,
-    child: SizedBox(
-      width: 32,
-      height: 18,
-      child: FittedBox(
-        child: SizedBox(
-          width: 32,
-          height: 18,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              FieldSkeleton(width: 32, height: 4, radius: 2, color: color),
-              const SizedBox(height: 3),
-              FieldSkeleton(width: 22, height: 4, radius: 2, color: color),
-              const SizedBox(height: 3),
-              FieldSkeleton(width: 27, height: 4, radius: 2, color: color),
-            ],
+    child: ExcludeSemantics(
+      child: Center(
+        widthFactor: 1,
+        heightFactor: 1,
+        child: SizedBox.square(
+          dimension: 20,
+          child: CircularProgressIndicator(
+            value: MediaQuery.disableAnimationsOf(context) ? .75 : null,
+            strokeWidth: 2.4,
+            strokeCap: StrokeCap.round,
+            color: color ?? Theme.of(context).colorScheme.primary,
           ),
         ),
       ),
@@ -139,7 +134,7 @@ class FieldLoadingContent extends StatelessWidget {
   );
 }
 
-/// Retains pull-to-refresh and existing content without the Material spinner.
+/// Retains existing content while showing a compact pull-to-refresh indicator.
 class FieldRefreshIndicator extends StatefulWidget {
   const FieldRefreshIndicator({
     super.key,
@@ -191,23 +186,19 @@ class _FieldRefreshIndicatorState extends State<FieldRefreshIndicator> {
             right: 0,
             child: IgnorePointer(
               child: Center(
-                child: Semantics(
-                  label: label,
-                  liveRegion: true,
-                  child: Container(
-                    key: const ValueKey('field-refresh-skeleton'),
-                    width: 124,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surface,
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE6DFCB)),
-                    ),
-                    child: FieldSkeleton(
-                      height: 6,
-                      radius: 3,
-                      color: widget.color?.withValues(alpha: .24),
-                    ),
+                child: Container(
+                  key: const ValueKey('field-refresh-indicator'),
+                  width: 40,
+                  height: 40,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surface,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: const Color(0xFFE6DFCB)),
+                  ),
+                  child: FieldLoadingIndicator(
+                    label: label,
+                    color: widget.color,
                   ),
                 ),
               ),

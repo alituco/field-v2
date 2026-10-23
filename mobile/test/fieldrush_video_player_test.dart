@@ -420,17 +420,17 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('uninitialized video uses the branded static loading state', (
+  testWidgets('uninitialized video shows the accessible activity indicator', (
     tester,
   ) async {
     final video = VideoPlayerController.networkUrl(
       Uri.parse('https://example.com/replay.m3u8'),
     );
     await pumpPlayer(tester, video);
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 300));
     expect(find.bySemanticsLabel('Loading video'), findsOneWidget);
     expect(find.byType(FieldLoadingIndicator), findsOneWidget);
-    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(tester.binding.hasScheduledFrame, isTrue);
     await tester.pumpWidget(const SizedBox());
     unawaited(video.dispose());
     await tester.pump();

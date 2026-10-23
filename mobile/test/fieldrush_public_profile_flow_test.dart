@@ -268,7 +268,9 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(clip);
-      await tester.pumpAndSettle();
+      // A processing clip intentionally keeps its activity indicator running.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
       final screen = tester.widget<ProfileClipScreen>(
         find.byType(ProfileClipScreen),
       );
