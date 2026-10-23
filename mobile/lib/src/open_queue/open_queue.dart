@@ -408,6 +408,13 @@ class OpenQueueGame {
         startsAt.isAfter(now);
   }
 
+  /// A confirmed player's match does not end at its scheduled kickoff. Keep
+  /// delayed starts and live matches available until the server resolves them.
+  bool get isActiveReservation =>
+      !hasPendingOperationalResolution &&
+      (status == 'LIVE' ||
+          ((status == 'OPEN' || status == 'FULL') && !hasRecordedScore));
+
   bool get isUpcomingMatchConfirmed {
     return !hasRecordedScore &&
         (hasConfigurableMinimum
@@ -1330,6 +1337,8 @@ List<FixtureTimelineEvent> _openQueueTimeline(Object? value, String gameId) {
         minute: _asInt(row['minute']),
         second: _asInt(row['second']),
         note: _nonEmptyString(row['note']),
+        goalId: row['goal_id'] as String?,
+        isGoalValid: row['is_goal_valid'] as bool?,
         createdAt: _asDate(row['created_at']),
         occurredAt: _asDate(row['occurred_at']),
         player: player == null ? null : FixtureParticipant.fromJson(player),
@@ -1382,7 +1391,7 @@ List<FixtureScorer> _openQueueScorers(
 
   return [
     for (final event in timeline)
-      if (event.eventType == 'GOAL' && event.clanId != null)
+      if (event.isCreditedGoal && event.clanId != null)
         FixtureScorer(
           id: event.id,
           fixtureId: gameId,

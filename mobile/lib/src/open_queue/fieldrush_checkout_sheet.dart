@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
-import '../fixtures/fixture.dart';
+import '../core/read_timeout.dart';
 import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
 import '../support/contact_support_sheet.dart';
@@ -60,6 +60,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   late OpenQueueGame _game = widget.game;
   late OpenQueueRole? _role = widget.role;
   bool _availabilityReady = false;
+  bool _termsVerified = false;
   OpenQueueBookingCostPreview? _preview;
   bool _loading = true;
   bool _processing = false;
@@ -102,6 +103,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       _refund == null &&
       _role != null &&
       _preview != null &&
+      _termsVerified &&
       (!_embedded ||
           _preview!.totalFils == 0 ||
           (_resumePayment && !_verifiedUnpaid) ||
@@ -141,9 +143,10 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     final bookings = repository is OpenQueueBookingLookupRepository
         ? [
             await (repository as OpenQueueBookingLookupRepository)
-                .getMyUpcomingBookingForGame(widget.game.id),
+                .getMyUpcomingBookingForGame(widget.game.id)
+                .timeout(fieldReadTimeout),
           ]
-        : await repository.getMyUpcomingBookings();
+        : await repository.getMyUpcomingBookings().timeout(fieldReadTimeout);
     for (final booking in bookings) {
       if (booking?.gameId == widget.game.id && booking?.status == 'CONFIRMED') {
         return booking;
@@ -255,7 +258,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       );
     }
     final result = await (repository as OpenQueueBookingCostPreviewRepository)
-        .previewBookingCost(gameId: widget.game.id, role: role);
+        .previewBookingCost(gameId: widget.game.id, role: role)
+        .timeout(fieldReadTimeout);
     if (result.currency != 'USD' ||
         result.totalFils < 0 ||
         result.totalFils % 10 != 0) {
@@ -270,7 +274,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     setState(() {
       _loading = true;
       _error = null;
-      _preview = null;
+      _termsVerified = false;
     });
     try {
       var previewRole = _role;
@@ -279,19 +283,13 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         final results = await Future.wait([
           widget.repository.getMatchDetail(widget.game.id),
           widget.repository.getMyUpcomingBookings(),
-        ]);
+        ]).timeout(fieldReadTimeout);
         if (!mounted || generation != _loadGeneration) return;
         final game = (results[0] as OpenQueueMatchDetail).game;
         final bookings = results[1] as List<OpenQueueBooking>;
-        final now = DateTime.now();
         if (bookings.any(
           (booking) =>
-              booking.status == 'CONFIRMED' &&
-              !['CANCELLED', 'FINAL'].contains(booking.game.status) &&
-              (booking.game.status == 'LIVE' ||
-                  (booking.game.operationalState !=
-                          MatchOperationalState.noData &&
-                      booking.game.endsAt.isAfter(now))),
+              booking.status == 'CONFIRMED' && booking.game.isActiveReservation,
         )) {
           throw StateError(
             'You can only join one upcoming or active game. Manage your current game before taking another spot.',
@@ -312,7 +310,10 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       }
       final preview = await _quote(previewRole: previewRole);
       if (!mounted || generation != _loadGeneration) return;
-      setState(() => _preview = preview);
+      setState(() {
+        _preview = preview;
+        _termsVerified = true;
+      });
       await _replacePaymentSession(preview, generation);
     } catch (error) {
       if (mounted && generation == _loadGeneration) {
@@ -556,7 +557,8 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
     });
     try {
       final latest = await (repository as OpenQueuePaymentStatusRepository)
-          .checkRefundStatus(refund.intentId);
+          .checkRefundStatus(refund.intentId)
+          .timeout(fieldReadTimeout);
       if (!mounted || _closing || generation != _loadGeneration) return;
       if (latest.intentId != refund.intentId) {
         throw const PaymentPendingException();

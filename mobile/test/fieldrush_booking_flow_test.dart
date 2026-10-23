@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
+import 'package:field/src/ui/field_loading.dart';
 import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
@@ -14,6 +15,73 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2099, 6, 1);
 
 void main() {
+  testWidgets(
+    'stalled booking lookup times out without offering unverified availability',
+    (tester) async {
+      final pending = Completer<List<OpenQueueBooking>>();
+      final repository = _ReadRepository([_game('one')])
+        ..nextBookings = pending;
+      await _pump(
+        tester,
+        FieldrushBookingFlow(
+          repository: repository,
+          now: _now,
+          startAtGames: true,
+        ),
+      );
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.byKey(const ValueKey('booking-game-one')), findsNothing);
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+      pending.complete([_booking(_game('stale'))]);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('booking-active-game-limit')),
+        findsNothing,
+      );
+      expect(repository.bookCalls, 0);
+    },
+  );
+
+  testWidgets(
+    'booking refresh retains loaded games and ignores older read after retry',
+    (tester) async {
+      final repository = _ReadRepository([_game('one')]);
+      await _pump(
+        tester,
+        FieldrushBookingFlow(
+          repository: repository,
+          now: _now,
+          startAtGames: true,
+        ),
+      );
+      final pending = Completer<List<OpenQueueGame>>();
+      repository.nextGames = pending;
+      unawaited(
+        tester
+            .widget<FieldRefreshIndicator>(find.byType(FieldRefreshIndicator))
+            .onRefresh(),
+      );
+      await tester.pump();
+      expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      repository.games = [_game('two')];
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('booking-game-two')), findsOneWidget);
+      pending.complete([_game('old')]);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('booking-game-old')), findsNothing);
+      expect(repository.bookCalls, 0);
+    },
+  );
+
   test('matching chooses most needed selected position, never midfield', () {
     final game = _game('one');
     expect(fieldrushSuggestedRole(game, {}, _now), OpenQueueRole.defender);
@@ -266,6 +334,38 @@ void main() {
     expect(repository.bookCalls, 0);
     expect(tester.takeException(), isNull);
   });
+
+  for (final status in ['OPEN', 'FULL']) {
+    testWidgets(
+      'delayed $status game still blocks booking after its scheduled end',
+      (tester) async {
+        final current = _game(
+          'delayed',
+          status: status,
+          start: _now.subtract(const Duration(hours: 3)),
+        );
+        final next = _game('next');
+        final repository = _Repository([next])..bookings = [_booking(current)];
+        await _pump(
+          tester,
+          FieldrushBookingFlow(
+            repository: repository,
+            initialGame: next,
+            now: _now,
+          ),
+        );
+        expect(
+          find.byKey(const ValueKey('booking-active-game-limit')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const ValueKey('booking-continue-payment')),
+          findsNothing,
+        );
+        expect(repository.bookCalls, 0);
+      },
+    );
+  }
 
   testWidgets('finalized and cancelled games do not block a new booking flow', (
     tester,
@@ -683,4 +783,23 @@ class _Repository
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _ReadRepository extends _Repository {
+  _ReadRepository(super.games);
+  Completer<List<OpenQueueGame>>? nextGames;
+  Completer<List<OpenQueueBooking>>? nextBookings;
+  @override
+  Future<List<OpenQueueGame>> listMarketGames(String timezone) {
+    final pending = nextGames;
+    nextGames = null;
+    return pending?.future ?? super.listMarketGames(timezone);
+  }
+
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() {
+    final pending = nextBookings;
+    nextBookings = null;
+    return pending?.future ?? super.getMyUpcomingBookings();
+  }
 }

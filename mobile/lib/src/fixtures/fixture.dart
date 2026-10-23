@@ -484,6 +484,8 @@ class FixtureTimelineEvent {
     this.profileId,
     this.assistProfileId,
     this.note,
+    this.goalId,
+    this.isGoalValid,
     this.player,
     this.assist,
   });
@@ -497,6 +499,10 @@ class FixtureTimelineEvent {
   final int minute;
   final int second;
   final String? note;
+
+  /// Links a recorded goal and its later removal without deleting audit events.
+  final String? goalId;
+  final bool? isGoalValid;
   final DateTime? createdAt;
   final DateTime? occurredAt;
   final FixtureParticipant? player;
@@ -507,6 +513,11 @@ class FixtureTimelineEvent {
   String get assistName => assist?.displayName ?? 'Unknown';
 
   DateTime? get highlightTimestamp => occurredAt ?? createdAt;
+
+  bool get isCreditedGoal =>
+      eventType.trim().toUpperCase() == 'GOAL' &&
+      isGoalValid != false &&
+      note?.trim().toLowerCase() != 'admin correction';
 
   factory FixtureTimelineEvent.fromJson(Map<String, dynamic> json) {
     final player = _nestedMap(json['player'] ?? json['profiles']);
@@ -522,6 +533,8 @@ class FixtureTimelineEvent {
       minute: _asInt(json['minute']),
       second: _asInt(json['second']),
       note: (json['note'] as String?)?.trim(),
+      goalId: json['goal_id'] as String?,
+      isGoalValid: json['is_goal_valid'] as bool?,
       createdAt: _asDate(json['created_at']),
       occurredAt: _asDate(json['occurred_at']),
       player: player == null ? null : FixtureParticipant.fromJson(player),
@@ -761,9 +774,14 @@ class Fixture {
     final moments = <FixtureHighlightMoment>[];
     final goals =
         timeline.where((event) {
-          return event.eventType.toUpperCase() == 'GOAL' &&
+          return event.isCreditedGoal &&
               event.highlightTimestamp != null &&
-              event.note?.toLowerCase() != 'admin correction';
+              !timeline.any(
+                (correction) =>
+                    event.goalId != null &&
+                    correction.eventType.toUpperCase() == 'CORRECTION' &&
+                    correction.goalId == event.goalId,
+              );
         }).toList()..sort((left, right) {
           return left.highlightTimestamp!.compareTo(right.highlightTimestamp!);
         });

@@ -82,7 +82,7 @@ void main() {
   }
 
   testWidgets(
-    'Home assignment refresh reads bookings without reloading ratings',
+    'Home assignment refresh updates bookings and SR without reloading profile',
     (tester) async {
       final queue = _Queue(game: _game());
       final ratings = _Ratings();
@@ -99,7 +99,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(queue.bookingReads, greaterThan(bookingReads));
-      expect(ratings.reads, ratingReads);
+      expect(ratings.reads, ratingReads + 1);
       expect(profiles.reads, profileReads);
       expect(
         tester

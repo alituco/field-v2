@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'profile.dart';
+import '../core/read_timeout.dart';
 
 abstract class ProfileRepository {
   String? get currentUserId;
@@ -301,9 +302,9 @@ class SupabaseProfileRepository
       throw const AuthException('You need to sign in again.');
     }
 
-    await _ensureProfile(user);
+    await _ensureProfile(user).timeout(fieldReadTimeout);
 
-    return _getProfile(user.id);
+    return _getProfile(user.id).timeout(fieldReadTimeout);
   }
 
   @override
@@ -312,7 +313,7 @@ class SupabaseProfileRepository
     if (user == null) {
       throw const AuthException('You need to sign in again.');
     }
-    final profile = await _loadProfile(user.id);
+    final profile = await _loadProfile(user.id).timeout(fieldReadTimeout);
     return PlayerProfile(
       id: user.id,
       displayName: profile.displayName,
@@ -335,7 +336,7 @@ class SupabaseProfileRepository
     if (id.isEmpty) {
       throw ArgumentError.value(profileId, 'profileId', 'Profile is required.');
     }
-    return _getProfile(id);
+    return _getProfile(id).timeout(fieldReadTimeout);
   }
 
   Future<PlayerProfile> _getProfile(String profileId) async {
@@ -347,7 +348,7 @@ class SupabaseProfileRepository
       _loadCareer(profileId),
       _loadPreviousGames(profileId),
       _loadPlayerRating(profileId),
-    ]);
+    ]).timeout(fieldReadTimeout);
     final profile = results[0] as _ProfileRow;
     final clan = results[1] as ProfileClan?;
     final connectionCounts = results[2] as _ConnectionCounts;
@@ -357,7 +358,7 @@ class SupabaseProfileRepository
     final playerRating = results[6] as ProfilePlayerRating?;
     final stats = clan == null
         ? const _ProfileStats(appearances: 0, goals: 0, assists: 0)
-        : await _loadStats(profileId, clan.id);
+        : await _loadStats(profileId, clan.id).timeout(fieldReadTimeout);
 
     return PlayerProfile(
       id: profileId,
@@ -464,7 +465,8 @@ class SupabaseProfileRepository
           .eq(ownerColumn, userId)
           .order('created_at', ascending: false)
           .order(relatedColumn, ascending: true)
-          .range(offset, offset + pageSize - 1);
+          .range(offset, offset + pageSize - 1)
+          .timeout(fieldReadTimeout);
       ids.addAll([for (final row in rows) row[relatedColumn] as String]);
       if (rows.length < pageSize) break;
     }
@@ -798,7 +800,8 @@ class SupabaseProfileRepository
             'list_profile_previous_games',
             params: {'profile_id_to_use': userId},
           )
-          .range(offset, offset + pageSize - 1);
+          .range(offset, offset + pageSize - 1)
+          .timeout(fieldReadTimeout);
       final rows = switch (response) {
         final List value => value,
         final Map value => [value],
@@ -829,7 +832,8 @@ class SupabaseProfileRepository
             .from('open_queue_games')
             .select('id,timezone,open_queue_events(occurred_at)')
             .inFilter('id', soloIds.sublist(start, end))
-            .eq('open_queue_events.event_type', 'MATCH_STARTED');
+            .eq('open_queue_events.event_type', 'MATCH_STARTED')
+            .timeout(fieldReadTimeout);
         for (final row in metadata) {
           final timezone = row['timezone'];
           if (timezone is String && timezone.trim().isNotEmpty) {

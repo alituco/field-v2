@@ -360,9 +360,9 @@ class SupabaseOpenQueueRepository
     if (response == null) return null;
 
     final booking = _bookingFromJoinedGame(Map<String, dynamic>.from(response));
-    if (!booking.game.isUpcomingReservation) return null;
+    if (!booking.game.isActiveReservation) return null;
     final hydrated = await _hydrateBookingGame(booking);
-    return hydrated.game.isUpcomingReservation ? hydrated : null;
+    return hydrated.game.isActiveReservation ? hydrated : null;
   }
 
   @override
@@ -480,7 +480,9 @@ class SupabaseOpenQueueRepository
   Future<OpenQueueBooking> _hydrateBookingGame(OpenQueueBooking booking) async {
     try {
       // This endpoint applies rating privacy and is not discovery-limited.
-      final detail = await getMatchDetail(booking.gameId);
+      final detail = await getMatchDetail(
+        booking.gameId,
+      ).timeout(const Duration(seconds: 4));
       if (detail.game.id == booking.gameId) {
         return booking.copyWith(game: detail.game);
       }
@@ -519,7 +521,6 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
   required Iterable<OpenQueueGame> games,
   DateTime? now,
 }) {
-  final cutoff = now ?? DateTime.now();
   final gamesById = {for (final game in games) game.id: game};
   final seenBookingIds = <String>{};
   final hydrated = <OpenQueueBooking>[];
@@ -529,7 +530,7 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
       continue;
     }
     final game = gamesById[booking.gameId] ?? booking.game;
-    if (game.id != booking.gameId || !game.isUpcomingReservationAt(cutoff)) {
+    if (game.id != booking.gameId || !game.isActiveReservation) {
       continue;
     }
     hydrated.add(booking.copyWith(game: game));

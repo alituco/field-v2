@@ -26,6 +26,68 @@ void main() {
     }
   });
 
+  testWidgets(
+    'stalled live refresh times out, retries and ignores a late stale result',
+    (tester) async {
+      final repository = _Games()..status = 'LIVE';
+      await _game(tester, repository);
+      final oldDetail = repository.detail;
+      final pending = Completer<OpenQueueMatchDetail>();
+      repository.nextDetail = pending;
+      await tester.pump(const Duration(seconds: 20));
+      await tester.pump();
+      repository.status = 'FINAL';
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('● LIVE'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.text('FULL TIME'), findsOneWidget);
+      expect(find.text('Try again'), findsNothing);
+      pending.complete(oldDetail);
+      await tester.pumpAndSettle();
+      expect(find.text('FULL TIME'), findsOneWidget);
+      expect(find.text('● LIVE'), findsNothing);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('stalled first game read leaves loading for a usable retry', (
+    tester,
+  ) async {
+    final repository = _Games()..nextDetail = Completer<OpenQueueMatchDetail>();
+    await _game(tester, repository);
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.text('Try again'), findsOneWidget);
+    await tester.tap(find.text('Try again'));
+    await tester.pumpAndSettle();
+    expect(find.text('Leave game'), findsOneWidget);
+    expect(find.text('Try again'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'stalled cancellation preview releases actions without cancelling the booking',
+    (tester) async {
+      final repository = _Games();
+      await _game(tester, repository);
+      repository.nextPreview = Completer<OpenQueueCancellationPreview>();
+      await tester.tap(find.text('Leave game'));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(repository.cancellations, 0);
+      expect(find.text('Confirm cancellation'), findsNothing);
+      await tester.tap(find.text('Leave game'));
+      await tester.pumpAndSettle();
+      expect(find.text('Confirm cancellation'), findsOneWidget);
+      expect(repository.cancellations, 0);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   for (final owner in [true, false]) {
     testWidgets(
       'switching party discloses ${owner ? 'owner disband' : 'member departure'} and can be declined',
@@ -604,6 +666,7 @@ class _Games extends Fake
   final requestedGameIds = <String>[];
   Completer<OpenQueueBooking?>? nextLookup;
   Completer<OpenQueueMatchDetail>? nextDetail;
+  Completer<OpenQueueCancellationPreview>? nextPreview;
   OpenQueueMatchDetail get detail => OpenQueueMatchDetail(
     game: _gameModel(booked: booked, status: status),
     scorers: const [],
@@ -636,14 +699,20 @@ class _Games extends Fake
   @override
   Future<OpenQueueCancellationPreview> previewCancellation(
     String bookingId,
-  ) async => const OpenQueueCancellationPreview(
-    canCancel: true,
-    refundPercent: 100,
-    refundAmountFils: 13000,
-    refundCutoffAt: null,
-    currency: 'USD',
-    refundDestination: 'ORIGINAL_PAYMENT_METHOD',
-  );
+  ) async {
+    final pending = nextPreview;
+    nextPreview = null;
+    if (pending != null) return pending.future;
+    return const OpenQueueCancellationPreview(
+      canCancel: true,
+      refundPercent: 100,
+      refundAmountFils: 13000,
+      refundCutoffAt: null,
+      currency: 'USD',
+      refundDestination: 'ORIGINAL_PAYMENT_METHOD',
+    );
+  }
+
   @override
   Future<OpenQueueBooking> cancelBooking(String bookingId) async {
     cancellations++;

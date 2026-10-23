@@ -176,11 +176,12 @@ void main() {
   );
 
   testWidgets(
-    'a currently live booked game stays accessible after upcoming API stops returning it',
+    'a live booked game stays accessible when the booking lookup fails',
     (tester) async {
       await _pump(
         tester,
         _Queue(
+          bookingsFail: true,
           fixtures: [_game('live', status: 'LIVE', bookingId: 'live-booking')],
         ),
       );
@@ -776,12 +777,18 @@ class _Queue extends Fake implements OpenQueueRepository {
     this.bookings = const [],
     this.games = const [],
     this.fixtures = const [],
+    this.bookingsFail = false,
   });
   List<OpenQueueBooking> bookings;
   List<OpenQueueGame> games;
   List<OpenQueueGame> fixtures;
+  final bool bookingsFail;
   @override
-  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => bookings;
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
+    if (bookingsFail) throw StateError('Bookings temporarily unavailable');
+    return bookings;
+  }
+
   @override
   Future<List<OpenQueueGame>> listGames() async => games;
   @override

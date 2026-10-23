@@ -8,6 +8,7 @@ import 'package:video_player/video_player.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
+import '../core/read_timeout.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fieldrush_match_replay_screen.dart';
 import '../fixtures/fixture_repository.dart';
@@ -185,12 +186,14 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   }
 
   Future<void> _load({bool quiet = false, bool requireFresh = false}) async {
-    if (_refreshing && !requireFresh) return;
+    if (_refreshing && quiet && !requireFresh) return;
     final generation = ++_loadGeneration;
     _refreshing = true;
     if (!quiet) setState(() => _error = null);
     try {
-      final detail = await widget.repository.getMatchDetail(widget.gameId);
+      final detail = await widget.repository
+          .getMatchDetail(widget.gameId)
+          .timeout(fieldReadTimeout);
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _detail = detail;
@@ -226,9 +229,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
         // Keep the server's booking flag and retry on the next refresh.
       }
     } catch (error) {
-      if (mounted &&
-          generation == _loadGeneration &&
-          (!quiet || _detail == null)) {
+      if (mounted && generation == _loadGeneration) {
         setState(
           () => _error = userFacingError(
             error,
@@ -297,7 +298,9 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     if (bookingId == null || _acting) return;
     setState(() => _acting = true);
     try {
-      var preview = await widget.repository.previewCancellation(bookingId);
+      var preview = await widget.repository
+          .previewCancellation(bookingId)
+          .timeout(fieldReadTimeout);
       var updated = false;
       while (mounted) {
         if (!mounted) return;
@@ -327,7 +330,9 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
           destructive: true,
         );
         if (!confirmed || !mounted) return;
-        final latest = await widget.repository.previewCancellation(bookingId);
+        final latest = await widget.repository
+            .previewCancellation(bookingId)
+            .timeout(fieldReadTimeout);
         if (preview.hasSameConsequencesAs(latest)) break;
         preview = latest;
         updated = true;
@@ -1294,7 +1299,10 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            event.assist != null
+                            event.isGoalValid == false ||
+                                    event.eventType == 'DISALLOWED_GOAL'
+                                ? 'Goal disallowed'
+                                : event.assist != null
                                 ? 'Assist · ${event.assistName}'
                                 : event.note?.isNotEmpty == true
                                 ? event.note!
