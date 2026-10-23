@@ -330,13 +330,13 @@ void main() {
     expect(find.text('9/14 in', findRichText: true), findsOneWidget);
     expect(find.text('8:30'), findsOneWidget);
     expect(find.textContaining('THU, 4 JUN'), findsOneWidget);
-    expect(find.textContaining('Teams assigned'), findsOneWidget);
+    expect(find.textContaining('assigned White or Black'), findsOneWidget);
     expect(find.text('WEAR WHITE'), findsNothing);
     expect(find.textContaining('Streak'), findsNothing);
     expect(find.textContaining('streak'), findsNothing);
   });
 
-  testWidgets('kit instruction appears only for an active assigned team', (
+  testWidgets('team ticket appears only for an active assigned team', (
     tester,
   ) async {
     final game = _game(status: 'FULL', confirmed: 14, assigned: true);
@@ -348,14 +348,17 @@ void main() {
       ),
     );
     expect(find.text('ROSTER FULL'), findsOneWidget);
-    expect(find.text('WEAR BLACK'), findsOneWidget);
+    expect(find.text("YOU'RE ON"), findsOneWidget);
+    expect(find.text('BLACK'), findsOneWidget);
+    expect(find.text('See your team ›'), findsOneWidget);
+    expect(find.text('WEAR BLACK'), findsNothing);
     await _pump(
       tester,
       FieldrushSoloHero(booking: _booking(game), onTap: () {}),
     );
     expect(find.text('WEAR BLACK'), findsNothing);
     expect(find.text('WEAR WHITE'), findsNothing);
-    expect(find.text('Kit assignment updating'), findsOneWidget);
+    expect(find.text('ASSIGNMENT UPDATING'), findsOneWidget);
   });
 
   for (final team in [openQueueWhiteTeamId, openQueueBlackTeamId]) {
@@ -375,7 +378,8 @@ void main() {
           onTap: () {},
         ),
       );
-      expect(find.text('WEAR $team'), findsOneWidget);
+      expect(find.text(team), findsOneWidget);
+      expect(find.text("YOU'RE ON"), findsOneWidget);
       expect(find.text('Kit assignment updating'), findsNothing);
       expect(game.whiteAverageSr, isNull);
       expect(game.blackAverageSr, isNull);
@@ -383,6 +387,102 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  testWidgets('Home team ticket and Match details keep their own actions', (
+    tester,
+  ) async {
+    var details = 0;
+    var teams = 0;
+    final booking = _booking(
+      _game(status: 'FULL', confirmed: 14, assigned: true),
+      team: openQueueWhiteTeamId,
+    );
+    await _pump(
+      tester,
+      FieldrushSoloHero(
+        booking: booking,
+        onTap: () => details++,
+        onSeeTeam: () => teams++,
+      ),
+    );
+    await tester.tap(find.text('See your team ›'));
+    expect(teams, 1);
+    expect(details, 0);
+    await tester.tap(find.text('Match details'));
+    expect(details, 1);
+    await _pump(
+      tester,
+      FieldrushSoloHero(booking: booking, onTap: () => details++),
+    );
+    await tester.tap(find.text('See your team ›'));
+    expect(details, 2);
+  });
+
+  testWidgets(
+    'Home only shows assignment notices for active upcoming bookings',
+    (tester) async {
+      for (final status in ['LIVE', 'FINAL', 'CANCELLED']) {
+        await _pump(
+          tester,
+          FieldrushSoloHero(
+            booking: _booking(
+              _game(status: status, assigned: true, confirmed: 14),
+            ),
+            onTap: () {},
+          ),
+        );
+        expect(
+          find.byKey(const ValueKey('team-assignment-ticket')),
+          findsNothing,
+        );
+      }
+      await _pump(
+        tester,
+        FieldrushSoloHero(
+          booking: _booking(
+            _game(operationalState: MatchOperationalState.underReview),
+          ),
+          onTap: () {},
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('team-assignment-ticket')),
+        findsNothing,
+      );
+      await _pump(
+        tester,
+        FieldrushSoloHero(
+          booking: _booking(_game(), status: 'CANCELLED'),
+          onTap: () {},
+        ),
+      );
+      expect(
+        find.byKey(const ValueKey('team-assignment-ticket')),
+        findsNothing,
+      );
+    },
+  );
+
+  testWidgets(
+    'Home forwards one due refresh while the server assignment is pending',
+    (tester) async {
+      var refreshes = 0;
+      await _pump(
+        tester,
+        FieldrushSoloHero(
+          booking: _booking(
+            _game(assignmentAt: DateTime.utc(2000), confirmed: 14),
+          ),
+          onTap: () {},
+          onAssignmentDue: () => refreshes++,
+        ),
+      );
+      expect(refreshes, 1);
+      expect(find.text('ASSIGNMENT UPDATING'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 5));
+      expect(refreshes, 1);
+    },
+  );
 
   testWidgets(
     'also booked displays the game local date and opens its callback',
@@ -801,6 +901,7 @@ Future<void> _pump(
   tester.view.physicalSize = Size(width, 1600);
   addTearDown(tester.view.resetDevicePixelRatio);
   addTearDown(tester.view.resetPhysicalSize);
+  addTearDown(() async => tester.pumpWidget(const SizedBox.shrink()));
   await tester.pumpWidget(
     MaterialApp(
       builder: (context, widget) => MediaQuery(
@@ -838,6 +939,8 @@ OpenQueueGame _game({
   int defenderSpots = 6,
   String? myBookingId,
   bool assigned = false,
+  DateTime? assignmentAt,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
   bool hideRatings = false,
   int highestDivision = 1,
   int lowestDivision = 5,
@@ -864,24 +967,30 @@ OpenQueueGame _game({
   },
   myBookingId: myBookingId,
   teamsAssignedAt: assigned ? DateTime.utc(2000) : null,
-  teamAssignmentAt: assigned ? DateTime.utc(2000) : DateTime.utc(2099, 6, 5),
+  teamAssignmentAt:
+      assignmentAt ??
+      (assigned ? DateTime.utc(2000) : DateTime.utc(2099, 6, 5)),
   teamAssignmentLeadMinutes: 180,
   whiteAverageSr: assigned && !hideRatings ? 1200 : null,
   blackAverageSr: assigned && !hideRatings ? 1210 : null,
   matchAverageSr: assigned && !hideRatings ? 1205 : null,
+  operationalState: operationalState,
 );
-OpenQueueBooking _booking(OpenQueueGame game, {String? team}) =>
-    OpenQueueBooking(
-      id: 'booking',
-      gameId: game.id,
-      profileId: 'profile',
-      role: OpenQueueRole.defender,
-      status: 'CONFIRMED',
-      amountPaidFils: 13000,
-      bookedAt: DateTime.utc(2099),
-      game: game,
-      team: team,
-    );
+OpenQueueBooking _booking(
+  OpenQueueGame game, {
+  String? team,
+  String status = 'CONFIRMED',
+}) => OpenQueueBooking(
+  id: 'booking',
+  gameId: game.id,
+  profileId: 'profile',
+  role: OpenQueueRole.defender,
+  status: status,
+  amountPaidFils: 13000,
+  bookedAt: DateTime.utc(2099),
+  game: game,
+  team: team,
+);
 PlayerProfile _profile({
   List<ProfileRatingEvent> events = const [],
   int matches = 0,

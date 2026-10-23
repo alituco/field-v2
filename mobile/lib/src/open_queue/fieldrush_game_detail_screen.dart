@@ -24,6 +24,7 @@ import 'fieldrush_game_detail_party.dart';
 import 'fieldrush_game_loading.dart';
 import 'open_queue.dart';
 import 'open_queue_repository.dart';
+import 'team_assignment_notice.dart';
 
 const _cream = FieldrushAuthTheme.cream;
 const _ink = FieldrushAuthTheme.ink;
@@ -73,6 +74,7 @@ class FieldrushGameDetailScreen extends StatefulWidget {
     this.profileRepository,
     this.fixtureRepository,
     this.initiallyShowWatch = false,
+    this.initiallyFocusLineup = false,
   });
 
   final OpenQueueRepository repository;
@@ -89,6 +91,7 @@ class FieldrushGameDetailScreen extends StatefulWidget {
   final ProfileRepository? profileRepository;
   final FixtureRepository? fixtureRepository;
   final bool initiallyShowWatch;
+  final bool initiallyFocusLineup;
 
   @override
   State<FieldrushGameDetailScreen> createState() =>
@@ -110,6 +113,8 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
       ? _Section.watch
       : _Section.lineup;
   Timer? _timer;
+  final _lineupKey = GlobalKey();
+  bool _initialLineupFocused = false;
 
   OpenQueueGame? get _game => _detail?.game ?? widget.initialGame;
   OpenQueuePlayer? get _ratingPlayer => _detail?.players
@@ -188,21 +193,28 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _detail = detail;
+        _loading = false;
         _error = null;
         _bookingKnown = false;
         // A completed cancellation (including one on another device) must not
         // retain a stale confirmed booking if its supplemental lookup fails.
         if (_booking?.id != detail.game.myBookingId) _booking = null;
       });
+      if (widget.initiallyFocusLineup && !_initialLineupFocused) {
+        _showLineup();
+      }
       // A booking lookup failure must not hide an otherwise valid fixture.
       try {
         final repository = widget.repository;
-        final booking = repository is OpenQueueBookingLookupRepository
-            ? await (repository as OpenQueueBookingLookupRepository)
+        final lookup = repository is OpenQueueBookingLookupRepository
+            ? (repository as OpenQueueBookingLookupRepository)
                   .getMyUpcomingBookingForGame(widget.gameId)
-            : (await repository.getMyUpcomingBookings())
-                  .where((item) => item.gameId == widget.gameId)
-                  .firstOrNull;
+            : repository.getMyUpcomingBookings().then(
+                (rows) => rows
+                    .where((item) => item.gameId == widget.gameId)
+                    .firstOrNull,
+              );
+        final booking = await lookup.timeout(const Duration(seconds: 12));
         if (mounted && generation == _loadGeneration) {
           setState(() {
             _booking = booking;
@@ -226,9 +238,32 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     } finally {
       if (generation == _loadGeneration) {
         _refreshing = false;
-        if (mounted) setState(() => _loading = false);
+        if (mounted) {
+          setState(() => _loading = false);
+          if (widget.initiallyFocusLineup &&
+              !_initialLineupFocused &&
+              _detail != null) {
+            _showLineup();
+          }
+        }
       }
     }
+  }
+
+  void _showLineup() {
+    if (!mounted) return;
+    setState(() => _section = _Section.lineup);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _lineupKey.currentContext == null) return;
+      _initialLineupFocused = true;
+      unawaited(
+        Scrollable.ensureVisible(
+          _lineupKey.currentContext!,
+          duration: const Duration(milliseconds: 250),
+          alignment: 0,
+        ),
+      );
+    });
   }
 
   void _message(String message) {
@@ -431,127 +466,137 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
           child: FieldRefreshIndicator(
             color: _green,
             onRefresh: _load,
-            child: ListView(
+            // These few page sections contain their own bounded game content.
+            // Mount them together so the lineup anchor exists even when a
+            // large-text hero fills more than the viewport.
+            child: SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 18, 16, 132),
-              children: [
-                _DetailHeader(
-                  title: 'Solo game',
-                  titleAccessory: game == null
-                      ? null
-                      : FieldrushGameDivisionRange(
-                          key: const ValueKey('game-header-divisions'),
-                          game: game,
-                          compact: true,
-                        ),
-                  trailing: game == null
-                      ? null
-                      : Text(
-                          _isBooked &&
-                                  (game.status == 'OPEN' ||
-                                      game.status == 'FULL')
-                              ? 'YOU’RE IN'
-                              : game.status == 'OPEN' && !game.isFull
-                              ? 'OPEN'
-                              : game.statusLabel.toUpperCase(),
-                          style: _body(
-                            10,
-                            color: game.status == 'LIVE'
-                                ? FieldrushAuthTheme.danger
-                                : _green,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _DetailHeader(
+                    title: 'Solo game',
+                    titleAccessory: game == null
+                        ? null
+                        : FieldrushGameDivisionRange(
+                            key: const ValueKey('game-header-divisions'),
+                            game: game,
+                            compact: true,
                           ),
-                        ),
-                ),
-                if (_loading && game == null) const FieldrushGameLoading(),
-                if (_error != null)
-                  _Card(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _error!,
-                          style: _body(12, color: FieldrushAuthTheme.danger),
-                        ),
-                        TextButton(
-                          onPressed: _load,
-                          child: const Text('Try again'),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (game != null) ...[
-                  const SizedBox(height: 16),
-                  _hero(game),
-                  if (_ratingUpdate case final ratingUpdate?
-                      when game.status == 'FINAL') ...[
-                    const SizedBox(height: 12),
-                    _ratingSummary(ratingUpdate),
-                  ],
-                  if (_ratingMessage case final explanation?) ...[
-                    const SizedBox(height: 12),
-                    _Card(
-                      child: Text(
-                        explanation,
-                        key: const ValueKey('game-rating-explanation'),
-                        style: _body(12),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 16),
-                  Container(
-                    padding: const EdgeInsets.all(5),
-                    decoration: BoxDecoration(
-                      color: _wash,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Row(
-                      children: [
-                        for (final section in _Section.values)
-                          Expanded(
-                            child: Semantics(
-                              selected: section == _section,
-                              child: TextButton(
-                                key: ValueKey('game-tab-${section.name}'),
-                                onPressed: () =>
-                                    setState(() => _section = section),
-                                style: TextButton.styleFrom(
-                                  backgroundColor: section == _section
-                                      ? Colors.white
-                                      : Colors.transparent,
-                                  foregroundColor: section == _section
-                                      ? _ink
-                                      : _muted,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  textStyle: _body(12),
-                                ),
-                                child: Text(switch (section) {
-                                  _Section.lineup => 'Lineup',
-                                  _Section.timeline => 'Timeline',
-                                  _Section.watch => 'Stream',
-                                }),
-                              ),
+                    trailing: game == null
+                        ? null
+                        : Text(
+                            _isBooked &&
+                                    (game.status == 'OPEN' ||
+                                        game.status == 'FULL')
+                                ? 'YOU’RE IN'
+                                : game.status == 'OPEN' && !game.isFull
+                                ? 'OPEN'
+                                : game.statusLabel.toUpperCase(),
+                            style: _body(
+                              10,
+                              color: game.status == 'LIVE'
+                                  ? FieldrushAuthTheme.danger
+                                  : _green,
                             ),
                           ),
-                      ],
-                    ),
                   ),
-                  if (_detail == null && _loading)
-                    const FieldLoadingContent(label: 'Loading lineup', rows: 4),
-                  if (_detail case final detail?)
-                    switch (_section) {
-                      _Section.lineup => _lineup(detail),
-                      _Section.timeline => _timeline(detail),
-                      _Section.watch => _GameWatch(
-                        detail: detail,
-                        onClips: _clips,
-                        onReplay: _openReplay,
-                        onHighlights: () =>
-                            _clips(Duration.zero, highlights: true),
+                  if (_loading && game == null) const FieldrushGameLoading(),
+                  if (_error != null)
+                    _Card(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _error!,
+                            style: _body(12, color: FieldrushAuthTheme.danger),
+                          ),
+                          TextButton(
+                            onPressed: _load,
+                            child: const Text('Try again'),
+                          ),
+                        ],
                       ),
-                    },
+                    ),
+                  if (game != null) ...[
+                    const SizedBox(height: 16),
+                    _hero(game),
+                    if (_ratingUpdate case final ratingUpdate?
+                        when game.status == 'FINAL') ...[
+                      const SizedBox(height: 12),
+                      _ratingSummary(ratingUpdate),
+                    ],
+                    if (_ratingMessage case final explanation?) ...[
+                      const SizedBox(height: 12),
+                      _Card(
+                        child: Text(
+                          explanation,
+                          key: const ValueKey('game-rating-explanation'),
+                          style: _body(12),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(5),
+                      decoration: BoxDecoration(
+                        color: _wash,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Row(
+                        children: [
+                          for (final section in _Section.values)
+                            Expanded(
+                              child: Semantics(
+                                selected: section == _section,
+                                child: TextButton(
+                                  key: ValueKey('game-tab-${section.name}'),
+                                  onPressed: () =>
+                                      setState(() => _section = section),
+                                  style: TextButton.styleFrom(
+                                    backgroundColor: section == _section
+                                        ? Colors.white
+                                        : Colors.transparent,
+                                    foregroundColor: section == _section
+                                        ? _ink
+                                        : _muted,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    textStyle: _body(12),
+                                  ),
+                                  child: Text(switch (section) {
+                                    _Section.lineup => 'Lineup',
+                                    _Section.timeline => 'Timeline',
+                                    _Section.watch => 'Stream',
+                                  }),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    if (_detail == null && _loading)
+                      const FieldLoadingContent(
+                        label: 'Loading lineup',
+                        rows: 4,
+                      ),
+                    if (_detail case final detail?)
+                      switch (_section) {
+                        _Section.lineup => _lineup(detail),
+                        _Section.timeline => _timeline(detail),
+                        _Section.watch => _GameWatch(
+                          detail: detail,
+                          onClips: _clips,
+                          onReplay: _openReplay,
+                          onHighlights: () =>
+                              _clips(Duration.zero, highlights: true),
+                        ),
+                      },
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -566,8 +611,10 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     final count = game.confirmedCount;
     final time = game.startTimeLabel.split(' ');
     final team = game.hasActiveTeamAssignment
-        ? _booking?.assignedTeam ?? game.myBookingTeam
+        ? game.myBookingTeam ?? _booking?.assignedTeam
         : null;
+    final showAssignmentNotice =
+        upcoming && _isBooked && !game.hasPendingOperationalResolution;
     final role = _booking?.role ?? game.myBookingRole;
     final teamText = team?.isNotEmpty == true
         ? '${team!.toUpperCase() == 'WHITE' ? 'White' : 'Black'} team${role == null ? '' : ' · ${role.label}'}'
@@ -576,264 +623,295 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
         : 'Teams are drawn before kick-off';
     return Container(
       key: const ValueKey('fieldrush-game-hero'),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: _green,
         borderRadius: BorderRadius.circular(22),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Flexible(
-                child: FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text.rich(
-                    TextSpan(
-                      children: [
-                        TextSpan(
-                          text: time.first,
-                          style: _display(56, color: Colors.white),
-                        ),
-                        if (time.length > 1)
-                          TextSpan(
-                            text: ' ${time.last}',
-                            style: _display(18, color: _lime),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 13),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    '${game.calendarDateLabel}\n${game.venue.isEmpty ? 'Venue to be confirmed' : game.venue}',
-                    style: _body(11.5, color: _light),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (game.locationLabel case final String address) ...[
-            const SizedBox(height: 12),
-            Text(
-              address,
-              key: const ValueKey('fieldrush-game-address'),
-              style: _body(11.5, color: _light),
-            ),
-          ],
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.all(15),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .18),
-              borderRadius: BorderRadius.circular(16),
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                if (game.hasPendingOperationalResolution) ...[
-                  Text(
-                    game.operationalStatusLabel ?? 'Under review',
-                    style: _display(22, color: Colors.white),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    game.operationalStatusDetail ??
-                        'Match details will update after review.',
-                    style: _body(11.5, color: _light),
-                  ),
-                ] else if (status == 'LIVE' || status == 'FINAL') ...[
-                  Row(
-                    children: [
-                      Text(
-                        status == 'LIVE' ? '● LIVE' : 'FULL TIME',
-                        style: _body(10, color: _lime),
-                      ),
-                      const Spacer(),
-                      if (_detail?.clock != null && status == 'LIVE')
-                        Text(
-                          '${_detail!.clock!.elapsedSeconds() ~/ 60}′',
-                          style: _body(12, color: _light),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 13),
-                  Row(
-                    children: [
-                      Expanded(child: _score('WHITE', game.whiteScore)),
-                      Expanded(
-                        child: _score('BLACK', game.blackScore, right: true),
-                      ),
-                    ],
-                  ),
-                  if (status == 'FINAL' &&
-                      (game.whiteScore == null || game.blackScore == null))
-                    Padding(
-                      padding: const EdgeInsets.only(top: 12),
-                      child: Text(
-                        'Result not published yet',
-                        style: _body(11, color: _light),
-                      ),
-                    ),
-                ] else if (status == 'CANCELLED') ...[
-                  Text(
-                    'Game cancelled',
-                    style: _display(24, color: Colors.white),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'This game is no longer taking place.',
-                    style: _body(12, color: _light),
-                  ),
-                ] else ...[
-                  Row(
-                    children: [
-                      Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(
-                              text: '$count',
-                              style: _display(22, color: Colors.white),
-                            ),
-                            TextSpan(
-                              text: '/${game.capacity} in',
-                              style: _display(20, color: _lime),
-                            ),
-                          ],
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: time.first,
+                                style: _display(56, color: Colors.white),
+                              ),
+                              if (time.length > 1)
+                                TextSpan(
+                                  text: ' ${time.last}',
+                                  style: _display(18, color: _lime),
+                                ),
+                            ],
+                          ),
                         ),
                       ),
-                      const Spacer(),
-                      Text(
-                        game.isFull
-                            ? 'FULL'
-                            : '${math.max(0, game.capacity - count)} SPOTS',
-                        style: _body(10.5, color: _light),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 11),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(99),
-                    child: LinearProgressIndicator(
-                      value: game.capacity > 0
-                          ? (count / game.capacity).clamp(0, 1)
-                          : 0,
-                      minHeight: 9,
-                      backgroundColor: Colors.white24,
-                      color: const Color(0xFFA7C957),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (game.hasConfigurableMinimum) ...[
-                    Text(
-                      game.minimumPlayersProgressLabel,
-                      style: _body(11, color: _light),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'At kickoff and during play: ${game.requiredMinimumPlayers} actual players total, with at least one on each team.',
-                      style: _body(10.5, color: _light),
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  Divider(
-                    height: 1,
-                    color: Colors.white.withValues(alpha: .14),
-                  ),
-                  const SizedBox(height: 11),
-                  Row(
-                    children: [
-                      Icon(
-                        team == null
-                            ? Icons.lock_outline_rounded
-                            : Icons.check_circle_outline_rounded,
-                        color: _lime,
-                        size: 15,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
+                    const SizedBox(width: 13),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
                         child: Text(
-                          teamText,
+                          '${game.calendarDateLabel}\n${game.venue.isEmpty ? 'Venue to be confirmed' : game.venue}',
                           style: _body(11.5, color: _light),
                         ),
                       ),
-                      if (_isBooked)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: Text(
-                            'YOU’RE IN',
-                            style: _body(9, color: _lime),
+                    ),
+                  ],
+                ),
+                if (game.locationLabel case final String address) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    address,
+                    key: const ValueKey('fieldrush-game-address'),
+                    style: _body(11.5, color: _light),
+                  ),
+                ],
+                const SizedBox(height: 18),
+                Container(
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .18),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (game.hasPendingOperationalResolution) ...[
+                        Text(
+                          game.operationalStatusLabel ?? 'Under review',
+                          style: _display(22, color: Colors.white),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          game.operationalStatusDetail ??
+                              'Match details will update after review.',
+                          style: _body(11.5, color: _light),
+                        ),
+                      ] else if (status == 'LIVE' || status == 'FINAL') ...[
+                        Row(
+                          children: [
+                            Text(
+                              status == 'LIVE' ? '● LIVE' : 'FULL TIME',
+                              style: _body(10, color: _lime),
+                            ),
+                            const Spacer(),
+                            if (_detail?.clock != null && status == 'LIVE')
+                              Text(
+                                '${_detail!.clock!.elapsedSeconds() ~/ 60}′',
+                                style: _body(12, color: _light),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 13),
+                        Row(
+                          children: [
+                            Expanded(child: _score('WHITE', game.whiteScore)),
+                            Expanded(
+                              child: _score(
+                                'BLACK',
+                                game.blackScore,
+                                right: true,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (status == 'FINAL' &&
+                            (game.whiteScore == null ||
+                                game.blackScore == null))
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12),
+                            child: Text(
+                              'Result not published yet',
+                              style: _body(11, color: _light),
+                            ),
+                          ),
+                      ] else if (status == 'CANCELLED') ...[
+                        Text(
+                          'Game cancelled',
+                          style: _display(24, color: Colors.white),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'This game is no longer taking place.',
+                          style: _body(12, color: _light),
+                        ),
+                      ] else ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: Wrap(
+                            alignment: WrapAlignment.spaceBetween,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            spacing: 12,
+                            runSpacing: 8,
+                            children: [
+                              Text.rich(
+                                TextSpan(
+                                  children: [
+                                    TextSpan(
+                                      text: '$count',
+                                      style: _display(22, color: Colors.white),
+                                    ),
+                                    TextSpan(
+                                      text: '/${game.capacity} in',
+                                      style: _display(20, color: _lime),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Text(
+                                game.isFull
+                                    ? 'FULL'
+                                    : '${math.max(0, game.capacity - count)} SPOTS',
+                                style: _body(10.5, color: _light),
+                              ),
+                            ],
                           ),
                         ),
+                        const SizedBox(height: 11),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(99),
+                          child: LinearProgressIndicator(
+                            value: game.capacity > 0
+                                ? (count / game.capacity).clamp(0, 1)
+                                : 0,
+                            minHeight: 9,
+                            backgroundColor: Colors.white24,
+                            color: const Color(0xFFA7C957),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        if (game.hasConfigurableMinimum) ...[
+                          Text(
+                            game.minimumPlayersProgressLabel,
+                            style: _body(11, color: _light),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'At kickoff and during play: ${game.requiredMinimumPlayers} actual players total, with at least one on each team.',
+                            style: _body(10.5, color: _light),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
+                        if (!showAssignmentNotice) ...[
+                          Divider(
+                            height: 1,
+                            color: Colors.white.withValues(alpha: .14),
+                          ),
+                          const SizedBox(height: 11),
+                          Row(
+                            children: [
+                              Icon(
+                                team == null
+                                    ? Icons.lock_outline_rounded
+                                    : Icons.check_circle_outline_rounded,
+                                color: _lime,
+                                size: 15,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  teamText,
+                                  style: _body(11.5, color: _light),
+                                ),
+                              ),
+                              if (_isBooked)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Text(
+                                    'YOU’RE IN',
+                                    style: _body(9, color: _lime),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ],
+                      ],
+                    ],
+                  ),
+                ),
+                if (upcoming && !game.hasPendingOperationalResolution) ...[
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton(
+                          key: const ValueKey('game-main-action'),
+                          onPressed: _acting || _detail == null
+                              ? null
+                              : _isBooked
+                              ? _cancel
+                              : available && widget.onJoin != null
+                              ? _join
+                              : null,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: _lime,
+                            foregroundColor: _ink,
+                            disabledBackgroundColor: Colors.white24,
+                            disabledForegroundColor: _light,
+                            minimumSize: const Size(0, 50),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                          ),
+                          child: _acting
+                              ? Text(_isBooked ? 'Leaving…' : 'Joining…')
+                              : Text(
+                                  _isBooked
+                                      ? 'Leave game'
+                                      : available
+                                      ? 'Join · ${game.priceLabel}'
+                                      : game.isFull
+                                      ? 'Game full'
+                                      : 'Booking closed',
+                                  style: _body(12.5, color: _ink),
+                                ),
+                        ),
+                      ),
+                      const SizedBox(width: 9),
+                      OutlinedButton(
+                        onPressed: game.directionsUri == null
+                            ? null
+                            : _directions,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.white,
+                          side: const BorderSide(color: Colors.white54),
+                          minimumSize: const Size(0, 50),
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(15),
+                          ),
+                        ),
+                        child: Text(
+                          'Directions',
+                          style: _body(12.5, color: Colors.white),
+                        ),
+                      ),
                     ],
                   ),
                 ],
               ],
             ),
           ),
-          if (upcoming && !game.hasPendingOperationalResolution) ...[
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton(
-                    key: const ValueKey('game-main-action'),
-                    onPressed: _acting || _detail == null
-                        ? null
-                        : _isBooked
-                        ? _cancel
-                        : available && widget.onJoin != null
-                        ? _join
-                        : null,
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _lime,
-                      foregroundColor: _ink,
-                      disabledBackgroundColor: Colors.white24,
-                      disabledForegroundColor: _light,
-                      minimumSize: const Size(0, 50),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: _acting
-                        ? Text(_isBooked ? 'Leaving…' : 'Joining…')
-                        : Text(
-                            _isBooked
-                                ? 'Leave game'
-                                : available
-                                ? 'Join · ${game.priceLabel}'
-                                : game.isFull
-                                ? 'Game full'
-                                : 'Booking closed',
-                            style: _body(12.5, color: _ink),
-                          ),
-                  ),
-                ),
-                const SizedBox(width: 9),
-                OutlinedButton(
-                  onPressed: game.directionsUri == null ? null : _directions,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    side: const BorderSide(color: Colors.white54),
-                    minimumSize: const Size(0, 50),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15),
-                    ),
-                  ),
-                  child: Text(
-                    'Directions',
-                    style: _body(12.5, color: Colors.white),
-                  ),
-                ),
-              ],
+          if (showAssignmentNotice)
+            FieldrushTeamAssignmentNotice(
+              game: game,
+              team: team,
+              onAssignmentDue: () => unawaited(_load(quiet: true)),
+              captionColor: _light,
+              onSeeTeam: _showLineup,
             ),
-          ],
         ],
       ),
     );
@@ -910,15 +988,22 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     return Column(
       children: [
         _Card(
+          key: _lineupKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                children: [
-                  const _Label('LOBBY AVERAGE'),
-                  const Spacer(),
-                  Text('${game.confirmedCount} players', style: _body(10.5)),
-                ],
+              SizedBox(
+                width: double.infinity,
+                child: Wrap(
+                  alignment: WrapAlignment.spaceBetween,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  runSpacing: 8,
+                  children: [
+                    const _Label('LOBBY AVERAGE'),
+                    Text('${game.confirmedCount} players', style: _body(10.5)),
+                  ],
+                ),
               ),
               const SizedBox(height: 15),
               Row(
@@ -1059,12 +1144,18 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    const _Label('TEAMS'),
-                    const Spacer(),
-                    Text('Tap a player', style: _body(10.5)),
-                  ],
+                SizedBox(
+                  width: double.infinity,
+                  child: Wrap(
+                    alignment: WrapAlignment.spaceBetween,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 12,
+                    runSpacing: 8,
+                    children: [
+                      const _Label('TEAMS'),
+                      Text('Tap a player', style: _body(10.5)),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 14),
                 Row(
@@ -1472,23 +1563,35 @@ class _Fact extends StatelessWidget {
           ? null
           : const Border(bottom: BorderSide(color: Color(0xFFF0ECE0))),
     ),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: _body(12.5, weight: FontWeight.w600).copyWith(height: 1),
-        ),
-        const SizedBox(width: 15),
-        Expanded(
-          child: Text(
-            value,
-            style: _body(12.5, color: _ink).copyWith(height: 1),
-            textAlign: TextAlign.right,
+    child: MediaQuery.textScalerOf(context).scale(12.5) > 17.5
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: _body(12.5, weight: FontWeight.w600).copyWith(height: 1),
+              ),
+              const SizedBox(height: 8),
+              Text(value, style: _body(12.5, color: _ink).copyWith(height: 1)),
+            ],
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: _body(12.5, weight: FontWeight.w600).copyWith(height: 1),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: Text(
+                  value,
+                  style: _body(12.5, color: _ink).copyWith(height: 1),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
           ),
-        ),
-      ],
-    ),
   );
 }
 
