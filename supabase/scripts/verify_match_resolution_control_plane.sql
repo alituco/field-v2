@@ -874,6 +874,21 @@ begin
   where id = solo_game_id;
   execute 'alter table public.open_queue_games enable trigger user';
   execute 'alter table public.match_reliability_terms disable trigger user';
+  -- This rollback-only fixture deliberately models legacy attendance after
+  -- moving its schedule into the past. A current arrival contract bound while
+  -- the fixture was future inventory must not survive that artificial warp.
+  -- Clear its complete optional contract together, retaining the production
+  -- constraint and compatibility with replays before the arrival migration.
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='match_reliability_terms'
+      and column_name='arrival_policy_version_id'
+  ) then
+    execute 'update public.match_reliability_terms
+      set arrival_policy_version_id=null,arrival_check_in_opens_at=null,
+        arrival_check_in_deadline_at=null where open_queue_game_id=$1'
+      using solo_game_id;
+  end if;
   update public.match_reliability_terms
   set kickoff_at = solo_past_starts_at,
     check_in_opens_at = solo_past_starts_at - interval '3 hours',

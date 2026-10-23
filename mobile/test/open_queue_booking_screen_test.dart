@@ -173,7 +173,7 @@ void main() {
       FilledButton,
       'Continue to Secure Checkout',
     );
-    await tester.ensureVisible(checkoutButton);
+    await _bringAboveFloatingNav(tester, checkoutButton);
     await tester.pump();
     await tester.pump();
     await tester.tap(checkoutButton);
@@ -372,12 +372,11 @@ void main() {
       find.text('ASSIGNED 1 HOUR 30 MINUTES BEFORE KICKOFF'),
       findsOneWidget,
     );
-    expect(
-      find.textContaining(
-        'Teams and kits are finalized 1 hour 30 minutes before kickoff',
-      ),
-      findsOneWidget,
+    final kitCutoff = find.textContaining(
+      'Teams and kits are finalized 1 hour 30 minutes before kickoff',
     );
+    await _bringAboveFloatingNav(tester, kitCutoff);
+    expect(kitCutoff, findsOneWidget);
     expect(find.text('WEAR WHITE'), findsNothing);
     expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
     expect(find.byKey(const ValueKey('kit-assignment-updating')), findsNothing);

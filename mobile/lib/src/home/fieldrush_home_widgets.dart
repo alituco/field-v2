@@ -10,6 +10,8 @@ import '../leaderboard/leaderboard.dart';
 import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../leaderboard/fieldrush_rating_role_tabs.dart';
 import '../open_queue/open_queue.dart';
+import '../open_queue/fieldrush_check_in_notice.dart';
+import '../open_queue/team_assignment_notice.dart';
 import '../profile/profile.dart';
 import '../ranking/player_rating_visibility.dart';
 import '../ui/fieldrush_avatar_image.dart';
@@ -380,8 +382,16 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 const SizedBox(height: 14),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: Text(
+                    'CHECK IN',
+                    style: _jakarta(10.5, color: _green, tracking: 1.26),
+                  ),
+                ),
+                const SizedBox(height: 7),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: _KickoffTime(
-                    date: game.localStartsAt,
+                    date: game.localDisplayStartsAt,
                     size: 52,
                     color: const Color(0xFF24472C),
                   ),
@@ -390,13 +400,15 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: Text(
-                    '${_dateLabel(game.localStartsAt)} · $spots ${spots == 1 ? 'spot' : 'spots'} left for you',
+                    '${_dateLabel(game.localDisplayStartsAt)} · $spots ${spots == 1 ? 'spot' : 'spots'} left for you',
                     style: _jakarta(
                       12,
                       color: _green,
                     ).copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
+                const SizedBox(height: 12),
+                FieldrushCheckInNotice(game: game),
               ],
               const SizedBox(height: 14),
               SizedBox(
@@ -471,7 +483,7 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                   child: Text(
                     game == null
                         ? 'Play'
-                        : 'Play ${_weekday(game.localStartsAt.weekday)} · ${game.priceLabel}',
+                        : 'Play ${_weekday(game.localDisplayStartsAt.weekday)} · ${game.priceLabel}',
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -651,14 +663,14 @@ class _OpenNightRow extends StatelessWidget {
           );
           return Row(
             children: [
-              _DateTile(date: game.localStartsAt, size: 42),
+              _DateTile(date: game.localDisplayStartsAt, size: 42),
               const SizedBox(width: 13),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${_clock(game.localStartsAt)} · Solo',
+                      'CHECK IN · ${game.displayTimeLabel}',
                       style: _outfit(14),
                     ),
                     const SizedBox(height: 6),
@@ -743,182 +755,152 @@ class FieldrushSoloHero extends StatelessWidget {
     super.key,
     required this.booking,
     required this.onTap,
+    this.onSeeTeam,
+    this.onAssignmentDue,
   });
   final OpenQueueBooking booking;
   final VoidCallback onTap;
+  final VoidCallback? onSeeTeam;
+  final VoidCallback? onAssignmentDue;
 
   @override
   Widget build(BuildContext context) {
     final game = booking.game;
     final count = game.confirmedCount;
     final remaining = (game.capacity - count).clamp(0, game.capacity);
-    final team = booking.assignedTeam;
-    final pending = team == null;
-    final teamText = pending
-        ? game.isUpcomingMatchConfirmed && game.isTeamAssignmentDue
-              ? 'Kit assignment updating'
-              : 'Teams assigned ${game.teamAssignmentLeadLabel}'
-        : '${team == openQueueWhiteTeamId ? 'White' : 'Black'} team · ${booking.role.label}';
+    final showAssignment =
+        booking.status == 'CONFIRMED' &&
+        (game.status == 'OPEN' || game.status == 'FULL') &&
+        !game.hasPendingOperationalResolution &&
+        !game.hasRecordedScore;
     return Container(
       key: ValueKey('home-solo-booking-${booking.id}'),
       margin: const EdgeInsets.fromLTRB(16, 18, 16, 0),
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      clipBehavior: Clip.antiAlias,
       decoration: BoxDecoration(
         color: _green,
         borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: const Color(0xFFDED8C6)),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .2),
-              borderRadius: BorderRadius.circular(999),
-            ),
-            child: Text(
-              "SOLO GAME · YOU'RE IN",
-              style: _jakarta(10, color: Colors.white, tracking: 1.2),
-            ),
-          ),
-          const SizedBox(height: 16),
-          _HeroKickoff(date: game.localStartsAt, venue: game.venue),
-          const SizedBox(height: 18),
-          Container(
-            padding: const EdgeInsets.fromLTRB(15, 14, 15, 15),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .18),
-              borderRadius: BorderRadius.circular(16),
-            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  alignment: WrapAlignment.spaceBetween,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 12,
-                  runSpacing: 6,
-                  children: [
-                    Text.rich(
-                      TextSpan(
-                        text: '$count',
-                        style: _outfit(20, color: Colors.white),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .2),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    "SOLO GAME · YOU'RE IN",
+                    style: _jakarta(10, color: Colors.white, tracking: 1.2),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                _HeroKickoff(
+                  date: game.localDisplayStartsAt,
+                  venue: game.venue,
+                  checkIn: game.isUpcoming,
+                ),
+                const SizedBox(height: 18),
+                if (game.isUpcoming) ...[
+                  FieldrushCheckInNotice(game: game),
+                  const SizedBox(height: 18),
+                ],
+                Container(
+                  padding: const EdgeInsets.fromLTRB(15, 14, 15, 15),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: .18),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Wrap(
+                        alignment: WrapAlignment.spaceBetween,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 12,
+                        runSpacing: 6,
                         children: [
-                          TextSpan(
-                            text: '/${game.capacity} in',
-                            style: _outfit(20, color: _lime),
+                          Text.rich(
+                            TextSpan(
+                              text: '$count',
+                              style: _outfit(20, color: Colors.white),
+                              children: [
+                                TextSpan(
+                                  text: '/${game.capacity} in',
+                                  style: _outfit(20, color: _lime),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            remaining > 0
+                                ? 'WAITING ON $remaining'
+                                : 'ROSTER FULL',
+                            style: _jakarta(
+                              10.5,
+                              color: _light,
+                              tracking: 1.05,
+                            ),
                           ),
                         ],
                       ),
-                    ),
-                    Text(
-                      remaining > 0 ? 'WAITING ON $remaining' : 'ROSTER FULL',
-                      style: _jakarta(10.5, color: _light, tracking: 1.05),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 11),
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(999),
-                  child: LinearProgressIndicator(
-                    value: game.capacity <= 0
-                        ? 0
-                        : (count / game.capacity).clamp(0, 1),
-                    minHeight: 9,
-                    backgroundColor: Colors.white.withValues(alpha: .24),
-                    color: const Color(0xFFA7C957),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.only(top: 11),
-                  decoration: BoxDecoration(
-                    border: Border(
-                      top: BorderSide(
-                        color: Colors.white.withValues(alpha: .14),
-                      ),
-                    ),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Container(
-                        width: 10,
-                        height: 10,
-                        decoration: BoxDecoration(
-                          color: pending
-                              ? _lime
-                              : team == openQueueWhiteTeamId
-                              ? Colors.white
-                              : const Color(0xFF131913),
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color: Colors.white.withValues(alpha: .65),
-                          ),
+                      const SizedBox(height: 11),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          value: game.capacity <= 0
+                              ? 0
+                              : (count / game.capacity).clamp(0, 1),
+                          minHeight: 9,
+                          backgroundColor: Colors.white.withValues(alpha: .24),
+                          color: const Color(0xFFA7C957),
                         ),
                       ),
-                      const SizedBox(width: 9),
-                      Expanded(
-                        child: Text(
-                          teamText,
-                          style: _jakarta(
-                            11.5,
-                            color: _light,
-                          ).copyWith(fontWeight: FontWeight.w700),
-                        ),
-                      ),
-                      if (!pending) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          key: const ValueKey('kit-instruction'),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: team == openQueueWhiteTeamId
-                                ? Colors.white
-                                : const Color(0xFF141A15),
-                            borderRadius: BorderRadius.circular(7),
-                          ),
-                          child: Text(
-                            booking.kitInstruction!,
-                            style: _jakarta(
-                              8.5,
-                              color: team == openQueueWhiteTeamId
-                                  ? _ink
-                                  : Colors.white,
-                            ),
-                          ),
-                        ),
-                      ],
                     ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    onPressed: onTap,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: const Color(0xFF24472C),
+                      minimumSize: const Size(0, 50),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 15,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(15),
+                      ),
+                      textStyle: _jakarta(13.5),
+                    ),
+                    child: const Text('Match details'),
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton(
-              onPressed: onTap,
-              style: FilledButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: const Color(0xFF24472C),
-                minimumSize: const Size(0, 50),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 15,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(15),
-                ),
-                textStyle: _jakarta(13.5),
-              ),
-              child: const Text('Match details'),
+          if (showAssignment)
+            FieldrushTeamAssignmentNotice(
+              game: game,
+              team: booking.assignedTeam,
+              onSeeTeam: onSeeTeam ?? onTap,
+              onAssignmentDue: onAssignmentDue,
+              captionColor: _light,
             ),
-          ),
         ],
       ),
     );
@@ -926,18 +908,35 @@ class FieldrushSoloHero extends StatelessWidget {
 }
 
 class _HeroKickoff extends StatelessWidget {
-  const _HeroKickoff({required this.date, required this.venue});
+  const _HeroKickoff({
+    required this.date,
+    required this.venue,
+    this.checkIn = false,
+  });
   final DateTime date;
   final String venue;
+  final bool checkIn;
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final time = _KickoffTime(
-        date: date,
-        size: 56,
-        color: Colors.white,
-        periodColor: _lime,
+      final time = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (checkIn) ...[
+            Text(
+              'CHECK IN',
+              style: _jakarta(10.5, color: _lime, tracking: 1.26),
+            ),
+            const SizedBox(height: 7),
+          ],
+          _KickoffTime(
+            date: date,
+            size: 56,
+            color: Colors.white,
+            periodColor: _lime,
+          ),
+        ],
       );
       final meta = Text(
         '${_dateLabel(date).toUpperCase()}\n$venue',
@@ -1124,11 +1123,13 @@ class FieldrushAlsoBooked extends StatelessWidget {
     required this.startsAt,
     required this.onTap,
     this.gameTimezone = 'UTC',
+    this.isCheckIn = false,
   });
   final String title;
   final DateTime startsAt;
   final VoidCallback onTap;
   final String gameTimezone;
+  final bool isCheckIn;
 
   @override
   Widget build(BuildContext context) {
@@ -1156,6 +1157,13 @@ class FieldrushAlsoBooked extends StatelessWidget {
                     children: [
                       Text('ALSO BOOKED', style: _jakarta(9.5, tracking: 1.14)),
                       const SizedBox(height: 7),
+                      if (isCheckIn) ...[
+                        Text(
+                          'CHECK IN',
+                          style: _jakarta(9, color: _green, tracking: 1.08),
+                        ),
+                        const SizedBox(height: 5),
+                      ],
                       Text('${_clock(date)} · $title', style: _outfit(13.5)),
                     ],
                   ),

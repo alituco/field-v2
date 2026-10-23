@@ -435,7 +435,7 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('Saturday fixture shows the actual kickoff and 90-minute slot', (
+  testWidgets('Saturday fixture shows check-in time and the 90-minute slot', (
     tester,
   ) async {
     final detail = _detail(
@@ -444,10 +444,53 @@ void main() {
     );
     await show(tester, _Repository(detail));
     expect(find.textContaining('SAT, 12 JAN'), findsOneWidget);
-    expect(find.text('6:15 PM', findRichText: true), findsOneWidget);
+    expect(find.text('CHECK IN'), findsOneWidget);
+    expect(find.text('5:45 PM', findRichText: true), findsOneWidget);
+    expect(find.text('6:15 PM', findRichText: true), findsNothing);
     final format = find.text('7-a-side · 90 min slot');
     await tester.scrollUntilVisible(format, 250);
     expect(format, findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('upcoming detail uses saved arrival times across midnight', (
+    tester,
+  ) async {
+    await show(
+      tester,
+      _Repository(
+        _detail(
+          start: DateTime.utc(2030, 1, 13, 7, 15),
+          checkInOpensAt: DateTime.utc(2030, 1, 13, 6, 35),
+          checkInDeadlineAt: DateTime.utc(2030, 1, 13, 7, 3),
+          configurableMinimum: true,
+        ),
+      ),
+    );
+
+    expect(find.text('CHECK IN'), findsOneWidget);
+    expect(find.text('11:35 PM', findRichText: true), findsOneWidget);
+    expect(find.textContaining('12:03 AM', findRichText: true), findsOneWidget);
+    expect(find.textContaining('SAT, 12 JAN'), findsOneWidget);
+    expect(find.text('12:15 AM', findRichText: true), findsNothing);
+    expect(find.textContaining('At kickoff and during play:'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('final detail retains its historical kickoff time', (
+    tester,
+  ) async {
+    await show(
+      tester,
+      _Repository(
+        _detail(status: 'FINAL', start: DateTime.utc(2030, 1, 13, 1, 15)),
+      ),
+    );
+
+    expect(find.text('CHECK IN'), findsNothing);
+    expect(find.text('6:15 PM', findRichText: true), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
@@ -835,6 +878,9 @@ OpenQueueMatchDetail _detail({
   int lowestDivision = 5,
   DateTime? teamAssignmentAt,
   DateTime? teamsAssignedAt,
+  DateTime? checkInOpensAt,
+  DateTime? checkInDeadlineAt,
+  bool configurableMinimum = false,
   int? white,
   int? black,
   List<OpenQueuePlayer> players = const [],
@@ -864,9 +910,15 @@ OpenQueueMatchDetail _detail({
     lowestDivision: lowestDivision,
     teamAssignmentAt: teamAssignmentAt,
     teamsAssignedAt: teamsAssignedAt,
+    checkInOpensAt: checkInOpensAt,
+    checkInDeadlineAt: checkInDeadlineAt,
     ageLabel: '18+',
     capacity: 14,
     confirmedCount: count,
+    participationRulesVersion: configurableMinimum
+        ? 's0-configurable-v1'
+        : 's0-standard-v1',
+    minimumPlayers: 10,
     spots: const {
       OpenQueueRole.goalkeeper: 2,
       OpenQueueRole.defender: 4,

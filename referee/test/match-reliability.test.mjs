@@ -98,6 +98,7 @@ test("match reliability context preserves server timing and attendance states", 
       policyVersionId: "11111111-1111-4111-8111-111111111111",
       kickoffAt: "2026-07-21T17:00:00Z",
       checkInDeadlineAt: "2026-07-21T16:45:00Z",
+      lateCutoffInclusive: false,
       noShowCutoffAt: "2026-07-21T17:10:00Z",
       reserveActivationMinutesAfterKickoff: 12,
       reserveActivationAt: "2026-07-21T17:12:00Z",
@@ -166,8 +167,19 @@ test("browser eligibility defaults closed when the server omits flags", () => {
   const context = normalizeMatchReliabilityContext({ players: [] });
   assert.equal(context?.canCheckIn, false);
   assert.equal(context?.canFinalizeAttendance, false);
+  assert.equal(context?.lateCutoffInclusive, false);
   assert.deepEqual(context?.verifiedInjuries, []);
   assert.deepEqual(context?.openShorthandedPeriods, []);
+});
+
+test("Solo arrival context preserves the server-authored inclusive late boundary", () => {
+  const context = normalizeMatchReliabilityContext({
+    check_in_deadline_at: "2026-10-23T00:20:00Z",
+    late_cutoff_inclusive: true,
+    players: [],
+  });
+  assert.equal(context.checkInDeadlineAt, "2026-10-23T00:20:00Z");
+  assert.equal(context.lateCutoffInclusive, true);
 });
 
 test("match reliability context normalizes server-authored effect evidence", () => {

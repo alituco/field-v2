@@ -91,8 +91,11 @@ class _DashboardHomeState extends State<DashboardHome> {
   bool _loading = true;
   String? _error;
   int _loadVersion = 0;
+  int _bookingsReadGeneration = 0;
   bool _activityOpen = false;
   StreamSubscription<void>? _partySubscription;
+  Timer? _assignmentRefreshTimer;
+  bool _readingAssignments = false;
   FieldrushCity _city = FieldrushCity.phoenix;
 
   @override
@@ -107,6 +110,22 @@ class _DashboardHomeState extends State<DashboardHome> {
       (_) => _openRequestedActivity(),
     );
     _load();
+    _assignmentRefreshTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? false)) return;
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
+      final now = DateTime.now();
+      if (_bookings.any(
+        (booking) =>
+            booking.assignedTeam == null &&
+            (booking.game.status == 'OPEN' || booking.game.status == 'FULL') &&
+            booking.game.teamAssignmentAt != null &&
+            !now.isBefore(booking.game.teamAssignmentAt!) &&
+            !booking.game.hasPendingOperationalResolution,
+      )) {
+        unawaited(_refreshTeamAssignments());
+      }
+    });
     final repo = widget.openQueueRepository;
     if (repo is OpenQueuePartyNotificationRepository) {
       _partySubscription = (repo as OpenQueuePartyNotificationRepository)
@@ -134,6 +153,7 @@ class _DashboardHomeState extends State<DashboardHome> {
     fieldrushActivityRevision.removeListener(_load);
     fieldrushActivityOpenRequested.removeListener(_openRequestedActivity);
     _partySubscription?.cancel();
+    _assignmentRefreshTimer?.cancel();
     fieldrushCityRevision.removeListener(_load);
     super.dispose();
   }
@@ -181,8 +201,52 @@ class _DashboardHomeState extends State<DashboardHome> {
     );
   }
 
+  List<OpenQueueBooking> _activeBookings(List<OpenQueueBooking> rows) =>
+      rows
+          .where(
+            (booking) =>
+                booking.status.toUpperCase() == 'CONFIRMED' &&
+                ![
+                  'CANCELLED',
+                  'FINAL',
+                ].contains(booking.game.status.toUpperCase()) &&
+                !booking.game.hasPendingOperationalResolution,
+          )
+          .toList()
+        ..sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
+
+  Future<void> _refreshTeamAssignments() async {
+    if (_readingAssignments ||
+        !mounted ||
+        !TickerMode.valuesOf(context).enabled ||
+        !(ModalRoute.of(context)?.isCurrent ?? false)) {
+      return;
+    }
+    final lifecycle = WidgetsBinding.instance.lifecycleState;
+    if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
+    _readingAssignments = true;
+    final version = _loadVersion;
+    final bookingGeneration = ++_bookingsReadGeneration;
+    try {
+      final rows = await widget.openQueueRepository
+          .getMyUpcomingBookings()
+          .timeout(const Duration(seconds: 12));
+      if (mounted &&
+          version == _loadVersion &&
+          bookingGeneration == _bookingsReadGeneration) {
+        setState(() => _bookings = _activeBookings(rows));
+      }
+    } catch (_) {
+      // Keep the last confirmed booking visible; the next tick or pull refresh
+      // can recover without replacing the whole Home screen with a loader.
+    } finally {
+      _readingAssignments = false;
+    }
+  }
+
   Future<void> _load() async {
     final version = ++_loadVersion;
+    final bookingGeneration = ++_bookingsReadGeneration;
     final navigationProfile = FieldNavigationProfileScope.beginRead(context);
     setState(() {
       // Keep a valid feed visible while refreshing it in the background.
@@ -192,6 +256,8 @@ class _DashboardHomeState extends State<DashboardHome> {
     const coreTimeout = Duration(seconds: 30);
     const extraTimeout = Duration(seconds: 12);
     bool current() => mounted && version == _loadVersion;
+    bool bookingsCurrent() =>
+        current() && bookingGeneration == _bookingsReadGeneration;
     void publish(VoidCallback change) {
       if (current()) setState(change);
     }
@@ -216,27 +282,17 @@ class _DashboardHomeState extends State<DashboardHome> {
 
     // A pending season, city, clip/history or discovery read must not hold
     // already-booked games and actionable party invitations behind a skeleton.
-    final bookingsRead = () async {
+    final Future<List<OpenQueueBooking>?> bookingsRead = () async {
       try {
         final rows = await widget.openQueueRepository
             .getMyUpcomingBookings()
             .timeout(coreTimeout);
-        final bookings =
-            rows
-                .where(
-                  (b) =>
-                      b.status.toUpperCase() == 'CONFIRMED' &&
-                      ![
-                        'CANCELLED',
-                        'FINAL',
-                      ].contains(b.game.status.toUpperCase()) &&
-                      !b.game.hasPendingOperationalResolution,
-                )
-                .toList()
-              ..sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
+        final bookings = _activeBookings(rows);
+        if (!bookingsCurrent()) return null;
         publish(() => _bookings = bookings);
         return bookings;
       } catch (_) {
+        if (!bookingsCurrent()) return null;
         failed('bookings');
         return _bookings;
       }
@@ -265,9 +321,13 @@ class _DashboardHomeState extends State<DashboardHome> {
       }(),
       section('party invitations', () async {
         final bookings = await bookingsRead;
-        if (!current()) return;
-        final party = await _loadParty(bookings).timeout(extraTimeout);
-        publish(() => _party = party);
+        if (bookings == null || !bookingsCurrent()) return;
+        try {
+          final party = await _loadParty(bookings).timeout(extraTimeout);
+          if (bookingsCurrent()) publish(() => _party = party);
+        } catch (_) {
+          if (bookingsCurrent()) rethrow;
+        }
       }),
       section('rating', () async {
         final season = await loadActiveLeaderboardSeason(
@@ -464,13 +524,17 @@ class _DashboardHomeState extends State<DashboardHome> {
     if (mounted) await _openBooking(party.booking);
   }
 
-  Future<void> _openBooking(OpenQueueBooking booking) async {
+  Future<void> _openBooking(
+    OpenQueueBooking booking, {
+    bool focusLineup = false,
+  }) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => FieldrushGameDetailScreen(
           repository: widget.openQueueRepository,
           gameId: booking.gameId,
           initialGame: booking.game,
+          initiallyFocusLineup: focusLineup,
           profileRepository: widget.profileRepository,
           onNavigateTab: widget.onNavigateTab,
           onJoin: (game) async {
@@ -741,6 +805,10 @@ class _DashboardHomeState extends State<DashboardHome> {
                     FieldrushSoloHero(
                       booking: first!.booking!,
                       onTap: () => _openUpcoming(first),
+                      onSeeTeam: () =>
+                          _openBooking(first.booking!, focusLineup: true),
+                      onAssignmentDue: () =>
+                          unawaited(_refreshTeamAssignments()),
                     )
                   else if (first?.fixture != null)
                     _clanCard(first!)
@@ -757,7 +825,9 @@ class _DashboardHomeState extends State<DashboardHome> {
                     FieldrushAlsoBooked(
                       key: ValueKey('home-also-booked-${item.id}'),
                       title: item.label,
-                      startsAt: item.startsAt,
+                      startsAt:
+                          item.booking?.game.displayStartsAt ?? item.startsAt,
+                      isCheckIn: item.booking?.game.isUpcoming ?? false,
                       gameTimezone:
                           item.booking?.game.timezone ??
                           item.liveGame?.timezone ??
@@ -794,7 +864,7 @@ class _DashboardHomeState extends State<DashboardHome> {
                         ),
                         title: '${party.inviter} invited you to a party',
                         body:
-                            'Your booked game · ${party.booking.game.startTimeLabel}',
+                            'Your booked game · ${party.booking.game.isUpcoming ? 'Check-in ' : ''}${party.booking.game.displayTimeLabel}',
                         action: 'View invitation',
                         onTap: _openParty,
                       ),

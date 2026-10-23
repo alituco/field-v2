@@ -691,7 +691,7 @@ class _RatingCard extends StatelessWidget {
                       Text('Rating unavailable', style: _outfit(19)),
                       const SizedBox(height: 6),
                       Text(
-                        'Open ranks to try again.',
+                        'Explore divisions.',
                         style: _jakarta(11.5, color: _muted),
                       ),
                     ],

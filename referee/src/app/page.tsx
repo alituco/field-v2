@@ -950,7 +950,7 @@ function AttendancePanel({
 
       <p className="attendance-deadline">
         <strong>Referee check-in closes {cutoff}</strong>
-        <span>On-time arrival is by {deadline} · kickoff is {kickoff}</span>
+        <span>On-time arrival is {context.lateCutoffInclusive ? 'before' : 'by'} {deadline} · kickoff is {kickoff}</span>
       </p>
 
       {readOnly ? (
@@ -1019,6 +1019,7 @@ function AttendancePanel({
     </section>
     <CheckInTimingDialog
       player={readOnly ? null : playerToCheckIn}
+      lateCutoffInclusive={context.lateCutoffInclusive ?? false}
       submitting={submitting}
       onClose={() => setPlayerToCheckIn(null)}
       onConfirm={async (timing) => {
@@ -1147,11 +1148,13 @@ const CHECK_IN_TIMING_OPTIONS: Array<{
 
 function CheckInTimingDialog({
   player,
+  lateCutoffInclusive,
   submitting,
   onClose,
   onConfirm,
 }: {
   player: ReliabilityAttendancePlayer | null;
+  lateCutoffInclusive: boolean;
   submitting: string | null;
   onClose: () => void;
   onConfirm: (timing: CheckInTiming) => Promise<void>;
@@ -1212,7 +1215,11 @@ function CheckInTimingDialog({
               type="button"
             >
               <span>{option.title}</span>
-              <small>{option.detail}</small>
+              <small>{lateCutoffInclusive && option.value === 'EARLY'
+                ? 'The player arrived before the on-time deadline.'
+                : lateCutoffInclusive && option.value === 'LATE'
+                ? 'The player arrived at or after the deadline, but before kickoff.'
+                : option.detail}</small>
             </button>
           ))}
         </div>

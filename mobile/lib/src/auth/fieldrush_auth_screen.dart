@@ -442,7 +442,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
           _code.text,
         );
         if (!mounted) return;
-        _awaitingAccount = true;
+        FocusScope.of(context).unfocus();
+        setState(() => _awaitingAccount = true);
       }
       await _loadSignedInAccount();
     });
@@ -637,7 +638,11 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         },
         child: Scaffold(
           backgroundColor: FieldrushAuthTheme.cream,
-          body: _openingApp
+          // Verification is complete, but the account read and the gate's
+          // access checks may still be pending. Keep the same quiet handoff
+          // until we know whether to enter the app or resume signup. The code
+          // screen's recovery message belongs only to a failed account read.
+          body: _openingApp || (_awaitingAccount && _busy)
               ? const SafeArea(
                   key: Key('fieldrush-signing-in'),
                   child: FieldLoadingContent(label: 'Signing you in'),

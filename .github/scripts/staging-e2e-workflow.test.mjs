@@ -333,6 +333,11 @@ test("privacy RPC volatility and real party context are checked on the full sche
 test("career write protection and full lobby averages are verified against the effective database schema", () => {
   const source = job("database");
   const check = stepContaining(source, "supabase/scripts/verify_player_stats_and_lobby_average.sql");
+  assert.match(check, /verify_team_assignment_notice_contract\.sql/);
+  assert.match(check, /verify_solo_arrival_contract\.sql/);
+  assert.match(source, /BEFORE_MIGRATION=20261022000700/);
+  assert.match(source, /seed_solo_arrival_before_migration\.sql/);
+  assert.match(source, /assert_solo_arrival_backfill\.sql/);
   assert.match(check, /docker exec -i supabase_db_field_v2/);
   assert.match(check, /ON_ERROR_STOP=1/);
   assert.match(check, /-c BEGIN -f \/dev\/stdin -c ROLLBACK/);

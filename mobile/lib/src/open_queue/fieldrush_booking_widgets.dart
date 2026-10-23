@@ -103,10 +103,10 @@ class BookingDateBadge extends StatelessWidget {
             'FRI',
             'SAT',
             'SUN',
-          ][game.localStartsAt.weekday - 1],
+          ][game.localDisplayStartsAt.weekday - 1],
           style: bookingText(9, bold: true),
         ),
-        Text('${game.localStartsAt.day}', style: bookingHeading(19)),
+        Text('${game.localDisplayStartsAt.day}', style: bookingHeading(19)),
       ],
     ),
   );

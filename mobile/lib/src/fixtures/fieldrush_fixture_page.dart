@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../open_queue/fieldrush_check_in_notice.dart';
 
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
@@ -90,9 +91,10 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
   DateTime get _now => widget.now ?? DateTime.now();
   DateTime get _today => _date(gameLocalDateTime(_now, _city.timezone));
   List<DateTime> get _dates =>
-      {for (final game in _games) _date(game.localStartsAt)}.toList()..sort();
+      {for (final game in _games) _date(game.localDisplayStartsAt)}.toList()
+        ..sort();
   List<OpenQueueGame> get _selectedGames => _games
-      .where((game) => _date(game.localStartsAt) == _selectedDate)
+      .where((game) => _date(game.localDisplayStartsAt) == _selectedDate)
       .toList();
 
   @override
@@ -833,7 +835,7 @@ class FieldrushFixtureCard extends StatelessWidget {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      '${game.startTimeLabel} · ${game.venue}',
+                      '${game.isUpcoming ? 'Check-in ' : ''}${game.displayTimeLabel} · ${game.venue}',
                       textAlign: TextAlign.right,
                       style: _jakarta(
                         10.5,
@@ -970,6 +972,8 @@ class FieldrushFixtureCard extends StatelessWidget {
               ],
               if (upcoming) ...[
                 const SizedBox(height: 15),
+                FieldrushCheckInNotice(game: game),
+                const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(

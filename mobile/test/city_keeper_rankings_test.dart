@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -546,25 +547,104 @@ void main() {
     },
   );
 
-  testWidgets('You unavailable rating retains the ladder retry action', (
-    tester,
-  ) async {
-    var ranksOpened = 0;
-    await _pump(
-      tester,
-      _youScreen(
-        rankings: _Rankings(failRatings: true),
-        onRanks: () => ranksOpened++,
-      ),
-    );
-    final retry = find.byKey(const ValueKey('you-rating-unavailable'));
-    await tester.ensureVisible(retry);
-    await tester.tap(retry);
-    await tester.pumpAndSettle();
-    expect(ranksOpened, 1);
-    expect(find.byType(FieldrushDivisionsScreen), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'You unavailable rating opens divisions for the selected role before ranks',
+    (tester) async {
+      for (final track in RatingTrack.values) {
+        final role = ValueNotifier(track);
+        addTearDown(role.dispose);
+        var ranksOpened = 0;
+        await _pump(
+          tester,
+          _youScreen(
+            key: ValueKey(track),
+            rankings: _Rankings(failRatings: true),
+            role: role,
+            onRanks: () => ranksOpened++,
+          ),
+        );
+        final card = find.byKey(const ValueKey('you-rating-unavailable'));
+        await tester.ensureVisible(card);
+        expect(find.text('Explore divisions.'), findsOneWidget);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        final screen = tester.widget<FieldrushDivisionsScreen>(
+          find.byType(FieldrushDivisionsScreen),
+        );
+        expect(screen.rating, isNull);
+        expect(screen.prediction, isNull);
+        expect(screen.track, track);
+        expect(screen.selectedTab, 4);
+        expect(ranksOpened, 0);
+        expect(
+          find.byKey(const ValueKey('division-current-rating')),
+          findsNothing,
+        );
+        expect(find.textContaining('Play 2 games'), findsNothing);
+
+        await tester.tap(find.byKey(const ValueKey('divisions-open-ranks')));
+        await tester.pumpAndSettle();
+        expect(ranksOpened, 1);
+        expect(find.byType(FieldrushDivisionsScreen), findsNothing);
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
+
+  testWidgets(
+    'You waits for the rating before making the rank card interactive',
+    (tester) async {
+      for (final track in RatingTrack.values) {
+        final role = ValueNotifier(track);
+        addTearDown(role.dispose);
+        final response = Completer<FieldrushPlayerRatings>();
+        var ranksOpened = 0;
+        await _pump(
+          tester,
+          _youScreen(
+            key: ValueKey(track),
+            rankings: _Rankings(response: response),
+            role: role,
+            onRanks: () => ranksOpened++,
+          ),
+          settle: false,
+        );
+        await tester.pump();
+        final loading = find.byKey(const ValueKey('you-rating-loading'));
+        expect(loading, findsOneWidget);
+        expect(
+          find.descendant(of: loading, matching: find.byType(InkWell)),
+          findsNothing,
+        );
+        expect(find.byType(FieldrushDivisionsScreen), findsNothing);
+        expect(ranksOpened, 0);
+
+        response.complete(_ratings);
+        await tester.pumpAndSettle();
+        final card = find.byKey(
+          ValueKey(
+            track == RatingTrack.outfield
+                ? 'you-rating-ranked'
+                : 'you-rating-placement',
+          ),
+        );
+        await tester.ensureVisible(card);
+        await tester.tap(card);
+        await tester.pumpAndSettle();
+        final screen = tester.widget<FieldrushDivisionsScreen>(
+          find.byType(FieldrushDivisionsScreen),
+        );
+        expect(screen.track, track);
+        expect(screen.rating, same(_ratings.forTrack(track)));
+        expect(ranksOpened, 0);
+        Navigator.of(
+          tester.element(find.byType(FieldrushDivisionsScreen)),
+        ).pop();
+        await tester.pumpAndSettle();
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
 
   testWidgets(
     'placement routes pass the owner prediction without revealing SR',
@@ -715,6 +795,7 @@ Future<void> _pump(
   Widget child, {
   double width = 393,
   double scale = 1,
+  bool settle = true,
 }) async {
   await tester.binding.setSurfaceSize(Size(width, 1100));
   addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -757,7 +838,7 @@ Future<void> _pump(
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  if (settle) await tester.pumpAndSettle();
 }
 
 Future<void> _capture(WidgetTester tester, String name) async {
@@ -877,9 +958,10 @@ const _profile = PlayerProfile(
 
 class _Rankings extends Fake
     implements LeaderboardRepository, TrackLeaderboardRepository {
-  _Rankings({this.ratings, this.failRatings = false});
+  _Rankings({this.ratings, this.failRatings = false, this.response});
   final FieldrushPlayerRatings? ratings;
   final bool failRatings;
+  final Completer<FieldrushPlayerRatings>? response;
   final requests = <(RatingTrack, String?)>[];
   @override
   Future<FieldrushPlayerRatings> loadPlayerRatings({
@@ -887,6 +969,7 @@ class _Rankings extends Fake
     String? profileId,
   }) async {
     if (failRatings) throw StateError('Rating service unavailable');
+    if (response != null) return response!.future;
     return ratings ?? _ratings;
   }
 

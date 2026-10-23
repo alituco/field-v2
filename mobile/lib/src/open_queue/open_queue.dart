@@ -193,6 +193,8 @@ class OpenQueueGame {
     this.matchAverageSr,
     this.teamSrSpread,
     this.teamsAssignedAt,
+    this.checkInOpensAt,
+    this.checkInDeadlineAt,
     this.policyVersionId,
     this.teamAssignmentAt,
     this.partyLockAt,
@@ -272,6 +274,10 @@ class OpenQueueGame {
   final int? matchAverageSr;
   final int? teamSrSpread;
   final DateTime? teamsAssignedAt;
+
+  /// Player arrival and late-arrival instants, separate from checkout terms.
+  final DateTime? checkInOpensAt;
+  final DateTime? checkInDeadlineAt;
   final String? policyVersionId;
   final DateTime? teamAssignmentAt;
   final DateTime? partyLockAt;
@@ -472,6 +478,52 @@ class OpenQueueGame {
   DateTime get localStartsAt => localDateTime(startsAt);
   DateTime get localEndsAt => localDateTime(endsAt);
 
+  bool get isUpcoming =>
+      (status == 'OPEN' || status == 'FULL') && !hasRecordedScore;
+
+  // Older feed versions omit attendance terms. The same arrival policy still
+  // applies to those games during rollout; domain times remain the kickoff.
+  DateTime get checkInAt =>
+      checkInOpensAt ?? startsAt.subtract(const Duration(minutes: 30));
+  DateTime get checkInDeadline =>
+      checkInDeadlineAt ?? startsAt.subtract(const Duration(minutes: 10));
+  DateTime get localCheckInAt => localDateTime(checkInAt);
+  DateTime get localCheckInDeadlineAt => localDateTime(checkInDeadline);
+  String get checkInTimeLabel => _clock(localCheckInAt);
+  String get checkInDeadlineTimeLabel => _clock(localCheckInDeadlineAt);
+  String get checkInCalendarDateLabel => _calendarLabel(localCheckInAt);
+
+  /// Presentation-only: future cards show arrival; live/history show kickoff.
+  DateTime get displayStartsAt => isUpcoming ? checkInAt : startsAt;
+  DateTime get localDisplayStartsAt => localDateTime(displayStartsAt);
+  String get displayTimeLabel => _clock(localDisplayStartsAt);
+  String get displayCalendarDateLabel => _calendarLabel(localDisplayStartsAt);
+  String get displayProminentDateLabel {
+    final group = displayDateGroup;
+    return group == 'TODAY' || group == 'TOMORROW'
+        ? '$group · $displayCalendarDateLabel'
+        : displayCalendarDateLabel;
+  }
+
+  String get displayDateGroup {
+    final value = localDisplayStartsAt;
+    final now = localDateTime(DateTime.now());
+    bool sameDay(DateTime other) =>
+        value.year == other.year &&
+        value.month == other.month &&
+        value.day == other.day;
+    if (sameDay(now)) return 'TODAY';
+    if (sameDay(
+      DateTime.utc(now.year, now.month, now.day).add(const Duration(days: 1)),
+    )) {
+      return 'TOMORROW';
+    }
+    return displayCalendarDateLabel;
+  }
+
+  String _calendarLabel(DateTime value) =>
+      '${_weekday(value.weekday)}, ${value.day} ${_month(value.month)}';
+
   // Compatibility aliases for existing fixture screens. The game, not the
   // device or a hardcoded market, now determines the displayed wall clock.
   DateTime get bahrainStartsAt => localStartsAt;
@@ -576,6 +628,8 @@ class OpenQueueGame {
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
       teamSrSpread: _asNullableRoundedInt(json['team_sr_spread']),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      checkInOpensAt: _asDate(json['check_in_opens_at']),
+      checkInDeadlineAt: _asDate(json['check_in_deadline_at']),
       policyVersionId: _nonEmptyString(json['policy_version_id']),
       teamAssignmentAt: _asDate(json['team_assignment_at']),
       partyLockAt: _asDate(json['party_lock_at']),
@@ -635,6 +689,8 @@ class OpenQueueGame {
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
       teamSrSpread: _asNullableRoundedInt(json['team_sr_spread']),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      checkInOpensAt: _asDate(json['check_in_opens_at']),
+      checkInDeadlineAt: _asDate(json['check_in_deadline_at']),
       policyVersionId: _nonEmptyString(json['policy_version_id']),
       teamAssignmentAt: _asDate(json['team_assignment_at']),
       partyLockAt: _asDate(json['party_lock_at']),

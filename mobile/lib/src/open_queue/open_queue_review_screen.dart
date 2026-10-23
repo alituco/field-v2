@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'fieldrush_check_in_notice.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
@@ -51,8 +52,8 @@ class OpenQueueReviewScreen extends StatelessWidget {
     final rows = [
       _ReviewRow(
         Icons.schedule_rounded,
-        'TIME',
-        '${game.dateGroup} · ${game.timeLabel}',
+        game.isUpcoming ? 'CHECK-IN' : 'TIME',
+        '${game.displayDateGroup} · ${game.isUpcoming ? 'Check-in ' : ''}${game.isUpcoming ? game.displayTimeLabel : game.timeLabel}',
       ),
       _ReviewRow(Icons.location_on_outlined, 'VENUE', game.venue),
       _ReviewRow(
@@ -98,8 +99,14 @@ class OpenQueueReviewScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            if (game.isUpcoming) ...[
+              FieldrushCheckInNotice(game: game),
+              const SizedBox(height: 16),
+            ],
             if (repository is OpenQueueReliabilityLookupRepository) ...[
               ReliabilityDeadlineNotice(
+                timezone: game.timezone,
+                showDeadline: !game.isUpcoming,
                 load: () => (repository as OpenQueueReliabilityLookupRepository)
                     .getMatchReliabilityContext(game.id),
               ),
@@ -536,7 +543,7 @@ class _PaymentSummary extends StatelessWidget {
         children: [
           _summaryLine(
             Icons.schedule_rounded,
-            '${game.dateGroup} · ${game.timeLabel}',
+            '${game.displayDateGroup} · ${game.isUpcoming ? 'Check-in ' : ''}${game.isUpcoming ? game.displayTimeLabel : game.timeLabel}',
           ),
           _summaryLine(Icons.location_on_outlined, game.venue),
           _summaryLine(Icons.person_rounded, role.label),
