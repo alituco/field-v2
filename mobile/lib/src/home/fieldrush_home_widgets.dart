@@ -669,10 +669,7 @@ class _OpenNightRow extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'CHECK IN · ${game.displayTimeLabel}',
-                      style: _outfit(14),
-                    ),
+                    Text(game.displayTimeLabel, style: _outfit(14)),
                     const SizedBox(height: 6),
                     Text(
                       '${(game.capacity - game.confirmedCount).clamp(0, game.capacity)} of ${game.capacity} spots left',

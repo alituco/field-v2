@@ -1152,7 +1152,7 @@ void main() {
   ) async {
     final directory = Platform.environment['FIELDRUSH_CHECKOUT_SCREENSHOT_DIR'];
     if (directory == null) return;
-    tester.view.physicalSize = const Size(390, 900);
+    tester.view.physicalSize = const Size(390, 1100);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -1176,7 +1176,7 @@ void main() {
       sessions,
       choosePosition: true,
       boundaryKey: boundaryKey,
-      size: const Size(390, 900),
+      size: const Size(390, 1100),
     );
     Future<void> capture(String name) async {
       expect(tester.takeException(), isNull);
@@ -1241,6 +1241,7 @@ Future<_CheckoutResult> _openCheckout(
         ),
       ),
       home: Scaffold(
+        backgroundColor: boundaryKey == null ? null : FieldrushAuthTheme.cream,
         body: Builder(
           builder: (context) => TextButton(
             onPressed: () async {
@@ -1263,7 +1264,12 @@ Future<_CheckoutResult> _openCheckout(
               );
               result.completed = true;
             },
-            child: const Text('Open checkout'),
+            child: Text(
+              'Open checkout',
+              style: boundaryKey == null
+                  ? null
+                  : const TextStyle(color: Colors.transparent),
+            ),
           ),
         ),
       ),

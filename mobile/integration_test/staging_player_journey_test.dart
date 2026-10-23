@@ -408,11 +408,8 @@ Future<void> _completeOnboarding(
   );
   await pumpUntilFound(
     tester,
-    find.byKey(const ValueKey('fieldrush-accept-policies')),
-  );
-  await tapAfterScroll(
-    tester,
-    find.byKey(const ValueKey('fieldrush-accept-policies')),
+    find.byKey(const ValueKey('fieldrush-review-agreement')),
+    reason: 'The account review must show its Terms and Privacy links.',
   );
   await _continueOnboarding(tester);
   await pumpUntilFound(

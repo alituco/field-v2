@@ -17,6 +17,7 @@ import '../home/navigation_profile_scope.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_modal.dart';
+import '../legal/fieldrush_policy_links.dart';
 import '../markets/fieldrush_city.dart';
 import '../markets/fieldrush_city_repository.dart';
 import '../profile/fieldrush_city_picker.dart';
@@ -803,6 +804,7 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
                         ),
                       ),
                       _homeCityCard(account),
+                      _legalPoliciesCard(),
                       Padding(
                         padding: const EdgeInsets.fromLTRB(16, 22, 16, 0),
                         child: SizedBox(
@@ -1341,6 +1343,51 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
           ),
         ),
       ],
+    ),
+  );
+
+  Widget _legalPoliciesCard() => _card(
+    child: Material(
+      color: Colors.transparent,
+      child: Semantics(
+        link: true,
+        child: InkWell(
+          key: const Key('fieldrush-legal-policies'),
+          onTap: () => openFieldrushPolicy(context, '/legal'),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 15, 18, 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Legal & policies',
+                        style: _text(14, weight: FontWeight.w700, height: 1),
+                      ),
+                      const SizedBox(height: 7),
+                      Text(
+                        'Terms, privacy and data requests on fieldrush.gg',
+                        style: _text(
+                          11,
+                          color: FieldrushAuthTheme.muted,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                const CustomPaint(
+                  size: Size(15, 15),
+                  painter: _PolicyExternalLinkIcon(),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     ),
   );
 
@@ -1954,6 +2001,53 @@ class _EmailVerificationDialogState extends State<_EmailVerificationDialog>
       ],
     ),
   );
+}
+
+class _PolicyExternalLinkIcon extends CustomPainter {
+  const _PolicyExternalLinkIcon();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 24, size.height / 24);
+    final paint = Paint()
+      ..color = FieldrushAuthTheme.muted
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final path = Path()
+      ..moveTo(14, 5)
+      ..lineTo(19, 5)
+      ..lineTo(19, 10)
+      ..moveTo(19, 5)
+      ..lineTo(11, 13)
+      ..moveTo(10, 6)
+      ..lineTo(6.5, 6)
+      ..arcToPoint(
+        const Offset(5, 7.5),
+        radius: const Radius.circular(1.5),
+        clockwise: false,
+      )
+      ..lineTo(5, 17.5)
+      ..arcToPoint(
+        const Offset(6.5, 19),
+        radius: const Radius.circular(1.5),
+        clockwise: false,
+      )
+      ..lineTo(16.5, 19)
+      ..arcToPoint(
+        const Offset(18, 17.5),
+        radius: const Radius.circular(1.5),
+        clockwise: false,
+      )
+      ..lineTo(18, 14);
+    canvas.drawPath(path, paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_PolicyExternalLinkIcon oldDelegate) => false;
 }
 
 String fieldrushAccountError(Object error) {

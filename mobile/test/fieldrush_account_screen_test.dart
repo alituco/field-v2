@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:field/src/auth/auth_repository.dart';
 import 'package:field/src/auth/fieldrush_account.dart';
@@ -9,10 +11,12 @@ import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 void main() {
   late _AccountRepository accounts;
@@ -36,6 +40,8 @@ void main() {
     Widget? bottomNavigationBar,
     Widget Function(Future<bool> Function() confirmLeave)?
     bottomNavigationBuilder,
+    GlobalKey? boundaryKey,
+    double textScale = 1,
   }) async {
     await tester.binding.setSurfaceSize(size);
     addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -60,13 +66,20 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         navigatorKey: navigatorKey,
-        builder: (context, child) => MediaQuery(
-          data: MediaQuery.of(
-            context,
-          ).copyWith(viewInsets: EdgeInsets.only(bottom: keyboardInset)),
-          child: withNavigationAvatar
-              ? FieldNavigationProfileScope(authRepository: auth, child: child!)
-              : child!,
+        builder: (context, child) => RepaintBoundary(
+          key: boundaryKey,
+          child: MediaQuery(
+            data: MediaQuery.of(context).copyWith(
+              viewInsets: EdgeInsets.only(bottom: keyboardInset),
+              textScaler: TextScaler.linear(textScale),
+            ),
+            child: withNavigationAvatar
+                ? FieldNavigationProfileScope(
+                    authRepository: auth,
+                    child: child!,
+                  )
+                : child!,
+          ),
         ),
         home: routed ? const Scaffold(body: Text('SIGNED OUT ROOT')) : screen,
       ),
@@ -1045,6 +1058,100 @@ void main() {
     },
   );
 
+  testWidgets('legal policies card opens the website without account changes', (
+    tester,
+  ) async {
+    final previousLauncher = UrlLauncherPlatform.instance;
+    final launcher = _PolicyLauncher();
+    UrlLauncherPlatform.instance = launcher;
+    addTearDown(() => UrlLauncherPlatform.instance = previousLauncher);
+    await showAccount(tester);
+    final link = find.byKey(const Key('fieldrush-legal-policies'));
+    expect(find.text('Legal & policies'), findsOneWidget);
+    expect(
+      find.text('Terms, privacy and data requests on fieldrush.gg'),
+      findsOneWidget,
+    );
+    expect(
+      tester.getTopLeft(link).dy,
+      greaterThan(tester.getTopLeft(find.text('HOME CITY')).dy),
+    );
+    expect(
+      tester.getBottomLeft(link).dy,
+      lessThan(
+        tester.getTopLeft(find.byKey(const Key('fieldrush-delete-account'))).dy,
+      ),
+    );
+    await tester.tap(link);
+    await tester.pumpAndSettle();
+    expect(launcher.urls, ['https://fieldrush.gg/legal']);
+    expect(launcher.modes, [PreferredLaunchMode.externalApplication]);
+    expect(accounts.updateCalls, 0);
+    expect(accounts.deleteCalls, 0);
+    expect(accounts.reauthSendCalls, 0);
+    expect(find.byType(Checkbox), findsNothing);
+    expect(find.byType(FieldrushModal), findsNothing);
+    expect(find.text('Account details'), findsOneWidget);
+  });
+
+  testWidgets('legal policies card wraps on narrow screens with larger text', (
+    tester,
+  ) async {
+    await tester.runAsync(() async {
+      for (final font in ['Outfit', 'PlusJakartaSans']) {
+        await (FontLoader(
+          font,
+        )..addFont(rootBundle.load('assets/fonts/$font.ttf'))).load();
+      }
+    });
+    await showAccount(tester, size: const Size(320, 740), textScale: 1.6);
+    await tester.scrollUntilVisible(
+      find.byKey(const Key('fieldrush-legal-policies')),
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Legal & policies'), findsOneWidget);
+    expect(find.byType(Checkbox), findsNothing);
+  });
+
+  testWidgets('optional account visual preview uses the bundled fonts', (
+    tester,
+  ) async {
+    final directory = Platform.environment['FIELDRUSH_ACCOUNT_SCREENSHOT_DIR'];
+    if (directory == null) return;
+    await tester.runAsync(() async {
+      for (final font in ['Outfit', 'PlusJakartaSans']) {
+        await (FontLoader(
+          font,
+        )..addFont(rootBundle.load('assets/fonts/$font.ttf'))).load();
+      }
+      await (FontLoader(
+        'MaterialIcons',
+      )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+    });
+    final boundaryKey = GlobalKey();
+    await showAccount(
+      tester,
+      size: const Size(390, 1100),
+      boundaryKey: boundaryKey,
+    );
+    expect(tester.takeException(), isNull);
+    final boundary =
+        boundaryKey.currentContext!.findRenderObject()!
+            as RenderRepaintBoundary;
+    await tester.runAsync(() async {
+      final image = await boundary.toImage(pixelRatio: 2);
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+      await Directory(directory).create(recursive: true);
+      await File(
+        '$directory/account-extra-settings.png',
+      ).writeAsBytes(bytes!.buffer.asUint8List());
+      image.dispose();
+    });
+  });
+
   testWidgets('account design shows saved values without an open editor', (
     tester,
   ) async {
@@ -1272,6 +1379,21 @@ void main() {
       findsOneWidget,
     );
   });
+}
+
+class _PolicyLauncher extends UrlLauncherPlatform {
+  final urls = <String>[];
+  final modes = <PreferredLaunchMode>[];
+
+  @override
+  Null get linkDelegate => null;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    urls.add(url);
+    modes.add(options.mode);
+    return true;
+  }
 }
 
 class _AccountRepository extends Fake implements FieldrushAccountRepository {

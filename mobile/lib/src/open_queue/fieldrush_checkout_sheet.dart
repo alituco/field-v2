@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../core/read_timeout.dart';
+import '../legal/fieldrush_policy_links.dart';
 import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
 import '../support/contact_support_sheet.dart';
@@ -1033,6 +1034,12 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       'Cancellation refunds follow the game’s policy and return to your original payment method. Review the exact refund before cancelling.',
                       style: bookingText(11),
                     ),
+                  if (_refund == null) ...[
+                    const SizedBox(height: 7),
+                    FieldrushBookingPolicyNotice(
+                      freeBooking: preview?.totalFils == 0,
+                    ),
+                  ],
                   if (_error != null) ...[
                     const SizedBox(height: 12),
                     Semantics(
