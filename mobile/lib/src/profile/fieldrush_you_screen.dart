@@ -22,6 +22,11 @@ import '../reliability/reliability.dart';
 import '../reliability/reliability_repository.dart';
 import '../reliability/reliability_status_card.dart';
 import '../ranking/fieldrush_divisions_screen.dart';
+import '../referrals/referrals.dart';
+import '../referrals/referral_repository.dart';
+import '../referrals/referral_share.dart';
+import '../referrals/fieldrush_referral_widgets.dart';
+import '../referrals/fieldrush_referral_screens.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
 import 'dev_user_switcher_sheet.dart';
@@ -58,6 +63,7 @@ class FieldrushYouScreen extends StatefulWidget {
     this.isSigningOut = false,
     this.ratingTrackController,
     this.onNavigateTab,
+    this.referralRepository,
   });
 
   final ProfileRepository profileRepository;
@@ -78,6 +84,7 @@ class FieldrushYouScreen extends StatefulWidget {
   final bool isSigningOut;
   final ValueNotifier<RatingTrack>? ratingTrackController;
   final ValueChanged<int>? onNavigateTab;
+  final ReferralRepository? referralRepository;
 
   @override
   State<FieldrushYouScreen> createState() => _FieldrushYouScreenState();
@@ -105,6 +112,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   Object? _error;
   int _loadVersion = 0;
   bool _openingGame = false;
+  ReferralSummary? _referrals;
+  bool _referralsLoading = true;
+  bool _sharingReferral = false;
 
   @override
   void initState() {
@@ -133,10 +143,12 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       _reliability = null;
       _notifications = null;
       _wallet = null;
+      _referrals = null;
     }
     if (userChanged ||
         oldWidget.profileRepository != widget.profileRepository ||
         oldWidget.accountRepository != widget.accountRepository ||
+        oldWidget.referralRepository != widget.referralRepository ||
         oldWidget.activationTick != widget.activationTick) {
       _load();
     }
@@ -206,6 +218,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       _reliabilityLoading = _reliability == null;
       _walletLoading = _wallet == null;
       _notificationsLoading = _notifications == null;
+      _referralsLoading = _referrals == null;
       _error = null;
       _failedSections.clear();
     });
@@ -296,6 +309,13 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       ),
       if (widget.accountRepository case final repository?)
         section('account', repository.loadAccount, (value) => _account = value),
+      if (widget.referralRepository case final repository?)
+        section(
+          'referrals',
+          repository.load,
+          (value) => _referrals = value,
+          finished: () => _referralsLoading = false,
+        ),
       section(
         'reliability',
         () async => await widget.reliabilityRepository?.getMyStatus(),
@@ -325,6 +345,116 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
       'bahrain' => 'Bahrain',
       _ => 'City unavailable',
     };
+  }
+
+  Future<void> _shareReferral() async {
+    final code = _referrals?.ownCode;
+    if (code == null || code.isEmpty || _sharingReferral) return;
+    _sharingReferral = true;
+    try {
+      await shareFieldrushReferralCode(context, code);
+    } catch (error) {
+      if (mounted) {
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'Could not open sharing. Try again.',
+          ),
+        );
+      }
+    } finally {
+      _sharingReferral = false;
+    }
+  }
+
+  void _openReferralPlayer(String id) {
+    if (id == _profile?.id) return;
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ProfileScreen(
+          profileId: id,
+          profileRepository: widget.profileRepository,
+          clanRepository: widget.clanRepository,
+          fixtureRepository: widget.fixtureRepository,
+          openQueueRepository: widget.openQueueRepository,
+          supportRepository: widget.supportRepository,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openReferrals({bool enterCode = false}) async {
+    final repository = widget.referralRepository;
+    if (repository == null) return;
+    final navigator = Navigator.of(context);
+    final ownerRoute = ModalRoute.of(context);
+    void navigate(int index) {
+      navigator.popUntil((route) => route == ownerRoute);
+      widget.onNavigateTab?.call(index);
+    }
+
+    await navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => enterCode
+            ? FieldrushReferralCodeScreen(
+                repository: repository,
+                onOpenPlayer: _openReferralPlayer,
+                onNavigateTab: widget.onNavigateTab == null ? null : navigate,
+              )
+            : FieldrushReferralsScreen(
+                repository: repository,
+                onOpenPlayer: _openReferralPlayer,
+                onNavigateTab: widget.onNavigateTab == null ? null : navigate,
+              ),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
+  Widget? get _referralSection {
+    if (widget.referralRepository == null) return null;
+    final summary = _referrals;
+    if (summary != null) {
+      return FieldrushReferralCard(
+        summary: summary,
+        onShare: _shareReferral,
+        onOpenLeaderboard: () => _openReferrals(),
+        onOpenCode: () => _openReferrals(enterCode: true),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'REFERRALS',
+            style: TextStyle(
+              fontFamily: 'PlusJakartaSans',
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 1.54,
+              color: FieldrushAuthTheme.muted,
+            ),
+          ),
+          const SizedBox(height: 11),
+          if (_referralsLoading)
+            const SizedBox(
+              height: 40,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FieldLoadingIndicator(),
+              ),
+            )
+          else
+            TextButton(
+              onPressed: _load,
+              child: const Text('Could not load referrals. Retry'),
+            ),
+        ],
+      ),
+    );
   }
 
   String? get _walletLabel {
@@ -674,6 +804,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                           ),
                         ),
                       FieldrushYouContent(
+                        referralSection: _referralSection,
                         profile: profile,
                         profileDetailsLoading: _profileDetailsLoading,
                         profileDetailsUnavailable:

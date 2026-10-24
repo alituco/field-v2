@@ -182,6 +182,7 @@ class FieldrushYouContent extends StatefulWidget {
     this.onSupport,
     this.onSwitchUser,
     this.onAllClips,
+    this.referralSection,
   });
 
   final PlayerProfile profile;
@@ -218,6 +219,7 @@ class FieldrushYouContent extends StatefulWidget {
   final bool isSigningOut;
   final VoidCallback? onSupport;
   final VoidCallback? onSwitchUser;
+  final Widget? referralSection;
 
   @override
   State<FieldrushYouContent> createState() => _FieldrushYouContentState();
@@ -395,6 +397,7 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
             onAllClips: widget.onAllClips,
             emptyMessage: 'Open the replay of a finished match and tap Clip.',
           ),
+        if (widget.referralSection != null) widget.referralSection!,
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 22, 16, 0),
           child: _WhiteCard(

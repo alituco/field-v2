@@ -1,0 +1,34 @@
+.stack { display: grid; gap: 22px; }
+.card { padding: 26px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; min-width: 0; }
+.card h2 { margin: 10px 0 12px; color: var(--ink); font-size: 27px; line-height: 1.2; letter-spacing: -.04em; }
+.card h3, .heading h3 { margin: 0; font-size: 18px; color: var(--ink); }
+.card p { color: var(--muted); font-size: 13px; line-height: 1.7; max-width: 850px; }
+.card .small { font-size: 12px; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+.stats { display: flex; gap: 28px; flex-wrap: wrap; padding: 18px 0 8px; }
+.stats span { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.stats strong { font-size: 25px; color: var(--ink); }
+.tableWrap { overflow-x: auto; margin-top: 18px; }
+.table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.table th { color: var(--muted); font-size: 11px; font-weight: 650; white-space: nowrap; }
+.table th, .table td { border-bottom: 1px solid var(--line); padding: 13px 15px 13px 0; }
+.table td { color: var(--ink); }
+.player { display: grid; gap: 4px; min-width: 140px; }
+.player small { color: var(--muted); font-size: 11px; }
+.review { border-radius: 99px; padding: 6px 9px; font-size: 11px; font-weight: 700; color: #815b18; background: #fff1cf; white-space: nowrap; }
+.prize { color: #24472c; background: #e7f0dc; border-radius: 8px; padding: 5px 10px; font-weight: 750; }
+.empty { color: var(--muted); font-size: 13px; padding: 20px; border: 1px dashed var(--line); border-radius: 15px; }
+.fields { border: 0; padding: 24px 0 0; margin: 0; min-width: 0; }
+.fields legend { float: left; width: 100%; padding: 0 0 12px; font-weight: 700; font-size: 13px; }
+.positions { display: grid; grid-template-columns: repeat(auto-fit,minmax(210px,1fr)); gap: 14px; clear: both; }
+.fields label { display: grid; gap: 8px; color: var(--muted); font-size: 12px; }
+.fields select, .fields textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; background: #fff; color: var(--ink); font: inherit; }
+.fields select:focus-visible, .fields textarea:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+.fields .note { margin-top: 18px; }
+.actions { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-top: 12px; }
+.actions p { font-size: 12px; max-width: 600px; }
+.actions button { flex-shrink: 0; }
+.reviewed { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 16px; font-size: 13px; color: var(--muted); line-height: 1.7; }
+.reviewed summary { cursor: pointer; color: var(--ink); font-weight: 650; }
+.reviewed small { font-size: 11px; }
+@media (max-width: 620px) { .card { padding: 18px; } .actions { align-items: stretch; flex-direction: column; } .stats { gap: 20px; } }
