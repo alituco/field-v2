@@ -98,11 +98,13 @@ begin
   insert into public.open_queue_goals(game_id,team,profile_id,minute) values(game,'WHITE',scorer,5);
   select jsonb_agg(to_jsonb(g) order by id) into goals_before from public.open_queue_goals g where game_id=game;
   early_result:=public.referee_finish_season_zero_match(referee_id,game,request,1);
-  perform pg_temp.reopen_expect(early_result->>'rating_status'='unranked' and early_result->>'settlement_status'='NOT_RATED'
-    and early_result->>'referee_can_reopen'='true','early finish saves a final result without changing the existing SR eligibility');
+  perform pg_temp.reopen_expect(early_result->>'rating_status'='completed' and early_result->>'settlement_status'='RATED'
+    and early_result->>'completion_rules_version'='s0-referee-ended-v1'
+    and early_result->>'referee_can_reopen'='true','early finish rates the completed actual playing duration');
   perform pg_temp.reopen_expect((select status='FINAL' and white_score=1 and black_score=0 from public.open_queue_games where id=game),'early score saved');
   perform pg_temp.reopen_expect(public.referee_finish_season_zero_match(referee_id,game,request,999)=early_result,'finish retry returns original response');
-  perform pg_temp.reopen_expect((select jsonb_agg(to_jsonb(t) order by profile_id,rating_track)=before_tracks from public.fieldrush_player_rating_tracks t where profile_id=any(players)),'early finish does not alter either rating pool or appearance count');
+  perform pg_temp.reopen_expect((select count(*)=14 and bool_and(counted_as_played) from public.player_rating_events
+    where source_type='OPEN_QUEUE' and source_id=game),'all players who completed the early match receive one counted rating event');
   perform pg_temp.reopen_reject(format('select public.referee_reopen_season_zero_match(%L,%L,%L,2)',outsider,game,gen_random_uuid()),'not assigned');
   perform pg_temp.reopen_reject(format('select public.referee_reopen_season_zero_match(%L,%L,%L,1)',referee_id,game,gen_random_uuid()),'changed match');
   perform pg_temp.reopen_reject(format('select public.referee_reopen_season_zero_match(%L,%L,%L,2)',referee_id,game,request),'another action');
@@ -113,6 +115,9 @@ begin
     and reopened->'events'=early_result->'events' and reopened->'played_seconds'=early_result->'played_seconds','reopen preserves original roster and playing evidence');
   perform pg_temp.reopen_expect((select jsonb_agg(to_jsonb(g) order by id)=goals_before from public.open_queue_goals g where game_id=game),'recorded goals survive');
   perform pg_temp.reopen_expect((select status='PAUSED' and started_at is null and accumulated_seconds=(early_result->>'played_seconds')::integer from public.open_queue_clock_states where game_id=game),'reopened clock does not count time after final whistle');
+  perform pg_temp.reopen_expect((select jsonb_agg(to_jsonb(t)-'updated_at' order by profile_id,rating_track)=
+    (select jsonb_agg(value-'updated_at' order by value->>'profile_id',value->>'rating_track') from jsonb_array_elements(before_tracks))
+    from public.fieldrush_player_rating_tracks t where profile_id=any(players)),'reopening the early rated result restores the original ratings and counts');
   perform pg_temp.reopen_expect(public.referee_reopen_season_zero_match(referee_id,game,reopen_request,999)=reopened,'reopen retry is idempotent');
   perform public.referee_season_zero_action(referee_id,game,gen_random_uuid(),3,'{"action":"RESUME"}');
   update public.open_queue_clock_states set accumulated_seconds=3600,started_at=clock_timestamp() where game_id=game;

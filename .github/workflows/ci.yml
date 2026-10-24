@@ -485,8 +485,11 @@ jobs:
           node supabase/scripts/test_player_rating_read_cost.mjs
           node supabase/scripts/test_season_zero_rebalance.mjs
           node supabase/scripts/test_season_zero_migration_chain.mjs
-          THROUGH_MIGRATION=20261023000100 \
+          THROUGH_MIGRATION=20261024000100 \
             REPLAY_SQL_FILE=supabase/scripts/verify_referee_match_reopen.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261024000100 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_referee_early_ratings.sql \
             node supabase/scripts/test_season_zero_migration_chain.mjs
           THROUGH_MIGRATION=20261023000200 \
             REPLAY_SQL_FILE=supabase/scripts/verify_credited_replay_goals.sql \
@@ -668,6 +671,10 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_referee_match_reopen.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_referee_early_ratings.sql
 
       - name: Verify configurable solo minimum, start window, and stream readiness
         shell: bash

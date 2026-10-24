@@ -64,7 +64,7 @@ test("referee ends early and reopens with the saved score and a paused clock", a
   await page.setViewportSize({ width: 390, height: 844 });
   const { writes, game } = await match(page);
   await page.getByText("End match", { exact: true }).click();
-  await expect(page.getByText(/finish before the agreed duration/)).toBeVisible();
+  await expect(page.getByText(/SR is calculated for eligible players using the recorded playing time, even if you finish early/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Finish match", exact: true })).toBeEnabled();
   expect(writes).toHaveLength(0);
   await page.getByRole("button", { name: "Finish match", exact: true }).click();
