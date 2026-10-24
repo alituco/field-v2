@@ -64,7 +64,7 @@ export function SeasonZeroLifecycleControls({ fixture, accessToken, submitting, 
     <div>
       <span>{reopening
         ? "Reopen with the saved score, players and playing time. The clock stays paused until you press Resume. Ratings are recalculated when you finish again."
-        : "Save the current score and end the game now. If you finish before the agreed duration, the result will not award SR. You can reopen the match if play needs to continue."}</span>
+        : "Save the current score and end the game now. SR is calculated for eligible players using the recorded playing time, even if you finish early. You can reopen the match if play needs to continue."}</span>
       <span>{reopening ? "Reopening resumes the match only. An ended broadcast stays ended." : "If a broadcast is active, it will stop shortly after the match ends."}</span>
       {loading ? <span role="status">Checking the current match…</span> : null}
       {error ? <span role="alert">{error}</span> : null}
