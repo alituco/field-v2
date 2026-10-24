@@ -23,6 +23,7 @@ import '../profile/profile_repository.dart';
 import '../profile/fieldrush_you_screen.dart';
 import '../profile/fieldrush_you_settings.dart';
 import '../reliability/reliability_repository.dart';
+import '../referrals/referral_repository.dart';
 import '../support/support_repository.dart';
 import '../ui/fieldrush_toast.dart';
 import 'dashboard_home.dart';
@@ -62,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
       SupabaseOpenQueueRepository();
   final ReliabilityRepository _reliabilityRepository =
       SupabaseReliabilityRepository();
+  final ReferralRepository _referralRepository = SupabaseReferralRepository();
   int _selectedIndex = 0;
   int _homeActivationTick = 0;
   int _fixturesActivationTick = 0;
@@ -255,6 +257,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onOpenYou: () => _selectTab(4),
       ),
       (_) => FieldrushYouScreen(
+        referralRepository: _referralRepository,
         ratingTrackController: _ratingTrack,
         activationTick: _youActivationTick,
         profileRepository: _profileRepository,

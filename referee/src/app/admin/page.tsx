@@ -37,6 +37,7 @@ import { FieldsPanel } from "./fields-panel";
 import { SchedulesPanel } from "./schedules-panel";
 import { CitiesPanel } from "./cities-panel";
 import { SeasonsPanel } from "./seasons-panel";
+import { ReferralsPanel } from "./referrals-panel";
 import type { AdminField } from "@/lib/admin-fields";
 import { DEFAULT_SOLO_FORMATION, parseSoloFormation, type SoloFormation } from "@/lib/admin-solo-games";
 import { SoloFormationFields } from "./solo-formation-fields";
@@ -48,6 +49,7 @@ type AdminSection =
   | "fields"
   | "cities"
   | "seasons"
+  | "referrals"
   | "reliability"
   | "support"
   | "reports"
@@ -305,6 +307,7 @@ export default function AdminPage() {
   const [fieldsRefreshKey, setFieldsRefreshKey] = useState(0);
   const [citiesRefreshKey, setCitiesRefreshKey] = useState(0);
   const [seasonsRefreshKey, setSeasonsRefreshKey] = useState(0);
+  const [referralsRefreshKey, setReferralsRefreshKey] = useState(0);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
   const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
@@ -996,6 +999,8 @@ export default function AdminPage() {
                   setCitiesRefreshKey((value) => value + 1);
                 } else if (section === "seasons") {
                   setSeasonsRefreshKey((value) => value + 1);
+                } else if (section === "referrals") {
+                  setReferralsRefreshKey((value) => value + 1);
                 } else if (section === "reliability") {
                   setReliabilityRefreshKey((value) => value + 1);
                 } else if (section === "waitlist") {
@@ -1076,6 +1081,8 @@ export default function AdminPage() {
             <CitiesPanel accessToken={accessToken} refreshKey={citiesRefreshKey} />
           ) : section === "seasons" ? (
             <SeasonsPanel accessToken={accessToken} refreshKey={seasonsRefreshKey} />
+          ) : section === "referrals" ? (
+            <ReferralsPanel accessToken={accessToken} refreshKey={referralsRefreshKey} />
           ) : section === "schedules" ? (
             <SchedulesPanel accessToken={accessToken} refreshKey={schedulesRefreshKey} newlyAddedFieldId={scheduleAddedFieldId ?? undefined} onAddField={() => {
               setSection("fields"); setAddingField(true); setReturnToSolo(false); setReturnToSchedules(true);
@@ -1288,6 +1295,7 @@ const adminNavItems: Array<{
   { id: "fields", label: "Fields", shortLabel: "Fields", icon: "location" },
   { id: "cities", label: "Cities", shortLabel: "Cities", icon: "location" },
   { id: "seasons", label: "Seasons & rewards", shortLabel: "Seasons", icon: "policy" },
+  { id: "referrals", label: "Referrals", shortLabel: "Referrals", icon: "people" },
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
@@ -4806,6 +4814,7 @@ function sectionTitle(section: AdminSection) {
     fields: "Fields & pitches",
     cities: "Competition cities",
     seasons: "Seasons & rewards",
+    referrals: "Referrals",
     reliability: "Reliability policy",
     support: "Player support",
     reports: "Reports inbox",
@@ -4824,6 +4833,7 @@ function sectionSubtitle(section: AdminSection) {
     fields: "Save real locations once. Assign them to games. Help players find the pitch.",
     cities: "Choose where Fieldrush is available. Keep game discovery, timezones and rankings connected.",
     seasons: "Plan each season and publish city-by-city cash rewards for Outfield and Keeper ladders.",
+    referrals: "Review referral standings and resolve ties with an audited decision.",
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",

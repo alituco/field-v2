@@ -23,11 +23,39 @@ import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_connections_screen.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/reliability/reliability.dart';
+import 'package:field/src/referrals/referrals.dart';
+import 'package:field/src/referrals/referral_repository.dart';
 import 'package:field/src/ui/fieldrush_modal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'referral timeout never hides profile and retry restores the card',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(600, 2600));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final pending = Completer<ReferralSummary>();
+      final referrals = _PendingReferrals()..pending = pending;
+      await tester.pumpWidget(_app(referrals: referrals));
+      await tester.pump();
+      expect(find.text('Ali A.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('you-rating-ranked')), findsOneWidget);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('Could not refresh referrals.'), findsOneWidget);
+      expect(find.text('Ali A.'), findsOneWidget);
+      referrals.pending = null;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.text('ALI'), findsOneWidget);
+      expect(find.text('Have a referral code?'), findsOneWidget);
+      pending.complete(_referralSummary('OLD'));
+      await tester.pump();
+      expect(find.text('OLD'), findsNothing);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
   testWidgets(
     'optional wallet timeout keeps profile and rating, then retries without losing cached balance',
     (tester) async {
@@ -686,6 +714,7 @@ void main() {
 }
 
 Widget _app({
+  ReferralRepository? referrals,
   ProfileRepository? profiles,
   _Ratings? ratings,
   _Settings? settings,
@@ -697,6 +726,7 @@ Widget _app({
 }) => MaterialApp(
   home: Scaffold(
     body: FieldrushYouScreen(
+      referralRepository: referrals,
       activationTick: activationTick,
       profileRepository: profiles ?? _Profiles(),
       leaderboardRepository: ratings ?? _Ratings(),
@@ -711,6 +741,25 @@ Widget _app({
     ),
   ),
 );
+
+ReferralSummary _referralSummary(String code) => ReferralSummary(
+  serverNow: DateTime.utc(2026, 10, 24),
+  entryExpiresAt: DateTime.utc(2026, 10, 31),
+  canAddCode: true,
+  ownCode: code,
+  season: const ReferralSeason(id: 's1', label: 'S0', ended: false),
+);
+
+class _PendingReferrals implements ReferralRepository {
+  Completer<ReferralSummary>? pending;
+  @override
+  String get currentUserId => 'me';
+  @override
+  Future<ReferralSummary> load() async =>
+      pending?.future ?? _referralSummary('ALI');
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 class _Profiles implements ProfileRepository {
   _Profiles({this.first, this.games = const [], this.events = const []});
