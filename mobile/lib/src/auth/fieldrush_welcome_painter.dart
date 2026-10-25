@@ -2,142 +2,233 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Native, resolution-independent interpretation of the HTML's corner artwork.
-/// Scales with the canvas; it never paints UI controls or fake device chrome.
+import 'fieldrush_welcome_ball.dart';
+
+/// Native rendering of the original welcome illustration's geometry and layers.
 class FieldrushWelcomePainter extends CustomPainter {
   const FieldrushWelcomePainter();
 
   @override
   void paint(Canvas canvas, Size size) {
     final bounds = Offset.zero & size;
-    canvas.drawRect(bounds, Paint()..color = const Color(0xFF3B7448));
     canvas.save();
     canvas.clipRect(bounds);
     final scale = size.width / 372;
     canvas.scale(scale);
     final height = size.height / scale;
-    final stripe = Paint()
-      ..color = const Color(0xFF407C4D)
-      ..strokeWidth = 73.2;
-    for (double x = -height; x < 372 + height; x += 207) {
-      canvas.drawLine(Offset(x, 0), Offset(x - height, height), stripe);
-    }
+    final artworkBounds = Rect.fromLTWH(0, 0, 372, height);
+    const stripeEdge = 73.2 * math.sqrt2;
+    canvas.drawRect(
+      artworkBounds,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Color(0xFF3B7448),
+            Color(0xFF3B7448),
+            Color(0xFF407C4D),
+            Color(0xFF407C4D),
+          ],
+          stops: [0, 0.5, 0.5, 1],
+          tileMode: TileMode.repeated,
+        ).createShader(const Rect.fromLTWH(0, 0, stripeEdge, stripeEdge)),
+    );
     canvas.drawRect(
       const Rect.fromLTWH(0, 0, 372, 231.8),
-      Paint()..color = const Color(0x12000000),
+      Paint()..color = Colors.black.withValues(alpha: 0.07),
     );
 
-    final line = Paint()
-      ..color = const Color(0xEBFFFFFF)
-      ..strokeWidth = 14.6
-      ..style = PaintingStyle.stroke;
-    canvas.drawLine(const Offset(-20, 239), const Offset(321, 239), line);
-    canvas.drawLine(const Offset(321, 239), const Offset(321, 495), line);
+    final lineColor = Colors.white.withValues(alpha: 0.92);
+    canvas.drawRect(
+      const Rect.fromLTWH(-80, 231.8, 408.1, 14.6),
+      Paint()..color = lineColor,
+    );
+    const verticalLine = Rect.fromLTWH(313.4, 231.8, 14.6, 322.1);
+    canvas.drawRect(
+      verticalLine,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [lineColor, lineColor, Colors.white.withValues(alpha: 0)],
+          stops: const [0, 0.72, 1],
+        ).createShader(verticalLine),
+    );
+    // CSS's 183px outer corner radius includes its 14.6px inside border.
     canvas.drawArc(
-      const Rect.fromLTWH(145, 63, 352, 352),
+      Rect.fromCircle(center: const Offset(328.1, 231.8), radius: 175.7),
       math.pi / 2,
       math.pi / 2,
       false,
-      line,
+      Paint()
+        ..color = lineColor
+        ..strokeWidth = 14.6
+        ..style = PaintingStyle.stroke,
     );
-    final pole = Paint()
-      ..shader = const LinearGradient(
-        colors: [Color(0xFFB9B9AD), Color(0xFFF4F2EC), Color(0xFFB0B2A8)],
-      ).createShader(const Rect.fromLTWH(316, 90, 10, 148));
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(316, 90, 10, 148),
-        const Radius.circular(4),
-      ),
-      pole,
+
+    _paintPole(canvas);
+    _paintFlag(canvas);
+    _paintMotionLines(canvas);
+    paintFieldrushWelcomeBall(canvas);
+    canvas.restore();
+
+    canvas.drawRect(
+      bounds,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0x000A180E),
+            const Color(0x000A180E),
+            const Color(0xFF0A180E).withValues(alpha: 0.55),
+          ],
+          stops: const [0, 0.52, 1],
+        ).createShader(bounds),
     );
-    final flag = Path()
-      ..moveTo(326, 97)
-      ..lineTo(326, 149)
-      ..cubicTo(313, 153, 301, 146, 285, 151)
-      ..cubicTo(273, 155, 260, 148, 250, 151)
-      ..lineTo(251, 101)
-      ..cubicTo(262, 97, 273, 103, 287, 99)
-      ..cubicTo(300, 94, 313, 101, 326, 97)
-      ..close();
-    canvas.drawShadow(flag, Colors.black.withValues(alpha: 0.5), 5, true);
+  }
+
+  void _paintPole(Canvas canvas) {
     canvas.save();
+    canvas.translate(318.3 + 6.1 / 2, 234.3);
+    canvas.rotate(40 * math.pi / 180);
+    const shadow = Rect.fromLTWH(-6.1 / 2, 0, 6.1, 117.1);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(shadow, const Radius.circular(3)),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFF0A190E).withValues(alpha: 0.3),
+            const Color(0x000A190E),
+          ],
+        ).createShader(shadow)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2),
+    );
+    canvas.restore();
+
+    const grip = Rect.fromLTWH(314.7, 218.4, 12.2, 18.3);
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(grip, const Radius.circular(2)));
+    for (var row = 0; row < 10; row++) {
+      canvas.drawRect(
+        Rect.fromLTWH(grip.left, grip.top + row * 2, grip.width, 2),
+        Paint()
+          ..color = row.isEven
+              ? const Color(0xFF2E2E2A)
+              : const Color(0xFF9A988F),
+      );
+    }
+    canvas.restore();
+
+    const poleBounds = Rect.fromLTWH(315.9, 90.3, 9.8, 129.1);
+    final pole = RRect.fromRectAndCorners(
+      poleBounds,
+      topLeft: const Radius.circular(4.9),
+      topRight: const Radius.circular(4.9),
+      bottomLeft: const Radius.circular(1),
+      bottomRight: const Radius.circular(1),
+    );
+    canvas.drawRRect(pole, Paint()..color = const Color(0xFFF4F2EC));
+    canvas.drawRRect(
+      pole,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [
+            Colors.black.withValues(alpha: 0.22),
+            Colors.white.withValues(alpha: 0.34),
+            Colors.black.withValues(alpha: 0.26),
+          ],
+          stops: const [0, 0.36, 1],
+        ).createShader(poleBounds),
+    );
+  }
+
+  void _paintFlag(Canvas canvas) {
+    canvas.save();
+    canvas.translate(250.1, 95.2);
+    final flag = Path()
+      ..moveTo(75.6, 2.4)
+      ..lineTo(75.6, 53.7)
+      ..cubicTo(63, 57.4, 50.4, 50.1, 35.3, 54.9)
+      ..cubicTo(22.7, 58.6, 10.1, 52.5, 0, 56.2)
+      ..lineTo(1.3, 6.1)
+      ..cubicTo(11.3, 2.4, 22.7, 8.5, 36.5, 3.7)
+      ..cubicTo(50.4, 0, 63, 4.9, 75.6, 2.4)
+      ..close();
+    canvas.drawPath(
+      flag.shift(const Offset(0, 8)),
+      Paint()
+        ..color = Colors.black.withValues(alpha: 0.28)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
     canvas.clipPath(flag);
     for (var row = 0; row < 4; row++) {
       for (var column = 0; column < 6; column++) {
         canvas.drawRect(
-          Rect.fromLTWH(247 + column * 15, 93 + row * 15, 15, 15),
+          Rect.fromLTWH(column * 14.65, row * 14.65, 14.65, 14.65),
           Paint()
             ..color = (row + column).isEven
-                ? const Color(0xFFE23B2E)
-                : const Color(0xFFF2D012),
+                ? const Color(0xFFF2D012)
+                : const Color(0xFFE23B2E),
         );
       }
     }
-    canvas.restore();
-
-    const ball = Offset(240, 312);
-    canvas.drawOval(
-      const Rect.fromLTWH(189, 341, 80, 25),
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.24)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 9),
-    );
-    canvas.drawCircle(ball, 39, Paint()..color = const Color(0xFFF8F7F2));
-    canvas.save();
-    canvas.clipPath(Path()..addOval(Rect.fromCircle(center: ball, radius: 39)));
-    final patches = [
-      (const Offset(240, 312), 15.0, const Color(0xFF1A1915)),
-      (const Offset(212, 285), 12.0, const Color(0xFF22406F)),
-      (const Offset(276, 295), 13.0, const Color(0xFFAEB7BF)),
-      (const Offset(214, 341), 13.0, const Color(0xFFD9B04F)),
-      (const Offset(266, 344), 12.0, const Color(0xFF1A1915)),
-    ];
-    for (final (center, radius, color) in patches) {
-      final patch = Path();
-      for (var index = 0; index < 5; index++) {
-        final angle = index * 2 * math.pi / 5 - math.pi / 2;
-        final point =
-            center + Offset(math.cos(angle), math.sin(angle)) * radius;
-        if (index == 0) {
-          patch.moveTo(point.dx, point.dy);
-        } else {
-          patch.lineTo(point.dx, point.dy);
-        }
-      }
-      patch.close();
-      canvas.drawPath(patch, Paint()..color = color);
-      canvas.drawPath(
-        patch,
-        Paint()
-          ..color = const Color(0xFFD9B25C)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.3,
-      );
-    }
-    canvas.drawCircle(
-      ball,
-      39,
-      Paint()
-        ..shader = const RadialGradient(
-          center: Alignment(-0.4, -0.5),
-          radius: 1,
-          colors: [Color(0x55FFFFFF), Color(0x00000000), Color(0x60000000)],
-          stops: [0, 0.5, 1],
-        ).createShader(Rect.fromCircle(center: ball, radius: 39)),
-    );
-    canvas.restore();
-    canvas.restore();
+    const flagBounds = Rect.fromLTWH(0, 0, 75.6, 58.6);
     canvas.drawRect(
-      bounds,
+      flagBounds,
       Paint()
-        ..shader = const LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [Color(0x000A180E), Color(0x000A180E), Color(0xD00A180E)],
-          stops: [0, 0.43, 1],
-        ).createShader(bounds),
+        ..shader = LinearGradient(
+          colors: [
+            Colors.black.withValues(alpha: 0.18),
+            Colors.white.withValues(alpha: 0.16),
+            Colors.black.withValues(alpha: 0.14),
+            Colors.white.withValues(alpha: 0.12),
+            Colors.black.withValues(alpha: 0.1),
+          ],
+          stops: const [0, 0.22, 0.46, 0.70, 1],
+        ).createShader(flagBounds),
     );
+    const foldedEdge = Rect.fromLTWH(75.6 - 9.8, 0, 9.8, 58.6);
+    canvas.drawRect(
+      foldedEdge,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [
+            Colors.black.withValues(alpha: 0.24),
+            Colors.white.withValues(alpha: 0.2),
+            Colors.black.withValues(alpha: 0.28),
+          ],
+          stops: const [0, 0.45, 1],
+        ).createShader(foldedEdge),
+    );
+    canvas.restore();
+  }
+
+  void _paintMotionLines(Canvas canvas) {
+    for (final (left, top, width) in const [
+      (264.6, 267.9, 29.3),
+      (274.5, 278.7, 43.9),
+      (284.3, 289.5, 26.8),
+    ]) {
+      canvas.save();
+      canvas.translate(left, top + 2.45);
+      canvas.rotate(-42.3 * math.pi / 180);
+      final bounds = Rect.fromLTWH(0, -2.45, width, 4.9);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(bounds, const Radius.circular(2.45)),
+        Paint()
+          ..shader = LinearGradient(
+            colors: [
+              Colors.white.withValues(alpha: 0.75),
+              const Color(0x00FFFFFF),
+            ],
+          ).createShader(bounds),
+      );
+      canvas.restore();
+    }
   }
 
   @override
