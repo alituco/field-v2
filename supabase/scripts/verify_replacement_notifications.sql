@@ -95,7 +95,17 @@ begin
   perform pg_temp.spot_assert(fieldrush_private.notification_source_is_current(notification),'dispatch validates current offer');
   perform public.claim_push_deliveries(10,claim);
   select public.get_push_delivery_payload(id,claim) into payload from fieldrush_private.push_deliveries where notification_id=notification;
-  perform pg_temp.spot_assert(payload is not null,'eligible phone payload available to claimed worker');
+  if to_regprocedure('fieldrush_private.player_push_preview(uuid)') is not null then
+    -- Open-spot offers keep their recipient-owned Activity receipt, but are not
+    -- among the approved phone previews in the selected player rollout.
+    perform pg_temp.spot_assert(payload is null and fieldrush_private.notification_source_is_current(notification)
+      and (select resolved_at is null from public.notifications where id=notification)
+      and (select status='SKIPPED' and error_code='NOT_ELIGIBLE'
+      from fieldrush_private.push_deliveries where notification_id=notification),
+      'unselected replacement phone preview is suppressed while Activity remains valid');
+  else
+    perform pg_temp.spot_assert(payload is not null,'eligible phone payload available to claimed worker');
+  end if;
   insert into public.moderation_actions(subject_type,subject_profile_id,action_type,restriction_scope,
     reason_code,user_message,starts_at,ends_at,issued_by)
   values('PLAYER',people[2],'SUSPENSION','PLAY','VERIFICATION','Disposable dispatch restriction.',
