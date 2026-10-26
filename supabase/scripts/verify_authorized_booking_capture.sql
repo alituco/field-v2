@@ -39,6 +39,7 @@ from public.payment_intents where id=i $$;
 do $$
 declare people uuid[]:=array[]::uuid[]; games uuid[]:=array[]::uuid[]; checkout_ids uuid[]:=array[]::uuid[];
   n integer; g uuid; first_result jsonb; response jsonb; kickoff timestamptz; cancel_attempt uuid; race_attempt uuid;
+  clock_function record;
 begin
 for n in 1..10 loop people:=array_append(people,pg_temp.capture_person()); end loop;
 kickoff:=(date_trunc('week',(now() at time zone 'America/Phoenix')+interval '30 years')+interval '1 day 20 hours 30 minutes') at time zone 'America/Phoenix';
@@ -144,14 +145,32 @@ perform pg_temp.capture_expect((select count(*)=1 and max(amount_fils)=13000 fro
   'organizer cancellation racing capture queues only one full refund');
 
 -- Reserve before kickoff, finish that same captured reservation after kickoff.
--- Only this local clock is replaced, inside the rollback-only fixture.
+-- Shadow time calls in application functions inside this rollback-only fixture.
+-- Supabase's postgres role does not own pg_catalog's clock functions, so leave
+-- those built-ins untouched and use a fixture-owned schema before pg_catalog.
 create temporary table capture_clock(t timestamptz);
 insert into capture_clock values((select check_in_deadline_at-interval '1 second'
   from public.ensure_match_reliability_terms('SOLO',games[4])));
-alter function pg_catalog.clock_timestamp() rename to capture_original_clock_timestamp;
-create function pg_catalog.clock_timestamp() returns timestamptz language sql volatile as 'select t from pg_temp.capture_clock';
-alter function pg_catalog.now() rename to capture_original_now;
-create function pg_catalog.now() returns timestamptz language sql stable as 'select t from pg_temp.capture_clock';
+create schema capture_fixture_clock;
+create function capture_fixture_clock.clock_timestamp() returns timestamptz language sql volatile as 'select t from pg_temp.capture_clock';
+create function capture_fixture_clock.now() returns timestamptz language sql stable as 'select t from pg_temp.capture_clock';
+for clock_function in
+  select p.oid::regprocedure signature,
+    (select substring(setting from 13) from unnest(p.proconfig) setting
+      where setting like 'search_path=%') prior_path
+  from pg_proc p join pg_namespace ns on ns.oid=p.pronamespace
+  where (ns.nspname='public' or left(ns.nspname,10)='fieldrush_')
+    and p.prokind='f' and p.proowner=(select oid from pg_roles where rolname=current_user)
+    and p.prosrc ~ '\m(clock_timestamp|now)\s*\('
+loop
+  if clock_function.prior_path is not null then
+    perform set_config('search_path','capture_fixture_clock,pg_catalog'||
+      case when clock_function.prior_path in ('','""') then ''
+        else ','||clock_function.prior_path end,true);
+    execute format('alter function %s set search_path from current',clock_function.signature);
+  end if;
+end loop;
+perform set_config('search_path','capture_fixture_clock,pg_catalog,public,pg_temp',true);
 execute 'discard plans';
 checkout_ids:=array_append(checkout_ids,pg_temp.capture_attempt(people[8],games[4]));
 perform pg_temp.capture_expect(pg_temp.capture_reserve(checkout_ids[8])->>'status'='RESERVED','late-capture probe secures its spot before kickoff');
