@@ -111,7 +111,7 @@ class StripeFieldrushEmbeddedPaymentSession
           mode: IntentMode.paymentMode(
             amount: amountFils ~/ 10,
             currencyCode: currency,
-            captureMethod: CaptureMethod.Automatic,
+            captureMethod: CaptureMethod.Manual,
           ),
           paymentMethodTypes: const ['card'],
           confirmHandler: (_, _) => _respondToConfirmation(),
@@ -203,9 +203,7 @@ class StripeFieldrushEmbeddedPaymentSession
         case 'canceled':
           throw const PaymentCancelledException();
         case 'failed':
-          throw const PaymentException(
-            'Payment could not be completed. Please try another card.',
-          );
+          throw const PaymentDeclinedException();
         default:
           _markIndeterminate();
           throw const PaymentPendingException();

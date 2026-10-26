@@ -19,9 +19,14 @@ Recovery scans a fixed creation range in pages of 100, at most three pages and
 20 seconds per invocation. Its cursor and sanitized candidate evidence are
 persisted. Subsequent runs resume incomplete scans. A complete unique match must
 pass the exact Fieldrush attempt ID, owner, purpose, transaction reference,
-amount, currency, card-only automatic-capture contract and payment environment.
+amount, currency, card-only contract, its immutable per-attempt capture method
+and payment environment. Older attempts remain automatic; updated mobile
+explicitly negotiates manual capture for new solo attempts.
 The recovered ID is durably linked, then retrieved again before existing
 financial reconciliation. No recovery code creates a new PaymentIntent.
+For a manual authorization, reconciliation reserves the game/role before capture.
+An abandoned or unbookable authorization is voided; an uncertain provider
+capture/cancellation retains its private capacity reservation until verified.
 
 Empty results, conflicting matches, incomplete scans and provider outages never
 release the lease. They create a stable support reference. Completed ambiguous

@@ -34,7 +34,8 @@ test('only enables matching webhook after protected worker configuration succeed
   assert.equal(calls.length, 3);
   assert.match(JSON.parse(calls[1].options.body).query, /configure_stripe_reconciliation/);
   assert.equal(calls[2].options.body.get('disabled'), 'false');
-  assert.equal(calls[2].options.body.getAll('enabled_events[]').length, 7);
+  assert.equal(calls[2].options.body.getAll('enabled_events[]').length, 8);
+  assert.ok(calls[2].options.body.getAll('enabled_events[]').includes('payment_intent.amount_capturable_updated'));
 });
 test('does not activate a webhook when scheduling fails; hides provider response body', async () => {
   let calls = 0;

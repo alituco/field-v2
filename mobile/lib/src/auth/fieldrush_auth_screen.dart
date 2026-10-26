@@ -14,6 +14,7 @@ import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_auth_theme.dart';
+import 'fieldrush_auth_platform.dart';
 import 'fieldrush_phone_field.dart';
 import 'fieldrush_recovery_screen.dart';
 import 'fieldrush_skill_assessment_step.dart';
@@ -1164,39 +1165,41 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
             }),
     ),
     if (_step == _Step.phone && _account == null) ...[
-      const SizedBox(height: 12),
-      const Row(
-        children: [
-          Expanded(child: Divider(color: FieldrushAuthTheme.border)),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              'or',
-              style: TextStyle(fontSize: 11, color: FieldrushAuthTheme.muted),
+      if (fieldrushGoogleAuthAvailable) ...[
+        const SizedBox(height: 12),
+        const Row(
+          children: [
+            Expanded(child: Divider(color: FieldrushAuthTheme.border)),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'or',
+                style: TextStyle(fontSize: 11, color: FieldrushAuthTheme.muted),
+              ),
+            ),
+            Expanded(child: Divider(color: FieldrushAuthTheme.border)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: const Key('fieldrush-google'),
+          onPressed: _busy ? null : _google,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 54),
+            backgroundColor: Colors.white,
+            foregroundColor: FieldrushAuthTheme.ink,
+            side: const BorderSide(color: FieldrushAuthTheme.border),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
             ),
           ),
-          Expanded(child: Divider(color: FieldrushAuthTheme.border)),
-        ],
-      ),
-      const SizedBox(height: 12),
-      OutlinedButton.icon(
-        key: const Key('fieldrush-google'),
-        onPressed: _busy ? null : _google,
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 54),
-          backgroundColor: Colors.white,
-          foregroundColor: FieldrushAuthTheme.ink,
-          side: const BorderSide(color: FieldrushAuthTheme.border),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
+          icon: const FieldrushGoogleMark(),
+          label: const Text(
+            'Continue with Google',
+            style: TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
-        icon: const FieldrushGoogleMark(),
-        label: const Text(
-          'Continue with Google',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
-      ),
+      ],
       TextButton(
         onPressed: _busy ? null : _openRecovery,
         child: const Text('Need help signing in?'),

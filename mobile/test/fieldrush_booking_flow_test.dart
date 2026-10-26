@@ -15,6 +15,74 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2099, 6, 1);
 
 void main() {
+  testWidgets('position picker uses the listed game formation', (tester) async {
+    final repository = _Repository([
+      _game('launch', defenderCapacity: 4, attackerCapacity: 8),
+    ]);
+    await _pump(
+      tester,
+      FieldrushBookingFlow(repository: repository, now: _now),
+    );
+    expect(find.text('1 slot per team'), findsOneWidget);
+    expect(find.text('2 slots per team'), findsOneWidget);
+    expect(find.text('4 slots per team'), findsOneWidget);
+    expect(find.text('3 slots per team'), findsNothing);
+  });
+
+  testWidgets('position picker does not invent a shared formation', (
+    tester,
+  ) async {
+    final repository = _Repository([
+      _game('launch', defenderCapacity: 4, attackerCapacity: 8),
+      _game('legacy', defenderCapacity: 6, attackerCapacity: 6),
+    ]);
+    await _pump(
+      tester,
+      FieldrushBookingFlow(repository: repository, now: _now),
+    );
+    expect(find.text('1 slot per team'), findsOneWidget);
+    expect(find.text('Varies by game'), findsNWidgets(2));
+  });
+
+  testWidgets('empty position feed uses the current launch formation', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      FieldrushBookingFlow(repository: _Repository([]), now: _now),
+    );
+    expect(find.text('1 slot per team'), findsOneWidget);
+    expect(find.text('2 slots per team'), findsOneWidget);
+    expect(find.text('4 slots per team'), findsOneWidget);
+  });
+
+  testWidgets('an expired live reservation does not hide bookable games', (
+    tester,
+  ) async {
+    final repository = _Repository([_game('next')])
+      ..bookings = [
+        _booking(
+          _game(
+            'forgotten-live',
+            status: 'LIVE',
+            start: _now.subtract(const Duration(hours: 3)),
+            actualStartedAt: _now.subtract(const Duration(minutes: 61)),
+          ),
+        ),
+      ];
+    await _pump(
+      tester,
+      FieldrushBookingFlow(repository: repository, now: _now),
+    );
+    expect(
+      find.byKey(const ValueKey('booking-active-game-limit')),
+      findsNothing,
+    );
+    await tester.tap(find.byKey(const ValueKey('booking-see-games')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('booking-game-next')), findsOneWidget);
+  });
+
   testWidgets(
     'stalled booking lookup times out without offering unverified availability',
     (tester) async {
@@ -337,7 +405,7 @@ void main() {
 
   for (final status in ['OPEN', 'FULL']) {
     testWidgets(
-      'delayed $status game still blocks booking after its scheduled end',
+      'unstarted $status game stops blocking after its advertised end',
       (tester) async {
         final current = _game(
           'delayed',
@@ -356,11 +424,11 @@ void main() {
         );
         expect(
           find.byKey(const ValueKey('booking-active-game-limit')),
-          findsOneWidget,
+          findsNothing,
         );
         expect(
           find.byKey(const ValueKey('booking-continue-payment')),
-          findsNothing,
+          findsOneWidget,
         );
         expect(repository.bookCalls, 0);
       },
@@ -691,6 +759,9 @@ OpenQueueGame _game(
   DateTime? start,
   int durationMinutes = 60,
   int? minimumPlayers,
+  int? defenderCapacity,
+  int? attackerCapacity,
+  DateTime? actualStartedAt,
 }) => OpenQueueGame(
   id: id,
   status: status,
@@ -699,6 +770,9 @@ OpenQueueGame _game(
   endsAt: (start ?? _now.add(Duration(days: days, hours: 3, minutes: 30))).add(
     Duration(minutes: durationMinutes),
   ),
+  actualStartedAt: actualStartedAt,
+  defenderCapacity: defenderCapacity,
+  attackerCapacity: attackerCapacity,
   timezone: 'America/Phoenix',
   currency: 'USD',
   priceFils: 13000,

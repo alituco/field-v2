@@ -73,7 +73,7 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
   }
 
   Future<void> _openReview(OpenQueueGame game, OpenQueueRole role) async {
-    if (_upcomingBookings.isNotEmpty) {
+    if (_upcomingBookings.any((b) => b.game.blocksNewBooking)) {
       showFieldrushToast(
         context,
         'You already have an upcoming or active game. Finish or cancel it before booking another.',
@@ -158,7 +158,7 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
                   action: 'Try again',
                   onAction: _load,
                 )
-              else if (_upcomingBookings.isNotEmpty)
+              else if (_upcomingBookings.any((b) => b.game.blocksNewBooking))
                 const _QueueGamesEmpty(
                   icon: Icons.event_busy_rounded,
                   message:

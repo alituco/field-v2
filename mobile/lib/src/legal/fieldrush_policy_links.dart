@@ -65,6 +65,53 @@ class FieldrushBookingPolicyNotice extends StatelessWidget {
   );
 }
 
+class FieldrushRefundPolicyNotice extends StatefulWidget {
+  const FieldrushRefundPolicyNotice({super.key});
+
+  @override
+  State<FieldrushRefundPolicyNotice> createState() =>
+      _FieldrushRefundPolicyNoticeState();
+}
+
+class _FieldrushRefundPolicyNoticeState
+    extends State<FieldrushRefundPolicyNotice> {
+  late final _link = TapGestureRecognizer()
+    ..onTap = () => openFieldrushPolicy(context, '/refunds');
+
+  @override
+  void dispose() {
+    _link.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Text.rich(
+    TextSpan(
+      text:
+          'Full refund 24+ hours before kickoff; 50% from 10 to under '
+          '24 hours; none under 10 hours. ',
+      children: [
+        TextSpan(
+          text: 'Refund policy',
+          recognizer: _link,
+          style: const TextStyle(
+            color: FieldrushAuthTheme.forest,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
+    ),
+    key: const Key('fieldrush-refund-policy-notice'),
+    style: const TextStyle(
+      fontFamily: 'PlusJakartaSans',
+      color: FieldrushAuthTheme.muted,
+      fontSize: 11,
+      fontWeight: FontWeight.w600,
+      height: 1.5,
+    ),
+  );
+}
+
 class _PolicyNotice extends StatefulWidget {
   const _PolicyNotice({
     this.textKey,

@@ -71,6 +71,19 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
   }
 
+  void backgroundAndResume(WidgetTester tester) {
+    for (final state in [
+      AppLifecycleState.inactive,
+      AppLifecycleState.hidden,
+      AppLifecycleState.paused,
+      AppLifecycleState.hidden,
+      AppLifecycleState.inactive,
+      AppLifecycleState.resumed,
+    ]) {
+      tester.binding.handleAppLifecycleStateChanged(state);
+    }
+  }
+
   testWidgets(
     'stored staff identity is signed out before player loading or signup',
     (tester) async {
@@ -353,8 +366,8 @@ void main() {
     'account restriction',
     'pending deletion',
     'unverified phone',
-    'refresh failure',
-    'auth stream failure',
+    'revoked session',
+    'auth stream revoked session',
   ]) {
     testWidgets('$trigger clears private pages and dialogs above the gate', (
       tester,
@@ -386,8 +399,10 @@ void main() {
           await auth.signOut();
         case 'another player':
           auth.signIn(userId: 'player-b');
-        case 'auth stream failure':
-          auth.events.addError(const AuthException('Session unavailable.'));
+        case 'auth stream revoked session':
+          auth.events.addError(
+            const AuthException('Session unavailable.', statusCode: '401'),
+          );
         default:
           if (trigger == 'account restriction') {
             moderation.status = const ModerationStatus(
@@ -402,7 +417,10 @@ void main() {
           } else if (trigger == 'unverified phone') {
             accounts.account = _account(phoneVerified: false);
           } else {
-            accounts.error = const AuthException('Refresh failed.');
+            accounts.error = const AuthException(
+              'Session revoked.',
+              statusCode: '401',
+            );
           }
           auth.events.add(
             AuthState(AuthChangeEvent.userUpdated, auth.currentSession),
@@ -467,6 +485,170 @@ void main() {
     }
     expect(tester.takeException(), isNull);
   });
+
+  for (final failure in ['account read', 'moderation read', 'auth stream']) {
+    testWidgets('$failure failure retains a pushed draft and retry recovers', (
+      tester,
+    ) async {
+      final navigator = GlobalKey<NavigatorState>();
+      await showGate(tester, navigatorKey: navigator);
+      unawaited(
+        navigator.currentState!.push<void>(
+          MaterialPageRoute(
+            builder: (_) =>
+                const Scaffold(body: TextField(key: Key('private-draft'))),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final draft = find.byKey(const Key('private-draft'));
+      await tester.enterText(draft, 'Keep my booking position');
+      final element = tester.element(draft);
+      if (failure == 'auth stream') {
+        auth.events.addError(
+          AuthRetryableFetchException(message: 'Network interrupted.'),
+        );
+      } else {
+        if (failure == 'account read') {
+          accounts.error = StateError('Account offline');
+        } else {
+          moderation.error = StateError('Moderation offline');
+        }
+        backgroundAndResume(tester);
+      }
+      await tester.pumpAndSettle();
+      expect(tester.element(draft), same(element));
+      expect(find.text('Keep my booking position'), findsOneWidget);
+      expect(navigator.currentState!.canPop(), isTrue);
+      expect(find.text('Could not load your account'), findsNothing);
+      expect(
+        find.byKey(const Key('fieldrush-account-refresh-banner')),
+        findsOneWidget,
+      );
+      accounts.error = null;
+      moderation.error = null;
+      await tester.tap(find.text('Retry').last);
+      await tester.pumpAndSettle();
+      expect(tester.element(draft), same(element));
+      expect(
+        find.byKey(const Key('fieldrush-account-refresh-banner')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+    'a stalled foreground refresh times out without closing a dialog',
+    (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      await showGate(tester, navigatorKey: navigator);
+      unawaited(
+        showDialog<void>(
+          context: tester.element(find.text('AUTHENTICATED APP')),
+          builder: (_) =>
+              const AlertDialog(content: Text('BOOKING CONFIRMATION')),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final pending = Completer<FieldrushAccount>();
+      accounts.nextLoad = () => pending.future;
+      backgroundAndResume(tester);
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pumpAndSettle();
+      expect(find.text('BOOKING CONFIRMATION'), findsOneWidget);
+      expect(navigator.currentState!.canPop(), isTrue);
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('fieldrush-account-refresh-banner')),
+        findsOneWidget,
+      );
+      accounts.nextLoad = null;
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      pending.complete(_account(status: 'deletion_pending'));
+      await tester.pumpAndSettle();
+      expect(find.text('Account deletion in progress'), findsNothing);
+      expect(find.text('AUTHENTICATED APP'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'signout clears a retry banner after a transient refresh failure',
+    (tester) async {
+      await showGate(tester);
+      accounts.error = StateError('Offline');
+      auth.events.add(
+        AuthState(AuthChangeEvent.userUpdated, auth.currentSession),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('fieldrush-account-refresh-banner')),
+        findsOneWidget,
+      );
+      await auth.signOut();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('fieldrush-account-refresh-banner')),
+        findsNothing,
+      );
+      expect(find.byType(FieldrushAuthScreen), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('a late account response cannot reopen a revoked session', (
+    tester,
+  ) async {
+    await showGate(tester);
+    final pending = Completer<FieldrushAccount>();
+    accounts.nextLoad = () => pending.future;
+    auth.events.add(
+      AuthState(AuthChangeEvent.userUpdated, auth.currentSession),
+    );
+    await tester.pump();
+    auth.events.addError(
+      const AuthException('Session revoked.', statusCode: '401'),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Could not load your account'), findsOneWidget);
+    pending.complete(_account());
+    await tester.pumpAndSettle();
+    expect(find.text('Could not load your account'), findsOneWidget);
+    expect(find.text('AUTHENTICATED APP'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'retry applies an authoritative restriction after an offline error',
+    (tester) async {
+      await showGate(tester);
+      accounts.error = StateError('Offline');
+      auth.events.add(
+        AuthState(AuthChangeEvent.userUpdated, auth.currentSession),
+      );
+      await tester.pumpAndSettle();
+      accounts.error = null;
+      moderation.status = const ModerationStatus(
+        state: ModerationState.banned,
+        scope: ModerationScope.account,
+        message: 'Restricted for safety.',
+        endsAt: null,
+        warningCount: 0,
+      );
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RestrictedAccountScreen), findsOneWidget);
+      expect(find.text('AUTHENTICATED APP'), findsNothing);
+      expect(
+        find.byKey(const Key('fieldrush-account-refresh-banner')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('signout clears a restricted account support sheet', (
     tester,
@@ -647,7 +829,7 @@ void main() {
     expect(find.text('AUTHENTICATED APP'), findsNothing);
   });
 
-  testWidgets('refresh failure removes previously authenticated content', (
+  testWidgets('refresh failure preserves previously authenticated content', (
     tester,
   ) async {
     await showGate(tester);
@@ -657,8 +839,12 @@ void main() {
       AuthState(AuthChangeEvent.userUpdated, auth.currentSession),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Could not load your account'), findsOneWidget);
-    expect(find.text('AUTHENTICATED APP'), findsNothing);
+    expect(find.text('Could not load your account'), findsNothing);
+    expect(find.text('AUTHENTICATED APP'), findsOneWidget);
+    expect(
+      find.byKey(const Key('fieldrush-account-refresh-banner')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('pending deletion blocks app and does not run moderation', (

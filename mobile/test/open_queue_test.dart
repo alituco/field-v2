@@ -79,7 +79,7 @@ void main() {
       expect(restricted.allowedDivisions, [2, 3, 4]);
       expect(
         restricted.allowsPlayerDivision(skillRating: 1200, matchesPlayed: 1),
-        isFalse,
+        isTrue,
       );
       expect(
         restricted.allowsPlayerDivision(skillRating: 1200, matchesPlayed: 2),

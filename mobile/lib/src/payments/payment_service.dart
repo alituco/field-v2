@@ -82,6 +82,32 @@ class PaymentService {
     );
   }
 
+  /// Abandons one exact checkout only after the server reconciles Stripe.
+  /// A successful-payment race returns its actual booking instead of claiming
+  /// cancellation. Unknown outcomes retain the checkout for a later retry.
+  Future<PaymentResult?> cancelCheckout(String intentId) async {
+    final id = _requiredString(intentId);
+    final Map<String, dynamic> response;
+    try {
+      response = await _invoke({'action': 'cancel', 'intent_id': id});
+    } catch (_) {
+      throw const PaymentPendingException();
+    }
+    if (response['intent_id'] != id) throw const PaymentPendingException();
+    if (_status(response) == 'FINALIZED') {
+      try {
+        return _finalized(response);
+      } on PaymentException {
+        throw const PaymentPendingException();
+      }
+    }
+    if (_status(response) == 'CANCELLED') return null;
+    if (['REQUIRES_REFUND', 'REFUNDED'].contains(_status(response))) {
+      _throwTerminal(response, intentId: id);
+    }
+    throw const PaymentPendingException();
+  }
+
   Future<PaymentResult> _pay({
     required PaymentPurpose purpose,
     required Map<String, dynamic> payload,
@@ -109,6 +135,7 @@ class PaymentService {
         if (resumeIntentId != null) 'intent_id': resumeIntentId,
         'purpose': purpose.code,
         'payload': payload,
+        if (purpose == PaymentPurpose.soloBooking) 'capture_method': 'manual',
       });
     } on PaymentException {
       if (resuming) throw const PaymentPendingException();
@@ -171,6 +198,15 @@ class PaymentService {
       if (resuming) throw const PaymentPendingException();
       rethrow;
     }
+    if (purpose == PaymentPurpose.soloBooking &&
+        preparation['capture_method'] != 'manual') {
+      // Never give an automatic-capture secret to a manually configured native
+      // selector, including during a mixed-version backend/mobile rollout.
+      return _cancelAndReconcile(
+        intentId,
+        const PaymentQuoteChangedException(),
+      );
+    }
     try {
       final collector = _paymentCollector;
       if (collector != null) {
@@ -204,6 +240,8 @@ class PaymentService {
       return _cancelAndReconcile(intentId, error);
     } on PaymentCancelledException catch (error) {
       return _cancelAndReconcile(intentId, error);
+    } on PaymentDeclinedException catch (error) {
+      return _cancelAndReconcile(intentId, error);
     }
     return _confirm(intentId);
   }
@@ -219,6 +257,15 @@ class PaymentService {
     try {
       cancellation = await _invoke({'action': 'cancel', 'intent_id': intentId});
     } catch (_) {
+      throw const PaymentPendingException();
+    }
+    if ([
+          'FINALIZED',
+          'CANCELLED',
+          'REFUNDED',
+          'REQUIRES_REFUND',
+        ].contains(_status(cancellation)) &&
+        cancellation['intent_id'] != intentId) {
       throw const PaymentPendingException();
     }
     if (_status(cancellation) == 'FINALIZED') {
@@ -247,6 +294,15 @@ class PaymentService {
             'action': 'confirm',
             'intent_id': intentId,
           }, timeout: remaining < requestTimeout ? remaining : requestTimeout);
+          if ([
+                'FINALIZED',
+                'CANCELLED',
+                'REFUNDED',
+                'REQUIRES_REFUND',
+              ].contains(_status(response)) &&
+              response['intent_id'] != intentId) {
+            throw const PaymentPendingException();
+          }
           if (_status(response) == 'FINALIZED') return _finalized(response);
         } on PaymentException {
           // Authentication, transport, and malformed responses cannot establish
@@ -375,6 +431,9 @@ class PaymentService {
       if (error.error.code == FailureCode.Canceled) {
         throw const PaymentCancelledException();
       }
+      if (error.error.code == FailureCode.Failed) {
+        throw const PaymentDeclinedException();
+      }
       throw PaymentException(
         error.error.localizedMessage ??
             'Payment could not be completed. Please try another card.',
@@ -409,7 +468,11 @@ class PaymentService {
   }) {
     switch (_status(response)) {
       case 'CANCELLED':
-        throw const PaymentCancelledException();
+        throw PaymentCancelledException(
+          response['message'] is String
+              ? response['message'] as String
+              : 'Payment was cancelled.',
+        );
       case 'REFUNDED':
       case 'REQUIRES_REFUND':
         throw PaymentRefundException(
@@ -568,7 +631,14 @@ class PaymentException implements Exception {
 }
 
 class PaymentCancelledException extends PaymentException {
-  const PaymentCancelledException() : super('Payment was cancelled.');
+  const PaymentCancelledException([super.message = 'Payment was cancelled.']);
+}
+
+/// Native confirmation explicitly failed. The server still verifies cancellation
+/// before this attempt can be replaced; transport errors are not declines.
+class PaymentDeclinedException extends PaymentException {
+  const PaymentDeclinedException()
+    : super('Payment could not be completed. Please try another card.');
 }
 
 class PaymentRefundState {

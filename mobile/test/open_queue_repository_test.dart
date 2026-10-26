@@ -119,7 +119,7 @@ void main() {
       expect(result.single.game, same(bookedGame));
     });
 
-    test('empty discovery retains only valid joined upcoming games', () {
+    test('empty discovery retains upcoming and unresolved joined games', () {
       final future = _game(
         id: 'future',
         startsAt: now.add(const Duration(days: 1)),
@@ -138,7 +138,7 @@ void main() {
         ],
         games: const [],
       );
-      expect(result.map((b) => b.id), ['future']);
+      expect(result.map((b) => b.id), ['future', 'past']);
     });
 
     test('explicit canonical cancellation wins over joined snapshot', () {
@@ -202,7 +202,7 @@ void main() {
             ],
             now: now,
           ),
-          isEmpty,
+          hasLength(1),
         );
       }
     });

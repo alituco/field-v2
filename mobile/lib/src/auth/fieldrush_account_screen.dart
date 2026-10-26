@@ -10,6 +10,7 @@ import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_auth_theme.dart';
+import 'fieldrush_auth_platform.dart';
 import 'fieldrush_phone_field.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
@@ -1418,13 +1419,14 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
         ),
         if (_securityExpanded) ...[
           const SizedBox(height: 8),
-          Text(
-            account.googleLinked
-                ? 'Google is linked'
-                : 'Link Google as another way to sign in.',
-            style: _text(12, color: FieldrushAuthTheme.muted),
-          ),
-          if (!account.googleLinked)
+          if (account.googleLinked || fieldrushGoogleAuthAvailable)
+            Text(
+              account.googleLinked
+                  ? 'Google is linked'
+                  : 'Link Google as another way to sign in.',
+              style: _text(12, color: FieldrushAuthTheme.muted),
+            ),
+          if (!account.googleLinked && fieldrushGoogleAuthAvailable)
             Padding(
               padding: const EdgeInsets.only(top: 10),
               child: OutlinedButton.icon(
@@ -1439,15 +1441,18 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
                 label: const Text('Link Google'),
               ),
             ),
-          if (_waitingForGoogle)
+          if (_waitingForGoogle && fieldrushGoogleAuthAvailable)
             TextButton(
               onPressed: () => _loadAccount(preserveDraft: true),
               child: const Text('Refresh linked accounts'),
             ),
           const SizedBox(height: 18),
           Text(
-            'Lost access to your phone? Sign in with a previously linked '
-            'Google account. Do not create another account to recover this one.',
+            fieldrushGoogleAuthAvailable
+                ? 'Lost access to your phone? Sign in with a previously linked '
+                      'Google account. Do not create another account to recover this one.'
+                : 'Lost access to your phone? Contact support for help. '
+                      'Do not create another account to recover this one.',
             style: _text(11.5, color: FieldrushAuthTheme.muted, height: 1.5),
           ),
           const SizedBox(height: 8),

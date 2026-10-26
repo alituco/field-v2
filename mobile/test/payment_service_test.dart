@@ -14,6 +14,7 @@ Map<String, dynamic> _prepared() => {
   'status': 'PENDING',
   'currency': 'USD',
   'amount_fils': 13000,
+  'capture_method': 'manual',
 };
 Map<String, dynamic> _completed() => {
   'intent_id': 'attempt-1',
@@ -26,6 +27,131 @@ Map<String, dynamic> _completed() => {
 
 void main() {
   tearDown(() => debugDefaultTargetPlatformOverride = null);
+
+  for (final status in ['PENDING', 'PROCESSING', 'FAILED', 'EXPIRED']) {
+    test(
+      'explicit close retains an unconfirmed $status cancellation',
+      () async {
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            expect(body, {'action': 'cancel', 'intent_id': 'attempt-1'});
+            return {'status': status, 'intent_id': 'attempt-1'};
+          },
+        );
+        await expectLater(
+          service.cancelCheckout('attempt-1'),
+          throwsA(isA<PaymentPendingException>()),
+        );
+      },
+    );
+  }
+  test(
+    'explicit close releases only an exact confirmed cancellation',
+    () async {
+      final service = PaymentService(
+        functionInvoker: (_) async => {
+          'status': 'CANCELLED',
+          'intent_id': 'attempt-1',
+        },
+      );
+      expect(await service.cancelCheckout('attempt-1'), isNull);
+      final wrong = PaymentService(
+        functionInvoker: (_) async => {
+          'status': 'CANCELLED',
+          'intent_id': 'other-attempt',
+        },
+      );
+      await expectLater(
+        wrong.cancelCheckout('attempt-1'),
+        throwsA(isA<PaymentPendingException>()),
+      );
+    },
+  );
+  test('explicit close returns a booking when capture wins the race', () async {
+    final service = PaymentService(functionInvoker: (_) async => _completed());
+    expect(
+      (await service.cancelCheckout('attempt-1'))?.resourceId,
+      'booking-1',
+    );
+  });
+  test('explicit close preserves a real refund outcome', () async {
+    final service = PaymentService(
+      functionInvoker: (_) async => {
+        'status': 'REQUIRES_REFUND',
+        'intent_id': 'attempt-1',
+        'refund_status': 'PROCESSING',
+      },
+    );
+    await expectLater(
+      service.cancelCheckout('attempt-1'),
+      throwsA(isA<PaymentRefundException>()),
+    );
+  });
+  for (final status in ['FINALIZED', 'CANCELLED', 'REQUIRES_REFUND']) {
+    for (final receivedId in [null, 'wrong-attempt']) {
+      test(
+        'confirmation cannot trust $status for receipt $receivedId',
+        () async {
+          final service = PaymentService(
+            functionInvoker: (body) async => body['action'] == 'prepare'
+                ? _prepared()
+                : {..._completed(), 'status': status, 'intent_id': receivedId},
+            paymentCollector: (_) async {},
+            confirmationAttempts: 1,
+          );
+          await expectLater(
+            service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+            throwsA(isA<PaymentPendingException>()),
+          );
+        },
+      );
+    }
+  }
+  test(
+    'a native decline is cancelled before the player can change games',
+    () async {
+      final actions = <String>[];
+      final service = PaymentService(
+        functionInvoker: (body) async {
+          actions.add(body['action'] as String);
+          return body['action'] == 'prepare'
+              ? _prepared()
+              : {'status': 'CANCELLED', 'intent_id': 'attempt-1'};
+        },
+        paymentCollector: (_) async => throw const PaymentDeclinedException(),
+      );
+      await expectLater(
+        service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+        throwsA(isA<PaymentDeclinedException>()),
+      );
+      expect(actions, ['prepare', 'cancel']);
+    },
+  );
+  for (final serverMode in ['automatic', null]) {
+    test(
+      'new mobile never sends a $serverMode capture secret to its manual selector',
+      () async {
+        final actions = <String>[];
+        final service = PaymentService(
+          functionInvoker: (body) async {
+            actions.add(body['action'] as String);
+            if (body['action'] == 'prepare') {
+              expect(body['capture_method'], 'manual');
+              return {..._prepared(), 'capture_method': serverMode};
+            }
+            return {'status': 'CANCELLED', 'intent_id': 'attempt-1'};
+          },
+          paymentCollector: (_) async =>
+              fail('Capture mode mismatch cannot reach native confirmation'),
+        );
+        await expectLater(
+          service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
+          throwsA(isA<PaymentQuoteChangedException>()),
+        );
+        expect(actions, ['prepare', 'cancel']);
+      },
+    );
+  }
 
   Map<String, dynamic> collectable() => {
     ..._prepared(),
@@ -455,7 +581,7 @@ void main() {
           actions.add(body['action'] as String);
           if (body['action'] == 'prepare') return _prepared();
           expect(body['intent_id'], 'attempt-1');
-          return {'status': 'CANCELLED'};
+          return {'status': 'CANCELLED', 'intent_id': 'attempt-1'};
         },
         paymentCollector: (_) async =>
             throw const PaymentQuoteChangedException(),
@@ -583,7 +709,7 @@ void main() {
   });
 
   test(
-    'declared native failure does not trigger server confirmation or cancellation',
+    'an unclassified collector error is not treated as a native decline',
     () async {
       final actions = <String>[];
       final service = PaymentService(
@@ -592,7 +718,7 @@ void main() {
           return _prepared();
         },
         paymentCollector: (_) async =>
-            throw const PaymentException('Card declined'),
+            throw const PaymentException('Collector error'),
       );
       await expectLater(
         service.pay(purpose: PaymentPurpose.soloBooking, payload: _payload),
@@ -600,7 +726,7 @@ void main() {
           isA<PaymentException>().having(
             (error) => error.message,
             'message',
-            'Card declined',
+            'Collector error',
           ),
         ),
       );
@@ -659,7 +785,12 @@ void main() {
       );
       expect(sheetSecret, 'pi_1_secret_test');
       expect(calls, [
-        {'action': 'prepare', 'purpose': 'SOLO_BOOKING', 'payload': _payload},
+        {
+          'action': 'prepare',
+          'purpose': 'SOLO_BOOKING',
+          'payload': _payload,
+          'capture_method': 'manual',
+        },
         {'action': 'confirm', 'intent_id': 'attempt-1'},
       ]);
       expect(result.resourceId, 'booking-1');
@@ -798,7 +929,7 @@ void main() {
           functionInvoker: (body) async {
             if (body['action'] == 'prepare') return _prepared();
             confirms++;
-            return {'status': status};
+            return {'status': status, 'intent_id': 'attempt-1'};
           },
           paymentCollector: (_) async {},
           delay: (_) async {},
@@ -867,8 +998,9 @@ void main() {
 
   test('confirmed cancellation does not finalize a booking', () async {
     final service = PaymentService(
-      functionInvoker: (body) async =>
-          body['action'] == 'prepare' ? _prepared() : {'status': 'CANCELLED'},
+      functionInvoker: (body) async => body['action'] == 'prepare'
+          ? _prepared()
+          : {'status': 'CANCELLED', 'intent_id': 'attempt-1'},
       sheetPresenter: (_) async => throw const PaymentCancelledException(),
     );
     await expectLater(

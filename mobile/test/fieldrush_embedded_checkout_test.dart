@@ -278,7 +278,7 @@ void main() {
 
   for (final status in ['OPEN', 'FULL']) {
     testWidgets(
-      'delayed $status game prevents a new checkout after its scheduled end',
+      'unstarted $status game stays visible but releases checkout after its end',
       (tester) async {
         final current = _game(
           status: status,
@@ -289,11 +289,12 @@ void main() {
         await _openCheckout(tester, repository, sessions, choosePosition: true);
         expect(
           find.textContaining('already have an upcoming or active game'),
-          findsOneWidget,
+          findsNothing,
         );
-        expect(repository.quoteCalls, 0);
+        expect(current.isActiveReservation, isTrue);
+        expect(repository.quoteCalls, 1);
         expect(repository.embeddedBookCalls, 0);
-        expect(sessions.created, isEmpty);
+        expect(sessions.created, hasLength(1));
         expect(_payButton(tester).onPressed, isNull);
       },
     );
@@ -1096,6 +1097,133 @@ void main() {
     expect(result.booking!.status, 'CONFIRMED');
   });
 
+  testWidgets(
+    'closing a declined checkout cancels its exact prepared attempt',
+    (tester) async {
+      final repository = _Repository();
+      final sessions = _Sessions();
+      final result = await _openCheckout(tester, repository, sessions);
+      sessions.current
+        ..collectionError = const PaymentException('Your card was declined.')
+        ..select();
+      await tester.pump();
+      await _tapPay(tester);
+      expect(result.completed, isFalse);
+
+      repository.checkoutCancelBarrier = Completer<OpenQueueBooking?>();
+      await tester.ensureVisible(find.byTooltip('Close checkout'));
+      await tester.tap(find.byTooltip('Close checkout'));
+      await tester.pump();
+      expect(sessions.current.closed, isTrue);
+      expect(repository.cancelledCheckouts, ['embedded-attempt']);
+      expect(repository.cancelledGames, [repository.game.id]);
+      expect(result.completed, isFalse);
+
+      repository.checkoutCancelBarrier!.complete(null);
+      await tester.pumpAndSettle();
+      expect(result.completed, isTrue);
+      expect(result.booking, isNull);
+      expect(repository.embeddedBookCalls, 1);
+    },
+  );
+
+  testWidgets('server cancellation does not wait for native view teardown', (
+    tester,
+  ) async {
+    final repository = _Repository();
+    final sessions = _Sessions();
+    final result = await _openCheckout(tester, repository, sessions);
+    sessions.current
+      ..collectionError = const PaymentException('Your card was declined.')
+      ..select();
+    await tester.pump();
+    await _tapPay(tester);
+    sessions.current.closeBarrier = Completer<void>();
+    repository.checkoutCancelBarrier = Completer<OpenQueueBooking?>();
+    await tester.ensureVisible(find.byTooltip('Close checkout'));
+    await tester.tap(find.byTooltip('Close checkout'));
+    await tester.pump();
+    expect(repository.cancelledCheckouts, ['embedded-attempt']);
+    expect(sessions.current.closed, isFalse);
+    repository.checkoutCancelBarrier!.complete(null);
+    await tester.pump();
+    expect(result.completed, isFalse);
+    sessions.current.closeBarrier!.complete();
+    await tester.pumpAndSettle();
+    expect(result.completed, isTrue);
+    expect(result.booking, isNull);
+  });
+
+  testWidgets('closing returns the verified booking when capture wins cancel', (
+    tester,
+  ) async {
+    final repository = _Repository()
+      ..afterCollectionError = const PaymentPendingException();
+    final sessions = _Sessions();
+    final result = await _openCheckout(tester, repository, sessions);
+    sessions.current.select();
+    await tester.pump();
+    await _tapPay(tester);
+    expect(result.completed, isFalse);
+
+    repository.checkoutCancelResponse = _booking(repository.game);
+    await tester.ensureVisible(find.byTooltip('Close checkout'));
+    await tester.tap(find.byTooltip('Close checkout'));
+    await tester.pumpAndSettle();
+    expect(repository.cancelledCheckouts, ['embedded-attempt']);
+    expect(result.completed, isTrue);
+    expect(result.booking?.status, 'CONFIRMED');
+    expect(result.booking?.gameId, repository.game.id);
+  });
+
+  testWidgets('unknown cancellation stays recoverable and Close retries it', (
+    tester,
+  ) async {
+    final repository = _Repository()
+      ..afterCollectionError = const PaymentPendingException()
+      ..checkoutCancelError = const PaymentPendingException();
+    final sessions = _Sessions();
+    final result = await _openCheckout(tester, repository, sessions);
+    sessions.current.select();
+    await tester.pump();
+    await _tapPay(tester);
+    await tester.ensureVisible(find.byTooltip('Close checkout'));
+    await tester.tap(find.byTooltip('Close checkout'));
+    await tester.pumpAndSettle();
+    expect(result.completed, isFalse);
+    expect(
+      find.textContaining('Could not confirm checkout cancellation'),
+      findsOneWidget,
+    );
+    expect(repository.cancelledCheckouts, ['embedded-attempt']);
+    expect(repository.embeddedBookCalls, 1);
+
+    repository.checkoutCancelError = null;
+    await tester.ensureVisible(find.byTooltip('Close checkout'));
+    await tester.tap(find.byTooltip('Close checkout'));
+    await tester.pumpAndSettle();
+    expect(result.completed, isTrue);
+    expect(result.booking, isNull);
+    expect(repository.cancelledCheckouts, [
+      'embedded-attempt',
+      'embedded-attempt',
+    ]);
+    expect(repository.embeddedBookCalls, 1);
+  });
+
+  testWidgets('a completed booking never sends the checkout cancel action', (
+    tester,
+  ) async {
+    final repository = _Repository();
+    final sessions = _Sessions();
+    final result = await _openCheckout(tester, repository, sessions);
+    sessions.current.select();
+    await tester.pump();
+    await _tapPay(tester);
+    expect(result.booking?.status, 'CONFIRMED');
+    expect(repository.cancelledCheckouts, isEmpty);
+  });
+
   testWidgets('native session closes before checkout route is dismissed', (
     tester,
   ) async {
@@ -1445,6 +1573,7 @@ class _Repository
         OpenQueueRepository,
         OpenQueueBookingCostPreviewRepository,
         OpenQueueBookingLookupRepository,
+        OpenQueueCheckoutCancellationRepository,
         OpenQueuePaymentStatusRepository,
         OpenQueueEmbeddedCheckoutRepository {
   OpenQueueGame game = _game();
@@ -1475,6 +1604,23 @@ class _Repository
   Completer<PaymentRefundState>? refundBarrier;
   OpenQueueBooking? recoveredBooking;
   Completer<OpenQueueBooking>? verification;
+  final cancelledCheckouts = <String>[];
+  final cancelledGames = <String>[];
+  Completer<OpenQueueBooking?>? checkoutCancelBarrier;
+  OpenQueueBooking? checkoutCancelResponse;
+  Object? checkoutCancelError;
+
+  @override
+  Future<OpenQueueBooking?> cancelCheckout({
+    required String intentId,
+    required String gameId,
+  }) async {
+    cancelledCheckouts.add(intentId);
+    cancelledGames.add(gameId);
+    if (checkoutCancelError != null) throw checkoutCancelError!;
+    if (checkoutCancelBarrier != null) return checkoutCancelBarrier!.future;
+    return checkoutCancelResponse;
+  }
 
   @override
   Future<OpenQueueBookingCostPreview> previewBookingCost({

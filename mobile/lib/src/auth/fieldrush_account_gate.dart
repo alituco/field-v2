@@ -57,6 +57,11 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
   int _screenGeneration = 0;
   bool _switchingPhoneAccount = false;
   bool _staffIdentityRejected = false;
+  ScaffoldFeatureController<MaterialBanner, MaterialBannerClosedReason>?
+  _refreshBanner;
+  ScaffoldMessengerState? _bannerMessenger;
+
+  static const _accountReadTimeout = Duration(seconds: 12);
 
   @override
   void initState() {
@@ -132,8 +137,8 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
       },
       onError: (Object error) {
         if (mounted) {
-          _clearProtectedNavigation();
-          setState(() => _error = userFacingError(error));
+          _request++;
+          _handleRefreshFailure(error);
         }
       },
     );
@@ -157,12 +162,91 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
       _error == null;
 
   void _clearProtectedNavigation({bool identityChanged = false}) {
+    _dismissRefreshBanner();
     if (!_hasProtectedAccess && !identityChanged) return;
     // The account gate owns the first route, but pushed pages and dialogs
     // belong to the Navigator above it. Replacing only the gate's child leaves
     // those pages alive with the previous player's data and callbacks. Identity
     // changes also clear account-specific sheets on restricted/signup screens.
     Navigator.of(context).popUntil((route) => route.isFirst);
+  }
+
+  bool _canKeepCurrentScreen(Object error) {
+    if (!_hasProtectedAccess ||
+        widget.authRepository.currentUser?.id != _userId) {
+      return false;
+    }
+    if (error is AuthSessionMissingException ||
+        error is AuthInvalidJwtException) {
+      return false;
+    }
+    if (error is AuthException &&
+        (error.statusCode == '401' ||
+            error.statusCode == '403' ||
+            const {
+              'bad_jwt',
+              'refresh_token_not_found',
+              'refresh_token_already_used',
+              'session_not_found',
+              'session_expired',
+              'staff_account_only',
+              'user_banned',
+              'user_not_found',
+            }.contains(error.code))) {
+      return false;
+    }
+    return error is! PostgrestException ||
+        !const {
+          '28000',
+          '28P01',
+          '42501',
+          'PGRST301',
+          'PGRST302',
+          'PGRST303',
+        }.contains(error.code);
+  }
+
+  void _dismissRefreshBanner() {
+    final banner = _refreshBanner;
+    _refreshBanner = null;
+    if (_bannerMessenger?.mounted == true) banner?.close();
+    _bannerMessenger = null;
+  }
+
+  void _handleRefreshFailure(Object error) {
+    if (_canKeepCurrentScreen(error)) {
+      if (_refreshBanner != null) return;
+      final messenger = ScaffoldMessenger.of(context);
+      _bannerMessenger = messenger;
+      _refreshBanner = messenger.showMaterialBanner(
+        MaterialBanner(
+          key: const Key('fieldrush-account-refresh-banner'),
+          leading: const Icon(Icons.cloud_off_outlined),
+          content: const Text(
+            'Could not refresh your account. Your current screen is saved.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                _dismissRefreshBanner();
+                unawaited(_refresh());
+              },
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
+    _clearProtectedNavigation();
+    setState(() {
+      _error = userFacingError(
+        error,
+        fallback:
+            'We could not load your account. Check your connection and try again.',
+      );
+      _initialLoading = false;
+    });
   }
 
   @override
@@ -177,15 +261,20 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
     if (id == null) return;
     final generation = ++_request;
     try {
-      final account = await widget.accountRepository.loadAccount();
+      final account = await widget.accountRepository.loadAccount().timeout(
+        _accountReadTimeout,
+      );
       final status =
           account.completed && account.phoneVerified && !account.deletionPending
-          ? await _moderation.getMyModerationStatus()
+          ? await _moderation.getMyModerationStatus().timeout(
+              _accountReadTimeout,
+            )
           : null;
       if (!mounted || generation != _request || id != _userId) return;
       if (status == null || status.blocksAccount) {
         _clearProtectedNavigation();
       }
+      _dismissRefreshBanner();
       setState(() {
         _account = account;
         _status = status;
@@ -194,15 +283,7 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
       });
     } catch (error) {
       if (!mounted || generation != _request || id != _userId) return;
-      _clearProtectedNavigation();
-      setState(() {
-        _error = userFacingError(
-          error,
-          fallback:
-              'We could not load your account. Check your connection and try again.',
-        );
-        _initialLoading = false;
-      });
+      _handleRefreshFailure(error);
     }
   }
 
@@ -211,6 +292,13 @@ class _FieldrushAccountGateState extends State<FieldrushAccountGate>
     _request++;
     _subscription?.cancel();
     WidgetsBinding.instance.removeObserver(this);
+    final banner = _refreshBanner;
+    final messenger = _bannerMessenger;
+    if (banner != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (messenger?.mounted == true) banner.close();
+      });
+    }
     super.dispose();
   }
 

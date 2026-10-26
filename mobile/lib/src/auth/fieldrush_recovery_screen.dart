@@ -7,6 +7,7 @@ import 'auth_repository.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_account_screen.dart' show fieldrushAccountError;
 import 'fieldrush_auth_theme.dart';
+import 'fieldrush_auth_platform.dart';
 import 'fieldrush_phone_field.dart';
 
 /// Recovery verifies an existing sign-in method; names and birthdays are never
@@ -245,31 +246,33 @@ class _FieldrushRecoveryScreenState extends State<FieldrushRecoveryScreen>
                       : 'Verify & sign in',
                 ),
               ),
-              const SizedBox(height: 28),
-              const Text(
-                'No longer have that number?',
-                style: TextStyle(
-                  fontFamily: 'Outfit',
-                  fontSize: 21,
-                  fontWeight: FontWeight.w700,
+              if (fieldrushGoogleAuthAvailable) ...[
+                const SizedBox(height: 28),
+                const Text(
+                  'No longer have that number?',
+                  style: TextStyle(
+                    fontFamily: 'Outfit',
+                    fontSize: 21,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'You can use a Google account that you previously linked. Using a different Google account will not recover your profile.',
-              ),
-              const SizedBox(height: 16),
-              OutlinedButton.icon(
-                key: const Key('fieldrush-recovery-google'),
-                onPressed: _busy ? null : _google,
-                icon: const Icon(Icons.link),
-                label: const Text('Use your linked Google account'),
-              ),
-              if (_waitingForGoogle)
-                TextButton(
-                  onPressed: _busy ? null : () => _run(_finishRecovery),
-                  child: const Text('I’ve finished signing in'),
+                const SizedBox(height: 8),
+                const Text(
+                  'You can use a Google account that you previously linked. Using a different Google account will not recover your profile.',
                 ),
+                const SizedBox(height: 16),
+                OutlinedButton.icon(
+                  key: const Key('fieldrush-recovery-google'),
+                  onPressed: _busy ? null : _google,
+                  icon: const Icon(Icons.link),
+                  label: const Text('Use your linked Google account'),
+                ),
+                if (_waitingForGoogle)
+                  TextButton(
+                    onPressed: _busy ? null : () => _run(_finishRecovery),
+                    child: const Text('I’ve finished signing in'),
+                  ),
+              ],
               const SizedBox(height: 28),
               const Text(
                 'Still locked out?',

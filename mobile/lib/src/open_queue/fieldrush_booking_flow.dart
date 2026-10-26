@@ -149,7 +149,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
       final bookings = result[1] as List<OpenQueueBooking>;
       final activeBooking = bookings.where((booking) {
         return booking.status == 'CONFIRMED' &&
-            booking.game.isActiveReservation;
+            booking.game.blocksNewBookingAt(_now);
       }).firstOrNull;
       final bookedIds = bookings.map((b) => b.gameId).toSet();
       final games =
@@ -535,9 +535,7 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
       10.5,
       color: on || count > 0 ? secondary : const Color(0xFFA29D8B),
     ).copyWith(fontWeight: FontWeight.w700);
-    final slotLabel = role == OpenQueueRole.goalkeeper
-        ? '1 slot per team'
-        : '3 slots per team';
+    final slotLabel = roleCapacityLabelForGames(role, _games);
     final countLabel = count == 0
         ? 'None open'
         : '$count ${count == 1 ? 'game' : 'games'} open';

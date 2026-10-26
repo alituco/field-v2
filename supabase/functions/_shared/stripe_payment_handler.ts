@@ -8,6 +8,7 @@ import {
   assertStagingE2EActor,
   assertStagingE2EGame,
   canonicalJson,
+  captureMethod,
   checkoutIdentityKeys,
   deadlineFetch,
   errorCategory,
@@ -216,7 +217,7 @@ async function ensureStripeIntent(
     amount: stripeAmountMinor(intent.amount_fils, intent.currency),
     currency: intent.currency.toLowerCase(),
     allowed_payment_method_types: ["card"],
-    capture_method: "automatic",
+    capture_method: captureMethod(intent),
     confirmation_method: "automatic",
     description: intent.purpose === "SOLO_BOOKING"
       ? "Fieldrush solo match reservation"
@@ -244,6 +245,7 @@ export async function prepareCheckout(
     );
   }
   const { purpose, payload } = normalizedCheckout(body);
+  const requestedCapture = checkoutCaptureMethod(body, purpose);
   // Reconcile any money already captured before asking for another payment.
   const paid = await matchingIntent(ctx, purpose, payload, [
     "CAPTURED",
@@ -316,6 +318,14 @@ export async function prepareCheckout(
       return await reconcileAndRefund(ctx, intent, existingPayment);
     }
   }
+  if (intent && captureMethod(intent) !== requestedCapture) {
+    // Native SDK configuration must match its actual PaymentIntent. Old
+    // installed apps remain automatic; upgraded apps explicitly request manual.
+    const canceled = await cancelAtProvider(ctx, intent);
+    const result = await reconcileAndRefund(ctx, intent, canceled);
+    if (result.status !== "CANCELLED") return result;
+    return prepareCheckout(ctx, body, attempt + 1);
+  }
   const authoritativeQuote = await quote(ctx.user, purpose, payload);
   // Still recheck current availability above, but an unexpired server-owned
   // solo checkout keeps its agreed price/deposit. Admin repricing must not
@@ -362,6 +372,7 @@ export async function prepareCheckout(
       amount_fils: amount,
       payload,
       quote_snapshot: authoritativeQuote,
+      capture_method: requestedCapture,
       transaction_reference: `fieldrush_${id.replaceAll("-", "")}`,
     }).select("*").single();
     if (error) {
@@ -414,7 +425,22 @@ export async function prepareCheckout(
     amount_fils: amount,
     currency,
     expires_at: intent.expires_at,
+    capture_method: captureMethod(intent),
   };
+}
+
+function checkoutCaptureMethod(
+  body: Record<string, unknown>,
+  purpose: PaymentPurpose,
+) {
+  const mode = body.capture_method ?? "automatic";
+  if (
+    mode !== "automatic" && mode !== "manual" ||
+    mode === "manual" && purpose !== "SOLO_BOOKING"
+  ) {
+    throw new PaymentError("This payment capture method is unavailable.", 400);
+  }
+  return mode;
 }
 
 export function canReuseSoloCheckoutQuote(
@@ -462,6 +488,12 @@ export function canReuseSoloCheckoutQuote(
 }
 
 async function cancelAtProvider(ctx: Runtime, intent: PaymentIntent) {
+  if (captureMethod(intent) === "manual") {
+    const { error } = await ctx.admin.rpc("request_stripe_booking_void", {
+      intent_id_to_cancel: intent.id,
+    });
+    if (error) throw error;
+  }
   const payment = await ensureStripeIntent(ctx, intent);
   if (["succeeded", "canceled"].includes(payment.status)) return payment;
   try {
@@ -496,6 +528,7 @@ export async function resumeExistingCheckout(
   body: Record<string, unknown>,
 ) {
   const { purpose, payload } = normalizedCheckout(body);
+  const requestedCapture = checkoutCaptureMethod(body, purpose);
   const intent = body.intent_id == null
     ? await matchingIntent(ctx, purpose, payload, [
       "PENDING",
@@ -568,6 +601,13 @@ export async function resumeExistingCheckout(
       payment.status,
     ) && payment.amount_received === 0 && payment.client_secret
   ) {
+    if (captureMethod(intent) !== requestedCapture) {
+      return await reconcileAndRefund(
+        ctx,
+        intent,
+        await cancelAtProvider(ctx, intent),
+      );
+    }
     let authoritativeQuote: Record<string, unknown>;
     try {
       // Unpaid intents do not reserve a position. Recheck availability and
@@ -606,6 +646,7 @@ export async function resumeExistingCheckout(
       currency: intent.currency,
       provider_status: payment.status,
       expires_at: intent.expires_at,
+      capture_method: captureMethod(intent),
     };
   }
   return {
@@ -871,6 +912,7 @@ async function stagingE2ECheckout(ctx: Context, body: Record<string, unknown>) {
 }
 
 export const supportedWebhookEvents = new Set([
+  "payment_intent.amount_capturable_updated",
   "payment_intent.succeeded",
   "payment_intent.processing",
   "payment_intent.payment_failed",

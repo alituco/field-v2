@@ -234,7 +234,13 @@ class _DashboardHomeState extends State<DashboardHome>
                 booking.game.isActiveReservation,
           )
           .toList()
-        ..sort((a, b) => a.game.startsAt.compareTo(b.game.startsAt));
+        ..sort((a, b) {
+          final at = DateTime.now();
+          final aBlocks = a.game.blocksNewBookingAt(at);
+          final bBlocks = b.game.blocksNewBookingAt(at);
+          if (aBlocks != bBlocks) return aBlocks ? -1 : 1;
+          return a.game.startsAt.compareTo(b.game.startsAt);
+        });
 
   Future<void> _refreshCurrentGame() async {
     if (_refreshingCurrentGame || !_canRefreshCurrentGame) {
@@ -552,7 +558,7 @@ class _DashboardHomeState extends State<DashboardHome>
             booking = await (repo as OpenQueueBookingLookupRepository)
                 .getMyUpcomingBookingForGame(notice.gameId);
           }
-          if (booking != null) {
+          if (booking != null && booking.game.blocksNewBooking) {
             return _PartyNotice(booking, notice.inviter.displayName, notice.id);
           }
         }
@@ -564,6 +570,7 @@ class _DashboardHomeState extends State<DashboardHome>
     }
     if (repo is OpenQueuePartyRepository) {
       for (final booking in bookings) {
+        if (!booking.game.blocksNewBooking) continue;
         try {
           final context = await (repo as OpenQueuePartyRepository)
               .getPartyContext(booking.gameId);
@@ -817,15 +824,16 @@ class _DashboardHomeState extends State<DashboardHome>
     ]);
     final list = <_UpcomingHomeGame>[
       for (final booking in bookings)
-        if (booking.game.status == 'LIVE')
+        if (booking.game.status == 'LIVE' ||
+            booking.game.hasPendingOperationalResolution)
           _UpcomingHomeGame.live(booking.game)
         else
           _UpcomingHomeGame.solo(booking),
       if (_fixturesSnapshotVersion > _bookingsSnapshotVersion)
         for (final game in _fixtureGames)
           if (game.myBookingId != null &&
-              game.status.toUpperCase() == 'LIVE' &&
-              !game.hasPendingOperationalResolution &&
+              (game.status.toUpperCase() == 'LIVE' ||
+                  game.hasPendingOperationalResolution) &&
               !bookings.any((b) => b.gameId == game.id))
             _UpcomingHomeGame.live(game),
       for (final fixture in _fixtures)
@@ -836,6 +844,9 @@ class _DashboardHomeState extends State<DashboardHome>
           _UpcomingHomeGame.clan(fixture),
     ];
     list.sort((a, b) {
+      if (a.blocksNewBooking != b.blocksNewBooking) {
+        return a.blocksNewBooking ? -1 : 1;
+      }
       if (a.isLive != b.isLive) return a.isLive ? -1 : 1;
       return a.startsAt.compareTo(b.startsAt);
     });
@@ -1014,9 +1025,14 @@ class _DashboardHomeState extends State<DashboardHome>
     padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
     child: _noticeCard(
       key: ValueKey('home-live-game-${item.id}'),
-      title: 'Your game is live',
-      body:
-          '${item.liveGame!.venue} · ${item.liveGame!.whiteScore ?? 0} – ${item.liveGame!.blackScore ?? 0}',
+      title: item.liveGame!.hasPendingOperationalResolution
+          ? item.liveGame!.operationalStatusLabel ?? 'Match under review'
+          : item.blocksNewBooking
+          ? 'Your game is live'
+          : 'Awaiting match result',
+      body: !item.blocksNewBooking
+          ? '${item.liveGame!.venue} · You can book another game while this match is being resolved.'
+          : '${item.liveGame!.venue} · ${item.liveGame!.whiteScore ?? 0} – ${item.liveGame!.blackScore ?? 0}',
       action: 'Match details',
       onTap: () => _openUpcoming(item),
       green: true,
@@ -1157,8 +1173,14 @@ class _UpcomingHomeGame {
       booking?.game.startsAt ?? fixture?.scheduledStartAt ?? liveGame!.startsAt;
   bool get isLive =>
       fixture?.isLive ??
-      (liveGame != null || booking?.game.status.toUpperCase() == 'LIVE');
+      ((liveGame ?? booking?.game)?.status.toUpperCase() == 'LIVE' &&
+          !(liveGame ?? booking?.game)!.hasPendingOperationalResolution &&
+          blocksNewBooking);
+  bool get blocksNewBooking =>
+      fixture != null || (liveGame ?? booking?.game)!.blocksNewBooking;
   String get label => fixture == null
-      ? 'Solo game'
+      ? !(liveGame ?? booking?.game)!.blocksNewBooking
+            ? 'Solo game · ${(liveGame ?? booking?.game)!.operationalStatusLabel ?? 'Awaiting result'}'
+            : 'Solo game'
       : '${fixture!.homeClan.name} vs ${fixture!.awayClan?.name ?? 'Opponent TBC'}';
 }

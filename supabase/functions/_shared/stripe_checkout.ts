@@ -28,8 +28,14 @@ export type PaymentIntent = {
   resource_id: string | null;
   expires_at: string;
   created_at: string;
+  capture_method?: "automatic" | "manual";
+  failure_reason?: string | null;
   external_refund_review_required?: boolean;
 };
+
+export function captureMethod(intent: PaymentIntent) {
+  return intent.capture_method ?? "automatic";
+}
 
 export class PaymentError extends Error {
   constructor(message: string, readonly status = 409) {
@@ -232,6 +238,9 @@ export function stripeMetadata(intent: PaymentIntent) {
     field_profile_id: intent.profile_id,
     field_purpose: intent.purpose,
     field_transaction_reference: intent.transaction_reference,
+    ...(captureMethod(intent) === "manual"
+      ? { field_capture_method: "manual" }
+      : {}),
   };
 }
 
@@ -285,10 +294,19 @@ export function verifyStripePayment(
     }
   }
   if (
-    payment.capture_method !== "automatic" ||
+    payment.capture_method !== captureMethod(intent) ||
     payment.payment_method_types.some((method) => method !== "card")
   ) {
     throw new PaymentError("The payment configuration does not match.");
+  }
+  if (
+    captureMethod(intent) === "manual" &&
+    ((payment.status === "requires_capture" &&
+      (payment.amount_received !== 0 ||
+        payment.amount_capturable !== amount)) ||
+      (payment.status === "canceled" && payment.amount_received !== 0))
+  ) {
+    throw new PaymentError("The payment authorization amount does not match.");
   }
 }
 
@@ -326,6 +344,14 @@ export function intentResponse(intent: PaymentIntent): Record<string, unknown> {
     payment_method: intent.payment_method,
     resource_type: intent.resource_type,
     resource_id: intent.resource_id,
+    capture_method: captureMethod(intent),
+    ...(intent.status === "CANCELLED" && captureMethod(intent) === "manual" &&
+        intent.failure_reason
+      ? {
+        message:
+          "Your spot could not be reserved. You were not charged. Your bank may temporarily show an authorization hold.",
+      }
+      : {}),
   };
 }
 
@@ -344,6 +370,11 @@ export async function reconcilePayment(
       expand: ["latest_charge"],
     });
   verifyStripePayment(latest, intent, livemode);
+  if (
+    captureMethod(intent) === "manual" && latest.status === "requires_capture"
+  ) {
+    return reconcileAuthorization(admin, stripe, intent, livemode, latest);
+  }
   if (latest.status === "succeeded") {
     const charge = typeof latest.latest_charge === "string"
       ? latest.latest_charge
@@ -375,7 +406,7 @@ export async function reconcilePayment(
   ).eq("status", "PENDING");
   if (error) throw error;
   if (latest.status === "canceled") {
-    return { ...intentResponse(intent), status: "CANCELLED" };
+    return intentResponse({ ...intent, status: "CANCELLED" });
   }
   if (["processing", "requires_capture"].includes(latest.status)) {
     return { ...intentResponse(intent), status: "PROCESSING" };
@@ -385,6 +416,102 @@ export async function reconcilePayment(
     status: "PENDING",
     provider_status: latest.status,
   };
+}
+
+/** One shared path for player confirmation, webhooks and scheduled recovery.
+ * Provider capture is never attempted before the database durably reserves the
+ * actual game/role under the same capacity locks used by free/legacy bookings.
+ */
+async function reconcileAuthorization(
+  admin: PaymentDatabase,
+  stripe: Stripe,
+  intent: PaymentIntent,
+  livemode: boolean,
+  authorized: Stripe.PaymentIntent,
+): Promise<Record<string, unknown>> {
+  const { data, error } = await admin.rpc(
+    "reserve_stripe_booking_authorization",
+    {
+      intent_id_to_reserve: intent.id,
+      provider_intent_id_to_use: authorized.id,
+      amount_minor_to_use: authorized.amount_capturable,
+      currency_to_use: authorized.currency.toUpperCase(),
+      payment_method_to_use: paymentMethod(authorized),
+    },
+  );
+  if (error) throw error;
+  const reservation = object(data);
+  let latest: Stripe.PaymentIntent;
+  if (reservation?.status === "RESERVED") {
+    try {
+      latest = await stripe.paymentIntents.capture(authorized.id, {
+        amount_to_capture: stripeAmountMinor(
+          intent.amount_fils,
+          intent.currency,
+        ),
+      }, { idempotencyKey: `fieldrush-capture-${intent.id}` });
+    } catch {
+      // A lost capture acknowledgement is not a failed payment. Retrieve first;
+      // a confirmed still-uncaptured authorization can be voided safely, with
+      // capacity retained until the provider confirms the final outcome.
+      latest = await stripe.paymentIntents.retrieve(authorized.id, {
+        expand: ["latest_charge"],
+      });
+      verifyStripePayment(latest, intent, livemode);
+      if (latest.status === "requires_capture") {
+        latest = await voidAuthorization(admin, stripe, intent);
+      }
+    }
+  } else if (reservation?.status === "CANCEL_AUTHORIZATION") {
+    if (typeof reservation.failure_reason === "string") {
+      intent.failure_reason = reservation.failure_reason;
+    }
+    latest = await voidAuthorization(admin, stripe, intent);
+  } else if (
+    ["FINALIZED", "CANCELLED", "REFUNDED", "REQUIRES_REFUND"].includes(
+      String(reservation?.status),
+    )
+  ) {
+    return intentResponse(await loadIntent(admin, intent.id));
+  } else if (reservation?.status === "CAPTURED") {
+    return { ...intentResponse(intent), status: "PROCESSING" };
+  } else {
+    throw new PaymentError("Your payment authorization is being checked.", 503);
+  }
+  verifyStripePayment(latest, intent, livemode);
+  if (latest.status === "requires_capture") {
+    return { ...intentResponse(intent), status: "PROCESSING" };
+  }
+  // Request an expanded charge after capture so the saved payment method stays
+  // accurate for card wallets. The captured amount/reference remain verified.
+  if (
+    latest.status === "succeeded" && typeof latest.latest_charge !== "object"
+  ) {
+    latest = await stripe.paymentIntents.retrieve(latest.id, {
+      expand: ["latest_charge"],
+    });
+  }
+  return reconcilePayment(admin, stripe, intent, livemode, latest);
+}
+
+async function voidAuthorization(
+  admin: PaymentDatabase,
+  stripe: Stripe,
+  intent: PaymentIntent,
+) {
+  const { error } = await admin.rpc("request_stripe_booking_void", {
+    intent_id_to_cancel: intent.id,
+  });
+  if (error) throw error;
+  try {
+    return await stripe.paymentIntents.cancel(intent.provider_intent_id!, {}, {
+      idempotencyKey: `fieldrush-cancel-${intent.id}`,
+    });
+  } catch {
+    return await stripe.paymentIntents.retrieve(intent.provider_intent_id!, {
+      expand: ["latest_charge"],
+    });
+  }
 }
 
 type Refund = {
