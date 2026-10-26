@@ -684,7 +684,7 @@ jobs:
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_player_referrals.sql
 
-      - name: Verify registration recovery and authorized booking capture
+      - name: Verify registration recovery, capture and private history
         shell: bash
         run: |
           set -euo pipefail
@@ -695,6 +695,10 @@ jobs:
           docker exec -i supabase_db_field_v2 \
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             <supabase/scripts/verify_authorized_booking_capture.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_booking_history.sql
 
       - name: Verify configurable solo minimum, start window, and stream readiness
         shell: bash

@@ -17,6 +17,7 @@ import '../leaderboard/leaderboard_repository.dart';
 import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../leaderboard/fieldrush_seasons.dart';
 import '../open_queue/fieldrush_game_detail_screen.dart';
+import '../open_queue/fieldrush_booking_flow.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability.dart';
 import '../reliability/reliability_repository.dart';
@@ -38,6 +39,7 @@ import 'profile_clip_screen.dart';
 import 'profile_clips_screen.dart';
 import 'profile_connections_screen.dart';
 import 'profile_repository.dart';
+import 'player_history_repository.dart';
 import 'profile_screen.dart';
 
 /// The signed-in player's private You tab. Public player profiles have a
@@ -64,6 +66,7 @@ class FieldrushYouScreen extends StatefulWidget {
     this.ratingTrackController,
     this.onNavigateTab,
     this.referralRepository,
+    this.historyRepository,
   });
 
   final ProfileRepository profileRepository;
@@ -85,12 +88,17 @@ class FieldrushYouScreen extends StatefulWidget {
   final ValueNotifier<RatingTrack>? ratingTrackController;
   final ValueChanged<int>? onNavigateTab;
   final ReferralRepository? referralRepository;
+  final PlayerHistoryRepository? historyRepository;
 
   @override
   State<FieldrushYouScreen> createState() => _FieldrushYouScreenState();
 }
 
 class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
+  late final PlayerHistoryRepository _defaultHistoryRepository =
+      SupabasePlayerHistoryRepository();
+  PlayerHistoryRepository get _historyRepository =>
+      widget.historyRepository ?? _defaultHistoryRepository;
   PlayerProfile? _profile;
   FieldrushAccount? _account;
   PlayerRatingLeaderboardEntry? _rating;
@@ -537,6 +545,7 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
   void _openHistory() {
     final profile = _profile;
     if (profile == null || !_profileDetailsReady) return;
+    final ownerRoute = ModalRoute.of(context);
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (historyContext) => FieldrushMatchHistoryScreen(
@@ -545,9 +554,36 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
             profile.playerRating?.events ?? const [],
           ),
           onOpenGame: (game) => _openGame(game, historyContext),
+          historyRepository: _historyRepository,
+          onFindAnotherGame: () => _findAnotherGame(ownerRoute),
         ),
       ),
     );
+  }
+
+  Future<void> _findAnotherGame(Route<dynamic>? ownerRoute) async {
+    final navigator = Navigator.of(context);
+    navigator.popUntil(
+      (route) => ownerRoute == null ? route.isFirst : route == ownerRoute,
+    );
+    await navigator.push<void>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushBookingFlow(
+          repository: widget.openQueueRepository,
+          onNavigateTab: widget.onNavigateTab == null
+              ? null
+              : (index) {
+                  navigator.popUntil(
+                    (route) => ownerRoute == null
+                        ? route.isFirst
+                        : route == ownerRoute,
+                  );
+                  widget.onNavigateTab!(index);
+                },
+        ),
+      ),
+    );
+    if (mounted) await _load();
   }
 
   Future<void> _openGame(
@@ -854,7 +890,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                         onPaymentMethods: () =>
                             Navigator.of(context).push<void>(
                               MaterialPageRoute(
-                                builder: (_) => const YouPaymentMethodsScreen(),
+                                builder: (_) => YouPaymentMethodsScreen(
+                                  historyRepository: _historyRepository,
+                                ),
                               ),
                             ),
                         onSignOut: _signOut,
