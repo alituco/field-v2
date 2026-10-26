@@ -61,7 +61,7 @@ type FieldSection = {
 const FIELD_TOOLTIPS: Record<string, string> = {
   "attendance.checkInOpenLeadMinutes": "Arrival reminder for matches using the general attendance policy. Upcoming solo games use their saved arrival target. Referees can check players in earlier.",
   "attendance.checkInLeadMinutes": "Controls solo booking and cancellation availability, and the on-time deadline for matches using the general attendance policy. Upcoming solo games have a separate saved late-arrival cutoff.",
-  "attendance.noShowGraceMinutes": "A missing player becomes a no-show this many minutes after kickoff.",
+  "attendance.noShowGraceMinutes": "Earlier solo and clan policies use this grace period. Season 0 solo games finalize missing players as no-shows at full time.",
   "attendance.strikeLifetimeDays": "How long a reliability strike remains active before it expires.",
   "attendance.appealWindowHours": "How long a player or clan has to appeal an attendance decision.",
   "solo.teamAssignmentLeadMinutes": "How long before kickoff Field assigns teams and tells confirmed players which kit to wear.",
@@ -72,7 +72,7 @@ const FIELD_TOOLTIPS: Record<string, string> = {
   "solo.outcomes.onTime.refundBps": "Booking-fee refund after an on-time appearance. This does not control returning a reliability deposit.",
   "solo.outcomes.late.strikes": "Default strikes for a late arrival. Upcoming solo games use their saved arrival rule, which applies one strike when the referee records a late arrival.",
   "solo.outcomes.late.refundBps": "Booking-fee refund for a late arrival.",
-  "solo.outcomes.noShow.strikes": "Reliability strikes applied when the player is still missing after the grace period.",
+  "solo.outcomes.noShow.strikes": "Strikes applied when still missing at full time in Season 0 solo games, or after the saved grace period in earlier solo games.",
   "solo.outcomes.noShow.refundBps": "Booking-fee refund for a no-show.",
   "solo.outcomes.fieldCancelled.refundBps": "Booking-fee refund when Field or the venue cancels the match.",
   "solo.reliabilityDeposit.activeStrikeThreshold": "Players at or above this number of active strikes must pay the reliability deposit.",

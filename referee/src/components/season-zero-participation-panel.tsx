@@ -50,7 +50,7 @@ export function SeasonZeroParticipationPanel({ fixture, accessToken, submitting,
   return <section className="panel season-zero-participation">
     <div className="panel-heading"><div><span className="match-action-kicker">Season 0 rating policy</span>
       <h2 className="panel-title">Playing time</h2></div></div>
-    <p className="timer-start-note">Record actual entries and departures. Pauses do not count as playing time. No replacements or rotations.</p>
+    <p className="timer-start-note">Record departures, injuries and returns here. Record arrivals in Players; arrival also joins play. Pauses do not count as playing time.</p>
     <p className="timer-start-note">{soloMinimumHint(fixture)}</p>
     {error ? <p role="alert" className="error-message">{error}</p> : null}
     {!state && !error ? <p>{fixture.status === "LIVE" ? "Loading playing time…" : "Confirm the checked-in starting players at kickoff."}</p> : null}
@@ -65,7 +65,7 @@ export function SeasonZeroParticipationPanel({ fixture, accessToken, submitting,
         const remaining = blue ? Math.max(0, Math.ceil((Date.parse(blue.recorded_at) + 120_000 - now) / 1000)) : 0;
         const actions = playerState === "ACTIVE" ? ["EXCUSED_LEAVE", "BLUE_CARD", "RED_CARD", "QUIT"]
           : playerState === "EXCUSED" ? ["RETURN"] : playerState === "BLUE_CARD" ? ["BLUE_RETURN"]
-          : playerState === "NOT_ENTERED" ? ["JOIN"] : [];
+          : [];
         return <div key={player.id} className="season-zero-player-row">
           <div><strong>{display?.displayName ?? "Booked player"}</strong>
             <small>{player.team === "A" ? "White" : "Black"} · {player.booked_role} · {Math.floor((data?.actual_seconds ?? 0) / 60)} min recorded

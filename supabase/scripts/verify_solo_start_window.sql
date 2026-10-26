@@ -185,15 +185,23 @@ begin
   perform pg_temp.window_expect((select operational_state='NORMAL' from public.open_queue_games where id=late_game),'scheduled end does not lock valid delayed kickoff');
   select jsonb_agg(profile_id) into participants from public.open_queue_bookings where game_id=late_game and profile_id<>last_player;
   result:=public.referee_season_zero_action(admin_id,late_game,gen_random_uuid(),0,jsonb_build_object('action','START','participant_ids',participants));
-  perform public.referee_check_in_player_with_timing(admin_id,'SOLO',late_game,last_player,'AFTER_KICKOFF');
-  perform pg_temp.window_expect((select checked_in_at is not null and outcome is null from public.current_match_attendance_records where open_queue_game_id=late_game and profile_id=last_player),'late actual arrival remains checkable after original scheduled deadline');
-  perform pg_temp.window_expect((select played=false from public.open_queue_bookings where game_id=late_game and profile_id=last_player),'check-in does not invent actual participation');
-  perform pg_temp.window_expect(fieldrush_rating_private.solo_attendance_cutoff(late_game,null)=(result->>'started_at')::timestamptz+interval '10 minutes','saved grace uses actual kickoff');
+  if to_regprocedure('public.referee_save_solo_match_record(uuid,uuid,uuid,integer,jsonb,boolean,text)') is not null then
+    result:=public.referee_save_solo_match_record(admin_id,late_game,gen_random_uuid(),1,
+      jsonb_build_object('arrivals',jsonb_build_array(jsonb_build_object('profile_id',last_player,'arrived_at','now'))),false)->'state';
+    perform pg_temp.window_expect((select checked_in_at is not null and outcome is null from public.current_match_attendance_records where open_queue_game_id=late_game and profile_id=last_player),'late actual arrival remains checkable after original scheduled deadline');
+    perform pg_temp.window_expect((select played from public.open_queue_bookings where game_id=late_game and profile_id=last_player),'one arrival also records actual entry into play');
+    perform pg_temp.window_expect(fieldrush_rating_private.solo_attendance_cutoff(late_game,null)='infinity'::timestamptz,'live arrival remains open until actual finish');
+  else
+    perform public.referee_check_in_player_with_timing(admin_id,'SOLO',late_game,last_player,'AFTER_KICKOFF');
+    perform pg_temp.window_expect((select checked_in_at is not null and outcome is null from public.current_match_attendance_records where open_queue_game_id=late_game and profile_id=last_player),'late actual arrival remains checkable after original scheduled deadline');
+    perform pg_temp.window_expect((select played=false from public.open_queue_bookings where game_id=late_game and profile_id=last_player),'earlier policy keeps check-in separate from participation');
+    perform pg_temp.window_expect(fieldrush_rating_private.solo_attendance_cutoff(late_game,null)=(result->>'started_at')::timestamptz+interval '10 minutes','earlier policy grace uses actual kickoff');
+  end if;
   perform public.detect_due_match_resolution_cases();
   perform pg_temp.window_expect((select operational_state='NORMAL' from public.open_queue_games where id=late_game),'fresh delayed live match remains unlocked');
   perform pg_temp.window_expect(not fieldrush_rating_private.solo_resolution_is_due(late_game,clock_timestamp()+interval '89 minutes'),'missing-result timer waits for actual play plus grace');
   perform pg_temp.window_expect(fieldrush_rating_private.solo_resolution_is_due(late_game,clock_timestamp()+interval '91 minutes'),'missing-result timer follows actual play');
-  perform public.referee_season_zero_action(admin_id,late_game,gen_random_uuid(),1,'{"action":"PAUSE"}');
+  perform public.referee_season_zero_action(admin_id,late_game,gen_random_uuid(),(result->>'revision')::integer,'{"action":"PAUSE"}');
   perform pg_temp.window_expect(not fieldrush_rating_private.solo_resolution_is_due(late_game,clock_timestamp()+interval '3 days'),'paused wall time does not consume playing duration');
 
   -- Exact helper boundaries are deterministic; real RPCs use server wall time.

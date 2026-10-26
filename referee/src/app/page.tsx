@@ -6,6 +6,7 @@ import { BroadcasterLaptopPanel } from "@/components/broadcaster-laptop-panel";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
+import { SoloMatchRecordPanel } from "@/components/solo-match-record-panel";
 import { SeasonZeroParticipationPanel } from "@/components/season-zero-participation-panel";
 import { SeasonZeroRebalancePanel } from "@/components/season-zero-rebalance-panel";
 import { SeasonZeroLifecycleControls } from "@/components/season-zero-lifecycle-controls";
@@ -792,7 +793,7 @@ function GamesView({
         <div className="result-locked-note">
           <span aria-hidden="true">✓</span>
           {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY
-            ? "Final result saved. Use Reopen match if play needs to continue."
+            ? "Final result saved. Correct a mistake from More → Correct match record. Use Reopen match if play needs to continue."
             : "Final result saved. Admin corrections remain fully audited."}
         </div>
       ) : null}
@@ -801,18 +802,21 @@ function GamesView({
 
       {view === "players" ? (
         <div className="referee-view-panel referee-view-players">
-          <AttendancePanel
+          {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY && ["LIVE", "FINAL"].includes(activeFixture.status) ? <SoloMatchRecordPanel
+            key={`arrivals-${activeFixture.id}`} fixture={activeFixture} accessToken={accessToken} onSaved={onRefresh} /> : <AttendancePanel
             key={`attendance-${refereeMatchKey(activeFixture)}`}
             fixture={activeFixture}
             readOnly={resolutionLocked || activeFixture.status === "CANCELLED"}
             submitting={submitting}
             onRunAction={onRunAction}
-          />
+          />}
         </div>
       ) : null}
 
       {view === "more" ? (
         <div className="referee-view-panel referee-view-more">
+          {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY && ["LIVE", "FINAL"].includes(activeFixture.status) ? <SoloMatchRecordPanel
+            key={`record-${activeFixture.id}`} fixture={activeFixture} accessToken={accessToken} onSaved={onRefresh} mode="correction" /> : null}
           <MatchContextDisclosure
             key={`match-context-${activeFixture.matchKind}-${activeFixture.id}`}
             fixture={activeFixture}
@@ -925,6 +929,7 @@ function AttendancePanel({
   const deadline = formatAttendanceTime(context.checkInDeadlineAt, timezone);
   const kickoff = formatAttendanceTime(context.kickoffAt, timezone);
   const cutoff = formatAttendanceTime(context.noShowCutoffAt, timezone);
+  const flexibleArrivals = fixture.matchKind === "SOLO" && fixture.ratingPolicyId === SEASON_ZERO_POLICY;
   const statusLabel = fixture.status === "CANCELLED"
     ? "Cancelled"
     : readOnly
@@ -955,7 +960,7 @@ function AttendancePanel({
       </div>
 
       <p className="attendance-deadline">
-        <strong>Referee check-in closes {cutoff}</strong>
+        <strong>{flexibleArrivals ? "Arrivals stay open until full time" : <>Referee check-in closes {cutoff}</>}</strong>
         <span>On-time arrival is {context.lateCutoffInclusive ? 'before' : 'by'} {deadline} · kickoff is {kickoff}</span>
       </p>
 
@@ -1014,8 +1019,8 @@ function AttendancePanel({
         </div>
       ) : !context.attendanceFinalized ? (
         <p className="attendance-cutoff-note">
-          Missing players can be finalized after the {cutoff} no-show cutoff.
-          Kickoff is not delayed.
+          {flexibleArrivals ? "An arrived player joins play at kickoff. Late arrivals can join during the game; no-shows are finalized when it ends."
+            : <>Missing players can be finalized after the {cutoff} no-show cutoff. Kickoff is not delayed.</>}
         </p>
       ) : (
         <p className="attendance-cutoff-note final">
@@ -1026,6 +1031,7 @@ function AttendancePanel({
     <CheckInTimingDialog
       player={readOnly ? null : playerToCheckIn}
       lateCutoffInclusive={context.lateCutoffInclusive ?? false}
+      allowAfterKickoff={!flexibleArrivals}
       submitting={submitting}
       onClose={() => setPlayerToCheckIn(null)}
       onConfirm={async (timing) => {
@@ -1155,12 +1161,14 @@ const CHECK_IN_TIMING_OPTIONS: Array<{
 function CheckInTimingDialog({
   player,
   lateCutoffInclusive,
+  allowAfterKickoff = true,
   submitting,
   onClose,
   onConfirm,
 }: {
   player: ReliabilityAttendancePlayer | null;
   lateCutoffInclusive: boolean;
+  allowAfterKickoff?: boolean;
   submitting: string | null;
   onClose: () => void;
   onConfirm: (timing: CheckInTiming) => Promise<void>;
@@ -1212,7 +1220,7 @@ function CheckInTimingDialog({
           the audit trail.
         </p>
         <div className="attendance-timing-options">
-          {CHECK_IN_TIMING_OPTIONS.map((option) => (
+          {CHECK_IN_TIMING_OPTIONS.filter(option => allowAfterKickoff || option.value !== "AFTER_KICKOFF").map((option) => (
             <button
               className={`attendance-timing-option ${option.value.toLowerCase()}`}
               disabled={busy}
@@ -1879,7 +1887,7 @@ function TimerPanel({
         <details className="timer-lineup-disclosure">
           <summary>
             <span>
-              <strong>{isBeforeStart ? "Confirm who is playing" : "Match lineup"}</strong>
+              <strong>{isBeforeStart ? seasonZero ? "Arrived players" : "Confirm who is playing" : "Match lineup"}</strong>
               <small>
                 {isBeforeStart
                   ? soloTeamsPending
@@ -1895,7 +1903,7 @@ function TimerPanel({
             participantIds={
               isBeforeStart ? selectedParticipantIds : fixture.participantIds
             }
-            editable={isBeforeStart}
+            editable={isBeforeStart && !seasonZero}
             eligibleParticipantIds={attendanceEligibleIds ?? undefined}
             teamsPending={soloTeamsPending}
             onPlayerSelected={setPlayerSelected}
@@ -1908,7 +1916,7 @@ function TimerPanel({
           participantIds={
             isBeforeStart ? selectedParticipantIds : fixture.participantIds
           }
-          editable={isBeforeStart}
+          editable={isBeforeStart && !seasonZero}
           eligibleParticipantIds={attendanceEligibleIds ?? undefined}
           teamsPending={soloTeamsPending}
           onPlayerSelected={setPlayerSelected}

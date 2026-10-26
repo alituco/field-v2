@@ -156,6 +156,11 @@ begin
 
   game:=pg_temp.early_game(actor,players);
   select profile_id into nonparticipant from public.open_queue_bookings where game_id=game and role='DEF' order by profile_id limit 1;
+  -- Arrival now also means participation. The intentionally absent fixture must
+  -- actually be absent, rather than checked in and omitted from the lineup.
+  update public.match_attendance_records set checked_in_at=null,checked_in_by=null,
+    check_in_timing=null,outcome=null,finalized_at=null
+    where open_queue_game_id=game and profile_id=nonparticipant;
   select jsonb_agg(profile_id) into participants from public.open_queue_bookings where game_id=game and profile_id<>nonparticipant;
   perform public.referee_season_zero_action(actor,game,gen_random_uuid(),0,jsonb_build_object('action','START','participant_ids',participants));
   select profile_id into scorer from public.open_queue_bookings where game_id=game and team='WHITE' and profile_id<>nonparticipant limit 1;

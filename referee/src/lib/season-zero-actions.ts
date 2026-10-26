@@ -9,6 +9,7 @@ export type SeasonZeroMatchState = {
   rating_status: string;
   settlement_status: "UNSETTLED" | "RATED" | "NOT_RATED" | "HELD";
   referee_can_reopen?: boolean;
+  arrivals?: { profile_id: string; arrived_at: string | null }[];
   elapsed_seconds: number;
   scheduled_seconds: number;
   server_now: string;
@@ -41,8 +42,8 @@ export function seasonZeroActionInput(body: Record<string, unknown>): Record<str
       if (typeof body.profileId !== "string" || !body.profileId.trim()) throw new Error("Choose a player.");
       return { action: "BLUE_CARD", profile_id: body.profileId, note: "Two-minute suspension recorded by referee." };
     case "expire_blue_card": throw new Error("Confirm the player’s actual return in Playing time after the two-minute timer expires.");
-    case "set_time": throw new Error("This policy needs an audited timeline correction and rating replay. Use the organizer’s rating review.");
-    case "override_score": throw new Error("Use the organizer’s Season 0 rating review so this correction also replays dependent matches.");
+    case "set_time": throw new Error("This policy needs an audited timeline correction and rating replay. Use More → Correct match record.");
+    case "override_score": throw new Error("Use More → Correct match record so the correction also updates affected ratings.");
     // Keep the existing injury/refund evidence path separate from SR events.
     // It does not remove a player from the actual participation timeline.
     case "record_verified_injury": return null;

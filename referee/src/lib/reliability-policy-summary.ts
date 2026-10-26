@@ -68,7 +68,7 @@ export function buildReliabilityPolicySummary(
           },
           {
             title: "Check-in is referee managed",
-            explanation: `Referees may check players in at any time and choose when each player arrived. Use the game's saved arrival times for its on-time deadline. Upcoming Solo games have a separate saved arrival rule; the general policy deadline is ${config.attendance.checkInLeadMinutes} minutes before kickoff. The no-show grace period is ${config.attendance.noShowGraceMinutes} minutes after kickoff.`,
+            explanation: `Season 0 solo arrivals remain open until full time. Recording arrival also records entry into play, and missing players become no-shows when the game ends. Use each game's saved arrival deadline to determine lateness. Earlier solo and clan policies keep their saved check-in deadline (${config.attendance.checkInLeadMinutes} minutes before kickoff) and no-show grace period (${config.attendance.noShowGraceMinutes} minutes after kickoff).`,
           },
           {
             title: "Strikes expire",

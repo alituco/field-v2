@@ -59,3 +59,13 @@ test("downloadable document is standalone, printable, and escapes admin copy", (
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;/);
 });
+
+
+test("attendance summary distinguishes Season 0 full-time decisions from saved legacy grace periods", () => {
+  const document = buildReliabilityPolicySummary(reliabilityPolicyDefaults, metadata);
+  const rule = document.sections.find(section => section.id === "at-a-glance").rules.find(rule => rule.title === "Check-in is referee managed");
+  assert.match(rule.explanation, /Season 0 solo arrivals remain open until full time/);
+  assert.match(rule.explanation, /missing players become no-shows when the game ends/);
+  assert.match(rule.explanation, /Earlier solo and clan policies keep their saved/);
+  assert.match(rule.explanation, /10 minutes after kickoff/);
+});
