@@ -150,6 +150,9 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
   @visibleForTesting
   Future<void> synchronizeForTesting() => _synchronize();
 
+  @visibleForTesting
+  void openMessageForTesting(RemoteMessage message) => _openMessage(message);
+
   SupabaseClient? _client;
   FirebaseMessaging? _messaging;
   SharedPreferences? _storage;
@@ -160,6 +163,7 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
   int _generation = 0;
   int _consentEpoch = 0;
   String? _observedAuthUser;
+  String? _pendingSignedOutTapId;
   bool _configured = false;
   bool _registered = false;
   bool _busy = false;
@@ -207,6 +211,7 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
       final observedUser = event.session?.user.id;
       if (observedUser != _observedAuthUser ||
           event.event == AuthChangeEvent.signedOut) {
+        clearFieldrushActivityOpenRequest();
         _consentEpoch++;
         _observedAuthUser = observedUser;
       }
@@ -217,6 +222,11 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
       }
       _loggingOut = false;
       _logoutUser = null;
+      final pendingTap = _pendingSignedOutTapId;
+      if (observedUser != null && pendingTap != null) {
+        _pendingSignedOutTapId = null;
+        requestFieldrushNotificationOpen(pendingTap, observedUser);
+      }
       unawaited(_configured ? _synchronize() : _configureForCurrentSession());
     });
   }
@@ -258,12 +268,9 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
       _foreground = FirebaseMessaging.onMessage.listen(
         (_) => notifyFieldrushActivityChanged(),
       );
-      _opened = FirebaseMessaging.onMessageOpenedApp.listen(
-        (_) => requestFieldrushActivityOpen(),
-      );
-      if (await _messaging!.getInitialMessage() != null) {
-        requestFieldrushActivityOpen();
-      }
+      _opened = FirebaseMessaging.onMessageOpenedApp.listen(_openMessage);
+      final initialMessage = await _messaging!.getInitialMessage();
+      if (initialMessage != null) _openMessage(initialMessage);
       await _messaging!.setForegroundNotificationPresentationOptions(
         alert: false,
         badge: false,
@@ -293,6 +300,53 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> refreshSetup() => _configureForCurrentSession();
 
+  void _openMessage(RemoteMessage message) {
+    final owner = _client?.auth.currentUser?.id;
+    final id = message.data['notification_id'];
+    if (_loggingOut) return;
+    if (id is String &&
+        RegExp(
+          r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+        ).hasMatch(id)) {
+      if (owner == null) {
+        // Retain only an opaque ID until sign-in. The eventual owner's RPC
+        // decides whether it belongs to them; a different account sees nothing.
+        _pendingSignedOutTapId = id;
+      } else {
+        requestFieldrushNotificationOpen(id, owner);
+      }
+    } else if (owner != null) {
+      requestFieldrushActivityOpen();
+    }
+  }
+
+  /// Called from the visible success screen, never at app launch. A dismissed
+  /// or denied request is not repeated on every subsequent booking.
+  Future<void> offerAfterBooking() async {
+    try {
+      final owner = _client?.auth.currentUser?.id;
+      final storage = _storage;
+      if (!canEnable ||
+          owner == null ||
+          storage == null ||
+          !_foregroundActive) {
+        return;
+      }
+      if (storage.getBool('push.opted_in') == true &&
+          storage.getString('push.opted_in.user_id') == owner) {
+        return;
+      }
+      final key = 'push.booking_prompt.$owner';
+      if (storage.getBool(key) == true) return;
+      await storage.setBool(key, true);
+      if (_client?.auth.currentUser?.id != owner || _loggingOut) return;
+      await enableOnThisPhone();
+    } catch (_) {
+      // Notification setup is optional and cannot turn a confirmed booking
+      // into an error. Settings keeps the explicit retry action available.
+    }
+  }
+
   Future<void> enableOnThisPhone() async {
     if (!canEnable || _client?.auth.currentUser == null) return;
     final userId = _client!.auth.currentUser!.id;
@@ -305,6 +359,12 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
       await _drainPendingCleanup();
       if (_hasPendingCleanup ||
           _loggingOut ||
+          consentEpoch != _consentEpoch ||
+          _client?.auth.currentUser?.id != userId) {
+        return;
+      }
+      await _storage!.setBool('push.booking_prompt.$userId', true);
+      if (_loggingOut ||
           consentEpoch != _consentEpoch ||
           _client?.auth.currentUser?.id != userId) {
         return;
@@ -593,6 +653,7 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
   /// offline. Generic lock-screen previews contain no private account content.
   Future<void> prepareForSignOut() async {
     clearFieldrushActivityOpenRequest();
+    _pendingSignedOutTapId = null;
     if (!_configured) return;
     ++_generation;
     ++_consentEpoch;
@@ -616,6 +677,10 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
     _busy = true;
     notifyListeners();
     try {
+      final owner = _client?.auth.currentUser?.id;
+      if (owner != null) {
+        await _storage?.setBool('push.booking_prompt.$owner', true);
+      }
       await prepareForSignOut();
     } finally {
       _loggingOut = false;

@@ -6,14 +6,36 @@ final fieldrushActivityRevision = ValueNotifier<int>(0);
 
 void notifyFieldrushActivityChanged() => fieldrushActivityRevision.value++;
 
-/// A push tap opens the current account's canonical Activity, never a route or
-/// entity supplied by a notification payload. Retained until Home is mounted.
+/// Retained until Home mounts. A tap resolves the owner's canonical receipt;
+/// legacy or unavailable receipts open Activity instead.
 final fieldrushActivityOpenRequested = ValueNotifier<bool>(false);
 
-void requestFieldrushActivityOpen() {
+/// A phone supplies only a receipt ID. Its destination is fetched for the
+/// signed-in owner after Home mounts; no route or entity is trusted from FCM.
+class FieldrushNotificationOpenRequest {
+  const FieldrushNotificationOpenRequest(this.notificationId, this.userId);
+  final String notificationId;
+  final String userId;
+}
+
+FieldrushNotificationOpenRequest? fieldrushNotificationOpenRequest;
+
+void requestFieldrushNotificationOpen(String notificationId, String userId) {
+  fieldrushNotificationOpenRequest = FieldrushNotificationOpenRequest(
+    notificationId,
+    userId,
+  );
   notifyFieldrushActivityChanged();
   fieldrushActivityOpenRequested.value = true;
 }
 
-void clearFieldrushActivityOpenRequest() =>
-    fieldrushActivityOpenRequested.value = false;
+void requestFieldrushActivityOpen() {
+  fieldrushNotificationOpenRequest = null;
+  notifyFieldrushActivityChanged();
+  fieldrushActivityOpenRequested.value = true;
+}
+
+void clearFieldrushActivityOpenRequest() {
+  fieldrushNotificationOpenRequest = null;
+  fieldrushActivityOpenRequested.value = false;
+}

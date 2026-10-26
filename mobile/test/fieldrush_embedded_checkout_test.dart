@@ -20,6 +20,67 @@ const _payKey = ValueKey('open-queue-confirm-payment');
 
 void main() {
   testWidgets(
+    'only a verified foreground booking acknowledges the confirmation push',
+    (tester) async {
+      final repository = _Repository()
+        ..verification = Completer<OpenQueueBooking>();
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(_payKey));
+      await tester.tap(find.byKey(_payKey));
+      await tester.pump();
+      expect(repository.acknowledgedOutcomes, isEmpty);
+      repository.verification!.complete(_booking(repository.game));
+      await tester.pumpAndSettle();
+      expect(repository.acknowledgedOutcomes, ['embedded-attempt:CONFIRMED']);
+    },
+  );
+
+  testWidgets(
+    'confirmation while backgrounded remains eligible for phone push',
+    (tester) async {
+      final repository = _Repository()
+        ..verification = Completer<OpenQueueBooking>();
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await tester.ensureVisible(find.byKey(_payKey));
+      await tester.tap(find.byKey(_payKey));
+      await tester.pump();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      addTearDown(
+        () => tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        ),
+      );
+      repository.verification!.complete(_booking(repository.game));
+      await tester.pumpAndSettle();
+      expect(repository.acknowledgedOutcomes, isEmpty);
+    },
+  );
+
+  testWidgets(
+    'seeing a pending refund does not acknowledge later refunded outcome',
+    (tester) async {
+      final repository = _Repository()
+        ..afterCollectionError = PaymentRefundException(_refund());
+      final sessions = _Sessions();
+      await _openCheckout(tester, repository, sessions);
+      sessions.current.select();
+      await tester.pump();
+      await _tapPay(tester);
+      expect(repository.acknowledgedOutcomes, [
+        'refund-attempt:REFUND_PENDING',
+      ]);
+      expect(find.text('Refund processing'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets(
     'stalled price lookup times out and retries without creating a payment',
     (tester) async {
       final pending = Completer<OpenQueueBookingCostPreview>();
@@ -1574,8 +1635,18 @@ class _Repository
         OpenQueueBookingCostPreviewRepository,
         OpenQueueBookingLookupRepository,
         OpenQueueCheckoutCancellationRepository,
+        OpenQueueCheckoutNotificationRepository,
         OpenQueuePaymentStatusRepository,
         OpenQueueEmbeddedCheckoutRepository {
+  final acknowledgedOutcomes = <String>[];
+  @override
+  Future<void> acknowledgeCheckoutNotification({
+    required String paymentId,
+    required String outcome,
+  }) async {
+    acknowledgedOutcomes.add('$paymentId:$outcome');
+  }
+
   OpenQueueGame game = _game();
   int detailCalls = 0;
   Completer<OpenQueueMatchDetail>? detailBarrier;

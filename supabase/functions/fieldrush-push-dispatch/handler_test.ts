@@ -293,7 +293,7 @@ Deno.test("callers cannot inject recipients, tokens, project IDs or notification
   equal((await test.run(`Bearer ${secret}`, "", "GET")).status, 405);
 });
 
-Deno.test("dispatch claims ten at most, rereads eligibility, sends only generic content and acknowledges the same lease", async () => {
+Deno.test("dispatch claims fifty at most, rereads eligibility, preserves generic legacy content and acknowledges the same lease", async () => {
   const test = fixture();
   const result = await test.run();
   equal(result.status, 200);
@@ -302,7 +302,7 @@ Deno.test("dispatch claims ten at most, rereads eligibility, sends only generic 
     "get_push_delivery_payload",
     "complete_push_delivery",
   ]);
-  equal(test.calls[0].args.batch_size, 10);
+  equal(test.calls[0].args.batch_size, 50);
   equal(test.calls[0].args.claim_id_to_use, test.calls[1].args.claim_id_to_use);
   equal(test.calls[1].args.claim_id_to_use, test.calls[2].args.claim_id_to_use);
   equal(test.calls[2].args.outcome_to_use, "SENT");
@@ -312,7 +312,7 @@ Deno.test("dispatch claims ten at most, rereads eligibility, sends only generic 
     body: "You have a new update. Open Fieldrush to view it.",
   });
   equal(message.data, { notification_id: notificationId });
-  equal(message.android.collapse_key, "fieldrush_updates");
+  equal(message.android.collapse_key, undefined);
   equal(message.android.notification.tag, notificationId);
   equal(message.apns.headers["apns-collapse-id"], notificationId);
   equal(test.sends[0].init.redirect, "error");
@@ -327,6 +327,81 @@ Deno.test("dispatch claims ten at most, rereads eligibility, sends only generic 
       notificationId,
     ]
   ) assert(!text.includes(sensitive), "Responses must contain counters only.");
+});
+
+function approvedPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    delivery_id: deliveryId,
+    notification_id: notificationId,
+    token,
+    firebase_project_id: project,
+    platform: "ios",
+    preview_version: 1,
+    notification_type: "GAME_REMINDER",
+    title: "Check-in deadline approaching",
+    body: "Check in with the referee before 5:20 PM.",
+    expires_at: new Date(now + 120000).toISOString(),
+    ...overrides,
+  };
+}
+
+Deno.test("approved canonical preview reaches the phone and expires at the check-in deadline", async () => {
+  const test = fixture({ payload: approvedPayload() });
+  const response = await test.run();
+  equal((await response.json()).providerAccepted, 1);
+  const message = JSON.parse(test.sends[0].init.body as string).message;
+  equal(message.notification, {
+    title: "Check-in deadline approaching",
+    body: "Check in with the referee before 5:20 PM.",
+  });
+  equal(message.data, { notification_id: notificationId });
+  equal(message.android.ttl, "120s");
+  equal(message.apns.headers["apns-expiration"], String(now / 1000 + 120));
+});
+
+Deno.test("expired notices never reach FCM and long-lived notices have at most one hour provider storage", async () => {
+  for (const expiresAt of [now - 1, now, now + 500]) {
+    const test = fixture({
+      payload: approvedPayload({
+        expires_at: new Date(expiresAt).toISOString(),
+      }),
+    });
+    await test.run();
+    equal(test.sends.length, 0);
+    equal(test.calls.at(-1)?.args.error_code_to_use, "DELIVERY_EXPIRED");
+  }
+  const test = fixture({
+    payload: approvedPayload({
+      expires_at: new Date(now + 86400000).toISOString(),
+    }),
+  });
+  await test.run();
+  const message = JSON.parse(test.sends[0].init.body as string).message;
+  equal(message.android.ttl, "3600s");
+  equal(message.apns.headers["apns-expiration"], String(now / 1000 + 3600));
+});
+
+Deno.test("unapproved types, malformed preview text and invalid deadlines fail closed", async () => {
+  for (
+    const override of [
+      { notification_type: "NEWS_AND_OFFERS" },
+      { notification_type: "FORGED_PLAYER_EVENT" },
+      { preview_version: 2 },
+      { title: "" },
+      { title: "a".repeat(121) },
+      { body: "a".repeat(501) },
+      { body: "private\nadmin note" },
+      { expires_at: "tomorrow" },
+    ]
+  ) {
+    const test = fixture({ payload: approvedPayload(override) });
+    await test.run();
+    equal(test.sends.length, 0);
+    equal(
+      test.calls.at(-1)?.args.error_code_to_use,
+      "INVALID_DELIVERY_CONFIGURATION",
+    );
+  }
 });
 
 Deno.test("rebound, revoked, dismissed or disabled recipients return null and are never sent", async () => {
@@ -458,7 +533,7 @@ Deno.test("claim errors and duplicated or oversized claim batches never send", a
     const options of [{ claimFails: true }, {
       claimed: [{ id: deliveryId }, { id: deliveryId }],
     }, {
-      claimed: Array.from({ length: 11 }, () => ({ id: crypto.randomUUID() })),
+      claimed: Array.from({ length: 51 }, () => ({ id: crypto.randomUUID() })),
     }]
   ) {
     const test = fixture(options);
@@ -467,11 +542,11 @@ Deno.test("claim errors and duplicated or oversized claim batches never send", a
   }
 });
 
-Deno.test("a full batch uses at most five provider calls concurrently within its bounded lease budget", async () => {
+Deno.test("a fifty-device batch uses at most twenty provider calls concurrently within its bounded lease budget", async () => {
   let active = 0;
   let maximum = 0;
   const test = fixture({
-    claimed: Array.from({ length: 10 }, () => ({ id: crypto.randomUUID() })),
+    claimed: Array.from({ length: 50 }, () => ({ id: crypto.randomUUID() })),
     sendResponse: async () => {
       active++;
       maximum = Math.max(active, maximum);
@@ -483,9 +558,9 @@ Deno.test("a full batch uses at most five provider calls concurrently within its
     },
   });
   const result = await test.run();
-  equal((await result.json()).providerAccepted, 10);
-  equal(test.sends.length, 10);
-  equal(maximum, 5);
+  equal((await result.json()).providerAccepted, 50);
+  equal(test.sends.length, 50);
+  equal(maximum, 20);
 });
 
 Deno.test("payload transport timeouts release claims as retries without sending", async () => {

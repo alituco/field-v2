@@ -16,6 +16,10 @@ export type PushPayload = {
   notificationId: string;
   token: string;
   platform: "ios" | "android";
+  // Only the authenticated queue RPC can supply an approved preview. Legacy
+  // events retain their generic lock-screen message.
+  preview?: { title: string; body: string };
+  expiresAt?: number;
 };
 export type FcmOutcome = {
   outcome: "SENT" | "RETRY" | "INVALID_TOKEN" | "FAILED";
@@ -227,6 +231,14 @@ export async function sendFcm(
   nowMs: number,
 ): Promise<FcmOutcome> {
   try {
+    const expiresAt = Math.min(
+      payload.expiresAt ?? nowMs + 3600000,
+      nowMs + 3600000,
+    );
+    const ttlSeconds = Math.floor((expiresAt - nowMs) / 1000);
+    if (ttlSeconds <= 0) {
+      return { outcome: "FAILED", errorCode: "DELIVERY_EXPIRED" };
+    }
     const response = await fetcher(
       `https://fcm.googleapis.com/v1/projects/${account.projectId}/messages:send`,
       {
@@ -240,16 +252,16 @@ export async function sendFcm(
         body: JSON.stringify({
           message: {
             token: payload.token,
-            // Deliberately no names, game/party details, or caller-supplied preview.
-            notification: {
+            // No route, financial identifier, or arbitrary caller content is
+            // carried. Taps resolve the recipient-owned receipt after sign-in.
+            notification: payload.preview ?? {
               title: "Fieldrush",
               body: "You have a new update. Open Fieldrush to view it.",
             },
             data: { notification_id: payload.notificationId },
             android: {
               priority: "HIGH",
-              ttl: "3600s",
-              collapse_key: "fieldrush_updates",
+              ttl: `${ttlSeconds}s`,
               notification: { tag: payload.notificationId },
             },
             apns: {
@@ -257,7 +269,7 @@ export async function sendFcm(
                 "apns-push-type": "alert",
                 "apns-priority": "10",
                 "apns-collapse-id": payload.notificationId,
-                "apns-expiration": String(Math.floor(nowMs / 1000) + 3600),
+                "apns-expiration": String(Math.floor(expiresAt / 1000)),
               },
               payload: { aps: { sound: "default" } },
             },

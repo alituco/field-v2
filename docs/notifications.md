@@ -7,7 +7,27 @@ Payment, account, safety and operational messages are not optional categories.
 
 ## Implemented behavior
 
-- Confirmed upcoming matches: deduplicated reminders near 24 hours and 2 hours.
+- Confirmed solo matches: deduplicated reminders near 24 hours and 2 hours
+  **before check-in**, using the game's saved arrival terms and venue timezone.
+  A final reminder runs five minutes before the strict check-in deadline, only
+  while a confirmed player has no referee-recorded arrival and play has not
+  started. Late bookings do not replay missed reminder thresholds. A nearby
+  team announcement includes arrival details and replaces the 2-hour reminder.
+- Published teams and actual changes to the recipient's team; material saved
+  schedule, venue or field changes; Fieldrush cancellations and forced booking
+  removals with the actual refund state. Deferred observers see the final
+  transaction rather than intermediate roster or payment edits. Existing games
+  are baselined silently when the migration is installed.
+- Asynchronous real Stripe checkout outcomes: a secured booking, a pending or
+  fully processed refund after an unsuccessful booking, or release of an
+  uncaptured authorization. The visible foreground checkout acknowledges only
+  its displayed outcome; a 20-second queue grace lets that acknowledgement win.
+  A new refund outcome remains unread even if an earlier pending state was seen.
+- Games entering review/reopened, and reviewed or materially corrected results.
+  This rollout does not introduce ordinary result/SR, replay or referral pushes.
+- Recorded solo attendance decisions and resulting sanctions are combined into
+  one alert per incident. Appeal decisions include regained eligibility where
+  applicable; time-based restriction expiry is observed without historical spam.
 - Open solo spots: a separate **default-off** preference. Only active accounts
   in the game's discovery city, eligible for the released position/division and
   without any other upcoming/active registration (solo, clan or reserve) or
@@ -19,7 +39,8 @@ Payment, account, safety and operational messages are not optional categories.
   expiring or replacing an offer invalidates its queued alert.
 - Clan call-ups: an explicit successful captain roster confirmation, not an
   automatically created roster or a broadcast to every clan member.
-- Party invitations: the existing invite flow. Dismissing its Activity receipt
+- Party invitations: the existing invite flow, expiring at the saved party lock
+  (normally three hours before kickoff). Dismissing its Activity receipt
   does not accept/decline the invitation or prevent action in the game screen.
 - Ladder moves: committed qualified city/role rankings; first observation and
   changing primary city are silent. Outfield and Keeper remain independent.
@@ -34,9 +55,19 @@ a device or opting back in does not send a backlog. Receipts are idempotent;
 FCM delivery itself is at-least-once after an unknown/lost acknowledgement.
 Provider acceptance is not proof that a device displayed a notification.
 
-The lock-screen preview is deliberately generic and carries only a notification
-ID. A tap opens the signed-in account's canonical Activity. Neither push titles
-nor entity IDs grant access or select a private destination from untrusted data.
+The selected player rollout sends phone previews only for the approved events
+above. Other existing Activity events retain their current in-app behavior.
+Game reminders/team notices show the actual arrival information; checkout copy
+distinguishes charge refunds from authorization releases. Financial amounts,
+disciplinary evidence and private staff notes remain behind sign-in.
+
+Push data carries only a notification ID. A tap fetches the current signed-in
+owner's canonical receipt before opening its game, private payment history,
+reliability/appeal panel or decision. An unavailable/obsolete receipt falls back
+to Activity. Signed-out taps retain only that opaque ID; a different account
+cannot retrieve its contents. Every send rechecks ownership, device binding,
+preferences, current source and expiry. Provider TTL is capped at the event
+deadline, so a last-call reminder cannot wait offline for another hour.
 
 ## Staging Firebase apps
 
@@ -120,14 +151,18 @@ After explicit staging activation approval:
    alert, badge or sound.
 
 The one-minute dispatcher does nothing until both private enable flags are on.
-Its bounded ten-device batch reserves eight slots for urgent operational alerts
-(including reminders and open spots), one for routine optional updates, and one
+Its bounded fifty-device batch reserves forty-eight slots for urgent operational alerts
+(including reminders and party invitations), one for routine optional updates, and one
 for marketing. Unused capacity is filled in priority order. A news publication
 cannot hold a due reminder behind its entire audience, and lower lanes retain
 capacity during sustained urgent traffic. Priority is derived from the stored
 notification type, not supplied by clients. Source expiry caps each delivery's
 deadline; expired/exhausted rows consume no delivery slots.
-The five-minute event sweep can still populate ordinary in-app Activity with
+Urgent claims prefer the nearest expiry so an older tomorrow reminder cannot
+hold a five-minute check-in warning behind it. Provider delivery remains best
+effort; [FCM may collapse offline notifications](https://firebase.google.com/docs/cloud-messaging/customize-messages/collapsible-message-types),
+and Activity is the durable record.
+The one-minute event sweep can still populate ordinary in-app Activity with
 push disabled. Queue claims are leased, recipient/device binding is checked
 again immediately before dispatch, transient failures back off, and only an
 explicit FCM `UNREGISTERED` result retires the exact dispatched token.
@@ -144,7 +179,10 @@ Monotonic binding versions and server tombstones prevent late registration from
 undoing a revocation. Forced session changes are also handled. If a device is
 offline or provider/network errors prevent both revocation and provider token
 deletion, no app can guarantee cancellation of an already queued OS notification;
-generic previews prevent it exposing another account's private content.
+disciplinary and financial-detail previews remain generic. An already delivered
+game/checkout preview can remain in the phone's notification history; signing
+out cannot recall a notification already accepted by the OS. Opening it still
+requires the correct signed-in owner and a fresh canonical receipt lookup.
 Pending cleanup is persisted before network requests, retried on resume and
 every 30 seconds while the app is foregrounded, and must finish provider cleanup
 before a different account can enable notifications. The retry never requests

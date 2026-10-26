@@ -29,6 +29,9 @@ import '../open_queue/open_queue_repository.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../profile/fieldrush_payment_history_screen.dart';
+import '../reliability/reliability_repository.dart';
+import '../reliability/reliability_status_card.dart';
 import '../ranking/fieldrush_divisions_screen.dart';
 import 'fieldrush_home_widgets.dart';
 import 'activity_revision.dart';
@@ -99,6 +102,7 @@ class _DashboardHomeState extends State<DashboardHome>
   int _bookingsSnapshotVersion = 0;
   int _fixturesSnapshotVersion = 0;
   bool _activityOpen = false;
+  final Set<String> _openingPhoneNotificationIds = {};
   StreamSubscription<void>? _partySubscription;
   Timer? _gameRefreshTimer;
   bool _refreshingCurrentGame = false;
@@ -712,6 +716,36 @@ class _DashboardHomeState extends State<DashboardHome>
 
   Future<void> _openNotification(HomeNotification item) async {
     try {
+      if (item.opensPaymentHistory) {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => const FieldrushPaymentHistoryScreen(),
+          ),
+        );
+        return;
+      }
+      if (item.opensReliability) {
+        await Navigator.of(context).push<void>(
+          MaterialPageRoute(
+            builder: (_) => Theme(
+              data: FieldrushAuthTheme.theme(context),
+              child: Scaffold(
+                backgroundColor: FieldrushAuthTheme.cream,
+                appBar: AppBar(title: const Text('Reliability')),
+                body: ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    ReliabilityStatusCard(
+                      repository: SupabaseReliabilityRepository(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+        return;
+      }
       final gameId = item.openQueueGameId;
       if (gameId != null) {
         final booking = _bookings
@@ -765,8 +799,55 @@ class _DashboardHomeState extends State<DashboardHome>
 
   void _openRequestedActivity() {
     if (!mounted || !fieldrushActivityOpenRequested.value) return;
+    final request = fieldrushNotificationOpenRequest;
     clearFieldrushActivityOpenRequest();
+    if (request != null) {
+      unawaited(_openPhoneNotification(request));
+      return;
+    }
     if (!_activityOpen) unawaited(_discovery());
+  }
+
+  Future<void> _openPhoneNotification(
+    FieldrushNotificationOpenRequest request,
+  ) async {
+    if (_openingPhoneNotificationIds.contains(request.notificationId)) return;
+    final repository = widget.discoveryRepository;
+    if (repository is! HomeNotificationLookupRepository) {
+      if (!_activityOpen) await _discovery();
+      return;
+    }
+    final lookup = repository as HomeNotificationLookupRepository;
+    if (lookup.signedInProfileId != request.userId) return;
+    _openingPhoneNotificationIds.add(request.notificationId);
+    try {
+      final item = await lookup
+          .notificationById(request.notificationId)
+          .timeout(const Duration(seconds: 8));
+      if (!mounted || lookup.signedInProfileId != request.userId) return;
+      if (item == null) {
+        if (!_activityOpen) await _discovery();
+        return;
+      }
+      // Read receipts are best effort; a network hiccup must not prevent the
+      // player opening an already authenticated canonical notification.
+      unawaited(
+        repository!
+            .markRead(item.id)
+            .timeout(const Duration(seconds: 8))
+            .catchError((Object _) {}),
+      );
+      notifyFieldrushActivityChanged();
+      await _openNotification(item);
+    } catch (_) {
+      if (mounted &&
+          lookup.signedInProfileId == request.userId &&
+          !_activityOpen) {
+        await _discovery();
+      }
+    } finally {
+      _openingPhoneNotificationIds.remove(request.notificationId);
+    }
   }
 
   Future<void> _discovery({bool search = false}) async {

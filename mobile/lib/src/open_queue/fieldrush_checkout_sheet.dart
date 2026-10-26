@@ -10,6 +10,7 @@ import '../core/read_timeout.dart';
 import '../legal/fieldrush_policy_links.dart';
 import '../payments/fieldrush_embedded_payment.dart';
 import '../payments/payment_service.dart';
+import '../notifications/fieldrush_push.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support.dart';
 import '../support/support_repository.dart';
@@ -82,6 +83,39 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
   int _refundPollsRemaining = 0;
   bool _checkingRefund = false;
   String? _refundCheckError;
+  final Set<String> _acknowledgedOutcomes = {};
+
+  void _acknowledgeOutcomeAfterFrame(
+    String paymentId,
+    String outcome, {
+    bool confirmedAndClosing = false,
+  }) {
+    final repository = widget.repository;
+    if (repository is! OpenQueueCheckoutNotificationRepository) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle != null && lifecycle != AppLifecycleState.resumed) return;
+      if (!confirmedAndClosing &&
+          (!mounted ||
+              _closing ||
+              !(ModalRoute.of(context)?.isCurrent ?? false))) {
+        return;
+      }
+      final key = '$paymentId:$outcome';
+      if (!_acknowledgedOutcomes.add(key)) return;
+      unawaited(
+        (repository as OpenQueueCheckoutNotificationRepository)
+            .acknowledgeCheckoutNotification(
+              paymentId: paymentId,
+              outcome: outcome,
+            )
+            .timeout(fieldReadTimeout)
+            .catchError((Object _) {
+              _acknowledgedOutcomes.remove(key);
+            }),
+      );
+    });
+  }
 
   bool get _selectingPosition =>
       widget.allowPositionSelection || widget.role == null;
@@ -276,7 +310,21 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       if (!mounted) return;
       setState(() => _allowPop = true);
       await WidgetsBinding.instance.endOfFrame;
-      if (mounted) Navigator.of(context).pop(booking);
+      if (mounted) {
+        Navigator.of(context).pop(booking);
+        if (booking != null) {
+          if (intentId != null) {
+            _acknowledgeOutcomeAfterFrame(
+              intentId,
+              'CONFIRMED',
+              confirmedAndClosing: true,
+            );
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            unawaited(FieldrushPush.instance.offerAfterBooking());
+          });
+        }
+      }
     } on PaymentRefundException catch (error) {
       if (!mounted) return;
       setState(() => _closing = false);
@@ -568,6 +616,10 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
       _refundCheckError = null;
       _refundPollsRemaining = 3;
     });
+    _acknowledgeOutcomeAfterFrame(
+      refund.intentId,
+      refund.isRefunded ? 'REFUNDED' : 'REFUND_PENDING',
+    );
     final session = _paymentSession;
     if (session != null) {
       session.removeListener(_paymentChanged);
@@ -622,6 +674,10 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         throw const PaymentPendingException();
       }
       setState(() => _refund = latest);
+      _acknowledgeOutcomeAfterFrame(
+        latest.intentId,
+        latest.isRefunded ? 'REFUNDED' : 'REFUND_PENDING',
+      );
     } catch (_) {
       if (mounted && !_closing && generation == _loadGeneration) {
         setState(

@@ -34,6 +34,60 @@ import 'package:http/testing.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
+  setUp(clearFieldrushActivityOpenRequest);
+  tearDown(clearFieldrushActivityOpenRequest);
+
+  testWidgets(
+    'cold phone tap resolves its canonical receipt and opens its game',
+    (tester) async {
+      final game = _game('phone-game');
+      final queue = _Queue(detail: _detail(game));
+      await _openActivity(
+        tester,
+        queue,
+        _notice('OPEN_QUEUE_GAME', game.id),
+        phoneTap: true,
+      );
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      expect(find.byType(HomeDiscoveryScreen), findsNothing);
+      expect(queue.detailRequests, everyElement(game.id));
+      _expectNoCheckout(queue);
+    },
+  );
+
+  testWidgets('expired or missing phone receipt falls back to Activity', (
+    tester,
+  ) async {
+    final queue = _Queue();
+    await _openActivity(
+      tester,
+      queue,
+      _notice('OPEN_QUEUE_GAME', 'old-game'),
+      phoneTap: true,
+      missingPhoneReceipt: true,
+    );
+    expect(find.byType(HomeDiscoveryScreen), findsOneWidget);
+    expect(queue.detailRequests, isEmpty);
+    _expectNoCheckout(queue);
+  });
+
+  testWidgets(
+    'phone tap queued for previous account cannot open private route',
+    (tester) async {
+      final queue = _Queue();
+      await _openActivity(
+        tester,
+        queue,
+        _notice('OPEN_QUEUE_GAME', 'private-game'),
+        phoneTap: true,
+        phoneOwner: 'previous-account',
+      );
+      expect(find.byType(HomeDiscoveryScreen), findsNothing);
+      expect(find.byType(FieldrushGameDetailScreen), findsNothing);
+      expect(queue.detailRequests, isEmpty);
+    },
+  );
+
   testWidgets('optional themed activity and search visual previews', (
     tester,
   ) async {
@@ -862,12 +916,17 @@ Future<void> _openActivity(
   HomeNotification item, {
   _Fixtures? fixtures,
   bool readFails = false,
+  bool phoneTap = false,
+  bool missingPhoneReceipt = false,
+  String phoneOwner = 'profile',
 }) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final discovery = _Discovery(item, readFails: readFails);
+  final discovery = _Discovery(item, readFails: readFails)
+    ..missingPhoneReceipt = missingPhoneReceipt;
+  if (phoneTap) requestFieldrushNotificationOpen(item.id, phoneOwner);
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -888,6 +947,13 @@ Future<void> _openActivity(
     ),
   );
   await tester.pumpAndSettle();
+  if (phoneTap) {
+    expect(
+      discovery.readIds,
+      missingPhoneReceipt || phoneOwner != 'profile' ? isEmpty : [item.id],
+    );
+    return;
+  }
   tester
       .widget<FieldrushHomeHeader>(find.byType(FieldrushHomeHeader))
       .onActivity();
@@ -1164,9 +1230,16 @@ class _ActivityDiscovery extends Fake
   }
 }
 
-class _Discovery implements HomeDiscoveryRepository {
+class _Discovery
+    implements HomeDiscoveryRepository, HomeNotificationLookupRepository {
   _Discovery(this.item, {required this.readFails, this.dismissFails = false});
   final HomeNotification item;
+  bool missingPhoneReceipt = false;
+  @override
+  String? get signedInProfileId => 'profile';
+  @override
+  Future<HomeNotification?> notificationById(String notificationId) async =>
+      missingPhoneReceipt || notificationId != item.id ? null : item;
   final bool readFails;
   bool dismissFails;
   final readIds = <String>[];
