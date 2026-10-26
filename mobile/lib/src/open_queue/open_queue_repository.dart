@@ -45,6 +45,13 @@ abstract interface class OpenQueuePaymentStatusRepository {
   Future<PaymentRefundState> checkRefundStatus(String intentId);
 }
 
+abstract interface class OpenQueueCheckoutCancellationRepository {
+  Future<OpenQueueBooking?> cancelCheckout({
+    required String intentId,
+    required String gameId,
+  });
+}
+
 /// Market discovery applies the market predicate before the server feed limit.
 /// The historical, all-market [OpenQueueRepository.listGames] stays available.
 abstract interface class OpenQueueMarketRepository {
@@ -76,6 +83,7 @@ class SupabaseOpenQueueRepository
         OpenQueueBookingLookupRepository,
         OpenQueueEmbeddedCheckoutRepository,
         OpenQueuePaymentStatusRepository,
+        OpenQueueCheckoutCancellationRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
   SupabaseOpenQueueRepository({SupabaseClient? client}) : _supabase = client;
@@ -92,6 +100,7 @@ class SupabaseOpenQueueRepository
     lowest_division,
     minimum_players,
     participation_rules_version,
+    actual_started_at,
     goalkeeper_capacity,
     defender_capacity,
     midfielder_capacity,
@@ -391,6 +400,30 @@ class SupabaseOpenQueueRepository
   Future<PaymentRefundState> checkRefundStatus(String intentId) =>
       PaymentService(client: _client).checkRefundStatus(intentId);
 
+  @override
+  Future<OpenQueueBooking?> cancelCheckout({
+    required String intentId,
+    required String gameId,
+  }) async {
+    final result = await PaymentService(
+      client: _client,
+    ).cancelCheckout(intentId);
+    if (result == null) return null;
+    if (result.resourceType != 'OPEN_QUEUE_BOOKING') {
+      throw const PaymentPendingException();
+    }
+    final response = await _client
+        .from('open_queue_bookings')
+        .select(_bookingSelect)
+        .eq('id', result.resourceId)
+        .single();
+    final booking = _bookingFromJoinedGame(Map<String, dynamic>.from(response));
+    if (booking.gameId != gameId || booking.status != 'CONFIRMED') {
+      throw const PaymentPendingException();
+    }
+    return _hydrateBookingGame(booking);
+  }
+
   Future<OpenQueueBooking> _bookGame({
     required OpenQueueGame game,
     required OpenQueueRole role,
@@ -536,6 +569,10 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
     hydrated.add(booking.copyWith(game: game));
   }
   hydrated.sort((left, right) {
+    final at = now ?? DateTime.now();
+    final leftBlocks = left.game.blocksNewBookingAt(at);
+    final rightBlocks = right.game.blocksNewBookingAt(at);
+    if (leftBlocks != rightBlocks) return leftBlocks ? -1 : 1;
     final kickoff = left.game.startsAt.compareTo(right.game.startsAt);
     return kickoff != 0 ? kickoff : left.id.compareTo(right.id);
   });

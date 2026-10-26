@@ -38,7 +38,7 @@ The staging deployment uses three Edge Functions:
 
 Stripe's sandbox webhook URL is
 `https://nfdkdhdevpstfspazbfn.supabase.co/functions/v1/stripe-payment-webhook`.
-Subscribe to `payment_intent.succeeded`, `payment_intent.payment_failed`,
+Subscribe to `payment_intent.amount_capturable_updated`, `payment_intent.succeeded`, `payment_intent.payment_failed`,
 `payment_intent.processing`, `payment_intent.canceled`, `refund.created`,
 `refund.updated` and `refund.failed`. Use the signing secret belonging to this
 endpoint, not a local Stripe CLI listener. A scheduled reconciliation worker
@@ -51,6 +51,10 @@ minutes, and enables the webhook. The endpoint can stay disabled while this
 branch is under review; it must not deliver events to an undeployed handler.
 
 ## Booking and refund guarantees
+
+The authorization/capture contract follows Stripe's
+[separate authorization and capture flow](https://docs.stripe.com/payments/place-a-hold-on-a-payment-method)
+and [PaymentIntent capture API](https://docs.stripe.com/api/payment_intents/capture).
 
 - Opening checkout or choosing a payment method does not create a payment or
   booking. The embedded selector loads from a read-only quote; server `prepare`
@@ -65,11 +69,38 @@ branch is under review; it must not deliver events to an undeployed handler.
   is lost or the session expires. Resume checks the same attempt; it does not
   assume a failed charge or ask for a replacement payment.
 - Prices, currency, payer and target game come from authenticated server quotes.
-- The app never supplies a trusted successful-payment flag. Stripe's returned
-  payment is checked server-side before the database atomically creates a booking.
+- Updated apps explicitly request manual card capture. Stripe first authorizes
+  the quoted amount; the server validates that authorization, reserves the saved
+  game/position under the booking-capacity locks, and only then captures payment.
+  A losing last-position race cancels the authorization without charging or
+  creating a refund. Banks can still display a temporary authorization hold.
+- Provisional reservations are private. They count against capacity for paid,
+  free and older clients, but never appear as confirmed or paid bookings.
+  Confirmed bookings and their notifications are created only after Stripe
+  confirms capture. An unresolved capture/cancellation retains its reservation;
+  an expired local lease alone cannot release it.
+- New checkouts from older installed apps remain automatic capture until the app
+  is upgraded. The server pins each attempt's capture method; existing automatic
+  payments retain their original verification/refund/recovery path. New mobile
+  refuses a mismatched capture configuration before giving a secret to Stripe.
+  Switching app versions retires a provider-confirmed unpaid incompatible attempt
+  before another explicit payment; it never replaces an ambiguous paid attempt.
+- The app never supplies trusted successful-payment or authorization evidence.
+  Only the server verifies the exact provider, owner, amount, mode and metadata.
 - Retrying an interrupted checkout reuses the outstanding payment attempt.
-- A completed payment that cannot secure its booking is queued for a full refund
-  to the original payment method. It is not displayed as a confirmed booking.
+- A genuine organizer cancellation can race an already-started capture, just as
+  it can cancel an existing confirmed booking. Cancellation remains available
+  during a provider outage. It prevents later capture claims; a capture already
+  in flight is reconciled and fully refunded if its game is cancelled. Unexpected
+  external captures and legacy paid-but-unbookable attempts also retain the full
+  original-method refund fallback. None is shown as a confirmed booking.
+- Verified reservations can finish capture just after advertised kickoff without
+  being treated as new late bookings. Kickoff waits while capacity is privately
+  reserved, preventing a frozen roster from excluding an in-flight booking.
+- Closing an unpaid checkout calls the exact authenticated `cancel` action.
+  Native declines also cancel/reconcile. Only provider-confirmed cancellation
+  permits another checkout; a successful capture race returns its real booking,
+  and unknown outcomes remain on the same recovery path.
 - **New Stripe cancellation refunds return to the original payment method.**
   The policy determines the eligible amount, including deposits; it does not
   redirect the money into Field Wallet.

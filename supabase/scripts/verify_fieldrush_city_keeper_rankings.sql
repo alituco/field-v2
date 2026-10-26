@@ -191,10 +191,21 @@ begin
   perform set_config('field.match_resolution_control_plane','off',true);
   payload:=public.preview_open_queue_booking_cost(restricted_game,'GK');
   perform pg_temp.expect((payload->>'total_fils')::integer=0,'placed Keeper can quote its restricted division');
+  payload:=public.preview_open_queue_booking_cost(restricted_game,'ATT');
+  perform pg_temp.expect((payload->>'total_fils')::integer=0,
+    'Outfield placement can quote any division independently of completed Keeper placements');
+  update public.fieldrush_player_rating_tracks set matches_played=2,
+    skill_rating=case when keeper_division=1 then 0 else 3000 end
+    where profile_id=booker and rating_track='OUTFIELD';
   rejected:=false;
   begin perform public.preview_open_queue_booking_cost(restricted_game,'ATT');
-  exception when raise_exception then rejected:=sqlerrm like '%Placement players%'; end;
-  perform pg_temp.expect(rejected,'Outfield placement is not bypassed by high Outfield SR or completed Keeper placements');
+  exception when raise_exception then rejected:=sqlerrm like '%Your outfield division%'; end;
+  perform pg_temp.expect(rejected,'placed Outfield cannot borrow the eligible Keeper division');
+  payload:=public.preview_open_queue_booking_cost(restricted_game,'GK');
+  perform pg_temp.expect((payload->>'total_fils')::integer=0,
+    'eligible Keeper remains available when the placed Outfield track is outside the range');
+  update public.fieldrush_player_rating_tracks set matches_played=0,skill_rating=1700
+    where profile_id=booker and rating_track='OUTFIELD';
   perform set_config('field.match_resolution_control_plane','on',true);
   perform set_config('request.jwt.claim.sub','',true);
 

@@ -159,14 +159,34 @@ void main() {
     {'status': 'CANCELLED'},
     {'status': 'FINAL'},
     {'white_score': 1, 'black_score': 0},
-    {'operational_state': 'NO_DATA'},
-    {'operational_state': 'UNDER_REVIEW'},
   ]) {
     test(
       'canonical detail excludes resolved or invalid active game: $invalid',
       () async {
         detailGames['own-game'] = {..._game('own-game'), ...invalid};
         expect(await repository.getMyUpcomingBookings(), isEmpty);
+      },
+    );
+  }
+
+  for (final state in ['NO_DATA', 'UNDER_REVIEW']) {
+    test(
+      'canonical unresolved $state booking stays visible without blocking',
+      () async {
+        detailGames['own-game'] = {
+          ..._game('own-game'),
+          'operational_state': state,
+        };
+        final booking = (await repository.getMyUpcomingBookings()).single;
+        expect(booking.gameId, 'own-game');
+        expect(booking.game.isActiveReservation, isTrue);
+        expect(booking.game.hasPendingOperationalResolution, isTrue);
+        expect(booking.game.blocksNewBooking, isFalse);
+        expect(booking.game.supportedRoles.any(booking.game.canBook), isFalse);
+        expect(
+          (await repository.getMyUpcomingBookingForGame('own-game'))?.id,
+          booking.id,
+        );
       },
     );
   }

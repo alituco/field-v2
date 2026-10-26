@@ -19,6 +19,59 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets(
+    'review stays visible and does not displace the next booked game',
+    (tester) async {
+      final review = _booking(
+        id: 'review',
+        status: 'LIVE',
+        operationalState: MatchOperationalState.underReview,
+        startsAt: DateTime.now().subtract(const Duration(days: 2)),
+      );
+      final next = _booking(id: 'next', team: 'WHITE');
+      final queue = _Queue()..bookings = [review, next];
+      await _show(tester, queue);
+      expect(_hero(tester).booking.gameId, 'next');
+      expect(find.textContaining('Solo game · Under review'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  testWidgets('review-only Home explains that another game can be booked', (
+    tester,
+  ) async {
+    final queue = _Queue()
+      ..bookings = [
+        _booking(
+          status: 'LIVE',
+          operationalState: MatchOperationalState.underReview,
+        ),
+      ];
+    await _show(tester, queue);
+    expect(find.text('Under review'), findsOneWidget);
+    expect(find.textContaining('You can book another game'), findsOneWidget);
+    expect(find.text('Your game is live'), findsNothing);
+    expect(queue.partyReads, 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('expired live match stays visible behind a new reservation', (
+    tester,
+  ) async {
+    final stale = _booking(
+      id: 'stale',
+      status: 'LIVE',
+      startsAt: DateTime.now().subtract(const Duration(days: 2)),
+      endsAt: DateTime.now().subtract(const Duration(hours: 47)),
+    );
+    final next = _booking(id: 'next', team: 'WHITE');
+    final queue = _Queue()..bookings = [stale, next];
+    await _show(tester, queue);
+    expect(_hero(tester).booking.gameId, 'next');
+    expect(find.textContaining('Solo game · Awaiting result'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
     'assigned games refresh on resume and through live, final and reopen',
     (tester) async {
       final queue = _Queue()..bookings = [_booking(team: 'BLACK')];
@@ -383,19 +436,26 @@ Future<void> _show(
 }
 
 OpenQueueBooking _booking({
+  String id = 'game',
   String? team,
   String status = 'OPEN',
   bool late = false,
+  DateTime? startsAt,
+  DateTime? endsAt,
+  MatchOperationalState operationalState = MatchOperationalState.normal,
 }) {
   final now = DateTime.now();
   final game = OpenQueueGame(
-    id: 'game',
+    id: id,
     status: status,
     venue: 'Phoenix Sports Park',
-    startsAt: late
-        ? now.subtract(const Duration(minutes: 1))
-        : now.add(const Duration(hours: 2)),
-    endsAt: now.add(const Duration(hours: 3)),
+    startsAt:
+        startsAt ??
+        (late
+            ? now.subtract(const Duration(minutes: 1))
+            : now.add(const Duration(hours: 2))),
+    endsAt: endsAt ?? now.add(const Duration(hours: 3)),
+    operationalState: operationalState,
     timezone: 'America/Phoenix',
     priceFils: 10000,
     currency: 'USD',
@@ -412,7 +472,7 @@ OpenQueueBooking _booking({
     teamsAssignedAt: team == null ? null : now,
   );
   return OpenQueueBooking(
-    id: 'booking',
+    id: id == 'game' ? 'booking' : 'booking-$id',
     gameId: game.id,
     profileId: 'me',
     role: OpenQueueRole.attacker,

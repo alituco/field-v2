@@ -6,6 +6,8 @@ import '../reliability/reliability.dart';
 import '../notifications/fieldrush_push.dart';
 import '../home/activity_revision.dart';
 import '../ui/field_loading.dart';
+import 'fieldrush_payment_history_screen.dart';
+import 'player_history_repository.dart';
 
 enum YouNotificationOption {
   gameReminders(
@@ -622,7 +624,9 @@ class _YouWalletScreenState extends State<YouWalletScreen> {
 }
 
 class YouPaymentMethodsScreen extends StatelessWidget {
-  const YouPaymentMethodsScreen({super.key});
+  const YouPaymentMethodsScreen({super.key, this.historyRepository});
+
+  final PlayerHistoryRepository? historyRepository;
 
   @override
   Widget build(BuildContext context) {
@@ -674,6 +678,8 @@ class YouPaymentMethodsScreen extends StatelessWidget {
             style: _body(11.5),
           ),
         ),
+        const SizedBox(height: 22),
+        FieldrushPaymentHistorySection(repository: historyRepository),
       ],
     );
   }

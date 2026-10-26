@@ -834,6 +834,64 @@ void main() {
     );
   });
 
+  for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+    testWidgets(
+      '$platform account only offers supported Google linking',
+      (tester) async {
+        await showAccount(tester);
+        await tester.tap(find.byKey(const Key('fieldrush-security-options')));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('fieldrush-link-google')),
+          platform == TargetPlatform.iOS ? findsNothing : findsOneWidget,
+        );
+        expect(accounts.linkCalls, 0);
+      },
+      variant: TargetPlatformVariant.only(platform),
+    );
+
+    testWidgets(
+      '$platform recovery retains phone and support options',
+      (tester) async {
+        await tester.binding.setSurfaceSize(const Size(600, 1800));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        await tester.pumpWidget(
+          MaterialApp(
+            home: FieldrushRecoveryScreen(
+              authRepository: auth,
+              accountRepository: accounts,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const Key('fieldrush-recovery-google')),
+          platform == TargetPlatform.iOS ? findsNothing : findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('fieldrush-recovery-submit')),
+          findsOneWidget,
+        );
+        expect(find.text('Open support website'), findsOneWidget);
+      },
+      variant: TargetPlatformVariant.only(platform),
+    );
+  }
+
+  testWidgets(
+    'iOS still displays an existing linked Google account',
+    (tester) async {
+      accounts.account = googleSnapshot();
+      await showAccount(tester);
+      await tester.tap(find.byKey(const Key('fieldrush-security-options')));
+      await tester.pumpAndSettle();
+      expect(find.text('Google is linked'), findsOneWidget);
+      expect(find.byKey(const Key('fieldrush-link-google')), findsNothing);
+      expect(accounts.linkCalls, 0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
   testWidgets('phone change keeps current phone when new verification fails', (
     tester,
   ) async {

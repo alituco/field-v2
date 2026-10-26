@@ -16,7 +16,11 @@ import 'package:field/src/leaderboard/leaderboard_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
+import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
 import 'package:field/src/profile/fieldrush_match_history_screen.dart';
+import 'package:field/src/profile/fieldrush_cancelled_game_screen.dart';
+import 'package:field/src/profile/fieldrush_payment_history_screen.dart';
+import 'package:field/src/profile/player_history_repository.dart';
 import 'package:field/src/profile/fieldrush_you_screen.dart';
 import 'package:field/src/profile/fieldrush_you_settings.dart';
 import 'package:field/src/profile/profile.dart';
@@ -30,6 +34,51 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('Payment methods opens the signed-in player payment history', (
+    tester,
+  ) async {
+    final history = _BookingHistory();
+    await tester.pumpWidget(_app(history: history));
+    await tester.pumpAndSettle();
+    final paymentMethods = find.byKey(const Key('you-payment-methods'));
+    await tester.ensureVisible(paymentMethods);
+    await tester.pumpAndSettle();
+    await tester.tap(paymentMethods);
+    await tester.pumpAndSettle();
+    expect(find.byType(YouPaymentMethodsScreen), findsOneWidget);
+    expect(find.byKey(const Key('payment-history-charge')), findsOneWidget);
+    expect(history.paymentReads, 1);
+    expect(history.cancelledReads, 0);
+    await tester.ensureVisible(find.byKey(const Key('see-all-payments')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('see-all-payments')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushPaymentHistoryScreen), findsOneWidget);
+    expect(find.text(r'$8.00'), findsOneWidget);
+  });
+
+  testWidgets('cancelled receipt Find another game opens the booking flow', (
+    tester,
+  ) async {
+    final history = _BookingHistory();
+    await tester.pumpWidget(_app(history: history));
+    await tester.pumpAndSettle();
+    final matchHistory = find.byKey(const Key('you-match-history'));
+    await tester.ensureVisible(matchHistory);
+    await tester.tap(matchHistory);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('you-cancelled-history-cancelled')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushCancelledGameScreen), findsOneWidget);
+    await tester.ensureVisible(
+      find.byKey(const Key('cancelled-game-find-another')),
+    );
+    await tester.tap(find.byKey(const Key('cancelled-game-find-another')));
+    await tester.pumpAndSettle();
+    expect(find.byType(FieldrushBookingFlow), findsOneWidget);
+    expect(find.byType(FieldrushCancelledGameScreen), findsNothing);
+    expect(find.byType(FieldrushMatchHistoryScreen), findsNothing);
+  });
   testWidgets(
     'referral timeout never hides profile and retry restores the card',
     (tester) async {
@@ -714,6 +763,7 @@ void main() {
 }
 
 Widget _app({
+  PlayerHistoryRepository? history,
   ReferralRepository? referrals,
   ProfileRepository? profiles,
   _Ratings? ratings,
@@ -727,6 +777,7 @@ Widget _app({
   home: Scaffold(
     body: FieldrushYouScreen(
       referralRepository: referrals,
+      historyRepository: history,
       activationTick: activationTick,
       profileRepository: profiles ?? _Profiles(),
       leaderboardRepository: ratings ?? _Ratings(),
@@ -741,6 +792,59 @@ Widget _app({
     ),
   ),
 );
+
+class _BookingHistory implements PlayerHistoryRepository {
+  int paymentReads = 0;
+  int cancelledReads = 0;
+
+  @override
+  Future<PlayerHistoryPage<PlayerPaymentHistoryEntry>> getPayments({
+    PlayerHistoryCursor? cursor,
+    int limit = 30,
+  }) async {
+    paymentReads++;
+    return PlayerHistoryPage(
+      items: [
+        PlayerPaymentHistoryEntry(
+          id: 'charge',
+          paidAt: DateTime.utc(2026, 9, 1, 16),
+          gameStartsAt: DateTime.utc(2026, 9, 2, 4),
+          amountMinor: 800,
+          paymentMethod: 'VISA',
+          timezone: 'America/Phoenix',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<PlayerHistoryPage<PlayerCancelledGame>> getCancelledGames({
+    PlayerHistoryCursor? cursor,
+    int limit = 30,
+  }) async {
+    cancelledReads++;
+    return PlayerHistoryPage(
+      items: [
+        PlayerCancelledGame(
+          gameId: 'cancelled',
+          bookingId: 'booking',
+          startsAt: DateTime.utc(2026, 9, 2, 4),
+          endsAt: DateTime.utc(2026, 9, 2, 5),
+          cancelledAt: DateTime.utc(2026, 9, 1, 16),
+          venue: 'Reach 11 Fields',
+          timezone: 'America/Phoenix',
+          reason: 'The venue closed.',
+          amountPaidMinor: 800,
+          refundedMinor: 800,
+          paymentMethod: 'VISA',
+          ratingChange: 0,
+          strikeChange: 0,
+          streakKept: true,
+        ),
+      ],
+    );
+  }
+}
 
 ReferralSummary _referralSummary(String code) => ReferralSummary(
   serverNow: DateTime.utc(2026, 10, 24),

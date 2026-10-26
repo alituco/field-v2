@@ -153,6 +153,25 @@ extension OpenQueueRoleX on OpenQueueRole {
   }
 }
 
+String roleCapacityLabelForGames(
+  OpenQueueRole role,
+  Iterable<OpenQueueGame> games,
+) {
+  final capacities = games.map((game) => game.capacityFor(role)).toSet();
+  if (capacities.length > 1 || capacities.any((capacity) => capacity.isOdd)) {
+    return 'Varies by game';
+  }
+  final perTeam = capacities.isNotEmpty
+      ? capacities.single ~/ 2
+      : switch (role) {
+          OpenQueueRole.goalkeeper => 1,
+          OpenQueueRole.defender => 2,
+          OpenQueueRole.attacker => 4,
+          OpenQueueRole.midfielder => 0,
+        };
+  return '$perTeam ${perTeam == 1 ? 'slot' : 'slots'} per team';
+}
+
 class OpenQueueGame {
   const OpenQueueGame({
     required this.id,
@@ -200,6 +219,7 @@ class OpenQueueGame {
     this.partyLockAt,
     this.teamAssignmentLeadMinutes,
     this.partyLockLeadMinutes,
+    this.actualStartedAt,
     this.maxPartySize,
     this.operationalState = MatchOperationalState.normal,
     this.operationalStateUpdatedAt,
@@ -211,6 +231,9 @@ class OpenQueueGame {
   final String venue;
   final DateTime startsAt;
   final DateTime endsAt;
+
+  /// Immutable observed kickoff, independent of pauses and clock resumes.
+  final DateTime? actualStartedAt;
   final String timezone;
   final int priceFils;
   final String ageLabel;
@@ -231,8 +254,7 @@ class OpenQueueGame {
   final int highestDivision;
   final int lowestDivision;
 
-  bool get acceptsPlacementPlayers =>
-      highestDivision == 1 && lowestDivision == 5;
+  bool get acceptsPlacementPlayers => true;
 
   String get divisionRangeLabel => highestDivision == lowestDivision
       ? 'DIV $highestDivision'
@@ -408,12 +430,23 @@ class OpenQueueGame {
         startsAt.isAfter(now);
   }
 
-  /// A confirmed player's match does not end at its scheduled kickoff. Keep
-  /// delayed starts and live matches available until the server resolves them.
+  /// Keep unresolved history visible even after it stops blocking new bookings.
   bool get isActiveReservation =>
+      hasPendingOperationalResolution ||
+      status == 'LIVE' ||
+      ((status == 'OPEN' || status == 'FULL') && !hasRecordedScore);
+
+  DateTime get registrationEndsAt => status == 'LIVE' && actualStartedAt != null
+      ? actualStartedAt!.add(endsAt.difference(startsAt))
+      : endsAt;
+
+  bool get blocksNewBooking => blocksNewBookingAt(DateTime.now());
+
+  /// Mirror the server's one-game rule without confusing it with visibility.
+  bool blocksNewBookingAt(DateTime now) =>
       !hasPendingOperationalResolution &&
-      (status == 'LIVE' ||
-          ((status == 'OPEN' || status == 'FULL') && !hasRecordedScore));
+      const ['OPEN', 'FULL', 'LIVE'].contains(status) &&
+      registrationEndsAt.isAfter(now);
 
   bool get isUpcomingMatchConfirmed {
     return !hasRecordedScore &&
@@ -590,6 +623,7 @@ class OpenQueueGame {
       venue: (json['venue'] as String? ?? '').trim(),
       startsAt: DateTime.parse(json['starts_at'] as String).toLocal(),
       endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
+      actualStartedAt: _asDate(json['actual_started_at']),
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       currency: json['currency'] as String? ?? 'BHD',
@@ -662,6 +696,7 @@ class OpenQueueGame {
       venue: (json['venue'] as String? ?? '').trim(),
       startsAt: DateTime.parse(json['starts_at'] as String).toLocal(),
       endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
+      actualStartedAt: _asDate(json['actual_started_at']),
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
       currency: json['currency'] as String? ?? 'BHD',

@@ -48,7 +48,7 @@ export async function configure(env, fetcher = fetch) {
   // Do not print SQL errors: database diagnostics can include secret arguments.
   if (!configured.ok) throw new Error('Could not schedule the protected Stripe recovery worker.');
 
-  const events = ['payment_intent.succeeded', 'payment_intent.payment_failed',
+  const events = ['payment_intent.amount_capturable_updated', 'payment_intent.succeeded', 'payment_intent.payment_failed',
     'payment_intent.processing', 'payment_intent.canceled', 'refund.created',
     'refund.updated', 'refund.failed'];
   const body = new URLSearchParams({ disabled: 'false' });

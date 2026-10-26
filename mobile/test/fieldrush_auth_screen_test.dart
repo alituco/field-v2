@@ -106,6 +106,24 @@ void main() {
     },
   );
 
+  for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+    testWidgets(
+      '$platform shows phone help and the supported sign-in buttons',
+      (tester) async {
+        await _pump(tester, _AccountRepository());
+        await _tap(tester, 'fieldrush-create-account');
+        expect(
+          find.byKey(const Key('fieldrush-google')),
+          platform == TargetPlatform.iOS ? findsNothing : findsOneWidget,
+        );
+        expect(find.text('Need help signing in?'), findsOneWidget);
+        expect(find.byKey(const Key('fieldrush-phone')), findsOneWidget);
+        await _dispose(tester);
+      },
+      variant: TargetPlatformVariant.only(platform),
+    );
+  }
+
   testWidgets(
     'invalid phone does not send OTP and provider errors are visible',
     (tester) async {

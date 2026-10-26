@@ -79,6 +79,23 @@ void main() {
     );
   });
 
+  testWidgets('refund notice states every cutoff and opens the refund policy', (
+    tester,
+  ) async {
+    await show(tester, const FieldrushRefundPolicyNotice());
+    final text = tester.widget<Text>(
+      find.byKey(const Key('fieldrush-refund-policy-notice')),
+    );
+    expect(
+      text.textSpan!.toPlainText(),
+      'Full refund 24+ hours before kickoff; 50% from 10 to under '
+      '24 hours; none under 10 hours. Refund policy',
+    );
+    expect(find.byType(Checkbox), findsNothing);
+    await openLink(tester, 'Refund policy');
+    expect(launcher.urls, ['https://fieldrush.gg/refunds']);
+  });
+
   testWidgets(
     'failed link launch leaves the current screen and shows the URL',
     (tester) async {

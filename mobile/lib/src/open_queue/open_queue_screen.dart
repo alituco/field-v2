@@ -155,7 +155,9 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   Future<void> _continue() async {
     final role = _mainRole;
-    if (role == null || _upcomingBookings.isNotEmpty) return;
+    if (role == null || _upcomingBookings.any((b) => b.game.blocksNewBooking)) {
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => OpenQueueGamesScreen(
@@ -189,7 +191,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loading && _upcomingBookings.isNotEmpty) {
+    if (!_loading && _upcomingBookings.any((b) => b.game.blocksNewBooking)) {
       return _buildBookingLimitScreen();
     }
     return Scaffold(
@@ -408,7 +410,9 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
             padding: fieldHeaderAwarePadding(context, top: 22, bottom: 116),
             children: [
               _QueueBookingLimitCard(
-                bookings: _upcomingBookings,
+                bookings: _upcomingBookings
+                    .where((b) => b.game.blocksNewBooking)
+                    .toList(),
                 onBooking: _openBooking,
               ),
             ],

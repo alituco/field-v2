@@ -236,15 +236,72 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
 
   Future<void> _close([OpenQueueBooking? booking]) async {
     if (_closing || (_processing && booking == null)) return;
-    _closing = true;
+    setState(() {
+      _closing = true;
+      _error = null;
+    });
     _loadGeneration++;
     _paymentGeneration++;
     _refundTimer?.cancel();
-    await _paymentSession?.close();
-    if (!mounted) return;
-    setState(() => _allowPop = true);
-    await WidgetsBinding.instance.endOfFrame;
-    if (mounted) Navigator.of(context).pop(booking);
+    try {
+      // close() immediately disables new native confirmation callbacks. Release
+      // the server lease while its view tears down; a stalled native teardown
+      // must not prevent the cancellation request from reaching the server.
+      final nativeClose = _paymentSession
+          ?.close()
+          .timeout(fieldReadTimeout)
+          .catchError((Object _) {
+            // Removing the route also disposes the native view. Payment state
+            // is established only by the separate server result below.
+          });
+      final intentId = _paymentIntentId;
+      if (booking == null && _refund == null && intentId != null) {
+        final repository = widget.repository;
+        if (repository is! OpenQueueCheckoutCancellationRepository) {
+          throw const PaymentPendingException();
+        }
+        booking = await (repository as OpenQueueCheckoutCancellationRepository)
+            .cancelCheckout(intentId: intentId, gameId: widget.game.id)
+            .timeout(fieldReadTimeout);
+        // A successful capture can win the cancellation race. The repository
+        // returns its verified booking rather than reporting it as cancelled.
+        if (booking != null &&
+            (booking.gameId != widget.game.id ||
+                booking.status != 'CONFIRMED')) {
+          throw const PaymentPendingException();
+        }
+        _paymentIntentId = null;
+      }
+      await nativeClose;
+      if (!mounted) return;
+      setState(() => _allowPop = true);
+      await WidgetsBinding.instance.endOfFrame;
+      if (mounted) Navigator.of(context).pop(booking);
+    } on PaymentRefundException catch (error) {
+      if (!mounted) return;
+      setState(() => _closing = false);
+      await _showRefund(error.refund);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _closing = false;
+        if (_paymentIntentId != null) {
+          // A lost cancellation response proves neither cancellation nor
+          // non-payment. Reinspect this exact attempt before another Pay.
+          _resumePayment = true;
+          _paymentSubmitted = true;
+          _verifiedUnpaid = false;
+        }
+        _error = error is PaymentPendingException
+            ? 'Could not confirm checkout cancellation. Retry Close or check your payment.'
+            : userFacingError(
+                error,
+                fallback:
+                    'Could not close checkout. Check your connection and retry Close.',
+              );
+      });
+      _scheduleRefundRefresh();
+    }
   }
 
   Future<OpenQueueBookingCostPreview> _quote({
@@ -290,7 +347,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
         final bookings = results[1] as List<OpenQueueBooking>;
         if (bookings.any(
           (booking) =>
-              booking.status == 'CONFIRMED' && booking.game.isActiveReservation,
+              booking.status == 'CONFIRMED' && booking.game.blocksNewBooking,
         )) {
           throw StateError(
             'You can only join one upcoming or active game. Manage your current game before taking another spot.',
@@ -1029,11 +1086,7 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
                       style: bookingText(12),
                     ),
                   const SizedBox(height: 9),
-                  if (_refund == null)
-                    Text(
-                      'Cancellation refunds follow the game’s policy and return to your original payment method. Review the exact refund before cancelling.',
-                      style: bookingText(11),
-                    ),
+                  if (_refund == null) const FieldrushRefundPolicyNotice(),
                   if (_refund == null) ...[
                     const SizedBox(height: 7),
                     FieldrushBookingPolicyNotice(

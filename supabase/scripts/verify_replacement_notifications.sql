@@ -76,7 +76,7 @@ begin
   -- Preference source and role-specific DIV range are checked without leaking
   -- another player's settings or throwing player-facing eligibility exceptions.
   update public.open_queue_games set highest_division=2,lowest_division=4 where id=game;
-  perform pg_temp.spot_assert(not fieldrush_private.replacement_recipient_eligible(people[2],game,source),'unplaced role excluded from restricted DIV game');
+  perform pg_temp.spot_assert(fieldrush_private.replacement_recipient_eligible(people[2],game,source),'placement role qualifies for open-spot alerts in any division');
   update public.fieldrush_player_rating_tracks set matches_played=2,skill_rating=1200 where profile_id=people[2] and rating_track='OUTFIELD';
   perform pg_temp.spot_assert(fieldrush_private.replacement_recipient_eligible(people[2],game,source),'revealed eligible outfield role qualifies');
   update public.fieldrush_player_rating_tracks set skill_rating=2500 where profile_id=people[2] and rating_track='OUTFIELD';

@@ -154,7 +154,7 @@ void main() {
   });
 
   testWidgets(
-    'cancelled or unresolved games never become bookable Home heroes',
+    'cancelled games stay excluded and unresolved games show a nonbooking notice',
     (tester) async {
       final cancelled = _game('cancelled', status: 'CANCELLED');
       final noData = _game('missing', state: MatchOperationalState.noData);
@@ -167,11 +167,18 @@ void main() {
       );
       expect(find.byType(FieldrushSoloHero), findsNothing);
       expect(
-        tester
-            .widget<FieldrushQuickGameCard>(find.byType(FieldrushQuickGameCard))
-            .games,
-        isEmpty,
+        find.byKey(const ValueKey('home-live-game-cancelled')),
+        findsNothing,
       );
+      expect(
+        find.byKey(const ValueKey('home-live-game-missing')),
+        findsOneWidget,
+      );
+      expect(find.text('No data'), findsOneWidget);
+      expect(find.textContaining('You can book another game'), findsOneWidget);
+      expect(noData.supportedRoles.any(noData.canBook), isFalse);
+      expect(cancelled.isActiveReservation, isFalse);
+      expect(noData.blocksNewBooking, isFalse);
     },
   );
 

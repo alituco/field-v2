@@ -54,6 +54,7 @@ void main() {
     expect(identical(view, session.buildView()), isTrue);
     expect(view.intentConfiguration.mode.toJson()['amount'], 1300);
     expect(view.intentConfiguration.mode.toJson()['currencyCode'], 'USD');
+    expect(view.intentConfiguration.mode.toJson()['captureMethod'], 'Manual');
     expect(view.intentConfiguration.paymentMethodTypes, ['card']);
     expect(view.configuration.paymentIntentClientSecret, isNull);
     expect(
