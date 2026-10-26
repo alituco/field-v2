@@ -22,4 +22,14 @@ end;
 $$;
 revoke all on function public.assert_open_queue_division_eligibility_before_staging_bots(uuid,uuid,text)
 from public,anon,authenticated,service_role;
+
+-- Open-spot alerts use the same booked-track placement rule as checkout.
+do $migration$
+declare definition text; anchor text:='then g.highest_division=1 and g.lowest_division=5';
+begin
+  definition:=pg_get_functiondef('fieldrush_private.replacement_recipient_eligible(uuid,uuid,uuid)'::regprocedure);
+  if position(anchor in definition)=0 then raise exception 'Replacement placement eligibility changed.'; end if;
+  execute replace(definition,anchor,'then true');
+end;
+$migration$;
 notify pgrst,'reload schema';
