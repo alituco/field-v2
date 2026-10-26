@@ -265,6 +265,11 @@ begin
   original:=public.referee_mutate_solo_goal(ctx.referee_id,game,gen_random_uuid(),
     jsonb_build_object('action','ADD','team','WHITE','profile_id',scorer));
   original_goal:=(original->>'goal_id')::uuid;
+  -- Old writers used transaction-start now(), which could precede the actual
+  -- goal observation after a lock wait or a long transaction. Preserve those
+  -- existing goals and clips when correcting attendance or other goal rows.
+  update public.open_queue_events set occurred_at=occurred_at-interval '15 seconds'
+    where id=(original->>'event_id')::uuid;
   insert into public.profile_highlights(profile_id,title,duration,source_type,source_match_id,source_event_id,
     video_url,download_url,download_status,processing_status,is_public)
     values(scorer,'Original credited goal','0:30','SOLO',game,(original->>'event_id')::uuid,
@@ -335,9 +340,27 @@ begin
   perform pg_temp.reopen_reject(format('delete from public.open_queue_goals where id=%L',corrected_goal),
     'Goals require an unlocked running Season 0 match');
   perform pg_temp.reopen_expect(not has_function_privilege('service_role',
-    'fieldrush_rating_private.referee_correct_solo_goals(uuid,uuid,jsonb,text)','EXECUTE')
+    'fieldrush_rating_private.referee_correct_solo_goals(uuid,uuid,jsonb,text,boolean)','EXECUTE')
     and not has_table_privilege('service_role','fieldrush_rating_private.referee_goal_correction_context','INSERT'),
     'only the audited correction writer can use the private goal capability');
+  -- Moving only the final whistle does not move an earlier goal's playing
+  -- moment. Legacy wall drift must not revoke that unchanged goal's clip.
+  update public.open_queue_events set occurred_at=occurred_at-interval '15 seconds'
+    where game_id=game and goal_id=corrected_goal and event_type='GOAL';
+  insert into public.profile_highlights(profile_id,title,duration,source_type,source_match_id,source_event_id,
+    video_url,download_status,processing_status,is_public)
+    select late,'Unchanged goal before corrected whistle','0:30','SOLO',game,id,
+      'https://example.test/unchanged.m3u8','READY','READY',true
+      from public.open_queue_events where game_id=game and goal_id=corrected_goal and event_type='GOAL'
+      returning id into clip;
+  revision:=(saved#>>'{state,revision}')::integer; request:=gen_random_uuid();
+  input:=jsonb_build_object('reason','The actual whistle was at fifty-five minutes; retain the earlier goal.',
+    'played_seconds',3300,'goals',fieldrush_rating_private.solo_recorded_goals(game));
+  preview:=public.referee_save_solo_match_record(ctx.referee_id,game,request,revision,input,true);
+  saved:=public.referee_save_solo_match_record(ctx.referee_id,game,request,revision,preview->'record_input',false,preview->>'preview_token');
+  perform pg_temp.reopen_expect(exists(select 1 from public.open_queue_goals where id=corrected_goal)
+    and (select processing_status='READY' and is_public from public.profile_highlights where id=clip),
+    'duration-only correction preserves unchanged legacy goal ID and clip');
   -- A valid goal can precede a pause within the same whole clock second. Its
   -- original wall observation must win over a later PAUSE at that same second.
   revision:=(saved#>>'{state,revision}')::integer;
@@ -367,5 +390,29 @@ begin
     jsonb_array_elements(m.events) e where m.game_id=game and e->>'type'='JOIN'
       and e->>'player_id'=late::text and (e->>'second')::integer between 1499 and 1500),
     'clock correction rederives late arrival playing minute without changing arrival');
+  -- The browser emits Z/millisecond timestamps. Equivalent spellings of the
+  -- existing clock history are not a clock correction and must keep clips.
+  select id into corrected_goal from public.open_queue_goals where game_id=game and profile_id=late;
+  update public.open_queue_events set occurred_at=occurred_at-interval '15 seconds'
+    where game_id=game and goal_id=corrected_goal and event_type='GOAL';
+  insert into public.profile_highlights(profile_id,title,duration,source_type,source_match_id,source_event_id,
+    video_url,download_status,processing_status,is_public)
+    select late,'Unchanged goal with browser timestamp spelling','0:30','SOLO',game,id,
+      'https://example.test/spelling.m3u8','READY','READY',true
+      from public.open_queue_events where game_id=game and goal_id=corrected_goal and event_type='GOAL'
+      returning id into clip;
+  select jsonb_build_object('reason','The browser normalizes unchanged clock timestamps to UTC milliseconds.',
+    'events',jsonb_agg(jsonb_set(v,'{recorded_at}',to_jsonb(to_char(
+      date_trunc('milliseconds',(v->>'recorded_at')::timestamptz) at time zone 'UTC',
+      'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))) order by n)) into input
+    from fieldrush_rating_private.season_zero_matches m,
+      jsonb_array_elements(m.events) with ordinality item(v,n)
+      where m.game_id=game and v->>'type'<>'JOIN';
+  revision:=(saved#>>'{state,revision}')::integer; request:=gen_random_uuid();
+  preview:=public.referee_save_solo_match_record(ctx.referee_id,game,request,revision,input,true);
+  saved:=public.referee_save_solo_match_record(ctx.referee_id,game,request,revision,preview->'record_input',false,preview->>'preview_token');
+  perform pg_temp.reopen_expect(exists(select 1 from public.open_queue_goals where id=corrected_goal)
+    and (select processing_status='READY' and is_public from public.profile_highlights where id=clip),
+    'equivalent browser timestamp spelling preserves unchanged goal ID and clip');
 end $$;
 select count(*) as passed_match_and_goal_checks from reopen_checks;

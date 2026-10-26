@@ -112,7 +112,7 @@ end;
 $$;
 
 create function fieldrush_rating_private.referee_correct_solo_goals(
-  actor uuid,game uuid,goals_input jsonb,reason text)
+  actor uuid,game uuid,goals_input jsonb,reason text,reanchor_times boolean default false)
 returns jsonb language plpgsql security definer
 set search_path=pg_catalog,public,fieldrush_rating_private,pg_temp as $$
 declare g public.open_queue_games%rowtype; goal public.open_queue_goals%rowtype;
@@ -158,7 +158,11 @@ begin
       case when (original->>'second')::integer=goal_second then original_wall end);
     item:=jsonb_build_object('id',goal_id_to_use,'team',goal_team,'profile_id',scorer,
       'assist_profile_id',assist,'second',goal_second);
-    if original is not distinct from item and (goals_input is null or original_wall is null
+    -- Legacy goal writers used transaction-start wall time. Merely including
+    -- an unchanged goal in a correction must not replace it (and revoke its
+    -- clip) because that observation predates the authoritative clock second.
+    -- Re-anchor existing moments only for an actual change to the clock facts.
+    if original is not distinct from item and (not reanchor_times or original_wall is null
       or abs(extract(epoch from original_wall-at_wall))<=1) then
       keep_ids:=array_append(keep_ids,goal_id_to_use);
     else changed:=true;
@@ -202,5 +206,5 @@ $$;
 revoke all on function fieldrush_rating_private.solo_goal_correction_authorized(uuid),
   fieldrush_rating_private.solo_recorded_goals(uuid),
   fieldrush_rating_private.assert_corrected_solo_goal(uuid,integer,text,uuid,uuid,timestamptz),
-  fieldrush_rating_private.referee_correct_solo_goals(uuid,uuid,jsonb,text) from public,anon,authenticated,service_role;
+  fieldrush_rating_private.referee_correct_solo_goals(uuid,uuid,jsonb,text,boolean) from public,anon,authenticated,service_role;
 notify pgrst,'reload schema';

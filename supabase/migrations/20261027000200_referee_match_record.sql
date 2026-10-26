@@ -303,7 +303,19 @@ begin
      accumulated_seconds=played,started_at=case when s.lifecycle='LIVE' and new_clock='RUNNING' then observed_now end where game_id=game;
  end if;
  -- This helper also checks unchanged goals against the corrected attendance.
- response:=fieldrush_rating_private.referee_correct_solo_goals(actor,game,case when input ? 'events' then coalesce(input->'goals',fieldrush_rating_private.solo_recorded_goals(game)) else input->'goals' end,reason);
+ response:=fieldrush_rating_private.referee_correct_solo_goals(actor,game,
+   case when input ? 'events' then coalesce(input->'goals',fieldrush_rating_private.solo_recorded_goals(game)) else input->'goals' end,reason,
+   (select coalesce(jsonb_agg(jsonb_build_array(value->>'type',(value->>'second')::integer,
+       date_trunc('milliseconds',(value->>'recorded_at')::timestamptz)) order by ordinality),'[]'::jsonb)
+      from jsonb_array_elements(before_state->'events') with ordinality where value->>'type' in ('PAUSE','RESUME')
+        and not coalesce(s.lifecycle='FINAL' and value->>'type'='PAUSE' and value->>'note'='Referee ended the match.'
+          and abs(extract(epoch from (value->>'recorded_at')::timestamptz-(before_state->>'ended_at')::timestamptz))<=1,false))
+   is distinct from
+   (select coalesce(jsonb_agg(jsonb_build_array(value->>'type',(value->>'second')::integer,
+       date_trunc('milliseconds',(value->>'recorded_at')::timestamptz)) order by ordinality),'[]'::jsonb)
+      from jsonb_array_elements(events_to_use) with ordinality where value->>'type' in ('PAUSE','RESUME')
+        and not coalesce(s.lifecycle='FINAL' and value->>'type'='PAUSE' and value->>'note'='Referee ended the match.'
+          and abs(extract(epoch from (value->>'recorded_at')::timestamptz-s.ended_at))<=1,false)));
  white_score:=(response->>'white_score')::integer; black_score:=(response->>'black_score')::integer;
  if (input ? 'white_score' and (input->>'white_score')::integer is distinct from white_score)
    or (input ? 'black_score' and (input->>'black_score')::integer is distinct from black_score) then
