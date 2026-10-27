@@ -1193,14 +1193,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 'Format',
                 '${game.hasConfigurableMinimum ? 'Up to ' : ''}${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
               ),
-              _Fact(
-                'Ends at',
-                _localClock(
-                  game.localDateTime(
-                    game.endsAt.add(const Duration(minutes: 10)),
-                  ),
-                ),
-              ),
+              _Fact('Ends at', game.plannedEndTimeLabel),
               if (game.hasConfigurableMinimum)
                 _Fact('Players needed', game.minimumPlayersLabel),
               _Fact(

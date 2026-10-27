@@ -197,6 +197,8 @@ void main() {
       expect(find.text('STEP 3 OF 3'), findsOneWidget);
       expect(find.text('Attacker'), findsOneWidget);
       expect(find.text('7v7'), findsOneWidget);
+      expect(find.text('Ends at'), findsOneWidget);
+      expect(find.text('9:40 PM'), findsOneWidget);
       expect(find.textContaining('60 min'), findsOneWidget);
       expect(repository.bookCalls, 0);
       await tester.ensureVisible(

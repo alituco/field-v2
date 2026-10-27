@@ -533,6 +533,10 @@ class OpenQueueGame {
   String get checkInDeadlineTimeLabel => _clock(localCheckInDeadlineAt);
   String get checkInCalendarDateLabel => _calendarLabel(localCheckInAt);
 
+  /// Planned finish includes ten minutes beyond the advertised match slot.
+  String get plannedEndTimeLabel =>
+      _clock(localDateTime(endsAt.add(const Duration(minutes: 10))));
+
   /// Presentation-only: future cards show arrival; live/history show kickoff.
   DateTime get displayStartsAt => isUpcoming ? checkInAt : startsAt;
   DateTime get localDisplayStartsAt => localDateTime(displayStartsAt);
