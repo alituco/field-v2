@@ -100,19 +100,21 @@ another account's consent on a shared installation.
 4. Enable Background fetch and Remote notifications background modes in the
    staging push configuration, as required by Firebase's Flutter setup guide.
    Keep the default/production configuration unchanged until its own rollout.
-5. Opt into `Runner-staging-push.entitlements` and the matching APNs environment
-   using the documented `Push-staging.xcconfig.example`. It is deliberately not
-   selected by default: the existing TestFlight signing profile cannot sign an
-   entitlement it does not yet support.
+5. The staging TestFlight uploader selects `Runner-staging-push.entitlements`,
+   `Info-staging-push.plist`, and production APNs through Runner-only build
+   settings. It rejects a profile without production APNs or the existing Apple
+   Pay merchant, and verifies both the signed archive and exported IPA retain
+   these entitlements, background modes, and consent-controlled SDK auto-init.
 6. Build with the push flag enabled only after profile/configuration validation.
    Merely uploading an APNs key does not update the installed app.
 
-The example xcconfig is not automatically included, and the current release
-workflow does not set the push flag. Before activation, explicitly select the
-staging push native overrides for the intended configuration and add
-`--dart-define=PUSH_NOTIFICATIONS_ENABLED=true` to that approved staging build.
-The normal CI/TestFlight path remains off until this deliberate build/signing
-configuration change is reviewed; provider keys alone cannot enable an old binary.
+The staging TestFlight uploader passes
+`--dart-define=PUSH_NOTIFICATIONS_ENABLED=true`. Ordinary local/CI builds keep
+the flag off and their existing native defaults. For a separate Release-staging
+build, `Push-staging.xcconfig.example` documents the explicit native overrides;
+it is not automatically included. Production and web remain disabled. Provider
+keys alone cannot enable an already installed binary, and the server activation
+below and user consent are still required for delivery.
 
 References: [Firebase Flutter setup](https://firebase.google.com/docs/cloud-messaging/flutter/get-started),
 [Apple APNs keys](https://developer.apple.com/help/account/keys/create-a-private-key/).

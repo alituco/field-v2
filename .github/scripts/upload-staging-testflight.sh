@@ -145,6 +145,11 @@ if ! /usr/libexec/PlistBuddy -c 'Print :Entitlements:com.apple.developer.in-app-
   echo "::error::Regenerate the staging App Store profile with the Fieldrush Apple Pay merchant enabled."
   exit 1
 fi
+profile_apns_environment="$(/usr/libexec/PlistBuddy -c 'Print :Entitlements:aps-environment' "$profile_plist_path" 2>/dev/null || true)"
+if [[ "$profile_apns_environment" != production ]]; then
+  echo "::error::Regenerate the staging App Store profile with production APNs and the Fieldrush Apple Pay merchant enabled."
+  exit 1
+fi
 if [[ "$(date -j -f '%a %b %d %T %Y' "$profile_expiration_without_zone" '+%s')" -le "$(date '+%s')" ]]; then
   echo "::error::The staging provisioning profile has expired."
   exit 1
@@ -210,7 +215,8 @@ flutter build ios \
   --dart-define=APPLE_MERCHANT_ID="$APPLE_MERCHANT_ID" \
   --dart-define=DEV=false \
   --dart-define=EMAIL_DELIVERY_ENABLED=true \
-  --dart-define=PROFILE_SWITCHER_ENABLED=true
+  --dart-define=PROFILE_SWITCHER_ENABLED=true \
+  --dart-define=PUSH_NOTIFICATIONS_ENABLED=true
 
 (
   cd ios
@@ -222,9 +228,54 @@ flutter build ios \
     -configuration Release-staging \
     -destination 'generic/platform=iOS' \
     -archivePath "$archive_path" \
+    FIELDRUSH_IOS_INFOPLIST_FILE=Runner/Info-staging-push.plist \
+    FIELDRUSH_IOS_ENTITLEMENTS_FILE=Runner/Runner-staging-push.entitlements \
+    FIELDRUSH_APNS_ENVIRONMENT=production \
     archive \
     2>&1 | tee "$artifact_path/archive.log"
 )
+
+verify_push_app() {
+  local app_path="$1"
+  local stage="$2"
+  local info_path="$app_path/Info.plist"
+  local entitlements_path="$signing_root/$stage-entitlements.plist"
+  if [[ ! -d "$app_path" ]]; then
+    echo "::error::The $stage is missing the Field Staging app."
+    exit 1
+  fi
+  if ! codesign --display --entitlements :- "$app_path" >"$entitlements_path" 2>"$signing_root/$stage-codesign.log"; then
+    echo "::error::Could not inspect the signed $stage entitlements."
+    exit 1
+  fi
+  local app_identifier apns_environment bundle_id auto_init
+  app_identifier="$(/usr/libexec/PlistBuddy -c 'Print :application-identifier' "$entitlements_path" 2>/dev/null || true)"
+  apns_environment="$(/usr/libexec/PlistBuddy -c 'Print :aps-environment' "$entitlements_path" 2>/dev/null || true)"
+  bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$info_path" 2>/dev/null || true)"
+  auto_init="$(/usr/libexec/PlistBuddy -c 'Print :FirebaseMessagingAutoInitEnabled' "$info_path" 2>/dev/null || true)"
+  if [[ "$app_identifier" != "$expected_team_id.$expected_bundle_id" || "$bundle_id" != "$expected_bundle_id" || "$apns_environment" != production ]]; then
+    echo "::error::The $stage must be signed for Field Staging with production APNs."
+    exit 1
+  fi
+  if ! /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.in-app-payments' "$entitlements_path" \
+    | awk '{$1=$1; print}' | grep -Fxq "$APPLE_MERCHANT_ID"; then
+    echo "::error::The $stage is missing the Fieldrush Apple Pay entitlement."
+    exit 1
+  fi
+  for mode in fetch remote-notification; do
+    if ! /usr/libexec/PlistBuddy -c 'Print :UIBackgroundModes' "$info_path" \
+      | awk '{$1=$1; print}' | grep -Fxq "$mode"; then
+      echo "::error::The $stage is missing the '$mode' background mode."
+      exit 1
+    fi
+  done
+  if [[ "$auto_init" != false ]]; then
+    echo "::error::The $stage must keep Firebase Messaging auto-init off until in-app consent."
+    exit 1
+  fi
+}
+
+verify_push_app "$archive_path/Products/Applications/Runner.app" archive
 
 set -o pipefail
 xcodebuild \
@@ -240,6 +291,8 @@ if [[ "$ipa_count" -ne 1 ]]; then
   exit 1
 fi
 ipa_path="$(find "$export_path" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+unzip -q "$ipa_path" -d "$signing_root/exported-ipa"
+verify_push_app "$signing_root/exported-ipa/Payload/Runner.app" exported-ipa
 
 export API_PRIVATE_KEYS_DIR="$api_keys_path"
 set -o pipefail
