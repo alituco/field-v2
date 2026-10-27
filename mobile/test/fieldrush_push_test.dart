@@ -3,8 +3,10 @@ import 'dart:convert';
 
 import 'package:field/src/notifications/fieldrush_push.dart';
 import 'package:field/src/home/activity_revision.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -63,6 +65,9 @@ void main() {
   late SharedPreferences storage;
   late _Messaging messaging;
   late List<http.Request> requests;
+  late List<MethodCall> nativeDeletions;
+  Object? nativeDeletionError;
+  const messagingChannel = MethodChannel('fieldrush/push_cleanup');
   Future<http.Response> Function(http.Request)? respond;
   FieldrushPush? push;
   setUp(() async {
@@ -74,6 +79,17 @@ void main() {
     });
     storage = await SharedPreferences.getInstance();
     messaging = _Messaging();
+    nativeDeletions = [];
+    nativeDeletionError = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(messagingChannel, (call) async {
+          if (call.method != 'deleteRegistrations') {
+            throw StateError('Unexpected native messaging method');
+          }
+          nativeDeletions.add(call);
+          if (nativeDeletionError != null) throw nativeDeletionError!;
+          return null;
+        });
     requests = [];
     respond = null;
     client = SupabaseClient(
@@ -106,6 +122,8 @@ void main() {
     push?.dispose();
     push = null;
     await client.dispose();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(messagingChannel, null);
     debugDefaultTargetPlatformOverride = null;
   });
   FieldrushPush create({bool listenToAuth = false}) =>
@@ -522,6 +540,99 @@ void main() {
     },
   );
   test(
+    'first iOS opt-in deletes safely before APNs exists and waits for Apple registration',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      await storage.setBool('push.opted_in', false);
+      await storage.remove('push.opted_in.user_id');
+      messaging.apnsDelayChecks = 2;
+      final controller = create();
+      await controller.synchronizeForTesting();
+      expect(messaging.autoInitChanges, isEmpty);
+      expect(nativeDeletions, isEmpty);
+      await controller.enableOnThisPhone();
+      expect(controller.phoneEnabled, isTrue);
+      expect(messaging.permissionRequests, 1);
+      expect(nativeDeletions.single.arguments, isNull);
+      expect(messaging.autoInitChanges, [false, true]);
+      expect(messaging.apnsToken, isNotNull);
+      expect(registrations(), hasLength(1));
+    },
+  );
+  test(
+    'cold iOS opt-out cleanup succeeds without APNs or enabling auto-init',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      await storage.setBool('push.opted_in', false);
+      await storage.setBool('push.cleanup.pending', true);
+      await storage.setString('push.cleanup.user_id', 'user-a');
+      final controller = create();
+      await controller.synchronizeForTesting();
+      expect(storage.getBool('push.cleanup.pending'), isFalse);
+      expect(nativeDeletions, hasLength(1));
+      expect(messaging.autoInitChanges, everyElement(isFalse));
+      expect(messaging.apnsToken, isNull);
+      expect(messaging.permissionRequests, 0);
+      expect(registrations(), isEmpty);
+      expect(controller.phoneEnabled, isFalse);
+    },
+  );
+  testWidgets(
+    'iOS registration wait is bounded and a late Apple response cannot register',
+    (tester) async {
+      try {
+        debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+        messaging.apnsHold = Completer<String?>();
+        final controller = create();
+        final pending = controller.synchronizeForTesting();
+        for (var i = 0; i < 10; i++) {
+          await tester.pump();
+        }
+        await tester.pump(const Duration(seconds: 6));
+        await pending;
+        expect(controller.phoneEnabled, isFalse);
+        expect(controller.status, contains('waiting for Apple'));
+        expect(registrations(), isEmpty);
+
+        messaging.apnsHold!.complete('late-apns-token');
+        await tester.pump();
+        expect(registrations(), isEmpty);
+        messaging.apnsHold = null;
+        await controller.synchronizeForTesting();
+        expect(controller.phoneEnabled, isTrue);
+        expect(registrations(), hasLength(1));
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+  test(
+    'failed native iOS cleanup still blocks a new account until deletion succeeds',
+    () async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+      await storage.setBool('push.opted_in', false);
+      await storage.setBool('push.cleanup.pending', true);
+      await storage.setString('push.cleanup.user_id', 'user-a');
+      await client.auth.setInitialSession(jsonEncode(_session('user-b')));
+      nativeDeletionError = PlatformException(code: 'unavailable');
+      final controller = create();
+      await controller.enableOnThisPhone();
+      expect(storage.getBool('push.cleanup.pending'), isTrue);
+      expect(registrations(), isEmpty);
+      expect(messaging.autoInitChanges, everyElement(isFalse));
+      expect(messaging.permissionRequests, 0);
+
+      nativeDeletionError = null;
+      await controller.synchronizeForTesting();
+      expect(storage.getBool('push.cleanup.pending'), isFalse);
+      expect(registrations(), isEmpty);
+      await controller.enableOnThisPhone();
+      expect(controller.phoneEnabled, isTrue);
+      expect(registrations(), hasLength(1));
+      expect(storage.getString('push.opted_in.user_id'), 'user-b');
+    },
+  );
+  test(
     'iOS starts APNs registration only after explicit opt-in and permission',
     () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
@@ -559,6 +670,10 @@ class _Messaging extends Fake implements FirebaseMessaging {
   int deletions = 0;
   int permissionRequests = 0;
   bool autoInit = false;
+  final List<bool> autoInitChanges = [];
+  String? apnsToken;
+  int apnsDelayChecks = 0;
+  Completer<String?>? apnsHold;
   AuthorizationStatus permission = AuthorizationStatus.authorized;
   Completer<void>? deleteHold;
   Object? deleteError;
@@ -585,17 +700,34 @@ class _Messaging extends Fake implements FirebaseMessaging {
 
   @override
   Future<void> setAutoInitEnabled(bool enabled) async {
+    autoInitChanges.add(enabled);
     autoInit = enabled;
   }
 
   @override
-  Future<String?> getAPNSToken() async =>
-      autoInit ? 'fixture-apns-token' : null;
+  Future<String?> getAPNSToken() async {
+    if (autoInit && apnsHold != null) return await apnsHold!.future;
+    if (autoInit && apnsToken == null) {
+      if (apnsDelayChecks > 0) {
+        apnsDelayChecks--;
+      } else {
+        apnsToken = 'fixture-apns-token';
+      }
+    }
+    return apnsToken;
+  }
+
   @override
   Future<void> deleteToken() async {
     deletions++;
     await deleteHold?.future;
     if (deleteError != null) throw deleteError!;
+    if (defaultTargetPlatform == TargetPlatform.iOS && apnsToken == null) {
+      throw FirebaseException(
+        plugin: 'firebase_messaging',
+        code: 'apns-token-not-set',
+      );
+    }
   }
 
   @override

@@ -1020,7 +1020,9 @@ class _ReferralHeader extends StatelessWidget {
         Expanded(child: Text(title, style: referralOutfit(18))),
         if (trailing != null) ...[
           const SizedBox(width: 8),
-          Flexible(child: trailing!),
+          Flexible(
+            child: Align(alignment: Alignment.centerRight, child: trailing!),
+          ),
         ],
       ],
     ),
