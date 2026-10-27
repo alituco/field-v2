@@ -13,29 +13,33 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('clips header keeps its count beside the title and action right', (
-    tester,
-  ) async {
-    var opened = false;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: FieldrushProfileClips(
-            highlights: const [],
-            onClip: (_) {},
-            onAllClips: () => opened = true,
+  testWidgets(
+    'clips header keeps its count beside the title and action right',
+    (tester) async {
+      var opened = false;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: FieldrushProfileClips(
+              highlights: const [],
+              onClip: (_) {},
+              onAllClips: () => opened = true,
+            ),
           ),
         ),
-      ),
-    );
-    final title = find.text('CLIPS (0)');
-    final action = find.text('View all clips');
-    expect(title, findsOneWidget);
-    expect(tester.getTopLeft(title).dx, lessThan(tester.getTopLeft(action).dx));
-    await tester.tap(action);
-    expect(opened, isTrue);
-    expect(tester.takeException(), isNull);
-  });
+      );
+      final title = find.text('CLIPS (0)');
+      final action = find.text('View all clips');
+      expect(title, findsOneWidget);
+      expect(
+        tester.getTopLeft(title).dx,
+        lessThan(tester.getTopLeft(action).dx),
+      );
+      await tester.tap(action);
+      expect(opened, isTrue);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'season minimum does not hide an already revealed player rating',
@@ -218,9 +222,14 @@ void main() {
   testWidgets('rating and reliability outages show honest unavailable states', (
     tester,
   ) async {
+    final actions = <String>[];
     await _pump(
       tester,
-      _content(ratingUnavailable: true, reliabilityUnavailable: true),
+      _content(
+        ratingUnavailable: true,
+        reliabilityUnavailable: true,
+        actions: actions,
+      ),
     );
     expect(find.text('Rating unavailable'), findsOneWidget);
     expect(find.text('PLACEMENT'), findsNothing);
@@ -229,14 +238,13 @@ void main() {
     expect(find.text('Good standing'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('you-reliability')));
     await tester.pump();
-    expect(find.textContaining('could not be loaded'), findsOneWidget);
-    expect(find.text('View attendance & appeals'), findsOneWidget);
+    expect(actions, ['reliability']);
+    expect(find.text('Unavailable'), findsOneWidget);
+    expect(find.text('View attendance & appeals'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('reliability expands actual status and opens the full record', (
-    tester,
-  ) async {
+  testWidgets('reliability opens the full record directly', (tester) async {
     final actions = <String>[];
     await _pump(
       tester,
@@ -250,13 +258,10 @@ void main() {
     expect(find.text('Your two strikes are under review.'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('you-reliability')));
     await tester.pump();
-    expect(find.text('Your two strikes are under review.'), findsOneWidget);
+    expect(find.text('Your two strikes are under review.'), findsNothing);
     expect(find.textContaining('eight weeks'), findsNothing);
     expect(find.textContaining('3h'), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('you-reliability-details')));
     expect(actions, ['reliability']);
-    await tester.tap(find.byKey(const ValueKey('you-reliability')));
-    await tester.pump();
     expect(
       find.byKey(const ValueKey('you-reliability-expanded')),
       findsNothing,

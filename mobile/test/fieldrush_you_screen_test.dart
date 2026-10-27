@@ -78,6 +78,13 @@ void main() {
     expect(find.byType(FieldrushBookingFlow), findsOneWidget);
     expect(find.byType(FieldrushCancelledGameScreen), findsNothing);
     expect(find.byType(FieldrushMatchHistoryScreen), findsNothing);
+    expect(find.text('Try again'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('booking-see-games')));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('No upcoming games are open yet. Check back soon.'),
+      findsOneWidget,
+    );
   });
   testWidgets(
     'referral timeout never hides profile and retry restores the card',
@@ -961,6 +968,12 @@ class _Queue implements OpenQueueRepository {
   Completer<OpenQueueMatchDetail>? response;
   final OpenQueueMatchDetail? detail;
   final List<String> requested = [];
+
+  @override
+  Future<List<OpenQueueGame>> listGames() async => [];
+
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async => [];
 
   @override
   Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async {

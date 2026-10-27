@@ -21,7 +21,7 @@ import '../open_queue/fieldrush_booking_flow.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability.dart';
 import '../reliability/reliability_repository.dart';
-import '../reliability/reliability_status_card.dart';
+import '../reliability/fieldrush_reliability_screen.dart';
 import '../ranking/fieldrush_divisions_screen.dart';
 import '../referrals/referrals.dart';
 import '../referrals/referral_repository.dart';
@@ -701,16 +701,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
     if (repository == null) return;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
-        builder: (_) => Theme(
-          data: FieldrushAuthTheme.theme(context),
-          child: Scaffold(
-            backgroundColor: FieldrushAuthTheme.cream,
-            appBar: AppBar(title: const Text('Reliability')),
-            body: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [ReliabilityStatusCard(repository: repository)],
-            ),
-          ),
+        builder: (_) => FieldrushReliabilityScreen(
+          repository: repository,
+          onNavigateTab: widget.onNavigateTab,
         ),
       ),
     );
