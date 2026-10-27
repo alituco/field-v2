@@ -52,6 +52,13 @@ abstract interface class OpenQueueCheckoutCancellationRepository {
   });
 }
 
+abstract interface class OpenQueueCheckoutNotificationRepository {
+  Future<void> acknowledgeCheckoutNotification({
+    required String paymentId,
+    required String outcome,
+  });
+}
+
 /// Market discovery applies the market predicate before the server feed limit.
 /// The historical, all-market [OpenQueueRepository.listGames] stays available.
 abstract interface class OpenQueueMarketRepository {
@@ -84,6 +91,7 @@ class SupabaseOpenQueueRepository
         OpenQueueEmbeddedCheckoutRepository,
         OpenQueuePaymentStatusRepository,
         OpenQueueCheckoutCancellationRepository,
+        OpenQueueCheckoutNotificationRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
   SupabaseOpenQueueRepository({SupabaseClient? client}) : _supabase = client;
@@ -399,6 +407,17 @@ class SupabaseOpenQueueRepository
   @override
   Future<PaymentRefundState> checkRefundStatus(String intentId) =>
       PaymentService(client: _client).checkRefundStatus(intentId);
+
+  @override
+  Future<void> acknowledgeCheckoutNotification({
+    required String paymentId,
+    required String outcome,
+  }) async {
+    await _client.rpc(
+      'acknowledge_my_checkout_notification',
+      params: {'payment_id_to_use': paymentId, 'outcome_to_use': outcome},
+    );
+  }
 
   @override
   Future<OpenQueueBooking?> cancelCheckout({

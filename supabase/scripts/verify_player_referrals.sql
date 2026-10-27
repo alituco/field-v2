@@ -25,8 +25,11 @@ begin
   perform set_config('request.jwt.claim.sub',coalesce(prior_sub,''),true);
   return player;
 end $$;
+-- Keep the kickoff anchor fixed: a wall-clock minute rollover must not cancel
+-- the sequence offset and give two disposable games the same start time.
 create function pg_temp.ref_game(actor uuid,players uuid[],kickoff_to_use timestamptz default null) returns uuid language plpgsql as $$
-declare game uuid; i integer; kickoff timestamptz:=coalesce(kickoff_to_use,date_trunc('minute',clock_timestamp())-interval '1 minute'*nextval('pg_temp.ref_game_number'));
+declare game uuid; i integer; kickoff timestamptz:=coalesce(kickoff_to_use,
+  date_trunc('minute',transaction_timestamp())-interval '1 minute'*nextval('pg_temp.ref_game_number'));
 begin
   insert into public.open_queue_games(venue,starts_at,ends_at,price_fils,minimum_players,participation_rules_version)
     values('Disposable referral verification',kickoff,kickoff+interval '1 hour',0,2,'s0-configurable-v1') returning id into game;
@@ -198,9 +201,14 @@ begin
   extra:=pg_temp.ref_player(); extra2:=pg_temp.ref_player(); extra3:=pg_temp.ref_player();
   game3:=pg_temp.ref_game(actor,array[second_referrer,extra,extra2,extra3]);
   perform public.referee_season_zero_action(actor,game3,gen_random_uuid(),0,
-    jsonb_build_object('action','START','participant_ids',to_jsonb(array[second_referrer,extra,extra2])));
+    jsonb_build_object('action','START','participant_ids',to_jsonb(array[second_referrer,extra,extra2,extra3])));
+  -- Arrival is now entry into play. A genuine early injury still demonstrates
+  -- referral attendance independently of the minimum time for a counted SR game.
+  update public.open_queue_clock_states set accumulated_seconds=64,started_at=clock_timestamp()+interval '1 hour' where game_id=game3;
+  perform public.referee_season_zero_action(actor,game3,gen_random_uuid(),1,
+    jsonb_build_object('action','EXCUSED_LEAVE','profile_id',extra3,'note','Verified early injury in referral fixture.'));
   update public.open_queue_clock_states set accumulated_seconds=129,started_at=clock_timestamp()+interval '1 hour' where game_id=game3;
-  perform public.referee_finish_season_zero_match(actor,game3,gen_random_uuid(),1);
+  perform public.referee_finish_season_zero_match(actor,game3,gen_random_uuid(),2);
   perform pg_temp.ref_expect((select rank=1 and games_played=1 and referred_games_played=3 from fieldrush_referral_private.ranked where id=first_referrer)
     and (select rank=2 and games_played=1 and referred_games_played=2 from fieldrush_referral_private.ranked where id=second_referrer),
     'referred players combined games break an equal own-games tie');
@@ -216,11 +224,11 @@ begin
   perform pg_temp.ref_expect(not exists(select 1 from fieldrush_referral_private.attended_games where game_id=zero_game),
     'zero-play result does not qualify despite check-ins');
   -- Legitimate positive-time forfeits count; void/no-contest results do not.
-  perform public.admin_resolve_season_zero_match(actor,game3,gen_random_uuid(),2,
+  perform public.admin_resolve_season_zero_match(actor,game3,gen_random_uuid(),3,
     '{"status":"forfeit_confirmed","winner":"A","reason":"Verify an official positive-duration played forfeit."}');
   perform pg_temp.ref_expect((select count(*)=4 from fieldrush_referral_private.attended_games where game_id=game3),
     'positive-time official played forfeit qualifies for verified attendees');
-  perform public.admin_resolve_season_zero_match(actor,game3,gen_random_uuid(),3,
+  perform public.admin_resolve_season_zero_match(actor,game3,gen_random_uuid(),4,
     '{"status":"no_contest","winner":null,"reason":"Verify withdrawn no-contest attendance does not qualify."}');
   perform pg_temp.ref_expect(not exists(select 1 from fieldrush_referral_private.attended_games where game_id=game3),
     'official no-contest correction withdraws qualification');

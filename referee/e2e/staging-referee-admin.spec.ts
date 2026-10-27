@@ -127,8 +127,13 @@ test("referee runs the match and admin sees player-created requests", async ({
   await expect(page.locator(".fixture-status")).toHaveText("Finished", {
     timeout: 30_000,
   });
-  await expect(page.locator(".result-locked-note")).toContainText(
-    "Final result saved. Use Reopen match if play needs to continue.",
+  const resultNotice = page.locator(".result-locked-note");
+  await expect(resultNotice).toContainText("Final result saved.");
+  await expect(resultNotice).toContainText(
+    "Correct a mistake from More → Correct match record.",
+  );
+  await expect(resultNotice).toContainText(
+    "Use Reopen match if play needs to continue.",
   );
   const reopenMatch = page.locator("details.timer-end-disclosure");
   await expect(reopenMatch.locator("summary")).toHaveText("Reopen match");

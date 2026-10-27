@@ -330,6 +330,15 @@ begin
       raise exception 'Replacement recipient eligibility ignores restrictions, consent, city or expiry.';
     end if;
     select pg_get_functiondef('fieldrush_private.notification_source_is_current(uuid)'::regprocedure) into function_text;
+    -- The selected player-push rollout wraps this dispatcher while delegating
+    -- legacy replacement receipts to the unchanged, still-private checker.
+    if position('fieldrush_private.notification_source_before_player_push(n.id)' in function_text)>0 then
+      if exists(select 1 from unnest(array['anon','authenticated','service_role']) caller_role
+        where has_function_privilege(caller_role,'fieldrush_private.notification_source_before_player_push(uuid)','EXECUTE')) then
+        raise exception 'The wrapped replacement source checker is directly client-callable.';
+      end if;
+      function_text:=function_text||pg_get_functiondef('fieldrush_private.notification_source_before_player_push(uuid)'::regprocedure);
+    end if;
     if position('fieldrush_private.replacement_recipient_eligible' in function_text)=0
       or position('settings.open_spots_enabled_at<=job.created_at' in function_text)=0 then
       raise exception 'Replacement dispatch does not recheck current eligibility and original consent.';

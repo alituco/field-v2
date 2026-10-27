@@ -24,6 +24,7 @@ export function SeasonZeroLifecycleControls({ fixture, accessToken, submitting, 
   const changed = state !== null && state.lifecycle !== (reopening ? "FINAL" : "LIVE");
   const canSave = state !== null && !changed && (!reopening || state.referee_can_reopen === true);
   const busy = submitting !== null || loading;
+  const missingIds = state?.arrivals?.filter(player => player.arrived_at === null).map(player => player.profile_id) ?? [];
 
   async function load() {
     if (loadingRef.current || savingRef.current || submitting !== null) return;
@@ -66,6 +67,8 @@ export function SeasonZeroLifecycleControls({ fixture, accessToken, submitting, 
         ? "Reopen with the saved score, players and playing time. The clock stays paused until you press Resume. Ratings are recalculated when you finish again."
         : "Save the current score and end the game now. SR is calculated for eligible players using the recorded playing time, even if you finish early. You can reopen the match if play needs to continue."}</span>
       <span>{reopening ? "Reopening resumes the match only. An ended broadcast stays ended." : "If a broadcast is active, it will stop shortly after the match ends."}</span>
+      {!reopening && state?.arrivals ? <span>{missingIds.length === 0 ? "Everyone has an arrival recorded."
+        : `These players will be recorded as no-shows: ${missingIds.map(id => fixture.players.find(player => player.id === id)?.displayName ?? "Booked player").join(", ")}. Correct any missed arrivals in Players before finishing.`}</span> : null}
       {loading ? <span role="status">Checking the current match…</span> : null}
       {error ? <span role="alert">{error}</span> : null}
       {changed ? <>

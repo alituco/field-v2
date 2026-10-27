@@ -34,6 +34,7 @@ class HomeNotification {
     required this.body,
     required this.createdAt,
     this.readAt,
+    this.type,
     this.entityType,
     this.entityId,
     this.data = const {},
@@ -43,6 +44,7 @@ class HomeNotification {
   final String body;
   final DateTime createdAt;
   final DateTime? readAt;
+  final String? type;
   final String? entityType;
   final String? entityId;
   final Map<String, dynamic> data;
@@ -55,6 +57,7 @@ class HomeNotification {
       body: json['body'] as String,
       createdAt: DateTime.parse(json['created_at'] as String),
       readAt: DateTime.tryParse(json['read_at'] as String? ?? ''),
+      type: json['type'] as String?,
       entityType: json['related_entity_type'] as String?,
       entityId: json['related_entity_id'] as String?,
       data: payload is Map ? Map<String, dynamic>.from(payload) : const {},
@@ -67,8 +70,23 @@ class HomeNotification {
   String? get openQueueGameId => switch (entityType?.trim().toUpperCase()) {
     'OPEN_QUEUE_GAME' => _nonEmptyString(entityId),
     'OPEN_QUEUE_PARTY_MEMBERSHIP' => _nonEmptyString(data['game_id']),
+    'SOLO_MATCH' => _nonEmptyString(entityId),
     _ => null,
   };
+
+  bool get opensPaymentHistory => const {
+    'PLAYER_CHECKOUT_REFUND_PENDING',
+    'PLAYER_CHECKOUT_REFUNDED',
+  }.contains(type);
+
+  bool get opensReliability =>
+      const {
+        'RELIABILITY_OUTCOME',
+        'RELIABILITY_SANCTION',
+        'RELIABILITY_APPEAL_DECIDED',
+      }.contains(type) ||
+      (type == 'PLAYER_RESTRICTION_LIFTED' &&
+          data['route_hint'] == 'reliability');
 
   String? get fixtureId => switch (entityType?.trim().toUpperCase()) {
     'FIXTURE' => _nonEmptyString(entityId),
@@ -94,13 +112,39 @@ abstract interface class HomeActivityChanges {
   Stream<void> watchActivityChanges();
 }
 
+abstract interface class HomeNotificationLookupRepository {
+  String? get signedInProfileId;
+  Future<HomeNotification?> notificationById(String notificationId);
+}
+
 class SupabaseHomeDiscoveryRepository
-    implements HomeDiscoveryRepository, HomeActivityChanges {
+    implements
+        HomeDiscoveryRepository,
+        HomeActivityChanges,
+        HomeNotificationLookupRepository {
   SupabaseHomeDiscoveryRepository({SupabaseClient? client})
     : _injectedClient = client;
 
   final SupabaseClient? _injectedClient;
   SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
+
+  @override
+  String? get signedInProfileId => _client.auth.currentUser?.id;
+
+  @override
+  Future<HomeNotification?> notificationById(String notificationId) async {
+    final owner = signedInProfileId;
+    if (owner == null) return null;
+    final response = await _client.rpc(
+      'get_my_player_notification',
+      params: {'notification_id_to_use': notificationId},
+    );
+    // A request completing after account switching must not navigate or expose
+    // the prior account's receipt, even if its original server read succeeded.
+    if (owner != signedInProfileId || response is! Map) return null;
+    final item = HomeNotification.fromJson(Map<String, dynamic>.from(response));
+    return item.id == notificationId ? item : null;
+  }
 
   @override
   Future<List<HomePlayerResult>> searchPlayers(String query) async {
@@ -142,7 +186,7 @@ class SupabaseHomeDiscoveryRepository
     final rows = await _client
         .from('notifications')
         .select(
-          'id,title,body,created_at,read_at,related_entity_type,related_entity_id,data',
+          'id,type,title,body,created_at,read_at,related_entity_type,related_entity_id,data',
         )
         .eq('recipient_profile_id', user.id)
         .isFilter('resolved_at', null)

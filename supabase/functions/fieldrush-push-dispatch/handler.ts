@@ -24,6 +24,31 @@ type Dependencies = {
   rpcTimeoutMs?: number;
 };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+const approvedPreviewTypes = new Set([
+  "PLAYER_CHECKOUT_CONFIRMED",
+  "PLAYER_CHECKOUT_REFUND_PENDING",
+  "PLAYER_CHECKOUT_REFUNDED",
+  "PLAYER_CHECKOUT_AUTH_RELEASED",
+  "SOLO_TEAM_READY",
+  "SOLO_TEAM_CHANGED",
+  "SOLO_GAME_CHANGED",
+  "SOLO_GAME_CANCELLED",
+  "SOLO_BOOKING_REMOVED",
+  "SOLO_MATCH_REVIEW",
+  "SOLO_MATCH_CORRECTED",
+  "GAME_REMINDER",
+  "OPEN_QUEUE_PARTY_INVITE",
+  "RELIABILITY_OUTCOME",
+  "RELIABILITY_SANCTION",
+  "RELIABILITY_APPEAL_DECIDED",
+  "PLAYER_RESTRICTION_LIFTED",
+  "PLAYER_ACCOUNT_RESTRICTED",
+]);
+
+function previewText(value: unknown, maximum: number): value is string {
+  return typeof value === "string" && value.trim().length > 0 &&
+    value.length <= maximum && !/[\u0000-\u001f\u007f]/.test(value);
+}
 const json = (body: Record<string, unknown>, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
@@ -68,11 +93,28 @@ function parsePayload(
     typeof data.token !== "string" || data.token.length < 20 ||
     data.token.length > 4096 || /\s/.test(data.token)
   ) throw new Error();
+  let preview: PushPayload["preview"];
+  if (data.preview_version !== undefined) {
+    if (
+      data.preview_version !== 1 ||
+      !approvedPreviewTypes.has(String(data.notification_type)) ||
+      !previewText(data.title, 120) || !previewText(data.body, 500)
+    ) throw new Error();
+    preview = { title: data.title, body: data.body };
+  }
+  const expiresAt = data.expires_at === undefined
+    ? undefined
+    : typeof data.expires_at === "string"
+    ? Date.parse(data.expires_at)
+    : NaN;
+  if (expiresAt !== undefined && !Number.isFinite(expiresAt)) throw new Error();
   return {
     deliveryId,
     notificationId: data.notification_id,
     token: data.token,
     platform: data.platform as "ios" | "android",
+    preview,
+    expiresAt,
   };
 }
 
@@ -151,17 +193,17 @@ export function createPushDispatchHandler(deps: Dependencies) {
       );
     }
     const claimId = crypto.randomUUID();
-    const timeout = deps.rpcTimeoutMs ?? 10000;
+    const timeout = deps.rpcTimeoutMs ?? 5000;
     let db: PushDb;
     let deliveries: { id: string }[];
     try {
       db = deps.createDb(url!, key);
       const claimed = await boundedRpc(db, "claim_push_deliveries", {
-        batch_size: 10,
+        batch_size: 50,
         claim_id_to_use: claimId,
       }, timeout);
       if (
-        !Array.isArray(claimed) || claimed.length > 10 || claimed.some((item) =>
+        !Array.isArray(claimed) || claimed.length > 50 || claimed.some((item) =>
           !item || typeof item.id !== "string" || !uuid.test(item.id)
         ) ||
         new Set(claimed.map((item) =>
@@ -241,10 +283,11 @@ export function createPushDispatchHandler(deps: Dependencies) {
         counts.completionUnknown++;
       }
     }
-    // Five bounded workers keep ten sends and acknowledgements inside the
-    // two-minute lease. Each payload is rechecked immediately before its send.
+    // Twenty workers process fifty devices in at most three waves of 5s payload
+    // + 10s provider + 5s completion, inside the two-minute lease and scheduled
+    // HTTP timeout. Each source is rechecked immediately before its send.
     await Promise.all(
-      Array.from({ length: Math.min(5, deliveries.length) }, async () => {
+      Array.from({ length: Math.min(20, deliveries.length) }, async () => {
         while (next < deliveries.length) {
           await dispatchOne(deliveries[next++].id);
         }

@@ -138,9 +138,15 @@ begin
       (free_game,'Free verification',start_at+interval '7 days',start_at+interval '7 days 1 hour',0,'18+');
   -- Construct a historical off-schedule overlap only for the eligibility test.
   -- No payment, participation, capacity or account protection is bypassed.
+  -- Drain deferred observers before changing the rollback-only fixture trigger.
+  set constraints all immediate;
+  set constraints all deferred;
   alter table public.open_queue_games disable trigger enforce_open_queue_permanent_schedule;
   insert into public.open_queue_games(id,venue,starts_at,ends_at,price_fils,age_label)
     values(overlap_game,'Overlap verification',start_at+interval '30 minutes',start_at+interval '90 minutes',13000,'18+');
+  -- Other game observers remain enabled for the synthetic overlap insert.
+  set constraints all immediate;
+  set constraints all deferred;
   alter table public.open_queue_games enable trigger enforce_open_queue_permanent_schedule;
   perform set_config('request.jwt.claim.role','service_role',true);
   insert into public.referee_profiles(profile_id,display_name,phone,role,is_active)
