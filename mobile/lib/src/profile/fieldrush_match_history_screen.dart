@@ -8,7 +8,6 @@ import '../core/read_timeout.dart';
 import 'fieldrush_cancelled_game_screen.dart';
 import 'player_history_repository.dart';
 import 'profile.dart';
-import '../ranking/player_rating_visibility.dart';
 
 class FieldrushMatchHistoryScreen extends StatefulWidget {
   const FieldrushMatchHistoryScreen({
@@ -186,10 +185,13 @@ class _FieldrushMatchHistoryScreenState
         'solo:${game.id}': _HistoryEntry.cancelled(game),
     }.values.toList()..sort((a, b) => b.sortAt.compareTo(a.sortAt));
     final groups = <String, List<_HistoryEntry>>{};
+    final currentYear = DateTime.now().year;
     for (final entry in entries.take(_visible)) {
       final date = entry.localDate;
       final group = date == null
           ? 'Date unavailable'
+          : date.year == currentYear
+          ? _months[date.month - 1]
           : '${_months[date.month - 1]} ${date.year}';
       groups.putIfAbsent(group, () => []).add(entry);
     }
@@ -278,7 +280,7 @@ class _FieldrushMatchHistoryScreenState
                 ),
               for (final group in groups.entries) ...[
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 24, 20, 11),
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 11),
                   child: Text(
                     group.key.toUpperCase(),
                     style: _jakarta(
@@ -370,36 +372,21 @@ class _FieldrushMatchHistoryScreenState
                     style: _jakarta(13).copyWith(
                       color: FieldrushAuthTheme.ink,
                       fontWeight: FontWeight.w700,
+                      height: 1.2,
                     ),
                   ),
                   const SizedBox(height: 5),
-                  Text('$dateLabel · Cancelled', style: _jakarta(10.5)),
+                  Text(
+                    '$dateLabel · Cancelled',
+                    style: _jakarta(10.5).copyWith(height: 1),
+                  ),
                 ],
               ),
             ),
-            const SizedBox(width: 8),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '—',
-                  style: _outfit(16).copyWith(color: const Color(0xFF8E897A)),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  'SR',
-                  style: _jakarta(
-                    8.5,
-                  ).copyWith(fontWeight: FontWeight.w800, letterSpacing: .85),
-                ),
-              ],
-            ),
-            const SizedBox(width: 8),
-            const Icon(
-              Icons.chevron_right,
-              size: 16,
-              color: FieldrushAuthTheme.muted,
-            ),
+            const SizedBox(width: 12),
+            _ratingColumn(null),
+            const SizedBox(width: 12),
+            _chevron(),
           ],
         ),
       ),
@@ -411,11 +398,7 @@ class _FieldrushMatchHistoryScreenState
         ?.where((e) => e.sourceId == game.id && e.isSolo == game.isSolo)
         .firstOrNull;
     final (result, background, foreground) = switch (game.outcome) {
-      ProfileGameOutcome.win => (
-        'W',
-        const Color(0xFFEFF6E4),
-        FieldrushAuthTheme.forest,
-      ),
+      ProfileGameOutcome.win => ('W', FieldrushAuthTheme.forest, Colors.white),
       ProfileGameOutcome.draw => (
         'D',
         const Color(0xFFF2EFE3),
@@ -423,23 +406,25 @@ class _FieldrushMatchHistoryScreenState
       ),
       ProfileGameOutcome.loss => (
         'L',
-        const Color(0xFFF8E8E4),
+        const Color(0xFFF7E3E3),
         FieldrushAuthTheme.danger,
       ),
       null => ('—', const Color(0xFFF2EFE3), FieldrushAuthTheme.muted),
     };
-    final isHome = ['HOME', 'WHITE'].contains(game.playerSide.toUpperCase());
+    final playerSide = game.playerSide.trim().toUpperCase();
+    final isHome = ['HOME', 'WHITE'].contains(playerSide);
+    final isAway = ['AWAY', 'BLACK'].contains(playerSide);
     final opponent = isHome ? game.awayName : game.homeName;
     final delta = event?.hasPublicRating == true ? event?.ratingChange : null;
-    final explanation =
-        event?.publicRatingExplanation ??
-        publicRatingStatusLabel(event?.ratingStatus);
     final date = game.localPlayedAt;
     final dateLabel = date == null
         ? 'Date unavailable'
-        : '${_months[date.month - 1].substring(0, 3)} ${date.day}';
+        : '${_weekdays[date.weekday - 1]}, '
+              '${_months[date.month - 1].substring(0, 3)} ${date.day}';
     final scoreLabel = game.hasFinalScore
-        ? '${game.homeScore}–${game.awayScore}'
+        ? isAway
+              ? '${game.awayScore}–${game.homeScore}'
+              : '${game.homeScore}–${game.awayScore}'
         : 'Score unavailable';
     return InkWell(
       key: ValueKey(
@@ -475,21 +460,18 @@ class _FieldrushMatchHistoryScreenState
                     style: _jakarta(13).copyWith(
                       color: FieldrushAuthTheme.ink,
                       fontWeight: FontWeight.w700,
+                      height: 1.2,
                     ),
                   ),
                   const SizedBox(height: 5),
                   Text(
                     '$dateLabel · ${game.isSolo ? '' : 'Clan · '}$scoreLabel',
-                    style: _jakarta(10.5),
+                    style: _jakarta(10.5).copyWith(height: 1),
                   ),
-                  if (explanation != null) ...[
-                    const SizedBox(height: 5),
-                    Text(explanation, style: _jakarta(10.5)),
-                  ],
                 ],
               ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 12),
             if (_opening == '${game.type.name}:${game.id}')
               const SizedBox(
                 width: 18,
@@ -497,42 +479,49 @@ class _FieldrushMatchHistoryScreenState
                 child: FieldLoadingIndicator(label: 'Opening match'),
               )
             else ...[
-              if (delta != null)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      delta > 0 ? '+$delta' : '$delta',
-                      style: _outfit(16).copyWith(
-                        color: delta > 0
-                            ? FieldrushAuthTheme.forest
-                            : delta < 0
-                            ? FieldrushAuthTheme.danger
-                            : FieldrushAuthTheme.muted,
-                      ),
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      'PLAYER SR',
-                      style: _jakarta(8).copyWith(
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: .8,
-                      ),
-                    ),
-                  ],
-                ),
-              const SizedBox(width: 8),
-              const Icon(
-                Icons.chevron_right,
-                size: 16,
-                color: FieldrushAuthTheme.muted,
-              ),
+              _ratingColumn(delta),
+              const SizedBox(width: 12),
+              _chevron(),
             ],
           ],
         ),
       ),
     );
   }
+
+  Widget _ratingColumn(int? delta) => Column(
+    crossAxisAlignment: CrossAxisAlignment.end,
+    children: [
+      Text(
+        delta == null
+            ? '—'
+            : delta > 0
+            ? '+$delta'
+            : '$delta',
+        style: _outfit(16).copyWith(
+          color: delta == null
+              ? const Color(0xFF8E897A)
+              : delta > 0
+              ? FieldrushAuthTheme.forest
+              : delta < 0
+              ? FieldrushAuthTheme.danger
+              : FieldrushAuthTheme.muted,
+        ),
+      ),
+      const SizedBox(height: 5),
+      Text(
+        'SR',
+        style: _jakarta(
+          8.5,
+        ).copyWith(fontWeight: FontWeight.w800, letterSpacing: .85, height: 1),
+      ),
+    ],
+  );
+
+  Widget _chevron() => SizedBox(
+    width: 10,
+    child: Text('›', style: _jakarta(13).copyWith(fontWeight: FontWeight.w700)),
+  );
 }
 
 class _HistoryEntry {
@@ -581,17 +570,22 @@ class _CancelledBadgeBorder extends CustomPainter {
 class _BackButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SizedBox(
-    width: 44,
-    height: 44,
+    width: 36,
+    height: 36,
     child: IconButton(
       tooltip: 'Back',
+      padding: EdgeInsets.zero,
       onPressed: () => Navigator.of(context).pop(),
       style: IconButton.styleFrom(
         backgroundColor: Colors.white,
         side: const BorderSide(color: FieldrushAuthTheme.border),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      icon: const Icon(Icons.chevron_left, color: FieldrushAuthTheme.ink),
+      icon: const Icon(
+        Icons.chevron_left,
+        size: 20,
+        color: FieldrushAuthTheme.ink,
+      ),
     ),
   );
 }
@@ -601,6 +595,7 @@ TextStyle _outfit(double size) => TextStyle(
   fontSize: size,
   fontWeight: FontWeight.w800,
   height: 1,
+  letterSpacing: -size * .01,
   color: FieldrushAuthTheme.ink,
 );
 TextStyle _jakarta(double size) => TextStyle(

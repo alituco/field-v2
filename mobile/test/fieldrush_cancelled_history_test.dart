@@ -21,7 +21,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('1 played · 1W 0D 0L'), findsOneWidget);
     expect(find.text('Tue, Sep 1 · Cancelled'), findsOneWidget);
-    expect(find.text('—'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('you-cancelled-history-cancelled')),
+        matching: find.text('—'),
+      ),
+      findsOneWidget,
+    );
     expect(repository.cancellationCalls, 1);
 
     await tester.tap(find.byKey(const Key('you-cancelled-history-cancelled')));
