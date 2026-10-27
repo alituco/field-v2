@@ -175,6 +175,19 @@ set the Edge flag to false. No key deletion is required to stop dispatch.
 
 ## Privacy and limitations
 
+On iOS, the client waits up to six seconds for asynchronous APNs registration
+after permission and explicit opt-in, then offers a retry if Apple is not ready.
+FlutterFire's deletion wrapper requires an APNs token even for cleanup, and the
+native single-token API requires existing checkin credentials. iOS cleanup uses
+Firebase's public `deleteData` operation through an app-owned native channel, so
+fresh installs can clear messaging registrations without either prerequisite.
+Failed deletion still blocks account rebinding; cleanup never enables auto-init.
+The opt-in native SDK
+check is `flutter test integration_test/push_cleanup_native_test.dart --flavor
+staging -d <disposable-simulator-id> --dart-define=APP_ENV=staging
+--dart-define=VERIFY_NATIVE_PUSH_CLEANUP=true`. It contacts staging Firebase;
+Supabase is mocked and no player device or phone notification is created.
+
 Normal sign-out attempts to revoke the server binding while the JWT is valid,
 delete the provider token, clear consent and invalidate in-flight registration work.
 Monotonic binding versions and server tombstones prevent late registration from

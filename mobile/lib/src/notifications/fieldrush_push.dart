@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -469,10 +470,11 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
       await _messaging!.setAutoInitEnabled(true);
       if (!_isCurrent(generation, userId)) return;
       if (defaultTargetPlatform == TargetPlatform.iOS &&
-          await _messaging!.getAPNSToken() == null) {
+          !await _waitForAppleRegistration(generation, userId)) {
+        if (!_isCurrent(generation, userId)) return;
         _registered = false;
         status =
-            'Phone notifications are waiting for Apple device registration. Try again on a configured physical device.';
+            'Phone notifications are waiting for Apple. Try again in a moment; Activity remains available.';
         notifyListeners();
         return;
       }
@@ -525,12 +527,49 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
       !_loggingOut &&
       _client?.auth.currentUser?.id == userId;
 
+  Future<bool> _waitForAppleRegistration(int generation, String? userId) async {
+    var stopped = false;
+    Future<bool> poll() async {
+      for (var attempt = 0; attempt < 20; attempt++) {
+        if (stopped || !_isCurrent(generation, userId)) return false;
+        final token = await _messaging!.getAPNSToken();
+        if (stopped || !_isCurrent(generation, userId)) return false;
+        if (token != null) return true;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+      return false;
+    }
+
+    try {
+      return await poll().timeout(
+        const Duration(seconds: 6),
+        onTimeout: () => false,
+      );
+    } finally {
+      stopped = true;
+    }
+  }
+
   Future<void> _deleteToken() async {
     await _provider(() async {
       await _messaging
           ?.setAutoInitEnabled(false)
           .timeout(const Duration(seconds: 4));
-      await _messaging?.deleteToken().timeout(const Duration(seconds: 4));
+      final messaging = _messaging;
+      if (messaging == null) return;
+      Future<void> delete() async {
+        if (defaultTargetPlatform == TargetPlatform.iOS) {
+          // The public native reset handles fresh installs without APNs or
+          // checkin credentials. Auto-init stays off throughout revocation.
+          await const MethodChannel(
+            'fieldrush/push_cleanup',
+          ).invokeMethod<void>('deleteRegistrations');
+        } else {
+          await messaging.deleteToken();
+        }
+      }
+
+      await delete().timeout(const Duration(seconds: 4));
     });
   }
 
