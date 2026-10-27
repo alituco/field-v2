@@ -100,7 +100,7 @@ try {
   for(const id of [admin,referee,stranger,...players.map(p=>p.id)]) await db.query('insert into public.profiles values($1)',[id]);
   for(const [id,role] of [[admin,'admin'],[referee,'referee'],[stranger,'referee']]) await db.query('insert into public.referee_profiles values($1,$2,true)',[id,role]);
   for(const p of players) for(const track of ['OUTFIELD','GOALKEEPER']) await db.query('insert into public.fieldrush_player_rating_tracks values($1,$2,$3,10)',[p.id,track,(track==='GOALKEEPER'?1200:1000)+p.index]);
-  for(const file of ['20261014001000_season_zero_sr_calculator.sql','20261014001200_season_zero_sr_timeline.sql','20261014001300_season_zero_match_evidence.sql','20261014001600_season_zero_rebalance.sql']) await db.exec(await source(file));
+  for(const file of ['20261014001000_season_zero_sr_calculator.sql','20261014001200_season_zero_sr_timeline.sql','20261014001300_season_zero_match_evidence.sql','20261014001600_season_zero_rebalance.sql','20261027000700_admin_unassigned_players.sql']) await db.exec(await source(file));
   const legacy=await game();
   await invalid(legacy,pair(),/requires a Season 0/);
   await scalar('select public.admin_set_season_zero_policy($1,true,$2)',[admin,'Enable only isolated transfer test fixtures']);
@@ -210,7 +210,56 @@ try {
   await db.query("update public.open_queue_bookings set role='ATT' where game_id=$1 and role='DEF'",[saved106]);
   await rebalance(saved106,pair());
   for(const team of ['WHITE','BLACK']) await check("select jsonb_object_agg(role,n) from (select role,count(*)::integer n from public.open_queue_bookings where game_id=$1 and team=$2 group by role) x",{GK:1,ATT:6},[saved106,team]);
-  for(const role of ['anon','authenticated']) await check("select has_function_privilege($1,'public.referee_rebalance_season_zero_match(uuid,uuid,uuid,jsonb,text)','EXECUTE')",false,[role]);
+  // The admin's narrow placement action cannot transfer an existing player,
+  // including one assigned by another staff member after the form was opened.
+  const placing=await game();
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=any($2::uuid[])',[placing,[a[6].id,b[6].id]]);
+  await db.query('update public.open_queue_games set teams_assigned_at=null where id=$1',[placing]);
+  const assignments=[{profile_id:a[6].id,to_team:'WHITE'},{profile_id:b[6].id,to_team:'BLACK'}];
+  const place=(gameId,entries=assignments,{actor=admin,request=randomUUID()}={})=>scalar(
+    'select public.admin_assign_unassigned_open_queue_players($1,$2,$3,$4::jsonb)',[actor,gameId,request,JSON.stringify(entries)]);
+  async function invalidPlacement(gameId,entries,error,options={}) {
+    const before=await snapshot(gameId);
+    await assert.rejects(()=>place(gameId,entries,options),error); checks++;
+    assert.deepEqual(await snapshot(gameId),before,'Rejected placement preserves roster, audit and notifications'); checks++;
+  }
+  await invalidPlacement(placing,assignments,/Only an active admin/,{actor:referee});
+  await invalidPlacement(placing,[{profile_id:a[0].id,to_team:'BLACK'},...assignments],/already been assigned/);
+  await invalidPlacement(placing,[{profile_id:stranger,to_team:'BLACK'},...assignments],/no longer has a confirmed booking/);
+  await invalidPlacement(placing,[...assignments,assignments[0]],/only once/);
+  await invalidPlacement(placing,[{...assignments[0],consented:true},assignments[1]],/Choose a player/);
+  await invalidPlacement(placing,[assignments[0],{...assignments[1],to_team:'WHITE'}],/no more than seven/);
+  await invalidPlacement(placing,[assignments[0]],/every original booked player/);
+  const retained=await scalar('select jsonb_object_agg(profile_id,team) from public.open_queue_bookings where game_id=$1 and team is not null',[placing]);
+  const placementRequest=randomUUID();
+  const placed=await place(placing,assignments,{request:placementRequest});
+  assert.equal(placed.action,'ASSIGN_UNASSIGNED'); checks++;
+  assert.equal(placed.assigned_count,2); checks++;
+  for(const [profileId,team] of Object.entries(retained)) await check('select team from public.open_queue_bookings where game_id=$1 and profile_id=$2',team,[placing,profileId]);
+  await check('select count(*)::integer from public.notifications where related_entity_id=$1',2,[placing]);
+  await check('select count(*)::integer from public.open_queue_bookings where game_id=$1 and played',0,[placing]);
+  const savedPlacement=await snapshot(placing);
+  assert.deepEqual(await place(placing,assignments,{request:placementRequest}),placed,'same request safely acknowledges an already completed placement'); checks++;
+  assert.deepEqual(await snapshot(placing),savedPlacement,'retry has no duplicate notifications or audit'); checks++;
+  await invalidPlacement(placing,assignments,/already been assigned/);
+  await invalidPlacement(placing,[{...assignments[0],to_team:'BLACK'},assignments[1]],/request ID belongs/,{request:placementRequest});
+  await db.query("update public.open_queue_games set status='LIVE' where id=$1",[placing]);
+  assert.deepEqual(await place(placing,assignments,{request:placementRequest}),placed,'completed placement can be acknowledged after kickoff'); checks++;
+
+  const partyPlacement=await game();
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=any($2::uuid[])',[partyPlacement,[a[6].id,b[6].id]]);
+  await party(partyPlacement,[a[5],a[6]]);
+  await invalidPlacement(partyPlacement,[{...assignments[0],to_team:'BLACK'},{...assignments[1],to_team:'WHITE'}],/parties must stay together/);
+  await db.query("update public.open_queue_games set operational_state='REVIEW' where id=$1",[partyPlacement]);
+  await invalidPlacement(partyPlacement,assignments,/before actual kickoff/);
+  await db.query("update public.open_queue_games set operational_state='NORMAL',status='LIVE' where id=$1",[partyPlacement]);
+  await invalidPlacement(partyPlacement,assignments,/before actual kickoff/);
+
+  for(const role of ['anon','authenticated']) {
+    await check("select has_function_privilege($1,'public.admin_assign_unassigned_open_queue_players(uuid,uuid,uuid,jsonb)','EXECUTE')",false,[role]);
+    await check("select has_function_privilege($1,'public.referee_rebalance_season_zero_match(uuid,uuid,uuid,jsonb,text)','EXECUTE')",false,[role]);
+  }
+  await check("select has_function_privilege('service_role','public.admin_assign_unassigned_open_queue_players(uuid,uuid,uuid,jsonb)','EXECUTE')",true);
   await check("select has_function_privilege('service_role','public.referee_rebalance_season_zero_match(uuid,uuid,uuid,jsonb,text)','EXECUTE')",true);
   await check('select count(*)::integer from public.fieldrush_player_rating_tracks where matches_played<>10',0);
   await check('select count(*)::integer from public.open_queue_bookings where rating_change is not null',0);
