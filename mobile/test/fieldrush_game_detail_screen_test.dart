@@ -450,6 +450,8 @@ void main() {
     final format = find.text('7-a-side · 90 min slot');
     await tester.scrollUntilVisible(format, 250);
     expect(format, findsOneWidget);
+    expect(find.text('Ends at'), findsOneWidget);
+    expect(find.text('7:55 PM'), findsOneWidget);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
