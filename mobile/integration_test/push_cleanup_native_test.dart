@@ -4,7 +4,6 @@ import 'dart:io';
 import 'package:field/src/notifications/fieldrush_push.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -50,17 +49,20 @@ void main() {
         'push.cleanup.user_id': owner,
       });
       final storage = await SharedPreferences.getInstance();
+      final requests = <http.Request>[];
       final client = SupabaseClient(
         'https://test.supabase.co',
         'public-fixture-key',
         authOptions: const AuthClientOptions(autoRefreshToken: false),
-        httpClient: MockClient(
-          (_) async => http.Response(
+        httpClient: MockClient((request) async {
+          requests.add(request);
+          return http.Response(
             'null',
             200,
+            request: request,
             headers: {'content-type': 'application/json'},
-          ),
-        ),
+          );
+        }),
       );
       await client.auth.setInitialSession(
         jsonEncode({
@@ -88,8 +90,10 @@ void main() {
       );
       try {
         await controller.synchronizeForTesting();
+        expect(requests.single.url.path, '/rest/v1/rpc/revoke_my_push_device');
         expect(storage.getBool('push.cleanup.pending'), isFalse);
         expect(messaging.isAutoInitEnabled, isFalse);
+        expect(await messaging.getAPNSToken(), isNull);
         expect(controller.phoneEnabled, isFalse);
       } finally {
         controller.dispose();
