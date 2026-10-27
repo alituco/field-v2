@@ -23,9 +23,11 @@ export function AdminUnassignedPlayersPanel({ fixture, busy = false, accessToken
   const unassigned = players.filter(player => !["WHITE", "BLACK"].includes(player.clanId));
   const beforeKickoff = ["OPEN", "FULL"].includes(fixture.status) &&
     (!fixture.clock || (fixture.clock.status === "NOT_STARTED" && !fixture.clock.startedAt && fixture.clock.accumulatedSeconds === 0));
-  if (!beforeKickoff || !assigned.length || !unassigned.length) return null;
+  if (!beforeKickoff || (!fixture.teamsAssignedAt && !assigned.length) || !unassigned.length) return null;
 
-  const canPlace = fixture.operationalState === "NORMAL" && soloGameReadiness(fixture, players.length).minimumReached;
+  const seasonZero = fixture.ratingPolicyId === "field-sr-season0-v2";
+  const canPlace = fixture.operationalState === "NORMAL" && (!seasonZero || soloGameReadiness(fixture, players.length).minimumReached);
+  const capacityPerTeam = Math.floor((fixture.capacity ?? 14) / 2);
   const locked = saving || busy || !canPlace;
   const complete = unassigned.every(player => ["WHITE", "BLACK"].includes(targets[player.id]));
   const count = (team: string, excluding?: string) => players.filter(player =>
@@ -71,7 +73,7 @@ export function AdminUnassignedPlayersPanel({ fixture, busy = false, accessToken
   return <section className={styles.panel} aria-labelledby="admin-unassigned-players-title">
     <header><div><span>TEAM PLACEMENT</span><h2 id="admin-unassigned-players-title">Unassigned players</h2></div></header>
     <p className={styles.hint}>Choose a team for each new player. Everyone already assigned stays on their existing team.</p>
-    <p className={styles.hint}>White {count("WHITE")} / 7 · Black {count("BLACK")} / 7. Keep booked positions and accepted parties together.</p>
+    <p className={styles.hint}>White {count("WHITE")} / {capacityPerTeam} · Black {count("BLACK")} / {capacityPerTeam}. Keep booked positions and accepted parties together.</p>
     {!canPlace ? <p className={styles.hint}>Placement is unavailable while this game is under review or below its minimum player count.</p> : null}
     <form aria-label="Place unassigned players" onSubmit={event => void save(event)}>
       <div className={styles.playerList}>{unassigned.map(player => <div className={styles.playerRow} key={player.id}>
@@ -79,8 +81,8 @@ export function AdminUnassignedPlayersPanel({ fixture, busy = false, accessToken
         <label><span>Team for {player.displayName}</span><select disabled={locked} value={targets[player.id] ?? ""}
           onChange={event => { const value = event.target.value; setTargets(previous => ({ ...previous, [player.id]: value })); }}>
           <option value="">Choose team</option>
-          <option value="WHITE" disabled={count("WHITE", player.id) >= 7}>White</option>
-          <option value="BLACK" disabled={count("BLACK", player.id) >= 7}>Black</option>
+          <option value="WHITE" disabled={count("WHITE", player.id) >= capacityPerTeam}>White</option>
+          <option value="BLACK" disabled={count("BLACK", player.id) >= capacityPerTeam}>Black</option>
         </select></label>
       </div>)}</div>
       {error ? <p className={styles.error} role="alert">{error}</p> : null}

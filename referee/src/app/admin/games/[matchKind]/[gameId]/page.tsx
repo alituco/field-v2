@@ -306,7 +306,7 @@ export default function AdminGameDetailPage() {
             await load(true);
           }} /> : null}
 
-          {seasonZero ? <AdminUnassignedPlayersPanel key={`unassigned:${fixture.id}`} fixture={fixture} accessToken={accessToken}
+          {fixture.matchKind === "SOLO" ? <AdminUnassignedPlayersPanel key={`unassigned:${fixture.id}`} fixture={fixture} accessToken={accessToken}
             busy={lockingTeams || fillingBots} onSaved={async () => {
               setNotice("Player assignments saved. Existing teams have been preserved.");
               await load(true);

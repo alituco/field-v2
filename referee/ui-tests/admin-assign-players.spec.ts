@@ -8,7 +8,11 @@ const id = "d1000000-0000-4000-8000-000000000001";
 const newWhite = "e1000000-0000-4000-8000-000000000013";
 const newBlack = "e1000000-0000-4000-8000-000000000014";
 
-async function mockGame(page: Page, { firstConflict = false, status = "FULL", operationalState = "NORMAL", started = false } = {}) {
+async function mockGame(page: Page, { firstConflict = false, status = "FULL", operationalState = "NORMAL", started = false,
+  ratingPolicyId = "field-sr-season0-v2", capacity = 14, playerCount = capacity, published = false }: {
+    firstConflict?: boolean; status?: string; operationalState?: string; started?: boolean;
+    ratingPolicyId?: string; capacity?: number; playerCount?: number; published?: boolean;
+  } = {}) {
   const writes: { requestId: string; assignments: { profileId: string; team: string }[] }[] = [];
   let reads = 0;
   let saved = false;
@@ -27,29 +31,30 @@ async function mockGame(page: Page, { firstConflict = false, status = "FULL", op
       await route.fulfill({ json: { ok: true, assignment: { game_id: id, request_id: body.requestId, action: "ASSIGN_UNASSIGNED", assigned_count: body.assignments.length } } }); return;
     }
     if (path.endsWith("/rating-review")) { await route.fulfill({ json: { state: null } }); return; }
-    const players = Array.from({ length: 14 }, (_, index) => ({
-      id: index === 12 ? newWhite : index === 13 ? newBlack : `e1000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
-      displayName: index === 12 ? "New White Player" : index === 13 ? "New Black Player" : `Existing player ${index + 1}`,
-      username: null, avatarUrl: null, role: index >= 12 ? "ATT" : index % 6 === 0 ? "GK" : index % 6 < 3 ? "DEF" : "ATT", ratingAtTeamAssignment: 1200,
-      clanId: index < 6 ? "WHITE" : index < 12 ? "BLACK" : saved ? index === 12 ? "WHITE" : "BLACK" : "UNASSIGNED",
+    const existingPerSide = (playerCount - 2) / 2;
+    const players = Array.from({ length: playerCount }, (_, index) => ({
+      id: index === playerCount - 2 ? newWhite : index === playerCount - 1 ? newBlack : `e1000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+      displayName: index === playerCount - 2 ? "New White Player" : index === playerCount - 1 ? "New Black Player" : `Existing player ${index + 1}`,
+      username: null, avatarUrl: null, role: index >= playerCount - 2 ? "ATT" : index % existingPerSide === 0 ? "GK" : index % existingPerSide < 3 ? "DEF" : capacity === 12 ? "MID" : "ATT", ratingAtTeamAssignment: 1200,
+      clanId: index < existingPerSide ? "WHITE" : index < playerCount - 2 ? "BLACK" : saved ? index === playerCount - 2 ? "WHITE" : "BLACK" : "UNASSIGNED",
     }));
     if (path === `/api/referee/admin/games/solo/${id}`) reads++;
-    const fixture = { matchKind: "SOLO", id, status, operationalState, ratingPolicyId: "field-sr-season0-v2", capacity: 14,
-      teamsAssignedAt: saved ? "2099-07-25T19:00:00Z" : null, players,
+    const fixture = { matchKind: "SOLO", id, status, operationalState, ratingPolicyId, capacity,
+      teamsAssignedAt: saved || published ? "2099-07-25T19:00:00Z" : null, players,
       venue: "Encanto Park · Pitch 1", day: "Saturday", timeSlot: "8:30 PM", matchDate: "2099-07-25",
       homeScore: null, awayScore: null, clock: started ? { status: "PAUSED", startedAt: "2099-07-25T20:30:00Z", accumulatedSeconds: 20 } : null, events: [],
       homeClan: { id: "WHITE", name: "White team", tag: "WHT", emblem: "W" }, awayClan: { id: "BLACK", name: "Black team", tag: "BLK", emblem: "B" } };
     await route.fulfill({ json: { detail: { fixture, currency: "USD", pricing: null, formation: null,
-      participants: { matchKind: "SOLO", matchId: id, status, capacity: 14, capacityPerSide: 7,
+      participants: { matchKind: "SOLO", matchId: id, status, capacity, capacityPerSide: capacity / 2,
         registeredPlayers: players.map(player => ({ ...player, profileId: player.id, side: player.clanId === "UNASSIGNED" ? null : player.clanId, checkedInAt: null })),
-        actualPlayers: [], withdrawnPlayers: [], counts: { registered: 14, actual: 0, withdrawn: 0 } },
+        actualPlayers: [], withdrawnPlayers: [], counts: { registered: playerCount, actual: 0, withdrawn: 0 } },
       reserves: { active: [], history: [] }, assignedReferee: null,
       ratingSummary: { kind: "SOLO", whiteAverageSr: 1200, blackAverageSr: 1200, matchAverageSr: 1200, teamSrSpread: 0, ratedPlayers: 0 },
       audit: [], reports: [], stoppages: [], resolutionCase: null,
     } } });
   });
   await page.goto(`/admin/games/solo/${id}`);
-  await expect(page.getByText("Existing player 1", { exact: true })).toBeVisible();
+  await expect(page.getByText(playerCount > 2 ? "Existing player 1" : "New White Player", { exact: true }).last()).toBeVisible();
   return { writes, get reads() { return reads; } };
 }
 
@@ -101,5 +106,36 @@ test("review locks placement while keeping the unassigned roster visible", async
   const panel = page.getByRole("region", { name: "Unassigned players", exact: true });
   await expect(panel.getByLabel("Team for New White Player")).toBeDisabled();
   await expect(panel.getByRole("button", { name: "Save player assignments" })).toBeDisabled();
+  expect(calls.writes).toHaveLength(0);
+});
+
+for (const [label, capacity, playerCount] of [["legacy Phoenix 7v7", 14, 14], ["legacy Bahrain 6v6", 12, 12], ["legacy low roster", 14, 8]] as const) {
+  test(`${label} supports placement using its saved team capacity`, async ({ page }, info) => {
+    const calls = await mockGame(page, { ratingPolicyId: "LEGACY", capacity, playerCount, status: playerCount === capacity ? "FULL" : "OPEN" });
+    const panel = page.getByRole("region", { name: "Unassigned players", exact: true });
+    await expect(panel.getByLabel("Team for New White Player")).toBeEnabled();
+    await panel.getByLabel("Team for New White Player").selectOption("WHITE");
+    await panel.getByLabel("Team for New Black Player").selectOption("BLACK");
+    await expect(panel.getByText(`White ${playerCount / 2} / ${capacity / 2} · Black ${playerCount / 2} / ${capacity / 2}.`, { exact: false })).toBeVisible();
+    if (capacity === 12) await page.screenshot({ path: info.outputPath("legacy-6v6-player-placement.png"), fullPage: true });
+    await panel.getByRole("button", { name: "Save player assignments" }).click();
+    await expect(panel).toHaveCount(0);
+    expect(calls.writes[0].assignments).toEqual([{ profileId: newWhite, team: "WHITE" }, { profileId: newBlack, team: "BLACK" }]);
+  });
+}
+
+test("published legacy teams remain placeable after every original player has left", async ({ page }) => {
+  const calls = await mockGame(page, { ratingPolicyId: "LEGACY", playerCount: 2, published: true, status: "OPEN" });
+  const panel = page.getByRole("region", { name: "Unassigned players", exact: true });
+  await panel.getByLabel("Team for New White Player").selectOption("WHITE");
+  await panel.getByLabel("Team for New Black Player").selectOption("BLACK");
+  await panel.getByRole("button", { name: "Save player assignments" }).click();
+  await expect(panel).toHaveCount(0);
+  expect(calls.writes).toHaveLength(1);
+});
+
+test("initial unrevealed legacy teams still use the existing team creation flow", async ({ page }) => {
+  const calls = await mockGame(page, { ratingPolicyId: "LEGACY", playerCount: 2, status: "OPEN" });
+  await expect(page.getByRole("region", { name: "Unassigned players", exact: true })).toHaveCount(0);
   expect(calls.writes).toHaveLength(0);
 });

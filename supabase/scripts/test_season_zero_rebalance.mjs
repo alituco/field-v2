@@ -30,6 +30,8 @@ const reason = 'Consented pre-kickoff headcount rebalance with absent slot excha
 async function rebalance(id, moves=pair(), {actor=referee,request=randomUUID(),note=reason}={}) {
   return scalar('select public.referee_rebalance_season_zero_match($1,$2,$3,$4::jsonb,$5)',[actor,id,request,JSON.stringify(moves),note]);
 }
+const place=(gameId,entries,{actor=admin,request=randomUUID()}={})=>scalar(
+  'select public.admin_assign_unassigned_open_queue_players($1,$2,$3,$4::jsonb)',[actor,gameId,request,JSON.stringify(entries)]);
 async function game({omit=[],status='FULL',absent=[a[5].id,a[6].id]}={}) {
   const id=randomUUID();
   await db.query(`insert into public.open_queue_games(id,format_version,status,operational_state,starts_at,ends_at,teams_assigned_at,
@@ -68,7 +70,7 @@ try {
     create table public.profiles(id uuid primary key);
     create table public.referee_profiles(profile_id uuid primary key references public.profiles,role text,is_active boolean);
     create table public.open_queue_games(id uuid primary key,format_version text,status text,operational_state text,
-      starts_at timestamptz,ends_at timestamptz,teams_assigned_at timestamptz,capacity integer,goalkeeper_capacity integer,
+      starts_at timestamptz,ends_at timestamptz,actual_started_at timestamptz,teams_assigned_at timestamptz,capacity integer,goalkeeper_capacity integer,
       defender_capacity integer,midfielder_capacity integer,attacker_capacity integer,
       white_average_sr numeric(8,2),black_average_sr numeric(8,2),match_average_sr numeric(8,2),team_sr_spread numeric(8,2));
     create table public.open_queue_referee_assignments(game_id uuid,referee_id uuid);
@@ -103,6 +105,54 @@ try {
   for(const file of ['20261014001000_season_zero_sr_calculator.sql','20261014001200_season_zero_sr_timeline.sql','20261014001300_season_zero_match_evidence.sql','20261014001600_season_zero_rebalance.sql','20261027000700_admin_unassigned_players.sql']) await db.exec(await source(file));
   const legacy=await game();
   await invalid(legacy,pair(),/requires a Season 0/);
+  const lateEntries=[{profile_id:a[6].id,to_team:'WHITE'},{profile_id:b[6].id,to_team:'BLACK'}];
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=any($2::uuid[])',[legacy,[a[6].id,b[6].id]]);
+  const legacyBefore=await scalar('select jsonb_agg(to_jsonb(b) order by id) from public.open_queue_bookings b where game_id=$1 and team is not null',[legacy]);
+  const legacyRequest=randomUUID();
+  const legacyPlaced=await place(legacy,lateEntries,{request:legacyRequest});
+  assert.equal(legacyPlaced.assigned_count,2); checks++;
+  await check("select rating_policy_id from public.open_queue_games where id=$1",'LEGACY',[legacy]);
+  await check('select jsonb_agg(to_jsonb(b) order by id) from public.open_queue_bookings b where game_id=$1 and profile_id<>all($2::uuid[])',legacyBefore,[legacy,[a[6].id,b[6].id]]);
+  await check("select count(*)::integer from public.admin_audit_events where entity_id=$1 and action='OPEN_QUEUE_UNASSIGNED_PLAYERS_PLACED'",1,[legacy]);
+  await invalidPlacement(legacy,lateEntries,/already been assigned/);
+  await db.query("update public.open_queue_games set status='LIVE' where id=$1",[legacy]);
+  assert.deepEqual(await place(legacy,lateEntries,{request:legacyRequest}),legacyPlaced,'legacy placement retry remains idempotent after kickoff'); checks++;
+  await check("select count(*)::integer from public.admin_audit_events where entity_id=$1 and action='OPEN_QUEUE_UNASSIGNED_PLAYERS_PLACED'",1,[legacy]);
+  await invalidPlacement(legacy,[{...lateEntries[0],to_team:'BLACK'},lateEntries[1]],/request ID belongs/,{request:legacyRequest});
+
+  const legacySix=await game({omit:[a[6].id,b[6].id]});
+  await db.query("update public.open_queue_games set format_version='LEGACY_6V6',capacity=12,defender_capacity=4,midfielder_capacity=4,attacker_capacity=2 where id=$1",[legacySix]);
+  for(const side of [a,b]) for(const [index,p] of side.slice(0,6).entries()) await db.query(
+    'update public.open_queue_bookings set role=$3 where game_id=$1 and profile_id=$2',[legacySix,p.id,['GK','DEF','DEF','MID','MID','ATT'][index]]);
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=any($2::uuid[])',[legacySix,[a[5].id,b[5].id]]);
+  await invalidPlacement(legacySix,[{profile_id:a[5].id,to_team:'WHITE'},{profile_id:b[5].id,to_team:'WHITE'}],/saved game capacity/);
+  await place(legacySix,[{profile_id:a[5].id,to_team:'WHITE'},{profile_id:b[5].id,to_team:'BLACK'}]);
+  for(const team of ['WHITE','BLACK']) await check("select jsonb_object_agg(role,n) from (select role,count(*)::integer n from public.open_queue_bookings where game_id=$1 and team=$2 group by role) x",{GK:1,DEF:2,MID:2,ATT:1},[legacySix,team]);
+  await check("select format_version||':'||rating_policy_id from public.open_queue_games where id=$1",'LEGACY_6V6:LEGACY',[legacySix]);
+
+  const legacyPartial=await game({omit:[a[4].id,a[5].id,a[6].id,b[4].id,b[5].id,b[6].id],status:'OPEN'});
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=$2',[legacyPartial,a[3].id]);
+  await place(legacyPartial,[{profile_id:a[3].id,to_team:'WHITE'}]);
+  await check("select status||':'||rating_policy_id from public.open_queue_games where id=$1",'OPEN:LEGACY',[legacyPartial]);
+  await check('select count(*)::integer from public.open_queue_bookings where game_id=$1 and played',0,[legacyPartial]);
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1',[legacyPartial]);
+  const resetEntries=players.filter(p=>[a[0],a[1],a[2],a[3],b[0],b[1],b[2],b[3]].includes(p)).map(p=>({profile_id:p.id,to_team:p.team}));
+  await place(legacyPartial,resetEntries);
+  await check('select count(*)::integer from public.open_queue_bookings where game_id=$1 and team is not null',8,[legacyPartial]);
+
+  const legacyParty=await game();
+  await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=any($2::uuid[])',[legacyParty,[a[6].id,b[6].id]]);
+  await party(legacyParty,[a[5],a[6]]);
+  await invalidPlacement(legacyParty,[{...lateEntries[0],to_team:'BLACK'},{...lateEntries[1],to_team:'WHITE'}],/parties must stay together/);
+  await invalidPlacement(legacyParty,[lateEntries[0]],/every unassigned player/);
+  await invalidPlacement(legacyParty,[{profile_id: a[5].id,to_team:'WHITE'},...lateEntries],/already been assigned/);
+  await db.query("insert into public.open_queue_events values($1,'MATCH_STARTED',clock_timestamp())",[legacyParty]);
+  await invalidPlacement(legacyParty,lateEntries,/before actual kickoff/);
+  await db.query('delete from public.open_queue_events where game_id=$1',[legacyParty]);
+  await db.query("update public.open_queue_games set operational_state='UNDER_REVIEW' where id=$1",[legacyParty]);
+  await invalidPlacement(legacyParty,lateEntries,/no active review/);
+  await db.query("update public.open_queue_games set operational_state='NORMAL',actual_started_at=clock_timestamp() where id=$1",[legacyParty]);
+  await invalidPlacement(legacyParty,lateEntries,/before actual kickoff/);
   await scalar('select public.admin_set_season_zero_policy($1,true,$2)',[admin,'Enable only isolated transfer test fixtures']);
   const id=await game();
   await invalid(id,pair(),/not assigned/,{actor:stranger});
@@ -216,8 +266,6 @@ try {
   await db.query('update public.open_queue_bookings set team=null where game_id=$1 and profile_id=any($2::uuid[])',[placing,[a[6].id,b[6].id]]);
   await db.query('update public.open_queue_games set teams_assigned_at=null where id=$1',[placing]);
   const assignments=[{profile_id:a[6].id,to_team:'WHITE'},{profile_id:b[6].id,to_team:'BLACK'}];
-  const place=(gameId,entries=assignments,{actor=admin,request=randomUUID()}={})=>scalar(
-    'select public.admin_assign_unassigned_open_queue_players($1,$2,$3,$4::jsonb)',[actor,gameId,request,JSON.stringify(entries)]);
   async function invalidPlacement(gameId,entries,error,options={}) {
     const before=await snapshot(gameId);
     await assert.rejects(()=>place(gameId,entries,options),error); checks++;

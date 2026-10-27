@@ -452,9 +452,12 @@ jobs:
           export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
           node supabase/scripts/test_featured_city_fields.mjs
           node supabase/scripts/test_season_zero_rebalance.mjs
-          THROUGH_MIGRATION=20261027999999 \
-            REPLAY_SQL_FILE=supabase/scripts/verify_reliability_policy_display.sql \
-            node supabase/scripts/test_season_zero_migration_chain.mjs
+          for verifier in \
+            supabase/scripts/verify_reliability_policy_display.sql \
+            supabase/scripts/verify_admin_unassigned_players.sql; do
+            THROUGH_MIGRATION=20261027999999 REPLAY_SQL_FILE="$verifier" \
+              node supabase/scripts/test_season_zero_migration_chain.mjs
+          done
 
       - name: Replay the account and push migration chain without provider access
         shell: bash
