@@ -274,6 +274,9 @@ begin
   -- Reproduce a legacy/corrupt FINAL record with only one score. Trigger
   -- bypass is confined to this rolled-back verifier setup; the detector and
   -- every control-plane action below run with normal triggers enabled.
+  -- Drain deferred observers before fixture DDL, then restore their normal mode.
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.fixtures disable trigger user';
   update public.fixtures
   set status = 'FINAL',
@@ -373,6 +376,8 @@ begin
   legacy_case_id := review_case.id;
   delete from public.match_resolution_cases
   where id = legacy_case_id;
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.fixtures disable trigger user';
   update public.fixtures
   set status = 'SCHEDULED',
@@ -394,6 +399,8 @@ begin
   perform public.ensure_match_attendance_records(
     'CLAN', fixture_to_test.id
   );
+  set constraints all immediate;
+  set constraints all deferred;
   execute
     'alter table public.match_attendance_records disable trigger user';
   update public.match_attendance_records
@@ -861,6 +868,8 @@ begin
   set status = 'CANCELLED', cancelled_at = clock_timestamp()
   where id = solo_cancelled_booking_id;
 
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.open_queue_games disable trigger user';
   update public.open_queue_games
   set starts_at = solo_past_starts_at,
@@ -873,6 +882,8 @@ begin
     operational_reason_code = null
   where id = solo_game_id;
   execute 'alter table public.open_queue_games enable trigger user';
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.match_reliability_terms disable trigger user';
   -- This rollback-only fixture deliberately models legacy attendance after
   -- moving its schedule into the past. A current arrival contract bound while
@@ -896,6 +907,8 @@ begin
     no_show_cutoff_at = solo_past_starts_at + interval '15 minutes'
   where open_queue_game_id = solo_game_id;
   execute 'alter table public.match_reliability_terms enable trigger user';
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.match_attendance_records disable trigger user';
   update public.match_attendance_records
   set check_in_deadline_at = solo_past_starts_at,
