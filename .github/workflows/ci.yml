@@ -445,6 +445,17 @@ jobs:
           PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
             node supabase/scripts/test_profile_clip_recommendations.mjs
 
+      - name: Check featured fields, unassigned players, and reliability display
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          node supabase/scripts/test_featured_city_fields.mjs
+          node supabase/scripts/test_season_zero_rebalance.mjs
+          THROUGH_MIGRATION=20261027999999 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_reliability_policy_display.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+
       - name: Replay the account and push migration chain without provider access
         shell: bash
         run: |
