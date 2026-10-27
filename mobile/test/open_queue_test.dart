@@ -548,6 +548,104 @@ void main() {
     },
   );
 
+  for (final status in ['OPEN', 'FULL', 'LIVE']) {
+    for (final sr in [1228, 0, -20]) {
+      test(
+        'current roster SR $sr is visible during $status without a snapshot',
+        () {
+          final detail = OpenQueueMatchDetail.fromJson({
+            'id': 'pregame',
+            'status': status,
+            'starts_at': '2026-10-27T20:30:00Z',
+            'ends_at': '2026-10-27T21:30:00Z',
+            'rating_status': 'UNSETTLED',
+            'players': [
+              {
+                'id': 'me',
+                'display_name': 'Ali A.',
+                'role': 'ATT',
+                'is_me': true,
+                'rating_visible': true,
+                'roster_skill_rating': sr,
+                'rating_at_team_assignment': null,
+                'rating_at_match_start': null,
+                'rating_status': 'UNSETTLED',
+                'rating_change': 40,
+              },
+            ],
+          });
+          final player = detail.players.single;
+          expect(detail.rosterRatingFor(player), sr);
+          expect(player.displayedRating, isNull);
+          expect(player.ratingChange, isNull);
+          expect(detail.viewerRatingUpdate, isNull);
+          expect(player.toFixtureLineupPlayer().displayedRating, isNull);
+        },
+      );
+    }
+  }
+
+  test('roster SR respects placement privacy even for the viewer', () {
+    final player = OpenQueuePlayer.fromJson({
+      'id': 'me',
+      'display_name': 'Placement',
+      'role': 'GK',
+      'is_me': true,
+      'rating_visible': false,
+      'roster_skill_rating': 1200,
+    });
+    expect(player.rosterSkillRating, isNull);
+    final detail = OpenQueueMatchDetail.fromJson({
+      'status': 'FULL',
+      'starts_at': '2026-10-27T20:30:00Z',
+      'ends_at': '2026-10-27T21:30:00Z',
+    });
+    expect(detail.rosterRatingFor(player), isNull);
+    expect(
+      detail.rosterRatingFor(
+        const OpenQueuePlayer(
+          id: 'hidden',
+          displayName: 'Hidden',
+          role: OpenQueueRole.attacker,
+          team: '',
+          played: false,
+          isMe: false,
+          ratingVisible: false,
+          rosterSkillRating: 1200,
+        ),
+      ),
+      isNull,
+    );
+  });
+
+  for (final status in ['FINAL', 'CANCELLED']) {
+    test('$status roster keeps its frozen SR rather than current SR', () {
+      final detail = OpenQueueMatchDetail.fromJson({
+        'id': 'historical',
+        'status': status,
+        'starts_at': '2026-10-27T20:30:00Z',
+        'ends_at': '2026-10-27T21:30:00Z',
+        'rating_status': 'RATED',
+        'players': [
+          {
+            'id': 'me',
+            'display_name': 'Ali A.',
+            'role': 'ATT',
+            'is_me': true,
+            'rating_visible': true,
+            'roster_skill_rating': 1600,
+            'rating_at_match_start': 1200,
+            'rating_change': 28,
+            'rating_status': 'RATED',
+          },
+        ],
+      });
+      expect(detail.rosterRatingFor(detail.players.single), 1200);
+      expect(detail.viewerRatingUpdate?.ratingBefore, 1200);
+      expect(detail.viewerRatingUpdate?.ratingAfter, 1228);
+    });
+  }
+
   test('solo match detail maps teams, clock, goals, and replay data', () {
     final detail = OpenQueueMatchDetail.fromJson({
       'id': 'solo-detail',

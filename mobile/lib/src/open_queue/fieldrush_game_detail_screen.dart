@@ -1432,7 +1432,7 @@ class FieldrushGameRosterScreen extends StatelessWidget {
                                     ),
                                   ),
                                 Text(
-                                  '${player.displayedRating ?? '—'}',
+                                  '${detail.rosterRatingFor(player) ?? '—'}',
                                   style: _display(15),
                                 ),
                                 const SizedBox(width: 3),

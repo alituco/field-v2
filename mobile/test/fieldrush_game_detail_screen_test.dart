@@ -560,6 +560,52 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  for (final status in ['OPEN', 'FULL', 'LIVE']) {
+    testWidgets(
+      'roster shows current SR during $status before result settlement',
+      (tester) async {
+        final detail = _detail(
+          status: status,
+          ratingStatus: 'UNSETTLED',
+          players: [
+            OpenQueuePlayer.fromJson({
+              'id': 'me',
+              'display_name': 'Ali A.',
+              'role': 'ATT',
+              'is_me': true,
+              'rating_visible': true,
+              'roster_skill_rating': 1228,
+              'rating_at_match_start': null,
+              'rating_at_team_assignment': null,
+              'rating_status': 'UNSETTLED',
+            }),
+            OpenQueuePlayer.fromJson({
+              'id': 'placement',
+              'display_name': 'Placement player',
+              'role': 'ATT',
+              'is_me': false,
+              'rating_visible': false,
+              'roster_skill_rating': 1777,
+            }),
+          ],
+        );
+        await tester.pumpWidget(
+          MaterialApp(
+            home: FieldrushGameRosterScreen(detail: detail, onPlayer: (_) {}),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('Players'), findsOneWidget);
+        expect(find.text('YOU'), findsOneWidget);
+        expect(find.text('1228'), findsOneWidget);
+        expect(find.text('1777'), findsNothing);
+        expect(find.text('—'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   for (final visibleRating in [null, 1500]) {
     testWidgets(
       'lobby average includes hidden placement SR when visible rating is $visibleRating',
