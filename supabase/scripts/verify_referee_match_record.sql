@@ -71,10 +71,13 @@ $$;
 -- match would be loaded. No immutable timestamp or built-in clock is modified.
 create function pg_temp.record_game(admin_id uuid,referee_id uuid,players uuid[],absent_player uuid default null)
 returns uuid language plpgsql as $$
-declare game uuid; i integer; started timestamptz:=transaction_timestamp()-interval '1 hour'; roster jsonb; n integer:=nextval('pg_temp.reopen_game_number');
+declare game uuid; i integer; started timestamptz:=clock_timestamp()-interval '1 hour'; roster jsonb;
+ n integer:=nextval('pg_temp.reopen_game_number');
+ kickoff timestamptz:=date_trunc('minute',transaction_timestamp()-interval '1 hour')-make_interval(mins=>n);
 begin
+ -- Keep planned slots unique without tying the actual starts used for SR replay.
  insert into public.open_queue_games(venue,starts_at,ends_at,price_fils,defender_capacity,attacker_capacity)
- values('Disposable record correction '||n,date_trunc('minute',started)-make_interval(mins=>n),date_trunc('minute',started)-make_interval(mins=>n)+interval '1 hour',0,4,8) returning id into game;
+ values('Disposable record correction '||n,kickoff,kickoff+interval '1 hour',0,4,8) returning id into game;
  for i in 1..cardinality(players) loop
    insert into public.open_queue_bookings(game_id,profile_id,role,status,amount_paid_fils,base_amount_fils,payment_method,payment_status)
    values(game,players[i],case when i<=2 then 'GK' when i<=6 then 'DEF' else 'ATT' end,'CONFIRMED',0,0,'FREE','PAID');
