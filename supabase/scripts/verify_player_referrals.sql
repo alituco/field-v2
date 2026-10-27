@@ -25,8 +25,11 @@ begin
   perform set_config('request.jwt.claim.sub',coalesce(prior_sub,''),true);
   return player;
 end $$;
+-- Keep the kickoff anchor fixed: a wall-clock minute rollover must not cancel
+-- the sequence offset and give two disposable games the same start time.
 create function pg_temp.ref_game(actor uuid,players uuid[],kickoff_to_use timestamptz default null) returns uuid language plpgsql as $$
-declare game uuid; i integer; kickoff timestamptz:=coalesce(kickoff_to_use,date_trunc('minute',clock_timestamp())-interval '1 minute'*nextval('pg_temp.ref_game_number'));
+declare game uuid; i integer; kickoff timestamptz:=coalesce(kickoff_to_use,
+  date_trunc('minute',transaction_timestamp())-interval '1 minute'*nextval('pg_temp.ref_game_number'));
 begin
   insert into public.open_queue_games(venue,starts_at,ends_at,price_fils,minimum_players,participation_rules_version)
     values('Disposable referral verification',kickoff,kickoff+interval '1 hour',0,2,'s0-configurable-v1') returning id into game;

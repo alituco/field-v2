@@ -35,8 +35,9 @@ begin
   return player;
 end;
 $$;
+-- One fixed transaction anchor keeps sequence-offset fixture kickoffs unique.
 create function pg_temp.flex_game(admin_id uuid,referee_id uuid,players uuid[],paid boolean default false) returns uuid language plpgsql as $$
-declare game uuid; i integer; kickoff timestamptz:=date_trunc('minute',clock_timestamp())-make_interval(mins=>nextval('pg_temp.flex_game_number')::integer);
+declare game uuid; i integer; kickoff timestamptz:=date_trunc('minute',transaction_timestamp())-make_interval(mins=>nextval('pg_temp.flex_game_number')::integer);
 begin
   insert into public.open_queue_games(venue,starts_at,ends_at,price_fils,defender_capacity,attacker_capacity)
     values('Disposable referee flex',kickoff,kickoff+interval '1 hour',case when paid then 10000 else 0 end,4,8) returning id into game;

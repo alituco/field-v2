@@ -108,8 +108,9 @@ begin
   perform set_config('request.jwt.claim.sub',coalesce(prior_sub,''),true);
   return player;
 end $$;
+-- One fixed transaction anchor keeps sequence-offset fixture kickoffs unique.
 create function pg_temp.early_game(actor uuid,players uuid[]) returns uuid language plpgsql as $$
-declare game uuid; i integer; kickoff timestamptz:=date_trunc('minute',clock_timestamp())-interval '1 minute'*nextval('pg_temp.early_game_number');
+declare game uuid; i integer; kickoff timestamptz:=date_trunc('minute',transaction_timestamp())-interval '1 minute'*nextval('pg_temp.early_game_number');
 begin
   insert into public.open_queue_games(venue,starts_at,ends_at,price_fils,minimum_players,participation_rules_version)
     values('Disposable early-rating verification',kickoff,kickoff+interval '1 hour',0,2,'s0-configurable-v1') returning id into game;
