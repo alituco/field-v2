@@ -330,6 +330,12 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
         .where((game) => _selected.any((role) => game.canBookAt(role, now)))
         .toList();
     final game = matching.isEmpty ? null : matching.first;
+    final positionName = _selected.length == 1
+        ? '${(_selected.single == OpenQueueRole.goalkeeper ? 'Keeper' : _selected.single.label).toLowerCase()} '
+        : '';
+    final gamesLabel = matching.length == 1
+        ? 'See the ${positionName}game ›'
+        : 'See all ${matching.length} ${positionName}games ›';
     final spots = game == null
         ? 0
         : _selected.fold<int>(
@@ -400,7 +406,7 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 2),
                   child: Text(
-                    '${_dateLabel(game.localDisplayStartsAt)} · $spots ${spots == 1 ? 'spot' : 'spots'} left for you',
+                    '${_dateLabel(game.localDisplayStartsAt)} · $spots $positionName${spots == 1 ? 'spot' : 'spots'} left${_selected.length > 1 ? ' for you' : ''}',
                     style: _jakarta(
                       12,
                       color: _green,
@@ -481,9 +487,7 @@ class _FieldrushQuickGameCardState extends State<FieldrushQuickGameCard> {
                     textStyle: _outfit(16),
                   ),
                   child: Text(
-                    game == null
-                        ? 'Play'
-                        : 'Play ${_weekday(game.localDisplayStartsAt.weekday)} · ${game.priceLabel}',
+                    game == null ? 'Play' : gamesLabel,
                     textAlign: TextAlign.center,
                   ),
                 ),

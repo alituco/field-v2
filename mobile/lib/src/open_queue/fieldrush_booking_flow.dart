@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'fieldrush_check_in_notice.dart';
 
@@ -7,9 +9,12 @@ import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
 import '../core/read_timeout.dart';
 import '../home/field_bottom_nav.dart';
+import '../home/fieldrush_home_widgets.dart';
 import '../markets/fieldrush_city.dart';
 import '../markets/fieldrush_city_repository.dart';
 import 'fieldrush_booking_widgets.dart';
+import 'fieldrush_booking_game_choices.dart';
+import 'featured_field.dart';
 import 'fieldrush_checkout_sheet.dart';
 import 'fieldrush_game_detail_screen.dart';
 import 'open_queue.dart';
@@ -77,6 +82,8 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
   OpenQueueBooking? _activeBooking;
   bool _openingActiveGame = false;
   List<OpenQueueGame> _games = [];
+  FeaturedField? _featuredField;
+  String? _featuredCityId;
   bool _loading = true;
   bool _hasLoaded = false;
   bool _availabilityReady = false;
@@ -135,6 +142,11 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
       if (!mounted || generation != _generation) return;
       final cityId = widget.initialGame?.marketCityId ?? preferredCity.id;
       final timezone = widget.initialGame?.timezone ?? preferredCity.timezone;
+      if (_featuredCityId != cityId) {
+        _featuredCityId = cityId;
+        _featuredField = null;
+      }
+      unawaited(_loadFeaturedField(cityId, generation));
       final result = await Future.wait([
         repository is OpenQueueCityRepository
             ? (repository as OpenQueueCityRepository).listCityGames(cityId)
@@ -199,6 +211,22 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
       if (mounted && generation == _generation) {
         setState(() => _loading = false);
       }
+    }
+  }
+
+  Future<void> _loadFeaturedField(String cityId, int generation) async {
+    final repository = widget.repository;
+    if (repository is! OpenQueueFeaturedFieldRepository) return;
+    try {
+      final field = await (repository as OpenQueueFeaturedFieldRepository)
+          .getFeaturedField(cityId)
+          .timeout(fieldReadTimeout);
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _featuredField = field?.cityId == cityId ? field : null;
+      });
+    } catch (_) {
+      // An optional field showcase must never block finding or booking a game.
     }
   }
 
@@ -339,18 +367,20 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: 11),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 4),
-                        child: Text(switch (_step) {
-                          1 =>
-                            'Tell us where you play and we only show games that still need you.',
-                          2 =>
-                            'Pick a game — your spot is whichever of your positions it needs most.',
-                          _ => 'One look before you are in.',
-                        }, style: bookingText(12)),
-                      ),
-                      const SizedBox(height: 18),
+                      if (_step != 2) ...[
+                        const SizedBox(height: 11),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          child: Text(switch (_step) {
+                            1 =>
+                              'Tell us where you play and we only show games that still need you.',
+                            2 =>
+                              'Pick a game — your spot is whichever of your positions it needs most.',
+                            _ => 'One look before you are in.',
+                          }, style: bookingText(12)),
+                        ),
+                      ],
+                      SizedBox(height: _step == 2 ? 16 : 18),
                       if (_loading)
                         const FieldLoadingContent(
                           label: 'Loading available positions and games',
@@ -658,138 +688,163 @@ class _FieldrushBookingFlowState extends State<FieldrushBookingFlow> {
           (g) => matches.isEmpty || g.startsAt.isBefore(matches.first.startsAt),
         )
         .firstOrNull;
+    final fallbackField = matches.isEmpty
+        ? null
+        : FeaturedField.fromGame(matches.first);
+    final field =
+        _featuredField ??
+        (fallbackField != null && matches.every(fallbackField.matchesGame)
+            ? fallbackField
+            : null);
+    final allGamesHere =
+        field != null && matches.isNotEmpty && matches.every(field.matchesGame);
+    final sameTimeAndFee =
+        matches.isNotEmpty &&
+        matches.map((g) => g.displayTimeLabel).toSet().length == 1 &&
+        matches.map((g) => g.priceLabel).toSet().length == 1 &&
+        matches.map((g) => g.capacity).toSet().length == 1;
+    final sharedDivision =
+        matches.isNotEmpty &&
+        matches
+                .map((g) => (g.highestDivision, g.lowestDivision))
+                .toSet()
+                .length ==
+            1;
+    final count = matches.length;
+    final who = _roles.length == 1
+        ? ' ${_roles.single == OpenQueueRole.attacker ? 'AN' : 'A'} ${bookingRoleName(_roles.single).toUpperCase()}'
+        : ' YOU';
+    final heading = _roles.isEmpty
+        ? 'ALL OPEN GAMES'
+        : '$count ${count == 1 ? 'GAME NEEDS' : 'GAMES NEED'}$who';
     return [
-      Row(
-        children: [
-          Expanded(
-            child: Text(
-              _roles.isEmpty
-                  ? 'ALL OPEN GAMES'
-                  : 'GAMES NEEDING YOUR POSITIONS',
-              style: bookingText(10, bold: true),
-            ),
-          ),
-          TextButton(
-            onPressed: () => _goStep(1),
-            child: Text(
-              _roles.isEmpty
-                  ? 'Any position ›'
-                  : '${_roles.map((r) => r.code).join(' · ')} ›',
-              style: bookingText(
-                11,
-                color: FieldrushAuthTheme.forest,
-                bold: true,
+      if (field != null) ...[
+        FieldrushBookingFieldCard(
+          field: field,
+          games: matches,
+          allGamesHere: allGamesHere,
+        ),
+      ],
+      if (sharedDivision) ...[
+        if (field != null) const SizedBox(height: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: FieldrushGameDivisionRange(game: matches.first),
+        ),
+      ],
+      if (field != null || sharedDivision) const SizedBox(height: 22),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                heading,
+                style: bookingText(
+                  11,
+                  bold: true,
+                ).copyWith(height: 1.2, letterSpacing: 1.54),
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 10),
+            TextButton(
+              onPressed: () => _goStep(1),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                'Change ›',
+                style: bookingText(
+                  11.5,
+                  color: FieldrushAuthTheme.forest,
+                  bold: true,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
+      const SizedBox(height: 11),
       if (matches.isEmpty)
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
           child: Text(
             _games.isEmpty
                 ? 'No upcoming games are open yet. Check back soon.'
                 : 'No upcoming game needs those positions yet. Go back and widen your picks.',
-            style: bookingText(13),
+            style: bookingText(11.5),
           ),
-        ),
-      for (final game in matches) ...[
-        _gameTile(game),
-        const SizedBox(height: 9),
-      ],
-      if (sooner != null) ...[
-        const SizedBox(height: 20),
-        Center(
-          child: Text(
-            'OR PLAY SOONER',
-            style: bookingText(10, color: const Color(0xFF8A6516), bold: true),
-          ),
-        ),
-        const SizedBox(height: 12),
-        _gameTile(sooner, anyPosition: true),
-      ],
-    ];
-  }
-
-  Widget _gameTile(OpenQueueGame game, {bool anyPosition = false}) {
-    final role = fieldrushSuggestedRole(game, anyPosition ? {} : _roles, _now)!;
-    final count = fieldrushOpenQueueRoles
-        .where(
-          (r) =>
-              (anyPosition || _roles.isEmpty || _roles.contains(r)) &&
-              game.canBookAt(r, _now),
         )
-        .fold<int>(0, (n, r) => n + game.spotsFor(r));
-    return Material(
-      color: anyPosition ? const Color(0xFFFDFBF3) : Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: FieldrushAuthTheme.border),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        key: ValueKey('booking-game-${game.id}${anyPosition ? '-sooner' : ''}'),
-        onTap: () => _pick(game, anyPosition: anyPosition),
-        child: Padding(
-          padding: const EdgeInsets.all(14),
+      else
+        Material(
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+            side: BorderSide(color: FieldrushAuthTheme.border),
+          ),
+          clipBehavior: Clip.antiAlias,
           child: Column(
             children: [
-              Row(
-                children: [
-                  BookingDateBadge(game: game),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Check-in ${game.displayTimeLabel}',
-                          style: bookingHeading(16),
-                        ),
-                        Text(game.venue, style: bookingText(11)),
-                        const SizedBox(height: 5),
-                        Text(
-                          '${anyPosition ? 'Out of position' : 'Your spot'} · ${bookingRoleName(role)}',
-                          style: bookingText(11),
-                        ),
-                      ],
-                    ),
+              for (var i = 0; i < matches.length; i++) ...[
+                if (i > 0)
+                  const Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: Color(0xFFF0ECE0),
                   ),
-                  const SizedBox(width: 6),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        game.priceLabel,
-                        style: bookingText(
-                          12,
-                          color: FieldrushAuthTheme.ink,
-                          bold: true,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '$count ${count == 1 ? 'spot' : 'spots'}',
-                        style: bookingText(
-                          10,
-                          color: FieldrushAuthTheme.forest,
-                          bold: true,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              if (game.isUpcoming) ...[
-                const SizedBox(height: 12),
-                FieldrushCheckInNotice(game: game),
+                FieldrushBookingGameRow(
+                  game: matches[i],
+                  roles: _roles,
+                  suggestedRole: fieldrushSuggestedRole(
+                    matches[i],
+                    _roles,
+                    _now,
+                  )!,
+                  now: _now,
+                  onTap: () => _pick(matches[i]),
+                  showLocationAndTime: !allGamesHere || !sameTimeAndFee,
+                  showDivision: !sharedDivision,
+                ),
               ],
             ],
           ),
         ),
-      ),
-    );
+      if (sooner != null) ...[
+        const SizedBox(height: 20),
+        Row(
+          children: [
+            const Expanded(child: Divider(color: Color(0xFFE0DAC8))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                'OR PLAY SOONER',
+                style: bookingText(
+                  9.5,
+                  color: const Color(0xFF8A6516),
+                  bold: true,
+                ).copyWith(letterSpacing: 1.52),
+              ),
+            ),
+            const Expanded(child: Divider(color: Color(0xFFE0DAC8))),
+          ],
+        ),
+        const SizedBox(height: 11),
+        FieldrushBookingSoonerPanel(
+          child: FieldrushBookingGameRow(
+            game: sooner,
+            roles: const {},
+            suggestedRole: fieldrushSuggestedRole(sooner, {}, _now)!,
+            now: _now,
+            onTap: () => _pick(sooner, anyPosition: true),
+            showLocationAndTime: true,
+            showDivision: true,
+            sooner: true,
+          ),
+        ),
+      ],
+    ];
   }
 
   List<Widget> _review() {

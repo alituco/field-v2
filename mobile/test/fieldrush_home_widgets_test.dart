@@ -167,6 +167,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('home-quick-play')));
       expect(chosen?.id, 'later');
       expect(roles, {OpenQueueRole.defender});
+      expect(find.text('See the defender game ›'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('home-position-ATT')));
       await tester.pump();
@@ -175,8 +176,8 @@ void main() {
       // Home is a preference shortcut into the matching-game step, not a
       // reservation for only the first game's available position.
       expect(roles, {OpenQueueRole.defender, OpenQueueRole.attacker});
-      expect(find.textContaining(soonest.priceLabel), findsOneWidget);
-      expect(find.textContaining(r'$13.00'), findsOneWidget);
+      expect(find.text('See all 2 games ›'), findsOneWidget);
+      expect(find.textContaining(soonest.priceLabel), findsNothing);
       expect(find.textContaining('BHD'), findsNothing);
       expect(tester.takeException(), isNull);
     },
@@ -382,7 +383,7 @@ void main() {
     expect(find.text('12:10'), findsNothing);
   });
 
-  testWidgets('quick picker CTA follows the arrival date across midnight', (
+  testWidgets('quick picker retains the arrival date across midnight', (
     tester,
   ) async {
     final game = _game(startsAt: DateTime.utc(2099, 6, 5, 7, 10));
@@ -394,8 +395,8 @@ void main() {
     await tester.pump();
     expect(find.text('11:40'), findsOneWidget);
     expect(find.textContaining('Thu, 4 Jun'), findsOneWidget);
-    expect(find.textContaining('Play Thursday'), findsOneWidget);
-    expect(find.textContaining('Play Friday'), findsNothing);
+    expect(find.text('See the defender game ›'), findsOneWidget);
+    expect(find.textContaining('Play Thursday'), findsNothing);
     expect(find.text('12:10'), findsNothing);
   });
 
@@ -864,7 +865,15 @@ void main() {
               now: DateTime(2099, 6, 1, 19),
             ),
             FieldrushQuickGameCard(
-              games: [_game()],
+              games: [
+                for (var i = 0; i < 6; i++)
+                  _game(
+                    id: 'preview-$i',
+                    startsAt: now.add(
+                      Duration(days: i + 2, hours: 3, minutes: 30),
+                    ),
+                  ),
+              ],
               now: now,
               onPlay: (_, _) {},
             ),
@@ -991,6 +1000,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      if (name == 'empty-home') {
+        await tester.tap(find.byKey(const ValueKey('home-position-DEF')));
+        await tester.pumpAndSettle();
+      }
       final boundary =
           key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
       await tester.runAsync(() async {

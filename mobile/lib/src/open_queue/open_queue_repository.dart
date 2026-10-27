@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'open_queue.dart';
+import 'featured_field.dart';
 import 'open_queue_party_repository.dart';
 import '../payments/payment_service.dart';
 import '../reliability/reliability.dart';
@@ -70,6 +71,10 @@ abstract interface class OpenQueueCityRepository {
   Future<List<OpenQueueGame>> listCityGames(String cityId);
 }
 
+abstract interface class OpenQueueFeaturedFieldRepository {
+  Future<FeaturedField?> getFeaturedField(String cityId);
+}
+
 abstract interface class OpenQueueReliabilityLookupRepository {
   Future<MatchReliabilityContext?> getMatchReliabilityContext(String gameId);
 }
@@ -87,6 +92,7 @@ class SupabaseOpenQueueRepository
         OpenQueueRepository,
         OpenQueueMarketRepository,
         OpenQueueCityRepository,
+        OpenQueueFeaturedFieldRepository,
         OpenQueueBookingLookupRepository,
         OpenQueueEmbeddedCheckoutRepository,
         OpenQueuePaymentStatusRepository,
@@ -98,6 +104,17 @@ class SupabaseOpenQueueRepository
 
   final SupabaseClient? _supabase;
   SupabaseClient get _client => _supabase ?? Supabase.instance.client;
+
+  @override
+  Future<FeaturedField?> getFeaturedField(String cityId) async {
+    final value = await _client.rpc(
+      'get_featured_field',
+      params: {'city_id_to_use': cityId},
+    );
+    return value == null
+        ? null
+        : FeaturedField.fromJson(Map<String, dynamic>.from(value as Map));
+  }
 
   @override
   SupabaseClient get partyClient => _client;

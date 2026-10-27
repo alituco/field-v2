@@ -4,9 +4,9 @@ import { parseEnv } from "node:util";
 
 const publicConfig = existsSync(".env.local") ? parseEnv(readFileSync(".env.local", "utf8")) : {};
 const project = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? publicConfig.NEXT_PUBLIC_SUPABASE_URL ?? "https://nfdkdhdevpstfspazbfn.supabase.co").hostname;
-const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
+const sampleField = { id: "f1000000-0000-4000-8000-000000000001", name: "Encanto Park · Pitch 1", address: "2605 N 15th Ave", city: "Phoenix", state: "AZ", countryCode: "US", marketCityId: "phoenix", marketCityName: "Phoenix", marketTimezone: "America/Phoenix", marketActive: true, latitude: 33.477, longitude: -112.093, isActive: true, isFeatured: false, createdAt: "2026-10-11T00:00:00Z", updatedAt: "2026-10-11T00:00:00Z" };
 
-async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; fieldsError?: boolean; saveError?: boolean; createError?: boolean } = {}) {
+async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; fieldsError?: boolean; saveError?: boolean; createError?: boolean; featureError?: boolean } = {}) {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   let fields = options.fields ?? [];
   await page.addInitScript(({ key }) => {
@@ -24,6 +24,14 @@ async function mockAdmin(page: Page, options: { fields?: typeof sampleField[]; f
       if (path === "/api/referee/admin/fields") {
         if (options.saveError) { status = 400; data = { error: "This field already exists." }; }
         else { const field = { ...sampleField, ...body }; fields = [...fields, field]; data = { field }; status = 201; }
+      } else if (path.endsWith("/feature")) {
+        if (options.featureError) { status = 400; data = { error: "The featured field changed. Reload before removing its feature." }; }
+        else {
+          const fieldId = path.split("/").at(-2);
+          fields = fields.map((field) => field.marketCityId === body.cityId
+            ? { ...field, isFeatured: body.featured === true && field.id === fieldId } : field);
+          data = { fields };
+        }
       } else if (path.startsWith("/api/referee/admin/fields/")) {
         fields = fields.map((field) => ({ ...field, ...body })); data = { field: fields[0] };
       } else if (path === "/api/referee/admin/solo-games") {
@@ -204,6 +212,40 @@ test("archive and restore preserve field history; mobile layout has no page over
   await page.getByRole("button", { name: "Restore", exact: true }).click();
   await expect(page.getByText("Available", { exact: true })).toBeVisible();
   expect(writes.map((write) => write.body)).toEqual([{ isActive: false }, { isActive: true }]);
+});
+
+test("admins feature one field per city, replace it, and remove the feature", async ({ page }, info) => {
+  const second = { ...sampleField, id: "f1000000-0000-4000-8000-000000000002", name: "Second Phoenix pitch" };
+  const archived = { ...sampleField, id: "f1000000-0000-4000-8000-000000000003", name: "Archived pitch", isActive: false };
+  const writes = await mockAdmin(page, { fields: [sampleField, second, archived] });
+  await page.goto("/admin/fields");
+  const firstCard = page.getByRole("article", { name: sampleField.name, exact: true });
+  const secondCard = page.getByRole("article", { name: second.name, exact: true });
+  await firstCard.getByRole("button", { name: "Feature in player app" }).click();
+  await expect(firstCard.getByText("Featured", { exact: true })).toBeVisible();
+  await secondCard.getByRole("button", { name: "Feature in player app" }).click();
+  await expect(secondCard.getByText("Featured", { exact: true })).toBeVisible();
+  await expect(firstCard.getByText("Featured", { exact: true })).toHaveCount(0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({ path: info.outputPath("featured-field.png"), fullPage: true });
+  await secondCard.getByRole("button", { name: "Remove feature" }).click();
+  await expect(page.getByText("Featured", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Show archived").check();
+  await expect(page.getByRole("article", { name: archived.name }).getByRole("button", { name: "Feature in player app" })).toBeDisabled();
+  expect(writes.map((write) => ({ path: write.path, body: write.body }))).toEqual([
+    { path: `/api/referee/admin/fields/${sampleField.id}/feature`, body: { cityId: "phoenix", featured: true } },
+    { path: `/api/referee/admin/fields/${second.id}/feature`, body: { cityId: "phoenix", featured: true } },
+    { path: `/api/referee/admin/fields/${second.id}/feature`, body: { cityId: "phoenix", featured: false } },
+  ]);
+});
+
+test("a rejected feature update preserves the current featured badge", async ({ page }) => {
+  await mockAdmin(page, { fields: [{ ...sampleField, isFeatured: true }], featureError: true });
+  await page.goto("/admin/fields");
+  await page.getByRole("button", { name: "Remove feature" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "The featured field changed." })).toBeVisible();
+  await expect(page.getByText("Featured", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Remove feature" })).toBeEnabled();
 });
 
 test("server rejecting an archived field leaves the create form open for correction", async ({ page }) => {

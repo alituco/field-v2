@@ -69,6 +69,25 @@ export function FieldsPanel({ accessToken, startAdding, returnToSolo, returnToSc
     }
   }
 
+  async function setFeatured(field: AdminField) {
+    setSavingId(field.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const data = await fieldRequest<{ fields: AdminField[] }>(accessToken, `/${field.id}/feature`, {
+        method: "PATCH", body: JSON.stringify({ cityId: field.marketCityId, featured: !field.isFeatured }),
+      });
+      setFields(data.fields);
+      setNotice(field.isFeatured
+        ? `Featured field removed for ${field.marketCityName}.`
+        : `${field.name} is now the featured field for ${field.marketCityName}.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Could not update the featured field.");
+    } finally {
+      setSavingId(null);
+    }
+  }
+
   if (startAdding || editing) {
     return <FieldEditor
       key={editing?.id ?? "new"}
@@ -99,7 +118,7 @@ export function FieldsPanel({ accessToken, startAdding, returnToSolo, returnToSc
 
   return <div className={styles.stack}>
     <section className={styles.intro}>
-      <div><span className="admin-eyebrow">The places we play</span><h2>A home for every game.</h2><p>Save each pitch’s name, address and map pin. Players get the same clear directions in Fieldrush.</p></div>
+      <div><span className="admin-eyebrow">The places we play</span><h2>A home for every game.</h2><p>Save each pitch’s name, address and map pin. Choose one featured field per competition city for the green card players see when browsing games.</p></div>
       <button className="admin-primary-button" type="button" onClick={() => onNavigate(true)}>+ Add a field</button>
     </section>
     {error ? <div role="alert" className="admin-banner danger"><span>{error}</span><button type="button" onClick={() => void load()}>Try again</button></div> : null}
@@ -111,10 +130,11 @@ export function FieldsPanel({ accessToken, startAdding, returnToSolo, returnToSc
     </div>
     {loading ? <LoadingSkeleton label="Loading fields" />
       : !fields.length && !error ? <section className={styles.empty}><span className={styles.pitch} aria-hidden="true">＋</span><h3>Your first field goes here.</h3><p>Add a location before creating your first solo game. No placeholder venues or missing directions.</p><button type="button" className="admin-primary-button" onClick={() => onNavigate(true)}>Add your first field</button></section>
-      : <div className={styles.grid}>{visible.map((field) => <article className={styles.card} key={field.id}>
-        <div className={styles.cardTop}><span className={styles.pitch} aria-hidden="true">⌖</span><span className={field.isActive ? styles.active : styles.archived}>{field.isActive ? "Available" : "Archived"}</span></div>
+      : <div className={styles.grid}>{visible.map((field) => <article className={styles.card} key={field.id} aria-label={field.name}>
+        <div className={styles.cardTop}><span className={styles.pitch} aria-hidden="true">⌖</span><div className={styles.badges}>{field.isFeatured ? <span className={styles.featured}>Featured</span> : null}<span className={field.isActive ? styles.active : styles.archived}>{field.isActive ? "Available" : "Archived"}</span></div></div>
         <h3>{field.name}</h3><p>{field.address}<br />{field.city}, {field.state} · {field.countryCode}</p><p><strong>{field.marketCityName || "No competition city"}</strong> · {field.marketTimezone}{!field.marketActive ? " · City not open" : ""}</p>
         <a className={styles.mapLink} href={mapsUrl(field.latitude, field.longitude)} target="_blank" rel="noreferrer">View map pin ↗</a>
+        <div className={styles.featureActions}><button className="admin-secondary-button" type="button" disabled={savingId !== null || (!field.isFeatured && (!field.isActive || !field.marketActive))} onClick={() => void setFeatured(field)}>{field.isFeatured ? "Remove feature" : "Feature in player app"}</button></div>
         <div className={styles.actions}><button className="admin-secondary-button" type="button" onClick={() => setEditing(field)}>Edit field</button><button className={styles.quiet} type="button" disabled={savingId !== null} onClick={() => void setActive(field)}>{savingId === field.id ? "Saving…" : field.isActive ? "Archive" : "Restore"}</button></div>
       </article>)}</div>}
     {!loading && fields.length > 0 && visible.length === 0 ? <p className={styles.empty}>No fields match this view. Try another search or show archived fields.</p> : null}

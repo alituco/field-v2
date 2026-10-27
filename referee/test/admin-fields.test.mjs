@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { adminFieldsErrorMessage, parseAdminFieldInput, parseFieldId, serializeAdminField } from "../src/lib/admin-fields.ts";
+import { adminFieldsErrorMessage, parseAdminFieldInput, parseFeaturedFieldInput, parseFieldId, serializeAdminField } from "../src/lib/admin-fields.ts";
 
 const base = { name: " Test pitch ", address: " 123 Test Avenue ", marketCityId: "phoenix", latitude: "33.4484", longitude: "-112.0740" };
 
@@ -59,6 +59,24 @@ test("field payload does not expose creating admin identity", () => {
   assert.equal(result.createdBy, undefined);
 });
 
+test("featured field commands require a boolean and a valid competition city", () => {
+  assert.deepEqual(parseFeaturedFieldInput({ cityId: "phoenix", featured: true }), { cityId: "phoenix", featured: true });
+  assert.deepEqual(parseFeaturedFieldInput({ cityId: "new-york", featured: false }), { cityId: "new-york", featured: false });
+  for (const invalid of [null, [], {}, { cityId: "phoenix", featured: "true" }, { cityId: "Phoenix", featured: true },
+    { cityId: "phoenix", featured: true, actor_admin_id: "forged" }, { cityId: "phoenix", featured: null }]) {
+    assert.throws(() => parseFeaturedFieldInput(invalid));
+  }
+});
+
+test("a featured badge requires an active field in its active selected city", () => {
+  const row = { id: "field", is_active: true, market: { active: true, featured_field_id: "field" } };
+  assert.equal(serializeAdminField(row).isFeatured, true);
+  assert.equal(serializeAdminField({ ...row, is_active: false }).isFeatured, false);
+  assert.equal(serializeAdminField({ ...row, market: { active: false, featured_field_id: "field" } }).isFeatured, false);
+  assert.equal(serializeAdminField({ ...row, market: { active: true, featured_field_id: "another" } }).isFeatured, false);
+  assert.equal(serializeAdminField({ ...row, market: null }).isFeatured, false);
+});
+
 test("missing migration and duplicate field errors are actionable", () => {
   for (const code of ["42P01", "42703", "PGRST202", "PGRST204", "PGRST205"]) {
     assert.match(adminFieldsErrorMessage({ code }), /Apply the latest migration/);
@@ -68,7 +86,7 @@ test("missing migration and duplicate field errors are actionable", () => {
 });
 
 test("catalog and game endpoints enforce admin identity, never client venue coordinates", () => {
-  for (const file of ["fields/route.ts", "fields/[id]/route.ts", "solo-games/route.ts"]) {
+  for (const file of ["fields/route.ts", "fields/[id]/route.ts", "fields/[id]/feature/route.ts", "solo-games/route.ts"]) {
     const source = readFileSync(new URL(`../src/app/api/referee/admin/${file}`, import.meta.url), "utf8");
     assert.match(source, /await requireReferee\(request\)/);
     assert.match(source, /adminOnly\(context\.referee\)/);
