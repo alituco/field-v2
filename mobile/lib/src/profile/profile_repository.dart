@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'avatar_image.dart';
 import 'profile.dart';
 import '../core/read_timeout.dart';
 
@@ -607,16 +608,17 @@ class SupabaseProfileRepository
       throw const AuthException('You need to sign in again.');
     }
 
-    final extension = _normalizedAvatarExtension(fileExtension, contentType);
-    final path =
-        '$userId/avatar-${DateTime.now().millisecondsSinceEpoch}.$extension';
+    // Pickers can retain EXIF/GPS even after resizing. Upload only pixels
+    // re-encoded by us, with a MIME type and extension matching that encoding.
+    final sanitizedBytes = await sanitizeAvatarImage(bytes);
+    final path = '$userId/avatar-${DateTime.now().millisecondsSinceEpoch}.png';
 
     await _client.storage
         .from(_avatarBucket)
         .uploadBinary(
           path,
-          bytes,
-          fileOptions: FileOptions(contentType: contentType),
+          sanitizedBytes,
+          fileOptions: const FileOptions(contentType: 'image/png'),
         );
 
     return _client.storage.from(_avatarBucket).getPublicUrl(path);
@@ -1022,22 +1024,6 @@ ProfileConnection _connectionFromJson(
     clan: clan,
     isFollowedByMe: isFollowedByMe,
   );
-}
-
-String _normalizedAvatarExtension(String fileExtension, String contentType) {
-  final extension = fileExtension
-      .toLowerCase()
-      .replaceAll('.', '')
-      .replaceAll(RegExp(r'[^a-z0-9]'), '');
-
-  return switch (extension) {
-    'jpg' || 'jpeg' => 'jpg',
-    'png' => 'png',
-    'webp' => 'webp',
-    _ when contentType == 'image/png' => 'png',
-    _ when contentType == 'image/webp' => 'webp',
-    _ => 'jpg',
-  };
 }
 
 String _usernameFromDisplayName(String displayName) {

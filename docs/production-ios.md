@@ -6,8 +6,9 @@ Apple ID **6827873998**, Bundle ID **com.alialtaraif.field**, and Apple team
 
 The manual **Upload production iOS to TestFlight** workflow builds, signs,
 validates and uploads that app. It does not submit the app to App Review or
-publish it. TestFlight qualification and the store listing/review declarations
-are still required before submission.
+publish it. The first internal TestFlight build is for production qualification.
+Real-device checks and the store listing/review declarations are required before App Review;
+a TestFlight upload does not assert those checks have already passed.
 
 ## Prerequisites
 
@@ -84,15 +85,27 @@ Apple Pay, expected version/build, callback scheme, and the requested push mode.
 1. Qualify the reviewed staging tree through full CI and the hosted player/admin
    journeys, then promote that identical tree to `prod`.
 2. Complete CI and the protected production backend deployment for the exact
-   `prod` commit. Verify live authentication, payment/refund, account deletion,
-   real operational data and all services used by the app. A successful archive
-   alone does not verify hosted production configuration.
+   `prod` commit. Check production health, intended authentication/privacy
+   boundaries, actual SMS/email delivery, live Stripe account/webhook settings,
+   deletion configuration and the other services enabled for this build. These
+   are readiness checks for internal testing, not a claim that a real payment,
+   refund or account deletion has already been exercised.
 3. In **Actions → Upload production iOS to TestFlight → Run workflow**, select
    `prod`, enter `BUILD_PRODUCTION_IOS`, and enter
-   `PRODUCTION_BACKEND_VERIFIED` only after those live checks.
-4. Approve the protected production environment when requested.
-5. Wait for App Store Connect processing, then assign the production build to
-   the intended internal TestFlight testers and test it on real devices.
+   `PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT` after those readiness checks.
+4. Approve the protected production environment when requested. The workflow
+   repeats the exact release-evidence gate and read-only production health/privacy
+   smoke check before signing. It never grants anonymous access to satisfy a probe.
+5. Wait for App Store Connect processing, then assign the production build only
+   to the intended internal TestFlight testers. Qualify the actual build on real
+   devices: phone/email login and recovery, a deliberately authorized live payment
+   and original-method refund, account deletion and its safeguards, staff
+   operations, and every enabled recording/notification feature. Use genuine
+   operator-owned accounts and real operational data; do not seed fake production
+   games or claim mock tests prove live outcomes.
+6. Complete these live checks, final privacy/age declarations, screenshots and
+   reliable reviewer access before selecting the qualified build for App Review.
+   TestFlight readiness is not App Review approval or permission to publish.
 
 The workflow checks exact-commit CI and production backend deployment plus an
 identical successful staging deployment before requesting production access and
