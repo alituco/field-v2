@@ -24,6 +24,21 @@ type Dependencies = {
   rpcTimeoutMs?: number;
 };
 const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+function isExactFieldProductionSupabaseUrl(
+  value: string | undefined,
+): value is string {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      url.hostname === "zjsjuuhborxrlmdcpvlj.supabase.co" &&
+      url.port === "" && url.username === "" && url.password === "" &&
+      url.pathname === "/" && url.search === "" && url.hash === "";
+  } catch {
+    return false;
+  }
+}
 const approvedPreviewTypes = new Set([
   "PLAYER_CHECKOUT_CONFIRMED",
   "PLAYER_CHECKOUT_REFUND_PENDING",
@@ -148,6 +163,7 @@ export function createPushDispatchHandler(deps: Dependencies) {
     const environment = deps.env("FIELD_ENVIRONMENT");
     const allowedEnvironment =
       environment === "staging" && isExactFieldStagingSupabaseUrl(url) ||
+      environment === "production" && isExactFieldProductionSupabaseUrl(url) ||
       environment === "local" && isLocalSupabaseUrl(url);
     if (!allowedEnvironment || deps.env("PUSH_DELIVERY_ENABLED") !== "true") {
       return json({ error: "Push delivery is not enabled." }, 503);
@@ -184,6 +200,11 @@ export function createPushDispatchHandler(deps: Dependencies) {
     }
     try {
       account = parseServiceAccount(deps.env("FIREBASE_SERVICE_ACCOUNT_JSON"));
+      const expectedProject = deps.env("PUSH_FIREBASE_PROJECT_ID");
+      if (
+        (environment === "production" && !expectedProject) ||
+        (expectedProject !== undefined && expectedProject !== account.projectId)
+      ) throw new Error();
       // Validate credentials and get OAuth before consuming any database lease.
       accessToken = await fetchAccessToken(account, fetcher, now());
     } catch {

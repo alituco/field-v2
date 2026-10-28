@@ -175,22 +175,37 @@ Production is manual and protected. From
 1. select `prod`;
 2. type `DEPLOY_PRODUCTION`;
 3. verify Supabase backup/PITR availability and type `BACKUP_VERIFIED`;
-4. receive approval from the protected `production` GitHub environment.
+4. confirm the coordinated live Stripe cutover with `LIVE_STRIPE_READY`;
+5. receive approval from the protected `production` GitHub environment.
 
 Before migration, the workflow requires:
 
 - successful CI for the exact `prod` commit;
-- a successful staging deployment with the identical Git tree;
+- the explicit verified staging release record with the identical Git tree and
+  completed successful full staging push CI, including hosted journeys;
 - Field's exact production and staging refs;
-- the required environment credentials.
+- the required environment credentials and live Stripe account/webhook preflight.
 
-The deploy script removes `dev-phone-login` and `dev-switch-user` from the
+The deploy script removes `dev-phone-login`, `dev-switch-user`, and
+`staging-admin-session` from the
 guarded production project before touching its schema, never deploys them
 there, never seeds/resets hosted data, and verifies again after deployment.
 The workflow skips recording-function updates until the production Cloudflare
 secrets and webhook are ready; then set production variable
 `DEPLOY_RECORDING_FUNCTIONS=true`. Setting it to `false` does not delete an
 already deployed function.
+
+The live Stripe account must match `STRIPE_ACCOUNT_ID`, have charges and payouts
+enabled, and use the exact production webhook URL/API version. All live provider
+checks run before Supabase mutations. The deployment installs matching payment
+handlers, the recovery worker, and default-off deletion/push handlers. Account
+deletion and phone notifications still require their own explicit runtime
+activation and qualification.
+
+See [production iOS](../docs/production-ios.md) for protected signing and
+TestFlight uploads, [production push](../docs/production-push.md) for isolated
+Firebase/APNs setup, and [production launch](../docs/production-launch.md) for
+the store record and remaining operational checks.
 
 Migrations are forward-only. If a release fails after a migration, preserve
 data and ship a corrective migration; never use `db reset` or rewrite applied
@@ -236,12 +251,9 @@ The profile must include the Apple Pay merchant
 `merchant.com.alialtaraif.fieldrush`. See [Stripe payments](../docs/stripe-payments.md)
 for event subscriptions and testing. The deployment configures a five-minute
 Supabase cron worker with its credential stored in Vault. It enables the verified
-sandbox webhook after deploying its handler. Do not merge this payment cutover
-to production until live credentials, signing and a coordinated mobile/admin
-release are configured; production Stripe activation is not part of staging setup.
-The deployment script currently refuses production before making any changes,
-so this schema cannot accidentally be applied with the retired payment handlers
-still running. Remove that guard only as part of the coordinated live rollout.
+sandbox webhook after deploying its handler. Production uses its own live keys,
+expected account/webhook, explicit cutover confirmation, and protected release
+gates; staging setup does not activate production processing.
 
 GitHub environment `production`:
 
@@ -250,7 +262,18 @@ GitHub environment `production`:
 - prevent self-review and admin bypass when the plan supports them
 - secret `SUPABASE_ACCESS_TOKEN`
 - secret `SUPABASE_DB_PASSWORD` for Field Production
+- secrets `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` from the live account
+- secret `STRIPE_WEBHOOK_SECRET` for the exact production Stripe webhook
+- secret `STRIPE_RECONCILE_SECRET`, 32–512 base64url/hex-safe characters
+  (`A–Z`, `a–z`, `0–9`, `_`, `-`); `openssl rand -hex 32` is suitable
+- variables `STRIPE_ACCOUNT_ID` and `STRIPE_WEBHOOK_ENDPOINT_ID` for that live
+  account and webhook
 - variable `DEPLOY_RECORDING_FUNCTIONS=false` initially
+
+The production iOS workflow additionally needs the protected signing/API secrets
+and public client variables listed in [production iOS](../docs/production-ios.md).
+Private signing keys and server credentials never belong in Flutter defines or
+repository files.
 
 The Supabase access token is an account-level credential. Generate it under
 Supabase account access tokens and store it only in the two protected GitHub
