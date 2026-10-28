@@ -903,7 +903,11 @@ Future<void> _bookGameThroughUi(
   expect(
     find.descendant(
       of: joinAction,
-      matching: find.text('Your spot · ${bookingRoleName(role)}'),
+      matching: find.textContaining(
+        RegExp(
+          '^[1-9][0-9]* ${RegExp.escape(bookingRoleName(role).toLowerCase())} spots? left',
+        ),
+      ),
     ),
     findsOneWidget,
   );
