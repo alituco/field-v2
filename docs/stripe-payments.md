@@ -161,6 +161,13 @@ The TestFlight script validates the profile and includes only the publishable
 key and public merchant identifier in the app. Real-device Apple Pay testing is
 still required; a successful simulator build alone does not prove wallet payment.
 
+Production uses the separate merchant
+`merchant.com.alialtaraif.fieldrush.production` with a processing certificate
+issued from the live Stripe account's CSR and the **Fieldrush Production App
+Store** provisioning profile. Keep the existing staging merchant and active
+certificate in place. See [production iOS](production-ios.md) for the protected
+production build and profile checks.
+
 ## Google Pay on Android
 
 Android checkout uses Stripe's Google Pay integration in both the embedded

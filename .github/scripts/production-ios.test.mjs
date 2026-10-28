@@ -137,7 +137,7 @@ test('production input preflight rejects environment/credential mistakes before 
     IOS_PRODUCTION_PROVISIONING_PROFILE_BASE64: 'fixture-only',
     SUPABASE_URL: 'https://zjsjuuhborxrlmdcpvlj.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture',
     STRIPE_PUBLISHABLE_KEY: 'pk_live_fixture', APPLE_TEAM_ID: '69B646V2WM', IOS_PRODUCTION_BUNDLE_ID: 'com.alialtaraif.field',
-    APPLE_MERCHANT_ID: 'merchant.com.alialtaraif.fieldrush', PRODUCTION_EMAIL_DELIVERY_ENABLED: 'true',
+    APPLE_MERCHANT_ID: 'merchant.com.alialtaraif.fieldrush.production', PRODUCTION_EMAIL_DELIVERY_ENABLED: 'true',
     PRODUCTION_PUSH_NOTIFICATIONS_ENABLED: 'false', GITHUB_RUN_NUMBER: '12', GITHUB_RUN_ATTEMPT: '1',
     RUNNER_TEMP: root, GITHUB_WORKSPACE: root,
   };
@@ -158,6 +158,7 @@ test('production input preflight rejects environment/credential mistakes before 
     { SUPABASE_URL: 'https://nfdkdhdevpstfspazbfn.supabase.co' }, { SUPABASE_URL: `${env.SUPABASE_URL}/path` },
     { STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }, { APPLE_TEAM_ID: 'OTHERTEAM1' },
     { IOS_PRODUCTION_BUNDLE_ID: 'com.alialtaraif.field.staging' }, { APPLE_MERCHANT_ID: 'merchant.other' },
+    { APPLE_MERCHANT_ID: 'merchant.com.alialtaraif.fieldrush' },
     { SUPABASE_PUBLISHABLE_KEY: 'sb_secret_never_mobile' }, { SUPABASE_PUBLISHABLE_KEY: jwt('service_role') },
     { SUPABASE_PUBLISHABLE_KEY: jwt('anon', 'nfdkdhdevpstfspazbfn') },
     { APP_STORE_CONNECT_PRIVATE_KEY: 'broken' }, { APP_STORE_CONNECT_KEY_ID: '../../bad' },
@@ -187,8 +188,8 @@ test('production signing validation rejects wrong profiles, debugging, missing m
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const entitlements = { 'application-identifier': '69B646V2WM.com.alialtaraif.field',
     'com.apple.developer.team-identifier': '69B646V2WM', 'get-task-allow': false,
-    'com.apple.developer.in-app-payments': ['merchant.com.alialtaraif.fieldrush'], 'aps-environment': 'production' };
-  const profile = { Name: 'Field Production App Store', UUID: '12345678-1234-1234-1234-123456789ABC',
+    'com.apple.developer.in-app-payments': ['merchant.com.alialtaraif.fieldrush.production'], 'aps-environment': 'production' };
+  const profile = { Name: 'Fieldrush Production App Store', UUID: '12345678-1234-1234-1234-123456789ABC',
     TeamIdentifier: ['69B646V2WM'], ExpirationDate: new Date('2099-01-01T00:00:00Z'), Entitlements: entitlements };
   const info = { CFBundleIdentifier: 'com.alialtaraif.field', CFBundleDisplayName: 'Fieldrush',
     CFBundleShortVersionString: '1.0.0', CFBundleVersion: '1201', FirebaseMessagingAutoInitEnabled: false,
@@ -208,14 +209,17 @@ test('production signing validation rejects wrong profiles, debugging, missing m
   assert.equal(checkApp(withoutPush, info, 'false').status, 0);
   for (const value of [
     { ...profile, Name: 'Field Staging App Store' }, { ...profile, TeamIdentifier: ['OTHERTEAM1'] },
+    { ...profile, Name: 'Field Production App Store' },
     { ...profile, UUID: '../../escape' }, { ...profile, ExpirationDate: new Date('2020-01-01T00:00:00Z') },
     { ...profile, ProvisionedDevices: ['device'] }, { ...profile, ProvisionsAllDevices: true },
     { ...profile, Entitlements: { ...entitlements, 'application-identifier': '69B646V2WM.com.alialtaraif.field.staging' } },
     { ...profile, Entitlements: { ...entitlements, 'get-task-allow': true } },
     { ...profile, Entitlements: { ...entitlements, 'com.apple.developer.in-app-payments': [] } },
+    { ...profile, Entitlements: { ...entitlements, 'com.apple.developer.in-app-payments': ['merchant.com.alialtaraif.fieldrush'] } },
     { ...profile, Entitlements: { ...entitlements, 'aps-environment': 'development' } },
   ]) assert.equal(checkProfile(value).status, 1);
   for (const [value, metadata, push] of [
+    [{ ...entitlements, 'com.apple.developer.in-app-payments': ['merchant.com.alialtaraif.fieldrush'] }, info],
     [entitlements, { ...info, CFBundleIdentifier: 'com.alialtaraif.field.staging' }],
     [entitlements, { ...info, CFBundleDisplayName: 'Fieldrush Staging' }],
     [entitlements, { ...info, CFBundleVersion: '1' }],
@@ -246,9 +250,26 @@ test('production workflow is manual/protected and validates archive and exported
   const base = read('mobile/ios/Runner/Info.plist');
   const push = read('mobile/ios/Runner/Info-production-push.plist');
   assert.equal(push.replace(/\t<key>UIBackgroundModes<\/key>\n\t<array>\n\t\t<string>fetch<\/string>\n\t\t<string>remote-notification<\/string>\n\t<\/array>\n/, ''), base);
-  assert.match(read('mobile/ios/Runner/Runner-production.entitlements'), /merchant.com.alialtaraif.fieldrush/);
+  assert.match(read('mobile/ios/Runner/Runner-production.entitlements'), /<string>merchant\.com\.alialtaraif\.fieldrush\.production<\/string>/);
   assert.doesNotMatch(read('mobile/ios/Runner/Runner-production.entitlements'), /aps-environment/);
   assert.match(read('mobile/ios/Runner/Runner-production-push.entitlements'), /<key>aps-environment<\/key>\s*<string>production<\/string>/);
+});
+
+test('production Apple Pay uses its own merchant and profile while staging keeps its existing identity', () => {
+  for (const file of ['mobile/ios/Runner/Runner-production.entitlements', 'mobile/ios/Runner/Runner-production-push.entitlements']) {
+    assert.match(read(file), /<string>merchant\.com\.alialtaraif\.fieldrush\.production<\/string>/);
+    assert.doesNotMatch(read(file), /<string>merchant\.com\.alialtaraif\.fieldrush<\/string>/);
+  }
+  for (const file of ['mobile/ios/Runner/Runner-staging.entitlements', 'mobile/ios/Runner/Runner-staging-push.entitlements']) {
+    assert.match(read(file), /<string>merchant\.com\.alialtaraif\.fieldrush<\/string>/);
+    assert.doesNotMatch(read(file), /merchant\.com\.alialtaraif\.fieldrush\.production/);
+  }
+  assert.match(read('mobile/ios/Flutter/Release-production.xcconfig'),
+    /^PROVISIONING_PROFILE_SPECIFIER = Fieldrush Production App Store$/m);
+  assert.match(read('.github/workflows/upload-production-testflight.yml'),
+    /^      APPLE_MERCHANT_ID: merchant\.com\.alialtaraif\.fieldrush\.production$/m);
+  assert.match(read('.github/workflows/ci.yml'),
+    /^      APPLE_MERCHANT_ID: merchant\.com\.alialtaraif\.fieldrush$/m);
 });
 
 test('mocked production archive/export verifies signatures before upload and cleans signing files on success or failure', t => {
@@ -265,9 +286,9 @@ test('mocked production archive/export verifies signatures before upload and cle
     const push = scenario === 'push-enabled';
     const entitlements = { 'application-identifier': '69B646V2WM.com.alialtaraif.field',
       'com.apple.developer.team-identifier': '69B646V2WM', 'get-task-allow': false,
-      'com.apple.developer.in-app-payments': ['merchant.com.alialtaraif.fieldrush'],
+      'com.apple.developer.in-app-payments': ['merchant.com.alialtaraif.fieldrush.production'],
       ...(push ? { 'aps-environment': 'production' } : {}) };
-    const profile = { Name: 'Field Production App Store', UUID: '12345678-1234-1234-1234-123456789ABC',
+    const profile = { Name: 'Fieldrush Production App Store', UUID: '12345678-1234-1234-1234-123456789ABC',
       TeamIdentifier: ['69B646V2WM'], ExpirationDate: new Date('2099-01-01T00:00:00Z'), Entitlements: entitlements };
     const info = { CFBundleIdentifier: 'com.alialtaraif.field', CFBundleDisplayName: 'Fieldrush',
       CFBundleShortVersionString: '1.0.0', CFBundleVersion: '1201', FirebaseMessagingAutoInitEnabled: false,
@@ -330,7 +351,7 @@ if(command==='security'){
       IOS_PRODUCTION_PROVISIONING_PROFILE_BASE64: Buffer.from(encode(profile)).toString('base64'),
       SUPABASE_URL: 'https://zjsjuuhborxrlmdcpvlj.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture',
       STRIPE_PUBLISHABLE_KEY: 'pk_live_fixture', APPLE_TEAM_ID: '69B646V2WM', IOS_PRODUCTION_BUNDLE_ID: 'com.alialtaraif.field',
-      APPLE_MERCHANT_ID: 'merchant.com.alialtaraif.fieldrush', PRODUCTION_EMAIL_DELIVERY_ENABLED: 'true',
+      APPLE_MERCHANT_ID: 'merchant.com.alialtaraif.fieldrush.production', PRODUCTION_EMAIL_DELIVERY_ENABLED: 'true',
       PRODUCTION_PUSH_NOTIFICATIONS_ENABLED: String(push), GITHUB_RUN_NUMBER: '12', GITHUB_RUN_ATTEMPT: '1',
       RUNNER_TEMP: temp, GITHUB_WORKSPACE: workspace,
       PUSH_FIREBASE_API_KEY: 'AIzaFixture', PUSH_FIREBASE_PROJECT_ID: 'fieldrush-production', PUSH_FIREBASE_SENDER_ID: '1234567890',

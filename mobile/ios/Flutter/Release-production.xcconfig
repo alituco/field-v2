@@ -13,5 +13,5 @@ DEVELOPMENT_TEAM = 69B646V2WM
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = Apple Distribution
 CODE_SIGN_IDENTITY[sdk=iphoneos*] = Apple Distribution
-PROVISIONING_PROFILE_SPECIFIER = Field Production App Store
+PROVISIONING_PROFILE_SPECIFIER = Fieldrush Production App Store
 INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO

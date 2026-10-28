@@ -12,8 +12,8 @@ protected deployment history and real-device evidence.
 | Installed iOS app name | Fieldrush |
 | iOS Bundle ID | `com.alialtaraif.field` |
 | Apple team | `69B646V2WM` |
-| Apple Pay merchant | `merchant.com.alialtaraif.fieldrush` |
-| Distribution profile | Field Production App Store |
+| Apple Pay merchant | `merchant.com.alialtaraif.fieldrush.production` |
+| Distribution profile | Fieldrush Production App Store |
 | Supabase project | Field Production, `zjsjuuhborxrlmdcpvlj` |
 | Firebase project | Fieldrush Production, `fieldrush-production` |
 | Firebase iOS app | `1:399491660668:ios:3c3f530cba58ba30d5c2f9` |
