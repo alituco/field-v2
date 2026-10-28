@@ -11,7 +11,8 @@ import 'staging_test_helpers.dart';
 class FieldrushFixtureAuthRepository
     extends SupabaseFieldrushAccountRepository {
   FieldrushFixtureAuthRepository(StagingE2EConfig fixture)
-    : _bootstrapPhone = fixture.bootstrapPhone {
+    : _bootstrapPhone = fixture.bootstrapPhone,
+      _runCapability = fixture.password {
     fixture.validate();
     final config = AppConfig.fromEnvironment();
     if (config.environment != AppEnvironment.staging ||
@@ -28,6 +29,7 @@ class FieldrushFixtureAuthRepository
   }
 
   final String _bootstrapPhone;
+  final String _runCapability;
   bool _fixtureOtpPending = false;
 
   bool _canUseFixturePhone(String phone) =>
@@ -61,6 +63,7 @@ class FieldrushFixtureAuthRepository
       final client = Supabase.instance.client;
       final response = await client.functions.invoke(
         'dev-phone-login',
+        headers: {'x-fieldrush-e2e-secret': _runCapability},
         body: {'phone': phone, 'token': token},
       );
       final data = response.data;

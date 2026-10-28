@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadRowsForIds } from "./paginated-rows";
 
 import type {
   BlueCard,
@@ -50,36 +51,38 @@ export async function loadRefereeFixtures(
   db: SupabaseClient,
   refereeId: string,
 ): Promise<RefereeFixture[]> {
-  const today = new Date();
-  today.setUTCHours(0, 0, 0, 0);
-  today.setUTCDate(today.getUTCDate() - 1);
-
-  const { data: assignments, error: assignmentsError } = await db
-    .from("fixture_referee_assignments")
-    .select("fixture_id")
-    .eq("referee_id", refereeId);
-
-  if (assignmentsError) throw assignmentsError;
-
-  const assignedFixtureIds = (assignments ?? []).map((row) =>
-    String(row.fixture_id)
-  );
+  const assignedIds = new Set<string>();
+  const pageSize = 200;
+  for (let from = 0; ; from += pageSize) {
+    const { data: assignments, error } = await db
+      .from("fixture_referee_assignments")
+      .select("fixture_id")
+      .eq("referee_id", refereeId)
+      .order("fixture_id")
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    for (const row of assignments ?? []) assignedIds.add(String(row.fixture_id));
+    if ((assignments ?? []).length < pageSize) break;
+  }
+  const assignedFixtureIds = [...assignedIds];
 
   if (assignedFixtureIds.length === 0) return [];
 
-  const { data: fixtures, error: fixturesError } = await db
-    .from("fixtures")
-    .select(fixtureSelect)
-    .in("id", assignedFixtureIds)
-    .in("status", ["SCHEDULED", "LIVE", "FINAL"])
-    .not("away_clan_id", "is", null)
-    .gte("match_date", today.toISOString().slice(0, 10))
-    .order("match_date")
-    .order("time_slot");
-
-  if (fixturesError) throw fixturesError;
-
-  return hydrateFixtureRows(db, fixtures ?? [], true);
+  const fixtures: RefereeFixture[] = [];
+  // Assigned matches remain visible while open, awaiting an opponent, live,
+  // completed or cancelled. Do not silently truncate long assignment histories.
+  for (let index = 0; index < assignedFixtureIds.length; index += 50) {
+    const { data, error } = await db
+      .from("fixtures")
+      .select(fixtureSelect)
+      .in("id", assignedFixtureIds.slice(index, index + 50))
+      .order("match_date")
+      .order("time_slot")
+      .order("id");
+    if (error) throw error;
+    fixtures.push(...await hydrateFixtureRows(db, data ?? [], true));
+  }
+  return fixtures;
 }
 
 export async function loadAdminFixtures(
@@ -104,6 +107,16 @@ export async function loadAdminFixtures(
   return hydrateFixtureRows(db, fixtures ?? [], false);
 }
 
+export async function loadAdminFixture(
+  db: SupabaseClient,
+  fixtureId: string,
+): Promise<RefereeFixture | null> {
+  const { data, error } = await db.from("fixtures")
+    .select(fixtureSelect).eq("id", fixtureId).maybeSingle();
+  if (error) throw error;
+  return (await hydrateFixtureRows(db, data ? [data] : [], false))[0] ?? null;
+}
+
 async function hydrateFixtureRows(
   db: SupabaseClient,
   fixtures: Record<string, unknown>[],
@@ -118,7 +131,7 @@ async function hydrateFixtureRows(
       fixtureRows.flatMap((fixture) => [
         fixture.homeClan.id,
         fixture.awayClan.id,
-      ]),
+      ]).filter(Boolean),
     ),
   ];
 
@@ -186,13 +199,11 @@ async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
   const participantIds = new Map<string, string[]>();
   if (fixtureIds.length === 0) return participantIds;
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_player_appearances")
     .select("fixture_id,profile_id")
-    .in("fixture_id", fixtureIds)
-    .eq("played", true);
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .eq("played", true).order("fixture_id").order("profile_id").range(from, to));
 
   for (const row of data ?? []) {
     const fixtureId = String(row.fixture_id);
@@ -207,7 +218,7 @@ async function loadParticipantIds(db: SupabaseClient, fixtureIds: string[]) {
 async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
   if (clanIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(clanIds, (ids, from, to) => db
     .from("clan_members")
     .select(
       `
@@ -222,11 +233,8 @@ async function loadPlayers(db: SupabaseClient, clanIds: string[]) {
         )
       `,
     )
-    .in("clan_id", clanIds)
-    .is("left_at", null)
-    .order("role");
-
-  if (error) throw error;
+    .in("clan_id", ids)
+    .is("left_at", null).order("role").order("clan_id").order("profile_id").range(from, to));
 
   return (data ?? []).map((row) => {
     const profile = asObject(row.profiles);
@@ -246,14 +254,13 @@ async function loadClocks(db: SupabaseClient, fixtureIds: string[]) {
   const clocks = new Map<string, FixtureClock>();
   if (fixtureIds.length === 0) return clocks;
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_clock_states")
     .select(
       "fixture_id,status,started_at,accumulated_seconds,duration_seconds",
     )
-    .in("fixture_id", fixtureIds);
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("fixture_id").range(from, to));
 
   for (const row of data ?? []) {
     clocks.set(String(row.fixture_id), {
@@ -270,15 +277,13 @@ async function loadClocks(db: SupabaseClient, fixtureIds: string[]) {
 async function loadGoals(db: SupabaseClient, fixtureIds: string[]) {
   if (fixtureIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_scorers")
     .select(
       "id,fixture_id,clan_id,profile_id,assist_profile_id,minute,created_at",
     )
-    .in("fixture_id", fixtureIds)
-    .order("minute");
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("minute").order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -294,15 +299,13 @@ async function loadGoals(db: SupabaseClient, fixtureIds: string[]) {
 async function loadEvents(db: SupabaseClient, fixtureIds: string[]) {
   if (fixtureIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_events")
     .select(
       "id,fixture_id,event_type,clan_id,profile_id,assist_profile_id,blue_card_id,minute,second,note,created_at",
     )
-    .in("fixture_id", fixtureIds)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -322,15 +325,13 @@ async function loadEvents(db: SupabaseClient, fixtureIds: string[]) {
 async function loadBlueCards(db: SupabaseClient, fixtureIds: string[]) {
   if (fixtureIds.length === 0) return [];
 
-  const { data, error } = await db
+  const data = await loadRowsForIds(fixtureIds, (ids, from, to) => db
     .from("fixture_blue_cards")
     .select(
       "id,fixture_id,clan_id,profile_id,started_at,expires_at,duration_seconds,status,minute,second",
     )
-    .in("fixture_id", fixtureIds)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
+    .in("fixture_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -369,7 +370,7 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
     teamSrSpread: null,
     teamsAssignedAt: null,
     homeClan: normalizeClan(asObject(row.home_clan)),
-    awayClan: normalizeClan(asObject(row.away_clan)),
+    awayClan: normalizeClan(asObject(row.away_clan), "Opponent pending"),
     players: [],
     participantIds: [],
     clock: null,
@@ -381,11 +382,11 @@ function normalizeFixtureRow(row: Record<string, unknown>) {
   } satisfies RefereeFixture;
 }
 
-function normalizeClan(row: Record<string, unknown>): Clan {
+function normalizeClan(row: Record<string, unknown>, pendingName = ""): Clan {
   return {
-    id: String(row.id),
-    name: String(row.name ?? ""),
-    tag: String(row.tag ?? ""),
+    id: String(row.id ?? ""),
+    name: String(row.name ?? pendingName),
+    tag: String(row.tag ?? (pendingName ? "TBD" : "")),
     emblem: String(row.emblem ?? "⚽"),
     skillRating: Number(row.skill_rating ?? 1500),
   };

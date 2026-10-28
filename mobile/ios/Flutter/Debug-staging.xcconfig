@@ -4,3 +4,4 @@
 APP_DISPLAY_NAME = Fieldrush Staging
 PRODUCT_BUNDLE_IDENTIFIER = com.alialtaraif.field.staging
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
+CODE_SIGN_ENTITLEMENTS = Runner/Runner-staging.entitlements

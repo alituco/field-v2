@@ -5,6 +5,17 @@
 -- verification row and state change is rolled back.
 begin;
 
+-- Use the same registration rule as checkout rather than assuming a player
+-- with no future solo booking is free (clan rosters/reserves/leases also count).
+create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
+returns boolean language plpgsql as $availability$
+begin
+  perform public.assert_player_has_one_game(player_id,'SOLO','00000000-0000-0000-0000-000000000000',true);
+  return true;
+exception when raise_exception then return false;
+end;
+$availability$;
+
 do $$
 declare
   player_ids uuid[];
@@ -37,21 +48,13 @@ begin
     select profile.id, profile.created_at
     from public.profiles profile
     where not public.profile_has_active_play_restriction(profile.id)
-      and not exists (
-        select 1
-        from public.open_queue_bookings booking
-        join public.open_queue_games game on game.id = booking.game_id
-        where booking.profile_id = profile.id
-          and booking.status = 'CONFIRMED'
-          and game.status in ('OPEN', 'FULL')
-          and game.starts_at > now()
-      )
+      and pg_temp.verification_player_has_free_game_slot(profile.id)
     order by profile.created_at, profile.id
     limit 12
   ) candidate;
 
   if coalesce(cardinality(player_ids), 0) <> 12 then
-    raise exception 'Party verification needs 12 unrestricted profiles without future solo bookings.';
+    raise exception 'Party verification needs 12 unrestricted profiles without current games or checkouts.';
   end if;
 
   select array_agg(candidate.starts_at order by candidate.starts_at)
@@ -81,8 +84,11 @@ begin
   end if;
 
   insert into public.open_queue_games (
+    format_version, currency, timezone, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     venue, starts_at, ends_at, created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 'Asia/Bahrain', 12, 2, 4, 4, 2,
     'Party verification pitch A',
     game_starts[1],
     game_starts[1] + interval '1 hour',
@@ -456,11 +462,24 @@ begin
     raise exception 'Kickoff did not resolve its remaining invitation notification.';
   end if;
 
+  -- The first independent party scenario is complete. Retire its synthetic
+  -- game before reusing the same players for the positional-impossibility case.
+  -- This is rollback-only; no live-game registration guard is disabled.
+  update public.open_queue_games
+  set status='CANCELLED',cancellation_code='ADMIN_DECISION',
+    cancellation_reason='Party rollback verification first scenario complete.',
+    cancelled_at=clock_timestamp(),cancelled_by=player_ids[1],
+    cancellation_context=jsonb_build_object('source','PARTY_ROLLBACK_VERIFICATION')
+  where id=game_id_to_verify;
+
   -- A two-goalkeeper party can never fit one GK per side. Reject it at accept
   -- time even though ten roster positions are still future placeholders.
   insert into public.open_queue_games (
+    format_version, currency, timezone, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     venue, starts_at, ends_at, created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 'Asia/Bahrain', 12, 2, 4, 4, 2,
     'Party verification pitch B',
     game_starts[2],
     game_starts[2] + interval '1 hour',
@@ -490,7 +509,7 @@ begin
       impossible_invitation_id, true
     );
   exception when others then
-    if position('would make the required' in lower(sqlerrm)) > 0 then
+    if sqlerrm = 'Joining this party would make the configured team formation impossible.' then
       rejection_seen := true;
     else
       raise;

@@ -1,6 +1,40 @@
+import 'package:timezone/data/latest_all.dart' as tz_data;
+import 'package:timezone/timezone.dart' as tz;
+
 import '../fixtures/fixture.dart';
+import '../ranking/rating_division.dart';
+import '../ranking/player_rating_visibility.dart';
 
 enum OpenQueueRole { goalkeeper, defender, midfielder, attacker }
+
+/// Midfielder is retained in the enum for legacy 6v6 match history only.
+const fieldrushOpenQueueRoles = [
+  OpenQueueRole.goalkeeper,
+  OpenQueueRole.defender,
+  OpenQueueRole.attacker,
+];
+
+bool _timezonesInitialized = false;
+
+/// Returns wall-clock components in the game's IANA zone. The UTC-shaped
+/// value is for display/calendar grouping, not for comparing actual instants.
+DateTime gameLocalDateTime(DateTime instant, String timezone) {
+  if (!_timezonesInitialized) {
+    tz_data.initializeTimeZones();
+    _timezonesInitialized = true;
+  }
+  final local = tz.TZDateTime.from(instant, tz.getLocation(timezone));
+  return DateTime.utc(
+    local.year,
+    local.month,
+    local.day,
+    local.hour,
+    local.minute,
+    local.second,
+    local.millisecond,
+    local.microsecond,
+  );
+}
 
 class OpenQueueBookingCostPreview {
   const OpenQueueBookingCostPreview({
@@ -70,6 +104,9 @@ class OpenQueueBookingCostPreview {
 }
 
 String _moneyLabel(int fils, String currency) {
+  if (currency == 'USD') {
+    return '\$${(fils / 1000).toStringAsFixed(fils % 10 == 0 ? 2 : 3)}';
+  }
   final dinars = fils / 1000;
   final amount = dinars == dinars.roundToDouble()
       ? dinars.toInt().toString()
@@ -92,7 +129,15 @@ extension OpenQueueRoleX on OpenQueueRole {
     OpenQueueRole.attacker => 'Attacker',
   };
 
+  /// Compatibility formation for 7v7 games returned by older servers.
+  /// Active game capacities must come from [OpenQueueGame.capacityFor].
   int get matchCapacity => switch (this) {
+    OpenQueueRole.goalkeeper => 2,
+    OpenQueueRole.defender || OpenQueueRole.attacker => 6,
+    OpenQueueRole.midfielder => 0,
+  };
+
+  int get legacyMatchCapacity => switch (this) {
     OpenQueueRole.goalkeeper || OpenQueueRole.attacker => 2,
     OpenQueueRole.defender || OpenQueueRole.midfielder => 4,
   };
@@ -108,6 +153,25 @@ extension OpenQueueRoleX on OpenQueueRole {
   }
 }
 
+String roleCapacityLabelForGames(
+  OpenQueueRole role,
+  Iterable<OpenQueueGame> games,
+) {
+  final capacities = games.map((game) => game.capacityFor(role)).toSet();
+  if (capacities.length > 1 || capacities.any((capacity) => capacity.isOdd)) {
+    return 'Varies by game';
+  }
+  final perTeam = capacities.isNotEmpty
+      ? capacities.single ~/ 2
+      : switch (role) {
+          OpenQueueRole.goalkeeper => 1,
+          OpenQueueRole.defender => 2,
+          OpenQueueRole.attacker => 4,
+          OpenQueueRole.midfielder => 0,
+        };
+  return '$perTeam ${perTeam == 1 ? 'slot' : 'slots'} per team';
+}
+
 class OpenQueueGame {
   const OpenQueueGame({
     required this.id,
@@ -121,6 +185,23 @@ class OpenQueueGame {
     required this.capacity,
     required this.confirmedCount,
     required this.spots,
+    this.minimumPlayers = 10,
+    this.participationRulesVersion = 's0-standard-v1',
+    this.goalkeeperCapacity,
+    this.defenderCapacity,
+    this.midfielderCapacity,
+    this.attackerCapacity,
+    this.currency = 'BHD',
+    this.highestDivision = 1,
+    this.lowestDivision = 5,
+    this.fieldId,
+    this.marketCityId,
+    this.locationAddress,
+    this.locationCity,
+    this.locationState,
+    this.locationCountryCode,
+    this.locationLatitude,
+    this.locationLongitude,
     this.whiteScore,
     this.blackScore,
     this.myBookingId,
@@ -131,11 +212,14 @@ class OpenQueueGame {
     this.matchAverageSr,
     this.teamSrSpread,
     this.teamsAssignedAt,
+    this.checkInOpensAt,
+    this.checkInDeadlineAt,
     this.policyVersionId,
     this.teamAssignmentAt,
     this.partyLockAt,
     this.teamAssignmentLeadMinutes,
     this.partyLockLeadMinutes,
+    this.actualStartedAt,
     this.maxPartySize,
     this.operationalState = MatchOperationalState.normal,
     this.operationalStateUpdatedAt,
@@ -147,12 +231,61 @@ class OpenQueueGame {
   final String venue;
   final DateTime startsAt;
   final DateTime endsAt;
+
+  /// Immutable observed kickoff, independent of pauses and clock resumes.
+  final DateTime? actualStartedAt;
   final String timezone;
   final int priceFils;
   final String ageLabel;
   final int capacity;
   final int confirmedCount;
+
+  /// Saved total required at kickoff and during play; separate from capacity.
+  final int minimumPlayers;
+  final String participationRulesVersion;
   final Map<OpenQueueRole, int> spots;
+
+  /// Saved whole-match position capacities. Older payloads may omit them.
+  final int? goalkeeperCapacity;
+  final int? defenderCapacity;
+  final int? midfielderCapacity;
+  final int? attackerCapacity;
+  final String currency;
+  final int highestDivision;
+  final int lowestDivision;
+
+  bool get acceptsPlacementPlayers => true;
+
+  String get divisionRangeLabel => highestDivision == lowestDivision
+      ? 'DIV $highestDivision'
+      : 'DIV $highestDivision–$lowestDivision';
+
+  List<int> get allowedDivisions => [
+    for (var division = highestDivision; division <= lowestDivision; division++)
+      division,
+  ];
+
+  bool allowsPlayerDivision({
+    required int skillRating,
+    required int matchesPlayed,
+  }) {
+    if (matchesPlayed < 2) return acceptsPlacementPlayers;
+    final division = divisionFromRating(skillRating).number;
+    return division >= highestDivision && division <= lowestDivision;
+  }
+
+  final String? fieldId;
+  final String? marketCityId;
+
+  bool belongsToCity(String cityId, String cityTimezone) => marketCityId != null
+      ? marketCityId == cityId
+      : cityId == 'phoenix' && timezone == cityTimezone;
+  final String? locationAddress;
+  final String? locationCity;
+  final String? locationState;
+  final String? locationCountryCode;
+  final double? locationLatitude;
+  final double? locationLongitude;
   final int? whiteScore;
   final int? blackScore;
   final String? myBookingId;
@@ -163,6 +296,10 @@ class OpenQueueGame {
   final int? matchAverageSr;
   final int? teamSrSpread;
   final DateTime? teamsAssignedAt;
+
+  /// Player arrival and late-arrival instants, separate from checkout terms.
+  final DateTime? checkInOpensAt;
+  final DateTime? checkInDeadlineAt;
   final String? policyVersionId;
   final DateTime? teamAssignmentAt;
   final DateTime? partyLockAt;
@@ -173,7 +310,72 @@ class OpenQueueGame {
   final DateTime? operationalStateUpdatedAt;
   final String? operationalReasonCode;
 
+  String? get locationLabel {
+    final parts = [
+      for (final part in [
+        locationAddress,
+        locationCity,
+        locationState,
+        locationCountryCode,
+      ])
+        if (part?.trim().isNotEmpty == true) part!.trim(),
+    ];
+    return parts.isEmpty ? null : parts.join(', ');
+  }
+
+  /// New games use the saved pitch coordinates, never a guessed map pin.
+  /// Historic venue-only games retain their original text-search fallback.
+  Uri? get directionsUri {
+    final latitude = locationLatitude;
+    final longitude = locationLongitude;
+    final hasCoordinates =
+        latitude != null &&
+        longitude != null &&
+        latitude.isFinite &&
+        longitude.isFinite &&
+        latitude.abs() <= 90 &&
+        longitude.abs() <= 180;
+    final String query;
+    if (hasCoordinates) {
+      query = '$latitude,$longitude';
+    } else if (locationLabel case final String address) {
+      query = address;
+    } else {
+      if (venue.trim().isEmpty) return null;
+      final market = switch (timezone) {
+        'America/Phoenix' => 'Phoenix AZ',
+        'Asia/Bahrain' => 'Bahrain',
+        _ => '',
+      };
+      query = '${venue.trim()} $market'.trim();
+    }
+    return Uri.https('www.google.com', '/maps/search/', {
+      'api': '1',
+      'query': query,
+    });
+  }
+
   bool get isFull => status == 'FULL' || confirmedCount >= capacity;
+
+  bool get hasConfigurableMinimum =>
+      participationRulesVersion == 's0-configurable-v1';
+
+  int get requiredMinimumPlayers =>
+      minimumPlayers >= 2 && minimumPlayers <= capacity
+      ? minimumPlayers
+      : capacity;
+
+  bool get hasMinimumPlayers =>
+      hasConfigurableMinimum &&
+      confirmedCount >= requiredMinimumPlayers &&
+      confirmedCount <= capacity;
+
+  String get minimumPlayersLabel =>
+      '$requiredMinimumPlayers minimum · $capacity maximum';
+
+  String get minimumPlayersProgressLabel => hasMinimumPlayers
+      ? 'Minimum reached · $minimumPlayersLabel'
+      : '${(requiredMinimumPlayers - confirmedCount).clamp(0, capacity)} more needed · $minimumPlayersLabel';
 
   bool get hasRecordedScore => whiteScore != null || blackScore != null;
 
@@ -210,6 +412,7 @@ class OpenQueueGame {
     if (operationalLabel != null) return operationalLabel;
     return switch (status.toUpperCase()) {
       'OPEN' when isFull => 'Full',
+      'OPEN' when hasMinimumPlayers => 'Minimum reached',
       'OPEN' => 'Spots available',
       'FULL' => 'Full',
       'LIVE' => 'Live Now',
@@ -227,8 +430,29 @@ class OpenQueueGame {
         startsAt.isAfter(now);
   }
 
+  /// Keep unresolved history visible even after it stops blocking new bookings.
+  bool get isActiveReservation =>
+      hasPendingOperationalResolution ||
+      status == 'LIVE' ||
+      ((status == 'OPEN' || status == 'FULL') && !hasRecordedScore);
+
+  DateTime get registrationEndsAt => status == 'LIVE' && actualStartedAt != null
+      ? actualStartedAt!.add(endsAt.difference(startsAt))
+      : endsAt;
+
+  bool get blocksNewBooking => blocksNewBookingAt(DateTime.now());
+
+  /// Mirror the server's one-game rule without confusing it with visibility.
+  bool blocksNewBookingAt(DateTime now) =>
+      !hasPendingOperationalResolution &&
+      const ['OPEN', 'FULL', 'LIVE'].contains(status) &&
+      registrationEndsAt.isAfter(now);
+
   bool get isUpcomingMatchConfirmed {
-    return status == 'FULL' && confirmedCount >= capacity && !hasRecordedScore;
+    return !hasRecordedScore &&
+        (hasConfigurableMinimum
+            ? (status == 'OPEN' || status == 'FULL') && hasMinimumPlayers
+            : status == 'FULL' && confirmedCount >= capacity);
   }
 
   bool get isTeamAssignmentDue => isTeamAssignmentDueAt(DateTime.now());
@@ -245,28 +469,114 @@ class OpenQueueGame {
   String get partyLockLeadLabel => openQueueLeadTimeLabel(partyLockLeadMinutes);
 
   bool get hasActiveTeamAssignment {
+    // Assignment is an operational fact, not a rating-visibility decision.
+    // Calibration can hide every aggregate SR without undoing the teams.
     return isUpcomingMatchConfirmed &&
-        isTeamAssignmentDue &&
-        teamsAssignedAt != null &&
-        whiteAverageSr != null &&
-        blackAverageSr != null &&
-        matchAverageSr != null;
+        capacity > 0 &&
+        (hasConfigurableMinimum || isTeamAssignmentDue) &&
+        teamsAssignedAt != null;
   }
 
   bool get hasMyBooking => myBookingId != null;
 
+  // Both formats are constrained server-side. Capacity is included in all
+  // existing feed/booking contracts, including older deployed RPC versions.
+  bool get isFieldrushFormat => capacity == 14;
+
+  List<OpenQueueRole> get supportedRoles =>
+      isFieldrushFormat ? fieldrushOpenQueueRoles : OpenQueueRole.values;
+
+  int capacityFor(OpenQueueRole role) {
+    final saved = switch (role) {
+      OpenQueueRole.goalkeeper => goalkeeperCapacity,
+      OpenQueueRole.defender => defenderCapacity,
+      OpenQueueRole.midfielder => midfielderCapacity,
+      OpenQueueRole.attacker => attackerCapacity,
+    };
+    return saved ??
+        (isFieldrushFormat ? role.matchCapacity : role.legacyMatchCapacity);
+  }
+
   int spotsFor(OpenQueueRole role) => spots[role] ?? 0;
 
-  bool canBook(OpenQueueRole role) => !isFull && spotsFor(role) > 0;
+  bool canBook(OpenQueueRole role) => canBookAt(role, DateTime.now());
 
-  DateTime get bahrainStartsAt =>
-      startsAt.toUtc().add(const Duration(hours: 3));
+  bool canBookAt(OpenQueueRole role, DateTime now) =>
+      status == 'OPEN' &&
+      startsAt.isAfter(now) &&
+      !hasMyBooking &&
+      !hasRecordedScore &&
+      !hasPendingOperationalResolution &&
+      !isFull &&
+      capacityFor(role) > 0 &&
+      spotsFor(role) > 0;
 
-  DateTime get bahrainEndsAt => endsAt.toUtc().add(const Duration(hours: 3));
+  /// Wall-clock values use the game's immutable IANA timezone snapshot.
+  DateTime localDateTime(DateTime instant) =>
+      gameLocalDateTime(instant, timezone);
+
+  DateTime get localStartsAt => localDateTime(startsAt);
+  DateTime get localEndsAt => localDateTime(endsAt);
+
+  bool get isUpcoming =>
+      (status == 'OPEN' || status == 'FULL') && !hasRecordedScore;
+
+  // Older feed versions omit attendance terms. The same arrival policy still
+  // applies to those games during rollout; domain times remain the kickoff.
+  DateTime get checkInAt =>
+      checkInOpensAt ?? startsAt.subtract(const Duration(minutes: 30));
+  DateTime get checkInDeadline =>
+      checkInDeadlineAt ?? startsAt.subtract(const Duration(minutes: 10));
+  DateTime get localCheckInAt => localDateTime(checkInAt);
+  DateTime get localCheckInDeadlineAt => localDateTime(checkInDeadline);
+  String get checkInTimeLabel => _clock(localCheckInAt);
+  String get checkInDeadlineTimeLabel => _clock(localCheckInDeadlineAt);
+  String get checkInCalendarDateLabel => _calendarLabel(localCheckInAt);
+
+  /// Planned finish includes ten minutes beyond the advertised match slot.
+  String get plannedEndTimeLabel =>
+      _clock(localDateTime(endsAt.add(const Duration(minutes: 10))));
+
+  /// Presentation-only: future cards show arrival; live/history show kickoff.
+  DateTime get displayStartsAt => isUpcoming ? checkInAt : startsAt;
+  DateTime get localDisplayStartsAt => localDateTime(displayStartsAt);
+  String get displayTimeLabel => _clock(localDisplayStartsAt);
+  String get displayCalendarDateLabel => _calendarLabel(localDisplayStartsAt);
+  String get displayProminentDateLabel {
+    final group = displayDateGroup;
+    return group == 'TODAY' || group == 'TOMORROW'
+        ? '$group · $displayCalendarDateLabel'
+        : displayCalendarDateLabel;
+  }
+
+  String get displayDateGroup {
+    final value = localDisplayStartsAt;
+    final now = localDateTime(DateTime.now());
+    bool sameDay(DateTime other) =>
+        value.year == other.year &&
+        value.month == other.month &&
+        value.day == other.day;
+    if (sameDay(now)) return 'TODAY';
+    if (sameDay(
+      DateTime.utc(now.year, now.month, now.day).add(const Duration(days: 1)),
+    )) {
+      return 'TOMORROW';
+    }
+    return displayCalendarDateLabel;
+  }
+
+  String _calendarLabel(DateTime value) =>
+      '${_weekday(value.weekday)}, ${value.day} ${_month(value.month)}';
+
+  // Compatibility aliases for existing fixture screens. The game, not the
+  // device or a hardcoded market, now determines the displayed wall clock.
+  DateTime get bahrainStartsAt => localStartsAt;
+
+  DateTime get bahrainEndsAt => localEndsAt;
 
   bool get isToday {
     final value = bahrainStartsAt;
-    final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+    final now = localDateTime(DateTime.now());
     return value.year == now.year &&
         value.month == now.month &&
         value.day == now.day;
@@ -274,7 +584,7 @@ class OpenQueueGame {
 
   bool get isTomorrow {
     final value = bahrainStartsAt;
-    final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+    final now = localDateTime(DateTime.now());
     final tomorrow = DateTime.utc(
       now.year,
       now.month,
@@ -307,10 +617,7 @@ class OpenQueueGame {
   String get startTimeLabel => _clock(bahrainStartsAt);
 
   String get priceLabel {
-    final dinars = priceFils / 1000;
-    return dinars == dinars.roundToDouble()
-        ? '${dinars.toInt()} BHD'
-        : '${dinars.toStringAsFixed(3)} BHD';
+    return _moneyLabel(priceFils, currency);
   }
 
   factory OpenQueueGame.fromJson(Map<String, dynamic> json) {
@@ -320,11 +627,33 @@ class OpenQueueGame {
       venue: (json['venue'] as String? ?? '').trim(),
       startsAt: DateTime.parse(json['starts_at'] as String).toLocal(),
       endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
+      actualStartedAt: _asDate(json['actual_started_at']),
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
+      currency: json['currency'] as String? ?? 'BHD',
+      highestDivision: _asInt(json['highest_division'], fallback: 1),
+      lowestDivision: _asInt(json['lowest_division'], fallback: 5),
+      fieldId: _nonEmptyString(json['field_id']),
+      marketCityId: _nonEmptyString(json['market_city_id']),
+      locationAddress: _nonEmptyString(json['location_address']),
+      locationCity: _nonEmptyString(json['location_city']),
+      locationState: _nonEmptyString(json['location_state']),
+      locationCountryCode: _nonEmptyString(json['location_country_code']),
+      locationLatitude: _asNullableDouble(json['location_latitude']),
+      locationLongitude: _asNullableDouble(json['location_longitude']),
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
+      minimumPlayers: _asInt(
+        json['minimum_players'],
+        fallback: _asInt(json['capacity'], fallback: 12),
+      ),
+      participationRulesVersion:
+          json['participation_rules_version'] as String? ?? 's0-standard-v1',
+      goalkeeperCapacity: _asNullableInt(json['goalkeeper_capacity']),
+      defenderCapacity: _asNullableInt(json['defender_capacity']),
+      midfielderCapacity: _asNullableInt(json['midfielder_capacity']),
+      attackerCapacity: _asNullableInt(json['attacker_capacity']),
       spots: {
         OpenQueueRole.goalkeeper: _asInt(json['goalkeeper_spots']),
         OpenQueueRole.defender: _asInt(json['defender_spots']),
@@ -344,6 +673,8 @@ class OpenQueueGame {
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
       teamSrSpread: _asNullableRoundedInt(json['team_sr_spread']),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      checkInOpensAt: _asDate(json['check_in_opens_at']),
+      checkInDeadlineAt: _asDate(json['check_in_deadline_at']),
       policyVersionId: _nonEmptyString(json['policy_version_id']),
       teamAssignmentAt: _asDate(json['team_assignment_at']),
       partyLockAt: _asDate(json['party_lock_at']),
@@ -369,11 +700,33 @@ class OpenQueueGame {
       venue: (json['venue'] as String? ?? '').trim(),
       startsAt: DateTime.parse(json['starts_at'] as String).toLocal(),
       endsAt: DateTime.parse(json['ends_at'] as String).toLocal(),
+      actualStartedAt: _asDate(json['actual_started_at']),
       timezone: json['timezone'] as String? ?? 'Asia/Bahrain',
       priceFils: _asInt(json['price_fils'], fallback: 3000),
+      currency: json['currency'] as String? ?? 'BHD',
+      highestDivision: _asInt(json['highest_division'], fallback: 1),
+      lowestDivision: _asInt(json['lowest_division'], fallback: 5),
+      fieldId: _nonEmptyString(json['field_id']),
+      marketCityId: _nonEmptyString(json['market_city_id']),
+      locationAddress: _nonEmptyString(json['location_address']),
+      locationCity: _nonEmptyString(json['location_city']),
+      locationState: _nonEmptyString(json['location_state']),
+      locationCountryCode: _nonEmptyString(json['location_country_code']),
+      locationLatitude: _asNullableDouble(json['location_latitude']),
+      locationLongitude: _asNullableDouble(json['location_longitude']),
       ageLabel: json['age_label'] as String? ?? 'All ages',
       capacity: _asInt(json['capacity'], fallback: 12),
       confirmedCount: _asInt(json['confirmed_count']),
+      minimumPlayers: _asInt(
+        json['minimum_players'],
+        fallback: _asInt(json['capacity'], fallback: 12),
+      ),
+      participationRulesVersion:
+          json['participation_rules_version'] as String? ?? 's0-standard-v1',
+      goalkeeperCapacity: _asNullableInt(json['goalkeeper_capacity']),
+      defenderCapacity: _asNullableInt(json['defender_capacity']),
+      midfielderCapacity: _asNullableInt(json['midfielder_capacity']),
+      attackerCapacity: _asNullableInt(json['attacker_capacity']),
       spots: const {},
       whiteScore: _asNullableInt(json['white_score']),
       blackScore: _asNullableInt(json['black_score']),
@@ -382,6 +735,8 @@ class OpenQueueGame {
       matchAverageSr: _asNullableRoundedInt(json['match_average_sr']),
       teamSrSpread: _asNullableRoundedInt(json['team_sr_spread']),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
+      checkInOpensAt: _asDate(json['check_in_opens_at']),
+      checkInDeadlineAt: _asDate(json['check_in_deadline_at']),
       policyVersionId: _nonEmptyString(json['policy_version_id']),
       teamAssignmentAt: _asDate(json['team_assignment_at']),
       partyLockAt: _asDate(json['party_lock_at']),
@@ -428,6 +783,9 @@ class OpenQueueMatchDetail {
     this.clock,
     this.broadcast,
     this.videoUrl,
+    this.ratingStatus,
+    this.ratingExplanation,
+    this.lobbyAverageSr,
   });
 
   final OpenQueueGame game;
@@ -437,6 +795,32 @@ class OpenQueueMatchDetail {
   final List<FixtureTimelineEvent> timeline;
   final List<OpenQueuePlayer> players;
   final String? videoUrl;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+
+  /// Server-calculated average for the entire confirmed roster, including
+  /// players whose individual placement rating is hidden.
+  final int? lobbyAverageSr;
+
+  /// Current public SR belongs to the roster, not the match's frozen result.
+  int? rosterRatingFor(OpenQueuePlayer player) {
+    if (player.ratingVisible == false) return null;
+    if (const {'OPEN', 'FULL', 'LIVE'}.contains(game.status)) {
+      return player.rosterSkillRating ?? player.displayedRating;
+    }
+    return player.displayedRating;
+  }
+
+  String? get viewerRatingStatus =>
+      players.where((p) => p.isMe).firstOrNull?.ratingStatus ?? ratingStatus;
+
+  bool? get viewerCountedAsPlayed =>
+      players.where((p) => p.isMe).firstOrNull?.countedAsPlayed;
+
+  String? get viewerRatingExplanation =>
+      players.where((p) => p.isMe).firstOrNull?.publicRatingExplanation ??
+      ratingExplanation ??
+      publicRatingStatusLabel(viewerRatingStatus);
 
   factory OpenQueueMatchDetail.fromJson(Map<String, dynamic> json) {
     final gameJson = _mapFrom(json['game'] ?? json['open_queue_game']) ?? json;
@@ -478,15 +862,24 @@ class OpenQueueMatchDetail {
       scorers: scorers,
       timeline: timeline,
       players: _openQueuePlayers(json['players']),
+      lobbyAverageSr: _asNullableRoundedInt(json['lobby_average_sr']),
       videoUrl: _nonEmptyString(json['video_url'] ?? gameJson['video_url']),
+      ratingStatus: _nonEmptyString(
+        json['rating_status'] ?? gameJson['rating_status'],
+      ),
+      ratingExplanation: _nonEmptyString(
+        json['rating_explanation'] ?? gameJson['rating_explanation'],
+      ),
     );
   }
 
   FixturePlayerRatingUpdate? get viewerRatingUpdate {
+    if (!permitsPublicRatingResult(viewerRatingStatus)) return null;
     for (final player in players) {
       if (!player.isMe) continue;
+      if (player.ratingVisible == false) return null;
       final ratingBefore = player.displayedRating;
-      final ratingChange = player.ratingChange;
+      final ratingChange = player.publicRatingChange;
       if (ratingBefore == null || ratingChange == null) return null;
       return FixturePlayerRatingUpdate(
         ratingBefore: ratingBefore,
@@ -564,7 +957,7 @@ FixtureClan _openQueueTeamClan({
     emblem: isWhite ? '⚪' : '⚫',
     themeId: isWhite ? 'mint' : 'shadow',
     patternId: 'solid',
-    skillRating: averageRating ?? 1200,
+    skillRating: averageRating,
   );
 }
 
@@ -580,7 +973,13 @@ class OpenQueuePlayer {
     this.avatarUrl,
     this.ratingAtTeamAssignment,
     this.ratingAtMatchStart,
+    this.rosterSkillRating,
     this.ratingChange,
+    this.ratingVisible,
+    this.ratingStatus,
+    this.ratingExplanation,
+    this.countedAsPlayed,
+    this.actualPlayedSeconds,
   });
 
   final String id;
@@ -593,11 +992,29 @@ class OpenQueuePlayer {
   final bool isMe;
   final int? ratingAtTeamAssignment;
   final int? ratingAtMatchStart;
+  final int? rosterSkillRating;
   final int? ratingChange;
+  final bool? ratingVisible;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+  final bool? countedAsPlayed;
+  final int? actualPlayedSeconds;
 
-  int? get displayedRating => ratingAtMatchStart ?? ratingAtTeamAssignment;
+  int? get publicRatingChange =>
+      countedAsPlayed == false && ratingChange == 0 ? null : ratingChange;
+
+  String? get publicRatingExplanation =>
+      publicRatingAppearanceExplanation(ratingExplanation, countedAsPlayed);
+
+  int? get displayedRating => ratingVisible == false
+      ? null
+      : ratingAtMatchStart ?? ratingAtTeamAssignment;
 
   factory OpenQueuePlayer.fromJson(Map<String, dynamic> json) {
+    final status = json['rating_status'] as String?;
+    final numeric = permitsPublicRatingResult(status)
+        ? json
+        : {...json, 'rating_visible': false};
     return OpenQueuePlayer(
       id: json['id'] as String? ?? '',
       displayName: (json['display_name'] as String? ?? 'Player').trim(),
@@ -607,9 +1024,18 @@ class OpenQueuePlayer {
       team: _openQueueTeam(json['team']) ?? '',
       played: json['played'] == true,
       isMe: json['is_me'] == true,
-      ratingAtTeamAssignment: _asNullableInt(json['rating_at_team_assignment']),
-      ratingAtMatchStart: _asNullableInt(json['rating_at_match_start']),
-      ratingChange: _asNullableInt(json['rating_change']),
+      ratingAtTeamAssignment: publicRatingNumber(
+        json,
+        'rating_at_team_assignment',
+      ),
+      ratingAtMatchStart: publicRatingNumber(json, 'rating_at_match_start'),
+      rosterSkillRating: publicRatingNumber(json, 'roster_skill_rating'),
+      ratingChange: publicRatingNumber(numeric, 'rating_change'),
+      ratingVisible: json['rating_visible'] as bool?,
+      ratingStatus: status,
+      ratingExplanation: json['rating_explanation'] as String?,
+      countedAsPlayed: json['counted_as_played'] as bool?,
+      actualPlayedSeconds: _asNullableInt(json['actual_played_seconds']),
     );
   }
 
@@ -623,9 +1049,14 @@ class OpenQueuePlayer {
       side: team,
       played: played,
       isMe: isMe,
-      ratingAtTeamAssignment: ratingAtTeamAssignment,
-      ratingAtMatchStart: ratingAtMatchStart,
-      ratingChange: ratingChange,
+      ratingAtTeamAssignment: ratingVisible == false
+          ? null
+          : ratingAtTeamAssignment,
+      ratingAtMatchStart: ratingVisible == false ? null : ratingAtMatchStart,
+      ratingChange:
+          ratingVisible == false || !permitsPublicRatingResult(ratingStatus)
+          ? null
+          : publicRatingChange,
     );
   }
 }
@@ -644,6 +1075,8 @@ class OpenQueueBooking {
     this.cancelledAt,
     this.refundPercent,
     this.refundAmountFils,
+    this.refundDestination,
+    this.refundStatus,
   });
 
   final String id;
@@ -657,6 +1090,8 @@ class OpenQueueBooking {
   final DateTime? cancelledAt;
   final int? refundPercent;
   final int? refundAmountFils;
+  final String? refundDestination;
+  final String? refundStatus;
   final OpenQueueGame game;
 
   String? get assignedTeam {
@@ -689,6 +1124,8 @@ class OpenQueueBooking {
       cancelledAt: cancelledAt,
       refundPercent: refundPercent,
       refundAmountFils: refundAmountFils,
+      refundDestination: refundDestination,
+      refundStatus: refundStatus,
       game: game ?? this.game,
     );
   }
@@ -710,6 +1147,8 @@ class OpenQueueBooking {
       cancelledAt: _asDate(json['cancelled_at']),
       refundPercent: _asNullableInt(json['refund_percent']),
       refundAmountFils: _asNullableInt(json['refund_amount_fils']),
+      refundDestination: _nonEmptyString(json['refund_destination']),
+      refundStatus: _nonEmptyString(json['refund_status']),
       game: OpenQueueGame.fromBookingJson(gameJson),
     );
   }
@@ -731,6 +1170,7 @@ class OpenQueueCancellationPreview {
     this.explanation,
     this.checkInDeadlineAt,
     this.noShowCutoffAt,
+    this.currency = 'BHD',
   });
 
   final bool canCancel;
@@ -750,6 +1190,7 @@ class OpenQueueCancellationPreview {
   final String? explanation;
   final DateTime? checkInDeadlineAt;
   final DateTime? noShowCutoffAt;
+  final String currency;
 
   int get effectiveRefundBps => refundBps ?? (refundPercent * 100);
 
@@ -788,16 +1229,39 @@ class OpenQueueCancellationPreview {
         destination == 'FIELD_WALLET') {
       return '$refundPercentLabel to your Field wallet';
     }
+    if (destination == 'ORIGINAL_PAYMENT_METHOD' || destination == 'STRIPE') {
+      return '$refundPercentLabel to your original payment method';
+    }
     return '$refundPercentLabel to ${destination.replaceAll('_', ' ').toLowerCase()}';
   }
 
   String get refundLabel {
     if (effectiveRefundBps == 0) return 'No refund';
-    return '${(refundAmountFils / 1000).toStringAsFixed(3)} BHD to Field wallet';
+    final destination = refundDestination?.trim().toUpperCase();
+    final label =
+        destination == 'ORIGINAL_PAYMENT_METHOD' || destination == 'STRIPE'
+        ? 'your original payment method'
+        : 'Field wallet';
+    return '${_moneyLabel(refundAmountFils, currency)} to $label';
+  }
+
+  /// Older policy previews contain wallet wording even when the payment-aware
+  /// quote routes the refund back to Stripe. Keep the server policy narrative
+  /// intact except for that destination, and retain raw text for quote checks.
+  String? get displayExplanation {
+    final destination = refundDestination?.trim().toUpperCase();
+    if (destination != 'ORIGINAL_PAYMENT_METHOD' && destination != 'STRIPE') {
+      return explanation;
+    }
+    return explanation?.replaceAll(
+      RegExp(r'\bto your field wallet\b', caseSensitive: false),
+      'to your original payment method',
+    );
   }
 
   bool hasSameConsequencesAs(OpenQueueCancellationPreview other) {
     return canCancel == other.canCancel &&
+        currency == other.currency &&
         policyVersionId == other.policyVersionId &&
         outcomeCode == other.outcomeCode &&
         strikeDelta == other.strikeDelta &&
@@ -817,6 +1281,7 @@ class OpenQueueCancellationPreview {
       canCancel: json['can_cancel'] == true,
       refundPercent: _asInt(json['refund_percent']),
       refundAmountFils: _asInt(json['refund_amount_fils']),
+      currency: json['currency'] as String? ?? 'BHD',
       refundCutoffAt: _asDate(json['refund_cutoff_at']),
       serverNow: _asDate(json['server_now']),
       policyVersionId: _nonEmptyString(json['policy_version_id']),
@@ -923,6 +1388,8 @@ List<FixtureTimelineEvent> _openQueueTimeline(Object? value, String gameId) {
         minute: _asInt(row['minute']),
         second: _asInt(row['second']),
         note: _nonEmptyString(row['note']),
+        goalId: row['goal_id'] as String?,
+        isGoalValid: row['is_goal_valid'] as bool?,
         createdAt: _asDate(row['created_at']),
         occurredAt: _asDate(row['occurred_at']),
         player: player == null ? null : FixtureParticipant.fromJson(player),
@@ -975,7 +1442,7 @@ List<FixtureScorer> _openQueueScorers(
 
   return [
     for (final event in timeline)
-      if (event.eventType == 'GOAL' && event.clanId != null)
+      if (event.isCreditedGoal && event.clanId != null)
         FixtureScorer(
           id: event.id,
           fixtureId: gameId,
@@ -1028,6 +1495,12 @@ String? _nonEmptyString(Object? value) {
   final trimmed = value.trim();
   return trimmed.isEmpty ? null : trimmed;
 }
+
+double? _asNullableDouble(Object? value) => switch (value) {
+  num number => number.toDouble(),
+  String number => double.tryParse(number),
+  _ => null,
+};
 
 String _clock(DateTime value) {
   final hour = value.hour % 12 == 0 ? 12 : value.hour % 12;

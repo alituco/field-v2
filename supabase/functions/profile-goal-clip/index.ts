@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { creditedGoal } from "./credited-goals.ts";
 
 // deno-lint-ignore no-explicit-any
 type SupabaseAnyClient = ReturnType<typeof createClient<any, "public", any>>;
@@ -370,6 +371,23 @@ async function refreshGoalClip(
   highlightId: string,
 ) {
   let highlight = await loadVisibleHighlight(context, highlightId);
+  if (
+    highlight.source_event_id && highlight.source_type &&
+    highlight.source_match_id
+  ) {
+    const credit = await creditedGoal(
+      context.admin,
+      highlight.source_type,
+      highlight.source_match_id,
+      highlight.source_event_id,
+    );
+    if (!credit) {
+      throw new HttpError(
+        "That goal was removed from the official score.",
+        404,
+      );
+    }
+  }
   if (!highlight.source_type) {
     throw new HttpError("That legacy highlight cannot be processed.", 400);
   }
@@ -637,44 +655,19 @@ async function loadGoalSource(
   eventId: string,
 ): Promise<GoalSource> {
   const source = await loadMatchSource(context, sourceType, matchId);
-  const table = sourceType === "CLAN" ? "fixture_events" : "open_queue_events";
-  const matchColumn = sourceType === "CLAN" ? "fixture_id" : "game_id";
-  const { data: selectedGoal, error: goalError } = await context.admin
-    .from(table)
-    .select("id,event_type,occurred_at,note")
-    .eq("id", eventId)
-    .eq(matchColumn, matchId)
-    .eq("event_type", "GOAL")
-    .maybeSingle();
-  if (goalError) throw goalError;
-  const occurredAt = normalizedString(selectedGoal?.occurred_at);
-  if (
-    !occurredAt ||
-    normalizedString(selectedGoal?.event_type)?.toUpperCase() !== "GOAL" ||
-    normalizedString(selectedGoal?.note)?.toLowerCase() === "admin correction"
-  ) {
+  const credit = await creditedGoal(
+    context.admin,
+    sourceType,
+    matchId,
+    eventId,
+  );
+  if (!credit) {
     throw new HttpError("That goal is not available in this replay.", 404);
   }
-
-  const { data: allGoals, error: allGoalsError } = await context.admin
-    .from(table)
-    .select("id,occurred_at,note")
-    .eq(matchColumn, matchId)
-    .eq("event_type", "GOAL")
-    .order("occurred_at", { ascending: true })
-    .order("id", { ascending: true });
-  if (allGoalsError) throw allGoalsError;
-  const goalTimestamps = (allGoals ?? [])
-    .filter((row) =>
-      normalizedString(row.note)?.toLowerCase() !== "admin correction"
-    )
-    .map((row) => normalizedString(row.occurred_at))
-    .filter((value): value is string => value != null);
-
   return {
     ...source,
-    goalOccurredAt: occurredAt,
-    goalTimestamps,
+    goalOccurredAt: credit.occurredAt,
+    goalTimestamps: credit.timestamps,
   };
 }
 

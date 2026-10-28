@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'fieldrush_check_in_notice.dart';
+
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
@@ -69,13 +73,10 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
   }
 
   Future<void> _openReview(OpenQueueGame game, OpenQueueRole role) async {
-    if (_upcomingBookings.length >= 2) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'You already have 2 upcoming solo games. Cancel one before booking another.',
-          ),
-        ),
+    if (_upcomingBookings.any((b) => b.game.blocksNewBooking)) {
+      showFieldrushToast(
+        context,
+        'You already have an upcoming or active game. Finish or cancel it before booking another.',
       );
       return;
     }
@@ -135,7 +136,7 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Games for you', showBack: true),
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: fieldEmerald600,
           onRefresh: _load,
           child: ListView(
@@ -157,11 +158,11 @@ class _OpenQueueGamesScreenState extends State<OpenQueueGamesScreen> {
                   action: 'Try again',
                   onAction: _load,
                 )
-              else if (_upcomingBookings.length >= 2)
+              else if (_upcomingBookings.any((b) => b.game.blocksNewBooking))
                 const _QueueGamesEmpty(
                   icon: Icons.event_busy_rounded,
                   message:
-                      'You are already booked for 2 of 2 solo games. Cancel one before choosing another match.',
+                      'One upcoming or active game at a time. Finish or cancel your current booking before joining another.',
                 )
               else ...[
                 if (showFastestBackup) ...[
@@ -464,15 +465,15 @@ class _FastestWayCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final date = match.game.dateGroup == 'TODAY'
+    final date = match.game.displayDateGroup == 'TODAY'
         ? 'today'
-        : match.game.dateGroup.toLowerCase();
+        : match.game.displayDateGroup.toLowerCase();
     final role = match.role.label;
     final mainCopy = nextMainGame == null
         ? 'No ${mainRole.label.toLowerCase()} spot is currently available.'
         : 'Your next ${mainRole.label.toLowerCase()} option is '
-              '${nextMainGame!.dateGroup.toLowerCase()} at '
-              '${nextMainGame!.startTimeLabel}.';
+              '${nextMainGame!.displayDateGroup.toLowerCase()} with check-in at '
+              '${nextMainGame!.displayTimeLabel}.';
     return Material(
       color: fieldGray900,
       borderRadius: BorderRadius.circular(24),
@@ -505,7 +506,7 @@ class _FastestWayCard extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'A $role spot is open $date at ${match.game.startTimeLabel}. '
+                'A $role spot is open $date with check-in at ${match.game.displayTimeLabel}. '
                 '$mainCopy',
                 style: const TextStyle(
                   color: Colors.white,
@@ -666,7 +667,7 @@ class _QueueGameCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      game.dateGroup,
+                      game.displayDateGroup,
                       style: const TextStyle(
                         color: fieldGray400,
                         fontSize: 10,
@@ -676,7 +677,7 @@ class _QueueGameCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      game.timeLabel,
+                      '${game.isUpcoming ? 'Check-in ' : ''}${game.displayTimeLabel}',
                       style: const TextStyle(
                         color: fieldGray900,
                         fontSize: 17,
@@ -714,6 +715,10 @@ class _QueueGameCard extends StatelessWidget {
               badge,
             ],
           ),
+          if (game.isUpcoming) ...[
+            const SizedBox(height: 12),
+            FieldrushCheckInNotice(game: game),
+          ],
           if (availability == _QueueAvailability.neededNow) ...[
             const SizedBox(height: 12),
             const Text(

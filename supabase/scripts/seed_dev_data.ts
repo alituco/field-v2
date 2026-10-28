@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
 import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
+import { withLocalClanSeedCheckout } from "./_shared/local_clan_seed.ts";
 
 type AdminClient = ReturnType<typeof createClient<any, "public", any>>;
 
@@ -522,19 +523,32 @@ await seedJoinRequests(
 );
 await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
 const clanOwnerIdsByTag = await loadClanOwnerIds(admin, clanIdsByTag);
-const fixtureIdsByKey = await seedFixtures(
-  admin,
-  clanIdsByTag,
-  clanOwnerIdsByTag,
-);
-await seedFixtureScorers(admin, clanIdsByTag, usersByPhone, fixtureIdsByKey);
-await seedFixtureMatchControl(
-  admin,
-  clanIdsByTag,
-  usersByPhone,
-  fixtureIdsByKey,
-);
-await finalizeSeededFixtures(admin, usersByPhone, fixtureIdsByKey);
+const fixtureIdsByKey = await withLocalClanSeedCheckout({
+  url: supabaseUrl,
+  readEnabled: async () => {
+    const { data, error } = await admin.from("game_payment_settings")
+      .select("clan_enabled").eq("singleton", true).single();
+    if (error) {
+      throw new Error(`Read local clan seed settings: ${error.message}`);
+    }
+    return data.clan_enabled === true;
+  },
+  writeEnabled: async (enabled) => {
+    const { error } = await admin.from("game_payment_settings")
+      .update({ clan_enabled: enabled }).eq("singleton", true);
+    if (error) {
+      throw new Error(
+        `Restore/update local clan seed settings: ${error.message}`,
+      );
+    }
+  },
+}, async () => {
+  const ids = await seedFixtures(admin, clanIdsByTag, clanOwnerIdsByTag);
+  await seedFixtureScorers(admin, clanIdsByTag, usersByPhone, ids);
+  await seedFixtureMatchControl(admin, clanIdsByTag, usersByPhone, ids);
+  await finalizeSeededFixtures(admin, usersByPhone, ids);
+  return ids;
+});
 await refreshClanRecord(admin, requireClanId(clanIdsByTag, "TTR"));
 await seedProfileDetails(admin, usersByPhone, clanIdsByTag);
 await seedFollows(admin, usersByPhone);
@@ -1659,25 +1673,10 @@ async function seedFixtures(
 
 async function finalizeSeededFixtures(
   admin: AdminClient,
-  userIdsByPhone: Map<string, string>,
+  _userIdsByPhone: Map<string, string>,
   fixtureIdsByKey: Map<string, string>,
 ) {
-  const refereePhone = fakeUsers[0]?.phone;
-  if (!refereePhone) throw new Error("No seeded referee candidate exists.");
-  const refereeId = requireUserId(userIdsByPhone, refereePhone);
-
-  await assertNoError(
-    admin.from("referee_profiles").upsert({
-      profile_id: refereeId,
-      display_name: "Local Seed Referee",
-      phone: refereePhone,
-      role: "referee",
-      is_active: true,
-    }, {
-      onConflict: "profile_id",
-    }),
-    "upsert local seed referee",
-  );
+  const refereeId = await independentLocalSeedReferee(admin);
 
   for (
     const fixture of fakeFixtures
@@ -1889,6 +1888,75 @@ async function finalizeSeededFixtures(
       `restore historical end time for ${fixtureKey(fixture)}`,
     );
   }
+}
+
+/** Disposable local fixture only: never grant staff access to a player. */
+async function independentLocalSeedReferee(
+  admin: AdminClient,
+): Promise<string> {
+  const email = "local-referee@fieldrush-fixture.example";
+  let user = null;
+  let complete = false;
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await admin.auth.admin.listUsers({
+      page,
+      perPage: 1000,
+    });
+    if (error) {
+      throw new Error("Could not inspect local staff fixture identities.");
+    }
+    user = data.users.find((candidate) => candidate.email === email) ?? user;
+    if (data.users.length < 1000) {
+      complete = true;
+      break;
+    }
+  }
+  if (!complete) {
+    throw new Error("Local staff fixture identity search was incomplete.");
+  }
+  if (
+    user && (user.app_metadata?.fieldrush_account_type !== "staff" ||
+      user.app_metadata?.fieldrush_local_seed !== true || user.phone)
+  ) {
+    throw new Error(
+      "The local staff fixture email is owned by another identity.",
+    );
+  }
+  if (!user) {
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      app_metadata: {
+        fieldrush_account_type: "staff",
+        fieldrush_local_seed: true,
+      },
+    });
+    if (error || !data.user) {
+      throw new Error("Could not create the independent local staff fixture.");
+    }
+    user = data.user;
+  }
+  const { data: saved, error: savedError } = await admin.from(
+    "referee_profiles",
+  )
+    .select("profile_id").eq("auth_user_id", user.id).maybeSingle();
+  if (savedError) {
+    throw new Error("Could not inspect local staff fixture binding.");
+  }
+  const id = saved?.profile_id ?? user.id;
+  await assertNoError(
+    admin.from("referee_profiles").upsert({
+      profile_id: id,
+      auth_user_id: user.id,
+      email,
+      display_name: "Local Seed Referee",
+      phone: null,
+      role: "referee",
+      is_active: true,
+    }, { onConflict: "profile_id" }),
+    "bind independent local seed referee",
+  );
+  return id;
 }
 
 async function seedFixtureScorers(

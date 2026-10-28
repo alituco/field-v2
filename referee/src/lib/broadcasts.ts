@@ -10,6 +10,7 @@ import {
   setCloudflareLiveInputEnabled,
 } from "./cloudflare-stream";
 import { broadcastDeviceKey, broadcastDeviceName } from "./broadcast-agent-auth";
+import { getPairedBroadcastDevice, type BroadcastMatchKind } from "./broadcast-pairing";
 
 export type BroadcastStatus =
   | "NOT_CONFIGURED"
@@ -22,6 +23,8 @@ export type BroadcastStatus =
   | "ERROR";
 
 export type FixtureBroadcast = {
+  deviceKey?: string | null;
+  recoveryUploadId?: string | null;
   matchKind?: "CLAN" | "SOLO";
   fixtureId: string;
   openQueueGameId?: string | null;
@@ -72,7 +75,8 @@ export async function getFixtureBroadcast(
   return data ? normalizeBroadcast(data) : null;
 }
 
-export async function getBroadcastDevice(db: SupabaseClient) {
+export async function getBroadcastDevice(db: SupabaseClient, kind?: BroadcastMatchKind, matchId?: string) {
+  if (kind && matchId) return getPairedBroadcastDevice(db, kind, matchId);
   const key = broadcastDeviceKey();
   const { data, error } = await db
     .from("broadcast_devices")
@@ -151,28 +155,13 @@ export async function queueBroadcastStart(
   fixtureId: string,
   requestedBy: string,
 ) {
-  const deviceKey = await ensureBroadcastDevice(db);
   const broadcast = await ensureFixtureBroadcast(db, fixtureId, requestedBy);
   if (!broadcast.liveInputId) throw new Error("Broadcast input is unavailable.");
 
   await setCloudflareLiveInputEnabled(broadcast.liveInputId, true);
-  await failActiveCommands(db, fixtureId, "STOP_STREAM", "Superseded by start.");
-  await queueCommand(db, fixtureId, deviceKey, "START_STREAM", requestedBy);
-
-  const now = new Date().toISOString();
-  const { error } = await db
-    .from("fixture_broadcasts")
-    .update({
-      status: "STARTING",
-      stream_requested_at: now,
-      stream_started_at: null,
-      stream_stopped_at: null,
-      recording_ready_at: null,
-      replay_hls_url: null,
-      active_video_id: null,
-      error_message: null,
-    })
-    .eq("fixture_id", fixtureId);
+  const { error } = await db.rpc("reserve_broadcast_start", {
+    actor_id: requestedBy, kind: "CLAN", target_id: fixtureId,
+  });
 
   if (error) throw new Error(`Could not start broadcast: ${error.message}`);
   return getFixtureBroadcast(db, fixtureId);
@@ -186,11 +175,11 @@ export async function queueBroadcastStop(
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
   if (!broadcast?.liveInputId) return null;
-  if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+  if (broadcast.streamStoppedAt) {
     return broadcast;
   }
 
-  const deviceKey = await ensureBroadcastDevice(db);
+  const deviceKey = broadcast.deviceKey ?? await ensureBroadcastDevice(db);
   await failActiveCommands(db, fixtureId, "START_STREAM", "Superseded by stop.");
 
   const availableAt = new Date(Date.now() + delaySeconds * 1000).toISOString();
@@ -230,8 +219,7 @@ export async function queueBroadcastStop(
     .from("fixture_broadcasts")
     .update({ status: "STOPPING", error_message: null })
     .eq("fixture_id", fixtureId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY");
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not stop broadcast: ${error.message}`);
 
   return getFixtureBroadcast(db, fixtureId);
@@ -240,17 +228,19 @@ export async function queueBroadcastStop(
 export async function syncBroadcastFromCloudflare(
   db: SupabaseClient,
   fixtureId: string,
+  throwOnError = false,
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
-  if (!broadcast?.liveInputId) return broadcast;
+  if (!broadcast?.liveInputId || broadcast.recoveryUploadId ||
+    (broadcast.streamStoppedAt && broadcast.status === "REPLAY_READY")) return broadcast;
 
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
-    if (lifecycle.live) {
+    if (lifecycle.live && !broadcast.streamStoppedAt) {
       // Cloudflare can report the previous live lifecycle briefly after OBS stops.
-      // Once our stop is recorded (or its replay is ready), LIVE is no longer a
-      // valid state for this broadcast.
-      if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+      // Once our stop is recorded, LIVE is no longer valid. A ready segment
+      // alone is not terminal: Cloudflare may finalize one during a disconnect.
+      if (broadcast.status === "STOPPING") {
         return broadcast;
       }
       let providerStartedAt: string | null = null;
@@ -266,6 +256,8 @@ export async function syncBroadcastFromCloudflare(
         .update({
           status: "LIVE",
           active_video_id: lifecycle.videoUID,
+          replay_hls_url: null,
+          recording_ready_at: null,
           stream_started_at:
             providerStartedAt ??
             broadcast.streamStartedAt ??
@@ -273,37 +265,31 @@ export async function syncBroadcastFromCloudflare(
           error_message: null,
         })
         .eq("fixture_id", fixtureId)
+        .is("recovery_upload_id", null)
         .is("stream_stopped_at", null)
-        .neq("status", "REPLAY_READY");
+        .neq("status", "STOPPING");
       if (error) throw error;
       return getFixtureBroadcast(db, fixtureId);
     }
 
-    let activeVideoId = broadcast.activeVideoId;
-    if (
-      !activeVideoId &&
-      ["STARTING", "LIVE", "STOPPING", "PROCESSING"].includes(
-        broadcast.status,
-      )
-    ) {
-      const recordings = await listCloudflareLiveInputVideos(
-        broadcast.liveInputId,
-      );
-      const latest = recordings
-        .filter((video) => Boolean(video.uid))
-        .sort((left, right) =>
-          (right.created ?? "").localeCompare(left.created ?? ""),
-        )[0];
-      activeVideoId = latest?.uid ?? null;
-
-      if (activeVideoId) {
-        const { error } = await db
-          .from("fixture_broadcasts")
-          .update({ active_video_id: activeVideoId })
-          .eq("fixture_id", fixtureId);
+    // A provider disconnect can finish a segment while OBS is still reconnecting.
+    // Keep the session stoppable until the laptop acknowledges an intentional stop.
+    if (!broadcast.streamStoppedAt) {
+      if (["STARTING", "LIVE", "PROCESSING", "REPLAY_READY"].includes(broadcast.status)) {
+        const { error } = await db.from("fixture_broadcasts")
+          .update({ status: "STARTING", replay_hls_url: null, recording_ready_at: null })
+          .eq("fixture_id", fixtureId)
+          .is("recovery_upload_id", null)
+          .is("stream_stopped_at", null)
+          .neq("status", "STOPPING");
         if (error) throw error;
       }
+      return getFixtureBroadcast(db, fixtureId);
     }
+
+    const activeVideoId = await refreshStoppedRecording(
+      db, "fixture_broadcasts", "fixture_id", fixtureId, broadcast,
+    );
 
     if (activeVideoId) {
       const video = await getCloudflareVideo(activeVideoId);
@@ -321,30 +307,21 @@ export async function syncBroadcastFromCloudflare(
             error_message:
               video.status.errorReasonText ?? "Cloudflare could not process the recording.",
           })
-          .eq("fixture_id", fixtureId);
+          .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
         if (error) throw error;
         return getFixtureBroadcast(db, fixtureId);
       }
 
       if (isReady) {
         const readyAt = new Date().toISOString();
-        const { error } = await db
-          .from("fixture_broadcasts")
-          .update({
-            status: "REPLAY_READY",
-            active_video_id: activeVideoId,
-            replay_hls_url: replayUrl,
-            recording_ready_at: readyAt,
-            error_message: null,
-          })
-          .eq("fixture_id", fixtureId);
+        const { error } = await db.rpc("sync_broadcast_replay", {
+          kind: "CLAN", target_id: fixtureId, video_id: activeVideoId,
+          replay_url: replayUrl, ready_at: readyAt,
+          recording_started_at: validRecordingTimestamp(video?.created),
+          expected_requested_at: broadcast.streamRequestedAt,
+          expected_input_id: broadcast.liveInputId,
+        });
         if (error) throw error;
-
-        const { error: fixtureError } = await db
-          .from("fixtures")
-          .update({ video_url: replayUrl })
-          .eq("id", fixtureId);
-        if (fixtureError) throw fixtureError;
         return getFixtureBroadcast(db, fixtureId);
       }
 
@@ -354,7 +331,7 @@ export async function syncBroadcastFromCloudflare(
         const { error } = await db
           .from("fixture_broadcasts")
           .update({ status: "PROCESSING", replay_hls_url: replayUrl })
-          .eq("fixture_id", fixtureId);
+          .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
         if (error) throw error;
       }
     }
@@ -363,7 +340,8 @@ export async function syncBroadcastFromCloudflare(
     await db
       .from("fixture_broadcasts")
       .update({ error_message: message })
-      .eq("fixture_id", fixtureId);
+      .eq("fixture_id", fixtureId).is("recovery_upload_id", null);
+    if (throwOnError) throw error;
   }
 
   return getFixtureBroadcast(db, fixtureId);
@@ -387,14 +365,8 @@ export async function ensureOpenQueueBroadcast(
   gameId: string,
   requestedBy: string,
 ) {
-  const { data: game, error: gameError } = await db
-    .from("open_queue_games")
-    .select("id,status")
-    .eq("id", gameId)
-    .single();
-  if (gameError) throw new Error(`Could not load solo game: ${gameError.message}`);
-  if (!["FULL", "LIVE"].includes(String(game.status))) {
-    throw new Error("Only a full or live solo game can be streamed.");
+  if (!await isOpenQueueStreamReady(db, gameId)) {
+    throw new Error("Assign teams and reach this game’s minimum within its start window before streaming.");
   }
 
   const existing = await getOpenQueueBroadcast(db, gameId);
@@ -420,33 +392,25 @@ export async function ensureOpenQueueBroadcast(
   return normalizeOpenQueueBroadcast(data);
 }
 
+export async function isOpenQueueStreamReady(db: SupabaseClient, gameId: string): Promise<boolean> {
+  const { data, error } = await db.rpc("solo_game_stream_ready", { game_id_to_use: gameId });
+  if (error) throw new Error(`Could not check solo stream readiness: ${error.message}`);
+  if (typeof data !== "boolean") throw new Error("The solo stream readiness response was invalid. Refresh the match.");
+  return data;
+}
+
 export async function queueOpenQueueBroadcastStart(
   db: SupabaseClient,
   gameId: string,
   requestedBy: string,
 ) {
-  const deviceKey = await ensureBroadcastDevice(db);
   const broadcast = await ensureOpenQueueBroadcast(db, gameId, requestedBy);
   if (!broadcast.liveInputId) throw new Error("Broadcast input is unavailable.");
 
   await setCloudflareLiveInputEnabled(broadcast.liveInputId, true);
-  await failActiveOpenQueueCommands(
-    db,
-    gameId,
-    "STOP_STREAM",
-    "Superseded by start.",
-  );
-  await queueOpenQueueCommand(db, gameId, deviceKey, "START_STREAM", requestedBy);
-  const { error } = await db.from("open_queue_broadcasts").update({
-    status: "STARTING",
-    stream_requested_at: new Date().toISOString(),
-    stream_started_at: null,
-    stream_stopped_at: null,
-    recording_ready_at: null,
-    replay_hls_url: null,
-    active_video_id: null,
-    error_message: null,
-  }).eq("game_id", gameId);
+  const { error } = await db.rpc("reserve_broadcast_start", {
+    actor_id: requestedBy, kind: "SOLO", target_id: gameId,
+  });
   if (error) throw new Error(`Could not start solo broadcast: ${error.message}`);
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -459,11 +423,11 @@ export async function queueOpenQueueBroadcastStop(
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
   if (!broadcast?.liveInputId) return null;
-  if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+  if (broadcast.streamStoppedAt) {
     return broadcast;
   }
 
-  const deviceKey = await ensureBroadcastDevice(db);
+  const deviceKey = broadcast.deviceKey ?? await ensureBroadcastDevice(db);
   await failActiveOpenQueueCommands(
     db,
     gameId,
@@ -501,8 +465,7 @@ export async function queueOpenQueueBroadcastStop(
   const { error } = await db.from("open_queue_broadcasts")
     .update({ status: "STOPPING", error_message: null })
     .eq("game_id", gameId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY");
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not stop solo broadcast: ${error.message}`);
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -510,14 +473,16 @@ export async function queueOpenQueueBroadcastStop(
 export async function syncOpenQueueBroadcastFromCloudflare(
   db: SupabaseClient,
   gameId: string,
+  throwOnError = false,
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
-  if (!broadcast?.liveInputId) return broadcast;
+  if (!broadcast?.liveInputId || broadcast.recoveryUploadId ||
+    (broadcast.streamStoppedAt && broadcast.status === "REPLAY_READY")) return broadcast;
 
   try {
     const lifecycle = await getCloudflareLifecycle(broadcast.liveInputId);
-    if (lifecycle.live) {
-      if (broadcast.streamStoppedAt || broadcast.status === "REPLAY_READY") {
+    if (lifecycle.live && !broadcast.streamStoppedAt) {
+      if (broadcast.status === "STOPPING") {
         return broadcast;
       }
       let providerStartedAt: string | null = null;
@@ -528,34 +493,38 @@ export async function syncOpenQueueBroadcastFromCloudflare(
       const { error } = await db.from("open_queue_broadcasts").update({
         status: "LIVE",
         active_video_id: lifecycle.videoUID,
+        replay_hls_url: null,
+        recording_ready_at: null,
         stream_started_at:
           providerStartedAt ?? broadcast.streamStartedAt ?? new Date().toISOString(),
         error_message: null,
       })
         .eq("game_id", gameId)
+        .is("recovery_upload_id", null)
         .is("stream_stopped_at", null)
-        .neq("status", "REPLAY_READY");
+        .neq("status", "STOPPING");
       if (error) throw error;
       return getOpenQueueBroadcast(db, gameId);
     }
 
-    let activeVideoId = broadcast.activeVideoId;
-    if (
-      !activeVideoId &&
-      ["STARTING", "LIVE", "STOPPING", "PROCESSING"].includes(broadcast.status)
-    ) {
-      const recordings = await listCloudflareLiveInputVideos(broadcast.liveInputId);
-      activeVideoId = recordings
-        .filter((video) => Boolean(video.uid))
-        .sort((left, right) => (right.created ?? "").localeCompare(left.created ?? ""))[0]
-        ?.uid ?? null;
-      if (activeVideoId) {
+    // A provider disconnect can finish a segment while OBS is still reconnecting.
+    // Keep the session stoppable until the laptop acknowledges an intentional stop.
+    if (!broadcast.streamStoppedAt) {
+      if (["STARTING", "LIVE", "PROCESSING", "REPLAY_READY"].includes(broadcast.status)) {
         const { error } = await db.from("open_queue_broadcasts")
-          .update({ active_video_id: activeVideoId })
-          .eq("game_id", gameId);
+          .update({ status: "STARTING", replay_hls_url: null, recording_ready_at: null })
+          .eq("game_id", gameId)
+          .is("recovery_upload_id", null)
+          .is("stream_stopped_at", null)
+          .neq("status", "STOPPING");
         if (error) throw error;
       }
+      return getOpenQueueBroadcast(db, gameId);
     }
+
+    const activeVideoId = await refreshStoppedRecording(
+      db, "open_queue_broadcasts", "game_id", gameId, broadcast,
+    );
 
     if (activeVideoId) {
       const video = await getCloudflareVideo(activeVideoId);
@@ -566,38 +535,35 @@ export async function syncOpenQueueBroadcastFromCloudflare(
           active_video_id: activeVideoId,
           error_message:
             video.status.errorReasonText ?? "Cloudflare could not process the recording.",
-        }).eq("game_id", gameId);
+        }).eq("game_id", gameId).is("recovery_upload_id", null);
         if (error) throw error;
         return getOpenQueueBroadcast(db, gameId);
       }
 
       if (video?.readyToStream === true || video?.status?.state === "ready") {
-        const { error } = await db.from("open_queue_broadcasts").update({
-          status: "REPLAY_READY",
-          active_video_id: activeVideoId,
-          replay_hls_url: replayUrl,
-          recording_ready_at: new Date().toISOString(),
-          error_message: null,
-        }).eq("game_id", gameId);
+        const { error } = await db.rpc("sync_broadcast_replay", {
+          kind: "SOLO", target_id: gameId, video_id: activeVideoId,
+          replay_url: replayUrl, ready_at: new Date().toISOString(),
+          recording_started_at: validRecordingTimestamp(video?.created),
+          expected_requested_at: broadcast.streamRequestedAt,
+          expected_input_id: broadcast.liveInputId,
+        });
         if (error) throw error;
-        const { error: gameError } = await db.from("open_queue_games")
-          .update({ video_url: replayUrl })
-          .eq("id", gameId);
-        if (gameError) throw gameError;
         return getOpenQueueBroadcast(db, gameId);
       }
 
       if (["LIVE", "STOPPING", "PROCESSING"].includes(broadcast.status)) {
         const { error } = await db.from("open_queue_broadcasts")
           .update({ status: "PROCESSING", replay_hls_url: replayUrl })
-          .eq("game_id", gameId);
+          .eq("game_id", gameId).is("recovery_upload_id", null);
         if (error) throw error;
       }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Stream status failed.";
     await db.from("open_queue_broadcasts").update({ error_message: message })
-      .eq("game_id", gameId);
+      .eq("game_id", gameId).is("recovery_upload_id", null);
+    if (throwOnError) throw error;
   }
   return getOpenQueueBroadcast(db, gameId);
 }
@@ -615,16 +581,18 @@ export async function markBroadcastStopped(
   fixtureId: string,
 ) {
   const broadcast = await getFixtureBroadcast(db, fixtureId);
-  if (!broadcast?.liveInputId || broadcast.streamStoppedAt) return;
-
-  if (broadcast.status !== "REPLAY_READY") {
-    await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
+  if (!broadcast?.liveInputId) return;
+  if (broadcast.streamStoppedAt) {
+    await syncBroadcastFromCloudflare(db, fixtureId, true);
+    return;
   }
+
+  await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
   const stoppedAt = new Date().toISOString();
   const replayUrl = broadcast.replayHlsUrl ?? (broadcast.activeVideoId
     ? cloudflareHlsUrl(broadcast.activeVideoId)
     : null);
-  const { data: marked, error } = await db
+  const { error } = await db
     .from("fixture_broadcasts")
     .update({
       status: "PROCESSING",
@@ -633,22 +601,11 @@ export async function markBroadcastStopped(
       error_message: null,
     })
     .eq("fixture_id", fixtureId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY")
-    .select("fixture_id")
-    .maybeSingle();
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not save stopped broadcast: ${error.message}`);
-  if (marked) return;
-
-  const { error: replayReadyError } = await db
-    .from("fixture_broadcasts")
-    .update({ stream_stopped_at: stoppedAt })
-    .eq("fixture_id", fixtureId)
-    .is("stream_stopped_at", null)
-    .eq("status", "REPLAY_READY");
-  if (replayReadyError) {
-    throw new Error(`Could not save stopped broadcast: ${replayReadyError.message}`);
-  }
+  // A ready callback may have arrived before the stop acknowledgement.
+  // Reconcile here; a repeated acknowledgement retries any provider failure.
+  await syncBroadcastFromCloudflare(db, fixtureId, true);
 }
 
 export async function markOpenQueueBroadcastStopped(
@@ -656,39 +613,26 @@ export async function markOpenQueueBroadcastStopped(
   gameId: string,
 ) {
   const broadcast = await getOpenQueueBroadcast(db, gameId);
-  if (!broadcast?.liveInputId || broadcast.streamStoppedAt) return;
-  if (broadcast.status !== "REPLAY_READY") {
-    await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
+  if (!broadcast?.liveInputId) return;
+  if (broadcast.streamStoppedAt) {
+    await syncOpenQueueBroadcastFromCloudflare(db, gameId, true);
+    return;
   }
+  await setCloudflareLiveInputEnabled(broadcast.liveInputId, false);
   const stoppedAt = new Date().toISOString();
   const replayUrl = broadcast.replayHlsUrl ?? (broadcast.activeVideoId
     ? cloudflareHlsUrl(broadcast.activeVideoId)
     : null);
-  const { data: marked, error } = await db.from("open_queue_broadcasts").update({
+  const { error } = await db.from("open_queue_broadcasts").update({
     status: "PROCESSING",
     stream_stopped_at: stoppedAt,
     replay_hls_url: replayUrl,
     error_message: null,
   })
     .eq("game_id", gameId)
-    .is("stream_stopped_at", null)
-    .neq("status", "REPLAY_READY")
-    .select("game_id")
-    .maybeSingle();
+    .is("stream_stopped_at", null);
   if (error) throw new Error(`Could not save stopped solo broadcast: ${error.message}`);
-  if (marked) return;
-
-  const { error: replayReadyError } = await db
-    .from("open_queue_broadcasts")
-    .update({ stream_stopped_at: stoppedAt })
-    .eq("game_id", gameId)
-    .is("stream_stopped_at", null)
-    .eq("status", "REPLAY_READY");
-  if (replayReadyError) {
-    throw new Error(
-      `Could not save stopped solo broadcast: ${replayReadyError.message}`,
-    );
-  }
+  await syncOpenQueueBroadcastFromCloudflare(db, gameId, true);
 }
 
 async function loadFixtureForBroadcast(
@@ -826,8 +770,47 @@ async function failActiveOpenQueueCommands(
   if (error) throw new Error(`Could not clear camera command: ${error.message}`);
 }
 
+// A reconnect may create a new segment before a live poll observes its UID.
+// On stop, discover the latest recording in this generation rather than
+// publishing the previously observed partial segment. Compare-and-set prevents
+// a delayed provider response from replacing a newer or recovered source.
+async function refreshStoppedRecording(
+  db: SupabaseClient,
+  table: "fixture_broadcasts" | "open_queue_broadcasts",
+  idColumn: "fixture_id" | "game_id",
+  matchId: string,
+  broadcast: FixtureBroadcast,
+): Promise<string | null> {
+  const recordings = await listCloudflareLiveInputVideos(broadcast.liveInputId!);
+  const earliest = Math.max(
+    broadcast.streamRequestedAt ? Date.parse(broadcast.streamRequestedAt) - 60_000 : 0,
+    broadcast.streamStartedAt ? Date.parse(broadcast.streamStartedAt) : 0,
+  );
+  const latest = recordings.filter(video => Boolean(video.uid) &&
+    (video.uid === broadcast.activeVideoId ||
+      (video.created && Date.parse(video.created) >= earliest)))
+    .sort((left, right) => (right.created ?? "").localeCompare(left.created ?? ""))[0];
+  if (!latest?.uid || latest.uid === broadcast.activeVideoId) return broadcast.activeVideoId;
+  let update = db.from(table).update({
+    active_video_id: latest.uid,
+    stream_started_at: validRecordingTimestamp(latest.created) ?? broadcast.streamStartedAt,
+    replay_hls_url: null,
+    recording_ready_at: null,
+  }).eq(idColumn, matchId).is("recovery_upload_id", null)
+    .eq("stream_stopped_at", broadcast.streamStoppedAt!)
+    .eq("live_input_id", broadcast.liveInputId!)
+    .neq("status", "REPLAY_READY");
+  update = broadcast.activeVideoId ? update.eq("active_video_id", broadcast.activeVideoId) : update.is("active_video_id", null);
+  update = broadcast.streamRequestedAt ? update.eq("stream_requested_at", broadcast.streamRequestedAt) : update.is("stream_requested_at", null);
+  const { data, error } = await update.select(idColumn).maybeSingle();
+  if (error) throw error;
+  return data ? latest.uid : null;
+}
+
 function normalizeBroadcast(row: Record<string, unknown>): FixtureBroadcast {
   return {
+    deviceKey: nullableString(row.device_key),
+    recoveryUploadId: nullableString(row.recovery_upload_id),
     matchKind: "CLAN",
     fixtureId: String(row.fixture_id),
     openQueueGameId: null,
@@ -849,6 +832,8 @@ function normalizeOpenQueueBroadcast(
 ): FixtureBroadcast {
   const gameId = String(row.game_id);
   return {
+    deviceKey: nullableString(row.device_key),
+    recoveryUploadId: nullableString(row.recovery_upload_id),
     matchKind: "SOLO",
     fixtureId: gameId,
     openQueueGameId: gameId,

@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'fieldrush_check_in_notice.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
 import '../reliability/reliability_deadline_notice.dart';
 import 'open_queue.dart';
+import 'fieldrush_game_loading.dart';
 import 'open_queue_booking_screen.dart';
 import 'open_queue_repository.dart';
 
@@ -49,8 +52,8 @@ class OpenQueueReviewScreen extends StatelessWidget {
     final rows = [
       _ReviewRow(
         Icons.schedule_rounded,
-        'TIME',
-        '${game.dateGroup} · ${game.timeLabel}',
+        game.isUpcoming ? 'CHECK-IN' : 'TIME',
+        '${game.displayDateGroup} · ${game.isUpcoming ? 'Check-in ' : ''}${game.isUpcoming ? game.displayTimeLabel : game.timeLabel}',
       ),
       _ReviewRow(Icons.location_on_outlined, 'VENUE', game.venue),
       _ReviewRow(
@@ -96,8 +99,14 @@ class OpenQueueReviewScreen extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            if (game.isUpcoming) ...[
+              FieldrushCheckInNotice(game: game),
+              const SizedBox(height: 16),
+            ],
             if (repository is OpenQueueReliabilityLookupRepository) ...[
               ReliabilityDeadlineNotice(
+                timezone: game.timezone,
+                showDeadline: !game.isUpcoming,
                 load: () => (repository as OpenQueueReliabilityLookupRepository)
                     .getMatchReliabilityContext(game.id),
               ),
@@ -246,7 +255,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
       final booking = await widget.repository.bookGame(
         game: widget.game,
         role: widget.role,
-        paymentMethod: 'TAP_CHECKOUT',
+        paymentMethod: 'STRIPE',
       );
       if (!mounted) return;
       await Navigator.of(context).push<void>(
@@ -289,6 +298,13 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final walletName = kIsWeb
+        ? null
+        : switch (defaultTargetPlatform) {
+            TargetPlatform.android => 'Google Pay',
+            TargetPlatform.iOS => 'Apple Pay',
+            _ => null,
+          };
     return Scaffold(
       extendBody: true,
       backgroundColor: fieldBackground,
@@ -322,7 +338,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                   SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      'SECURE TAP CHECKOUT',
+                      'SECURE CHECKOUT',
                       style: TextStyle(
                         color: fieldEmerald700,
                         fontSize: 11,
@@ -352,14 +368,20 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                 borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: fieldGray100),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.apple_rounded, color: fieldGray900, size: 22),
-                  SizedBox(width: 11),
+                  const Icon(
+                    Icons.credit_card_rounded,
+                    color: fieldGray900,
+                    size: 22,
+                  ),
+                  const SizedBox(width: 11),
                   Expanded(
                     child: Text(
-                      'BenefitPay · Visa · Mastercard',
-                      style: TextStyle(
+                      walletName == null
+                          ? 'Visa · Mastercard'
+                          : '$walletName · Visa · Mastercard',
+                      style: const TextStyle(
                         color: fieldGray900,
                         fontSize: 13,
                         fontWeight: FontWeight.w800,
@@ -381,7 +403,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                 const SizedBox(width: 6),
                 const Expanded(
                   child: Text(
-                    'Before any cancellation, Field shows the exact wallet refund, reliability strikes, and deposit outcome calculated using server time.',
+                    'Before any cancellation, Fieldrush shows the exact refund, reliability strikes, and deposit outcome. Refunds return to your original payment method.',
                     style: TextStyle(
                       color: fieldGray400,
                       fontSize: 11,
@@ -415,14 +437,7 @@ class _OpenQueuePaymentScreenState extends State<_OpenQueuePaymentScreen> {
                 ),
               ),
               child: _processing
-                  ? const SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2.5,
-                      ),
-                    )
+                  ? const Text('Processing payment…')
                   : Text(
                       'Continue to Pay · ${_costPreview?.totalLabel ?? 'Checking total…'}',
                       style: const TextStyle(fontWeight: FontWeight.w900),
@@ -528,7 +543,7 @@ class _PaymentSummary extends StatelessWidget {
         children: [
           _summaryLine(
             Icons.schedule_rounded,
-            '${game.dateGroup} · ${game.timeLabel}',
+            '${game.displayDateGroup} · ${game.isUpcoming ? 'Check-in ' : ''}${game.isUpcoming ? game.displayTimeLabel : game.timeLabel}',
           ),
           _summaryLine(Icons.location_on_outlined, game.venue),
           _summaryLine(Icons.person_rounded, role.label),
@@ -605,7 +620,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
               .previewBookingCost(gameId: widget.game.id, role: widget.role)
         : Future.value(
             OpenQueueBookingCostPreview(
-              currency: 'BHD',
+              currency: widget.game.currency,
               standardMatchFeeFils: widget.game.priceFils,
               replacementDiscountBps: 0,
               discountAmountFils: 0,
@@ -654,25 +669,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
               ),
               const SizedBox(height: 13),
               if (snapshot.connectionState == ConnectionState.waiting)
-                const Row(
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'Checking your exact total…',
-                        style: TextStyle(
-                          color: fieldGray600,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ],
-                )
+                const FieldrushPriceLoading()
               else if (snapshot.hasError || preview == null) ...[
                 const Text(
                   'We could not verify the exact price. Refresh before booking.',
@@ -709,7 +706,7 @@ class _BookingCostPanelState extends State<_BookingCostPanel> {
                   const Padding(
                     padding: EdgeInsets.only(top: 5),
                     child: Text(
-                      'Returned to your Field Wallet after the referee records your on-time arrival.',
+                      'Refunded to your original payment method after the referee records your on-time arrival.',
                       style: TextStyle(
                         color: fieldGray500,
                         fontSize: 11,

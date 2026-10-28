@@ -8,6 +8,7 @@
     "start": "next start",
     "test": "node --test test/*.test.mjs",
     "test:e2e": "playwright test",
+    "test:ui": "playwright test --config=playwright.ui.config.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

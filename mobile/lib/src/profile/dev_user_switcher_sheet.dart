@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 
-import '../clans/clan_widgets.dart';
+import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
+import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 
@@ -12,11 +16,8 @@ Future<void> showDevUserSwitcher({
   required String currentUserId,
   required Future<void> Function(String profileId) onSwitchUser,
 }) {
-  return showModalBottomSheet<void>(
+  return showFieldrushModal<void>(
     context: context,
-    isScrollControlled: true,
-    useSafeArea: true,
-    backgroundColor: Colors.transparent,
     builder: (_) => _DevUserSwitcherSheet(
       profileRepository: profileRepository,
       currentUserId: currentUserId,
@@ -82,7 +83,7 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
       eyebrow: 'Swap profile',
       title: 'Continue as ${profile.displayName}?',
       message:
-          'The app will reload this user’s profile, bookings, and clan access.',
+          'Open this staging account for up to 15 minutes. Actions affect its staging data. Restart the app or choose your admin profile to return.',
       detail: profile.username.isEmpty
           ? profile.displayName
           : '@${profile.username}',
@@ -98,14 +99,11 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _switchingUserId = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not switch to that user. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not switch to that user. Try again.',
         ),
       );
     }
@@ -113,128 +111,97 @@ class _DevUserSwitcherSheetState extends State<_DevUserSwitcherSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
-
-    return FractionallySizedBox(
-      heightFactor: 0.88,
-      child: DecoratedBox(
-        decoration: const BoxDecoration(
-          color: Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        child: Column(
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: fieldGray300,
-                borderRadius: BorderRadius.circular(2),
-              ),
+    return FieldrushModal(
+      key: const ValueKey('dev-user-switcher-sheet'),
+      title: 'Swap profile',
+      eyebrow: 'Staging admin only',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            key: const ValueKey('dev-user-search'),
+            controller: _searchController,
+            autofocus: false,
+            textInputAction: TextInputAction.search,
+            style: FieldrushModal.bodyStyle.copyWith(
+              color: FieldrushAuthTheme.ink,
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 12, 12),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Swap profile',
-                      style: TextStyle(
-                        color: fieldGray900,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
+            decoration: InputDecoration(
+              hintText: 'Search profiles',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _query.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: _searchController.clear,
+                      icon: const Icon(Icons.close_rounded),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    onPressed: _switchingUserId == null
-                        ? () => Navigator.of(context).pop()
-                        : null,
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: TextField(
-                controller: _searchController,
-                autofocus: false,
-                textInputAction: TextInputAction.search,
-                decoration: InputDecoration(
-                  hintText: 'Search profiles',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: _query.isEmpty
-                      ? null
-                      : IconButton(
-                          tooltip: 'Clear search',
-                          onPressed: _searchController.clear,
-                          icon: const Icon(Icons.close_rounded),
-                        ),
-                  filled: true,
-                  fillColor: Colors.white,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 14),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: fieldGray200),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
-                    borderSide: const BorderSide(color: fieldGray200),
-                  ),
+          ),
+          const SizedBox(height: 14),
+          FutureBuilder<List<DevProfileOption>>(
+            future: _profilesFuture,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const FieldLoadingContent(
+                  label: 'Loading profiles',
+                  rows: 4,
+                  compact: true,
+                );
+              }
+              if (snapshot.hasError || !snapshot.hasData) {
+                return _SwitcherError(onRetry: _retry);
+              }
+              final profiles = snapshot.data!;
+              final filtered = _query.isEmpty
+                  ? profiles
+                  : profiles
+                        .where(
+                          (profile) => profile.searchableText.contains(_query),
+                        )
+                        .toList();
+              if (filtered.isEmpty) return const _EmptySearch();
+              return DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border.all(color: FieldrushAuthTheme.border),
+                  borderRadius: BorderRadius.circular(18),
                 ),
-              ),
-            ),
-            Expanded(
-              child: FutureBuilder<List<DevProfileOption>>(
-                future: _profilesFuture,
-                builder: (context, snapshot) {
-                  if (snapshot.connectionState != ConnectionState.done) {
-                    return const _SwitcherSkeleton();
-                  }
-                  if (snapshot.hasError || !snapshot.hasData) {
-                    return _SwitcherError(onRetry: _retry);
-                  }
-
-                  final profiles = snapshot.data!;
-                  final filtered = _query.isEmpty
-                      ? profiles
-                      : profiles
-                            .where(
-                              (profile) =>
-                                  profile.searchableText.contains(_query),
-                            )
-                            .toList();
-                  if (filtered.isEmpty) {
-                    return const _EmptySearch();
-                  }
-
-                  return ListView.separated(
-                    keyboardDismissBehavior:
-                        ScrollViewKeyboardDismissBehavior.onDrag,
-                    padding: EdgeInsets.fromLTRB(12, 0, 12, 16 + keyboardInset),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1, indent: 68),
-                    itemBuilder: (context, index) {
-                      final profile = filtered[index];
-                      return _ProfileOptionRow(
-                        profile: profile,
-                        isCurrent: profile.id == widget.currentUserId,
-                        isSwitching: profile.id == _switchingUserId,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var index = 0; index < filtered.length; index++) ...[
+                      if (index > 0)
+                        const Divider(
+                          height: 1,
+                          color: FieldrushAuthTheme.border,
+                        ),
+                      _ProfileOptionRow(
+                        profile: filtered[index],
+                        isCurrent: filtered[index].id == widget.currentUserId,
+                        isSwitching: filtered[index].id == _switchingUserId,
                         enabled: _switchingUserId == null,
-                        onTap: () => _switchUser(profile),
-                      );
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+                        onTap: () => _switchUser(filtered[index]),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            },
+          ),
+        ],
       ),
+      actions: [
+        OutlinedButton(
+          key: const ValueKey('dev-user-switcher-close'),
+          onPressed: _switchingUserId == null
+              ? () => Navigator.of(context).pop()
+              : null,
+          style: FieldrushModal.secondaryButtonStyle(),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }
@@ -266,11 +233,12 @@ class _ProfileOptionRow extends StatelessWidget {
     ].join('  |  ');
 
     return Material(
-      color: isCurrent ? fieldGray100 : Colors.transparent,
-      borderRadius: BorderRadius.circular(8),
+      color: isCurrent ? FieldrushAuthTheme.watermark : Colors.transparent,
+      borderRadius: BorderRadius.circular(18),
       child: InkWell(
+        key: ValueKey('dev-user-option-${profile.id}'),
         onTap: enabled && !isCurrent ? onTap : null,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(18),
         child: SizedBox(
           height: 72,
           child: Padding(
@@ -289,8 +257,9 @@ class _ProfileOptionRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: fieldGray900,
-                          fontSize: 15,
+                          fontFamily: 'PlusJakartaSans',
+                          color: FieldrushAuthTheme.ink,
+                          fontSize: 13,
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -300,9 +269,10 @@ class _ProfileOptionRow extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: fieldGray500,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
+                          fontFamily: 'PlusJakartaSans',
+                          color: FieldrushAuthTheme.muted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
                         ),
                       ),
                     ],
@@ -313,7 +283,8 @@ class _ProfileOptionRow extends StatelessWidget {
                   const Text(
                     'CURRENT',
                     style: TextStyle(
-                      color: fieldEmerald600,
+                      fontFamily: 'PlusJakartaSans',
+                      color: FieldrushAuthTheme.forest,
                       fontSize: 10,
                       fontWeight: FontWeight.w900,
                     ),
@@ -323,7 +294,9 @@ class _ProfileOptionRow extends StatelessWidget {
                     isSwitching
                         ? Icons.hourglass_top_rounded
                         : Icons.login_rounded,
-                    color: isSwitching ? fieldEmerald600 : fieldGray400,
+                    color: isSwitching
+                        ? FieldrushAuthTheme.forest
+                        : FieldrushAuthTheme.muted,
                     size: 21,
                   ),
               ],
@@ -344,13 +317,14 @@ class _SwitchAvatar extends StatelessWidget {
   Widget build(BuildContext context) {
     final fallback = DecoratedBox(
       decoration: const BoxDecoration(
-        gradient: LinearGradient(colors: [fieldEmerald500, fieldBlue600]),
+        color: FieldrushAuthTheme.forest,
         shape: BoxShape.circle,
       ),
       child: Center(
         child: Text(
           profile.initials,
           style: const TextStyle(
+            fontFamily: 'Outfit',
             color: Colors.white,
             fontSize: 15,
             fontWeight: FontWeight.w900,
@@ -363,42 +337,11 @@ class _SwitchAvatar extends StatelessWidget {
       width: 44,
       height: 44,
       child: ClipOval(
-        child: profile.avatarUrl == null || profile.avatarUrl!.isEmpty
-            ? fallback
-            : Image.network(
-                profile.avatarUrl!,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => fallback,
-              ),
-      ),
-    );
-  }
-}
-
-class _SwitcherSkeleton extends StatelessWidget {
-  const _SwitcherSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      itemCount: 7,
-      separatorBuilder: (_, __) => const SizedBox(height: 14),
-      itemBuilder: (_, __) => const Row(
-        children: [
-          FieldSkeletonBox(width: 44, height: 44, borderRadius: 999),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                FieldSkeletonBox(height: 15, borderRadius: 5),
-                SizedBox(height: 8),
-                FieldSkeletonBox(width: 170, height: 11, borderRadius: 5),
-              ],
-            ),
-          ),
-        ],
+        child: FieldrushAvatarImage(
+          size: 44,
+          url: profile.avatarUrl,
+          fallback: fallback,
+        ),
       ),
     );
   }
@@ -411,12 +354,11 @@ class _SwitcherError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: IconButton.filledTonal(
-        tooltip: 'Retry loading users',
-        onPressed: onRetry,
-        icon: const Icon(Icons.refresh_rounded),
-      ),
+    return OutlinedButton.icon(
+      onPressed: onRetry,
+      style: FieldrushModal.secondaryButtonStyle(),
+      icon: const Icon(Icons.refresh_rounded),
+      label: const Text('Retry loading users'),
     );
   }
 }
@@ -430,7 +372,8 @@ class _EmptySearch extends StatelessWidget {
       child: Text(
         'No users found',
         style: TextStyle(
-          color: fieldGray500,
+          fontFamily: 'PlusJakartaSans',
+          color: FieldrushAuthTheme.muted,
           fontSize: 14,
           fontWeight: FontWeight.w600,
         ),

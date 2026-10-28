@@ -221,7 +221,7 @@ web3 = 30
 enable_signup = true
 # If enabled, a user will be required to confirm any email change on both the old, and new email
 # addresses. If disabled, only the new email is required to confirm.
-double_confirm_changes = true
+double_confirm_changes = false
 # If enabled, users need to confirm their email address before signing in.
 enable_confirmations = false
 # If enabled, users will need to reauthenticate or have logged in recently to change their password.
@@ -414,12 +414,25 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 # JSON string passed through to pg-delta SQL formatting.
 # format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
 
-# Tap signs this server-to-server request with its webhook hashstring rather
-# than a Supabase user JWT. The function validates that HMAC before writing.
-[functions.tap-payment-webhook]
+# Checkout validates the user's token; webhooks verify Stripe's raw-body
+# signature; the recovery worker requires its own server-only secret.
+[functions.stripe-payment]
+verify_jwt = false
+
+[functions.stripe-payment-webhook]
+verify_jwt = false
+
+[functions.stripe-payment-reconcile]
 verify_jwt = false
 
 # ES256 tokens are verified with auth.getUser() inside the handler, followed by
 # an authenticated RPC enforcing recent reauthentication and deletion blockers.
 [functions.fieldrush-delete-account]
+verify_jwt = false
+
+# Protected scheduler only: the handler checks its own constant-time worker
+# bearer secret and exact staging/local environment; a user JWT is not accepted.
+[functions.fieldrush-push-dispatch]
+verify_jwt = false
+[functions.staging-admin-session]
 verify_jwt = false

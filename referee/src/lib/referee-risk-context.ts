@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadRowsForIds } from "./paginated-rows.ts";
 
 import type {
   ModerationRiskLevel,
@@ -11,7 +12,6 @@ type Row = Record<string, unknown>;
 
 const CLOSED_WITHOUT_SIGNAL = new Set(["DISMISSED", "DUPLICATE"]);
 const OPEN_STATUSES = new Set(["OPEN", "TRIAGED", "INVESTIGATING"]);
-const QUERY_CHUNK_SIZE = 80;
 
 type SubjectAccumulator = {
   subjectType: ModerationSubjectType;
@@ -308,21 +308,9 @@ async function loadRowsInChunks(
   ids: string[],
   select: string,
 ): Promise<Row[]> {
-  if (ids.length === 0) return [];
-  const chunks = chunk(ids, QUERY_CHUNK_SIZE);
-  const results = await Promise.all(
-    chunks.map((idsInChunk) =>
-      db.from(table).select(select).in(idColumn, idsInChunk),
-    ),
-  );
-  const loaded: Row[] = [];
-  for (const result of results) {
-    if (result.error) {
-      throw new Error(`Could not load referee safety context: ${result.error.message}`);
-    }
-    loaded.push(...((result.data ?? []) as unknown as Row[]));
-  }
-  return loaded;
+  const loaded = await loadRowsForIds(ids, (batch, from, to) => db.from(table)
+    .select(select).in(idColumn, batch).order("id").range(from, to));
+  return loaded as unknown as Row[];
 }
 
 function subjectKey(type: ModerationSubjectType, id: string) {
@@ -331,14 +319,6 @@ function subjectKey(type: ModerationSubjectType, id: string) {
 
 function unique(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function chunk<T>(values: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += size) {
-    chunks.push(values.slice(index, index + size));
-  }
-  return chunks;
 }
 
 function stringValue(value: unknown) {

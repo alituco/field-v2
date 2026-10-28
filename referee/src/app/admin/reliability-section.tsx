@@ -59,9 +59,9 @@ type FieldSection = {
 };
 
 const FIELD_TOOLTIPS: Record<string, string> = {
-  "attendance.checkInOpenLeadMinutes": "How long before kickoff the app begins reminding players to arrive. Referees can still check players in earlier.",
-  "attendance.checkInLeadMinutes": "Players checked in after this point are recorded as late. The referee remains able to check them in.",
-  "attendance.noShowGraceMinutes": "A missing player becomes a no-show this many minutes after kickoff.",
+  "attendance.checkInOpenLeadMinutes": "Arrival reminder for matches using the general attendance policy. Upcoming solo games use their saved arrival target. Referees can check players in earlier.",
+  "attendance.checkInLeadMinutes": "Controls solo booking and cancellation availability, and the on-time deadline for matches using the general attendance policy. Upcoming solo games have a separate saved late-arrival cutoff.",
+  "attendance.noShowGraceMinutes": "Earlier solo and clan policies use this grace period. Season 0 solo games finalize missing players as no-shows at full time.",
   "attendance.strikeLifetimeDays": "How long a reliability strike remains active before it expires.",
   "attendance.appealWindowHours": "How long a player or clan has to appeal an attendance decision.",
   "solo.teamAssignmentLeadMinutes": "How long before kickoff Field assigns teams and tells confirmed players which kit to wear.",
@@ -70,9 +70,9 @@ const FIELD_TOOLTIPS: Record<string, string> = {
   "solo.highestCrossedOnly": "If one incident crosses several strike thresholds, apply only the strongest newly reached consequence.",
   "solo.outcomes.onTime.strikes": "Reliability strikes applied after an on-time appearance. Normally zero.",
   "solo.outcomes.onTime.refundBps": "Booking-fee refund after an on-time appearance. This does not control returning a reliability deposit.",
-  "solo.outcomes.late.strikes": "Reliability strikes applied when the referee checks a player in after the deadline.",
+  "solo.outcomes.late.strikes": "Default strikes for a late arrival. Upcoming solo games use their saved arrival rule, which applies one strike when the referee records a late arrival.",
   "solo.outcomes.late.refundBps": "Booking-fee refund for a late arrival.",
-  "solo.outcomes.noShow.strikes": "Reliability strikes applied when the player is still missing after the grace period.",
+  "solo.outcomes.noShow.strikes": "Strikes applied when still missing at full time in Season 0 solo games, or after the saved grace period in earlier solo games.",
   "solo.outcomes.noShow.refundBps": "Booking-fee refund for a no-show.",
   "solo.outcomes.fieldCancelled.refundBps": "Booking-fee refund when Field or the venue cancels the match.",
   "solo.reliabilityDeposit.activeStrikeThreshold": "Players at or above this number of active strikes must pay the reliability deposit.",
@@ -104,11 +104,11 @@ const FIELD_TOOLTIPS: Record<string, string> = {
 const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "attendance-clock",
-    title: "Attendance clock",
-    detail: "The referee can start check-in at any time. Server time still decides whether an arrival is on time, late, or a no-show.",
+    title: "Booking and attendance timing",
+    detail: "Referees record when players arrived. Upcoming solo games show their saved arrival target and late cutoff; the settings below also control booking deadlines and general attendance rules.",
     fields: [
       numberField("attendance.checkInOpenLeadMinutes", "Arrival reminder begins", "min before kickoff", 0, 10_080),
-      numberField("attendance.checkInLeadMinutes", "Check-in deadline", "min before kickoff", 0, 1_440),
+      numberField("attendance.checkInLeadMinutes", "Booking / general arrival deadline", "min before kickoff", 0, 1_440),
       numberField("attendance.noShowGraceMinutes", "No-show cutoff", "min after kickoff", 0, 180),
       numberField("attendance.strikeLifetimeDays", "Strike lifetime", "days", 1, 3_650),
       numberField("attendance.appealWindowHours", "Appeal window", "hours", 1, 720),
@@ -117,7 +117,7 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "solo-structure",
     title: "Solo match controls",
-    detail: "Team finalization, party lock, and the refund used when a suspension releases unrelated bookings. Solo remains fixed at six players per side.",
+    detail: "Team finalization, party lock, and the refund used when a suspension releases unrelated bookings. New solo games have seven players per side.",
     fields: [
       numberField("solo.teamAssignmentLeadMinutes", "Assign teams and kits", "min before", 0, 10_080),
       numberField("solo.partyLockLeadMinutes", "Lock parties", "min before", 0, 10_080),
@@ -128,7 +128,7 @@ const FIELD_SECTIONS: FieldSection[] = [
   {
     id: "solo-outcomes",
     title: "Solo attendance outcomes",
-    detail: "One final outcome produces the strike and wallet refund shown here.",
+    detail: "One final outcome produces the strike and refund shown here.",
     fields: [
       numberField("solo.outcomes.onTime.strikes", "On time · strikes", "strikes", 0, 20),
       bpsField("solo.outcomes.onTime.refundBps", "On time · refund", "%", 100),
@@ -420,7 +420,7 @@ export function ReliabilitySection({
       const decision = appealDialog.decision;
       setAppealDialog(null);
       onNotice(decision === "OVERTURN"
-        ? "Appeal approved. The strike and its sanctions were reversed, and wallet corrections were applied."
+        ? "Appeal approved. The strike and its sanctions were reversed, and eligible refunds were recorded for processing."
         : "Appeal reviewed. The original attendance decision remains in place.");
       if (response.warning) onError(response.warning);
     } catch (error) {
@@ -802,7 +802,7 @@ export function ReliabilitySection({
           <blockquote className={styles.appealMessage}>{appealDialog.appeal.message}</blockquote>
           <div className={appealDialog.decision === "OVERTURN" ? styles.modalNotice : styles.modalWarning}>
             {appealDialog.decision === "OVERTURN"
-              ? "This appends a strike reversal, revokes only sanctions caused by this incident, corrects attendance to excused, and returns any eligible refund or forfeited deposit to Field Wallet. Nothing is deleted."
+              ? "This appends a strike reversal, revokes only sanctions caused by this incident, corrects attendance to excused, and returns any eligible refund or forfeited deposit through the original payment method. Historical wallet credits keep their original destination. Nothing is deleted."
               : "The attendance outcome, strike, refund, and related sanctions will remain unchanged. The player will receive your review result."}
           </div>
           <label className={styles.modalField}>
@@ -1069,7 +1069,7 @@ function CancellationRulesCard({ owner, config, issues, onChange }: {
                     label="Fee refunded"
                     maximum={100}
                     onChange={(value) => onChange(refundPath, value)}
-                    tooltip="Percentage of the original booking fee returned to the Field Wallet. 100% means a full fee refund."
+                    tooltip="Percentage of the original booking fee refunded. New card and digital wallet bookings return to their original payment method. 100% means a full fee refund."
                     unit="%"
                     value={Number(getAtPath(config, refundPath))}
                   />
@@ -1392,7 +1392,7 @@ function LockedReliabilityRulesCard({ config }: {
     <details className={`admin-card ${styles.policyGroup}`}>
       <summary><div><span>Locked product and safety rules</span><small>Shown honestly here, but not presented as live controls.</small></div><b>Not editable</b><i>⌄</i></summary>
       <div className={styles.choiceGroups}>
-        <div className={styles.lockedRule}><span>Solo format</span><strong>{config.solo.playersPerSide}-a-side</strong><small>Six players per team, including the goalkeeper.</small></div>
+        <div className={styles.lockedRule}><span>Solo format</span><strong>{config.solo.playersPerSide}-a-side</strong><small>{config.solo.playersPerSide} players per team, including the goalkeeper. Existing bookings keep their original game format.</small></div>
         <div className={styles.lockedRule}><span>Clan format</span><strong>{config.clan.playersPerSide}-a-side</strong><small>Six players per team, including the goalkeeper. Matchday squads may still include substitutes.</small></div>
         <div className={styles.lockedRule}><span>Field cancellation</span><strong>Zero strikes</strong><small>A venue or Field cancellation never becomes a player reliability penalty.</small></div>
         <div className={styles.lockedRule}><span>Verified injury</span><strong>Assigned referee · zero strikes</strong><small>Evidence authority and no-strike treatment are safety invariants, not penalty knobs.</small></div>
@@ -1428,7 +1428,7 @@ function AppealsCard({ config, onChange }: {
   }
   return (
     <details className={`admin-card ${styles.policyGroup}`}>
-      <summary><div><span>Appeals, deposit forfeiture and wallet</span><small>Player-facing exceptions stay explicit and auditable.</small></div><b>Review rules</b><i>⌄</i></summary>
+      <summary><div><span>Appeals, deposit forfeiture and refunds</span><small>Player-facing exceptions stay explicit and auditable.</small></div><b>Review rules</b><i>⌄</i></summary>
       <div className={styles.choiceGroups}>
         <fieldset><legend>Allowed appeal categories</legend><div>
           {RELIABILITY_APPEAL_CATEGORIES.map((category) => (
@@ -1446,7 +1446,7 @@ function AppealsCard({ config, onChange }: {
           ))}
         </div></fieldset>
         <div className={styles.lockedRule}><span>Routine traffic</span><strong>Not automatically excused</strong><small>An admin may still overturn a documented exceptional case. Automatic excusal is intentionally locked off.</small></div>
-        <div className={styles.lockedRule}><span>Refund destination</span><strong>Field wallet · BHD</strong><small>Financial ledger destination is locked for consistency.</small></div>
+        <div className={styles.lockedRule}><span>Refund destination</span><strong>{config.wallet.refundDestination === "FIELD_WALLET" ? "Historical Field Wallet rule" : "Original payment method"}</strong><small>New card and digital wallet payments are refunded to the original payment method, in the booking's currency. Historical wallet credits remain separate. Bank processing can take a few days.</small></div>
       </div>
     </details>
   );
@@ -1676,7 +1676,7 @@ function TimelinePoint({ label, time, tone }: { label: string; time: string; ton
 }
 
 function ReliabilitySkeleton() {
-  return <div className={styles.skeleton}><span /><div><span /><span /><span /></div><section><span /><span /></section></div>;
+  return <div className={styles.skeleton} role="status" aria-label="Loading reliability policy"><span aria-hidden="true" /><div aria-hidden="true"><span /><span /><span /></div><section aria-hidden="true"><span /><span /></section></div>;
 }
 
 function numberField(path: string, label: string, unit: string, minimum: number, maximum: number): FieldSpec {

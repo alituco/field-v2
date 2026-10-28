@@ -1,12 +1,18 @@
 import {
   createAdminClient,
+  createE2EStaffClient,
+  createE2EUserClient,
+  E2E_STAFF_EMAIL,
   isTerminalGameStatus,
   listAuthUsers,
   loadManifestConfig,
   logStep,
+  requireIndependentE2EStaff,
   unwrapRpcRow,
   updateAuthUser,
 } from "./_shared.ts";
+import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
+import { isCurrentRunFixture } from "../../functions/_shared/dev_auth.ts";
 
 if (Deno.args.includes("--help")) {
   console.log(`Usage:
@@ -30,15 +36,28 @@ referee assignment, closes test queues, and restores the reusable accounts.`);
 
 const config = await loadManifestConfig("staging E2E cleanup");
 const manifest = config.manifest;
+const staffIdentity = requireIndependentE2EStaff(manifest);
 const admin = createAdminClient(config.supabaseUrl, config.serviceRoleKey);
 const errors: string[] = [];
 
 logStep(`Cleaning transient state for E2E run ${manifest.runId}.`);
 await bestEffort("cancel transient E2E games", cancelTransientGames);
+await bestEffort(
+  "close unpaid legacy E2E checkouts",
+  () =>
+    cleanAndAssertE2ECheckoutPool(
+      admin,
+      [...manifest.accounts.players, manifest.accounts.onboarding],
+      manifest.accounts.admin,
+    ),
+);
 await bestEffort("remove E2E referee assignment", removeRefereeAssignment);
 await bestEffort("dismiss E2E moderation reports", dismissReports);
 await bestEffort("close E2E support requests", closeSupportTickets);
-await bestEffort("verify isolated account ownership", restoreAccountBaselines);
+await bestEffort(
+  "revoke owned E2E sessions and credentials",
+  restoreAccountBaselines,
+);
 
 if (errors.length > 0) {
   throw new Error(
@@ -56,14 +75,15 @@ console.log("FIELD_E2E_CLEANUP=complete");
 async function cancelTransientGames(): Promise<void> {
   const { data, error } = await admin
     .from("open_queue_games")
-    .select("id,status,venue,created_by")
+    .select("id,status,venue,created_by,created_by_staff_id")
     .in("id", [manifest.games.match.id, manifest.games.cancellation.id]);
   if (error) throw new Error(`load manifest games: ${error.message}`);
 
   for (const game of data ?? []) {
     if (isTerminalGameStatus(String(game.status))) continue;
     if (
-      game.created_by !== manifest.accounts.admin.profileId ||
+      (game.created_by_staff_id ?? game.created_by) !==
+        manifest.accounts.admin.profileId ||
       !String(game.venue).startsWith(manifest.markers.venuePrefix)
     ) {
       throw new Error(
@@ -223,40 +243,123 @@ async function restoreAccountBaselines(): Promise<void> {
     if (users.length < 1000) break;
   }
 
+  const bootstrap = [...authUsersById.values()].find((user) =>
+    user.phone?.replace(/\D/g, "") ===
+      manifest.login.bootstrapPhone.replace(/\D/g, "")
+  );
+  if (bootstrap) {
+    accounts.push({
+      profileId: bootstrap.id,
+      phone: bootstrap.phone!,
+      displayName: "E2E bootstrap",
+      username: "field_e2e_bootstrap",
+    });
+  }
+
   for (const account of accounts) {
-    const existing = authUsersById.get(account.profileId);
+    const isStaff = account.profileId === manifest.accounts.admin.profileId;
+    const authUserId = isStaff ? staffIdentity.authUserId : account.profileId;
+    const existing = authUsersById.get(authUserId);
     if (!existing) {
       throw new Error(
         `load auth baseline ${account.profileId}: user missing`,
       );
     }
 
-    if (existing.user_metadata?.field_e2e !== true) {
+    if (
+      isStaff && (existing.email !== E2E_STAFF_EMAIL || existing.phone ||
+        existing.app_metadata?.fieldrush_e2e !== true ||
+        existing.app_metadata?.fieldrush_e2e_role !== "admin" ||
+        existing.app_metadata?.fieldrush_account_type !== "staff")
+    ) {
+      throw new Error(
+        "Refusing to retire an unmarked independent staff fixture.",
+      );
+    }
+
+    if (
+      existing.app_metadata?.fieldrush_e2e_revoked_run_id === manifest.runId &&
+      existing.app_metadata?.fieldrush_e2e_run_id == null
+    ) {
+      if (isStaff) {
+        await bestEffort(
+          "retire previously revoked staff access",
+          retireIndependentStaffAccess,
+        );
+      }
+      continue;
+    }
+    if (
+      !isCurrentRunFixture(existing, manifest.runId, Date.now()) ||
+      (isStaff
+        ? existing.email !== E2E_STAFF_EMAIL || Boolean(existing.phone) ||
+          existing.app_metadata?.fieldrush_account_type !== "staff" ||
+          existing.app_metadata?.fieldrush_e2e_role !== "admin"
+        : existing.phone?.replace(/\D/g, "") !==
+          account.phone.replace(/\D/g, ""))
+    ) {
       throw new Error(
         `refusing to change unmarked account ${account.profileId}`,
       );
     }
-    // Never reset the server-owned signup state or rewrite private DOB into
-    // public profiles. The dedicated onboarding actor is recreated next setup.
-    await updateAuthUser(
-      config.supabaseUrl,
-      config.serviceRoleKey,
-      account.profileId,
-      {
-        user_metadata: {
-          ...existing.user_metadata,
-          field_e2e: true,
-          field_e2e_role: account.profileId ===
-              manifest.accounts.admin.profileId
-            ? "admin"
-            : "player",
+    await bestEffort(`close owned fixture ${account.profileId}`, async () => {
+      // Revoke refresh sessions before rotating the per-run fixture password.
+      // A prior JWT is never saved in a manifest or copied into another run.
+      let logoutFailed = false;
+      try {
+        const actor = isStaff
+          ? await createE2EStaffClient(config.supabaseUrl, staffIdentity.email)
+          : await createE2EUserClient(config.supabaseUrl, account.phone);
+        const { data: sessionData } = await actor.auth.getSession();
+        const token = sessionData.session?.access_token;
+        const { error } = token
+          ? await admin.auth.admin.signOut(token, "global")
+          : {
+            error: new Error("Synthetic E2E logout session was unavailable"),
+          };
+        logoutFailed = error != null;
+      } catch {
+        // Still close protected ownership, password and staff access below.
+        logoutFailed = true;
+      }
+      const password = Array.from(
+        crypto.getRandomValues(new Uint8Array(32)),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+      await updateAuthUser(
+        config.supabaseUrl,
+        config.serviceRoleKey,
+        authUserId,
+        {
+          password,
+          app_metadata: {
+            ...existing.app_metadata,
+            fieldrush_e2e_run_id: null,
+            fieldrush_e2e_revoked_run_id: manifest.runId,
+          },
         },
-      },
-    ).catch((error) => {
-      throw new Error(
-        `restore auth baseline ${account.profileId}: ${String(error)}`,
       );
+      if (isStaff) {
+        await retireIndependentStaffAccess();
+      }
+      if (logoutFailed) {
+        throw new Error("Could not confirm isolated E2E session revocation");
+      }
     });
+  }
+}
+
+async function retireIndependentStaffAccess(): Promise<void> {
+  const { data, error } = await admin.from("referee_profiles").update({
+    is_active: false,
+  })
+    .eq("profile_id", manifest.accounts.admin.profileId).eq(
+      "auth_user_id",
+      staffIdentity.authUserId,
+    )
+    .eq("email", E2E_STAFF_EMAIL).select("profile_id").maybeSingle();
+  if (error || !data) {
+    throw new Error("Could not retire the exact isolated E2E staff access.");
   }
 }
 

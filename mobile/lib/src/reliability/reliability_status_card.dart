@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../auth/fieldrush_auth_theme.dart';
+import '../ui/fieldrush_modal.dart';
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'reliability.dart';
@@ -19,7 +23,9 @@ class _ReliabilityStatusCardState extends State<ReliabilityStatusCard> {
 
   Future<void> _reload() async {
     final next = widget.repository.getMyStatus();
-    setState(() => _future = next);
+    setState(() {
+      _future = next;
+    });
     try {
       await next;
     } catch (_) {
@@ -35,10 +41,9 @@ class _ReliabilityStatusCardState extends State<ReliabilityStatusCard> {
       incident: incident,
     );
     if (!mounted || !submitted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Appeal submitted. Field operations will review it.'),
-      ),
+    showFieldrushToast(
+      context,
+      'Appeal submitted. Field operations will review it.',
     );
     await _reload();
   }
@@ -172,7 +177,7 @@ class _ReliabilityCard extends StatelessWidget {
               fontWeight: FontWeight.w600,
             ),
           ),
-          if (status.walletBalanceFils > 0) ...[
+          if (status.visibleWalletBalances.isNotEmpty) ...[
             const SizedBox(height: 13),
             Container(
               key: const ValueKey('field-wallet-balance'),
@@ -182,33 +187,50 @@ class _ReliabilityCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(13),
                 border: Border.all(color: fieldGray100),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(
-                    Icons.account_balance_wallet_outlined,
-                    color: fieldGray500,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 9),
-                  const Expanded(
-                    child: Text(
-                      'FIELD WALLET',
-                      style: TextStyle(
-                        color: fieldGray500,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: .8,
+                  for (final balance in status.visibleWalletBalances)
+                    Padding(
+                      key: ValueKey('field-wallet-balance-${balance.currency}'),
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.account_balance_wallet_outlined,
+                            color: fieldGray500,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'FIELD WALLET · ${balance.currency}',
+                              style: const TextStyle(
+                                color: fieldGray500,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: .8,
+                              ),
+                            ),
+                          ),
+                          Text(
+                            balance.label,
+                            style: const TextStyle(
+                              color: fieldGray900,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  Text(
-                    status.walletBalanceLabel,
-                    style: const TextStyle(
-                      color: fieldGray900,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
+                  if (status.visibleWalletBalances.length > 1) ...[
+                    const SizedBox(height: 5),
+                    const Text(
+                      'Balances are separate. No currency conversion.',
+                      style: TextStyle(color: fieldGray500, fontSize: 10),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -297,16 +319,27 @@ class _ReliabilityLoadingCard extends StatelessWidget {
     return Container(
       key: const ValueKey('profile-reliability-loading'),
       height: 112,
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: fieldGray100),
       ),
       alignment: Alignment.center,
-      child: const SizedBox(
-        width: 22,
-        height: 22,
-        child: CircularProgressIndicator(strokeWidth: 2.4),
+      child: Semantics(
+        label: 'Loading reliability status',
+        liveRegion: true,
+        child: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            FieldSkeleton(width: 160, height: 16),
+            SizedBox(height: 12),
+            FieldSkeleton(height: 12),
+            SizedBox(height: 8),
+            FieldSkeleton(width: 210, height: 10),
+          ],
+        ),
       ),
     );
   }
@@ -353,234 +386,193 @@ Future<bool> showReliabilityAppealSheet({
   required ReliabilityRepository repository,
   required ReliabilityIncident incident,
 }) async {
-  final allowedCategories = incident.allowedAppealCategories;
-  if (allowedCategories.isEmpty) return false;
-  final controller = TextEditingController();
-  var category = allowedCategories.first;
-  var submitting = false;
-  String? error;
-  final submitted =
-      await showModalBottomSheet<bool>(
+  if (incident.allowedAppealCategories.isEmpty) return false;
+  return await showFieldrushModal<bool>(
         context: context,
-        isScrollControlled: true,
-        useSafeArea: true,
-        backgroundColor: Colors.transparent,
-        builder: (sheetContext) => StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> submit() async {
-              final message = controller.text.trim();
-              if (message.length < 10) {
-                setSheetState(
-                  () => error =
-                      'Add at least 10 characters explaining what happened.',
-                );
-                return;
-              }
-              setSheetState(() {
-                submitting = true;
-                error = null;
-              });
-              try {
-                await repository.submitAppeal(
-                  attendanceRecordId: incident.attendanceRecordId,
-                  category: category,
-                  message: message,
-                );
-                if (sheetContext.mounted) Navigator.of(sheetContext).pop(true);
-              } catch (caught) {
-                if (!sheetContext.mounted) return;
-                setSheetState(() {
-                  submitting = false;
-                  error = userFacingError(
-                    caught,
-                    fallback: 'We could not submit this appeal. Try again.',
-                  );
-                });
-              }
-            }
-
-            return Container(
-              key: const ValueKey('reliability-appeal-sheet'),
-              padding: EdgeInsets.fromLTRB(
-                20,
-                10,
-                20,
-                20 + MediaQuery.viewInsetsOf(context).bottom,
-              ),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Center(
-                      child: Container(
-                        width: 42,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: fieldGray200,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    const Text(
-                      'APPEAL ATTENDANCE OUTCOME',
-                      style: TextStyle(
-                        color: fieldEmerald700,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
-                    Text(
-                      incident.outcomeLabel,
-                      style: const TextStyle(
-                        color: fieldGray900,
-                        fontSize: 22,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                    if (incident.appealDeadlineAt case final deadline?) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        'Submit by ${_formatDateTime(deadline)}',
-                        style: const TextStyle(
-                          color: fieldGray500,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                    if (incident.checkedInAt != null ||
-                        incident.checkInDeadlineAt != null ||
-                        incident.strikeDelta > 0) ...[
-                      const SizedBox(height: 15),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF9FAFB),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: fieldGray100),
-                        ),
-                        child: Column(
-                          children: [
-                            if (incident.checkedInAt case final checkedIn?)
-                              _appealFact(
-                                'Checked in',
-                                _formatDateTime(checkedIn),
-                              ),
-                            if (incident.checkInDeadlineAt case final deadline?)
-                              _appealFact(
-                                'Check-in deadline',
-                                _formatDateTime(deadline),
-                              ),
-                            if (incident.strikeDelta > 0)
-                              _appealFact(
-                                'Strike added',
-                                '+${incident.strikeDelta}',
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 18),
-                    DropdownButtonFormField<ReliabilityAppealCategory>(
-                      initialValue: category,
-                      decoration: const InputDecoration(
-                        labelText: 'Reason',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: [
-                        for (final option in allowedCategories)
-                          DropdownMenuItem(
-                            value: option,
-                            child: Text(option.label),
-                          ),
-                      ],
-                      onChanged: submitting
-                          ? null
-                          : (value) {
-                              if (value != null) {
-                                setSheetState(() => category = value);
-                              }
-                            },
-                    ),
-                    const SizedBox(height: 13),
-                    TextField(
-                      controller: controller,
-                      enabled: !submitting,
-                      minLines: 4,
-                      maxLines: 6,
-                      maxLength: 2000,
-                      decoration: const InputDecoration(
-                        labelText: 'What happened?',
-                        hintText:
-                            'Give the operations team the facts they need.',
-                        alignLabelWithHint: true,
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    if (error != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        error!,
-                        style: const TextStyle(
-                          color: Colors.redAccent,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      key: const ValueKey('submit-reliability-appeal'),
-                      onPressed: submitting ? null : submit,
-                      style: FilledButton.styleFrom(
-                        minimumSize: const Size.fromHeight(54),
-                        backgroundColor: fieldEmerald600,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                      child: submitting
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
-                          : const Text(
-                              'Submit appeal',
-                              style: TextStyle(fontWeight: FontWeight.w900),
-                            ),
-                    ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'The referee records attendance facts. Field operations reviews consequences privately.',
-                      style: TextStyle(
-                        color: fieldGray400,
-                        fontSize: 10,
-                        height: 1.4,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
+        builder: (_) =>
+            _ReliabilityAppealSheet(repository: repository, incident: incident),
       ) ??
       false;
-  controller.dispose();
-  return submitted;
+}
+
+class _ReliabilityAppealSheet extends StatefulWidget {
+  const _ReliabilityAppealSheet({
+    required this.repository,
+    required this.incident,
+  });
+
+  final ReliabilityRepository repository;
+  final ReliabilityIncident incident;
+
+  @override
+  State<_ReliabilityAppealSheet> createState() =>
+      _ReliabilityAppealSheetState();
+}
+
+class _ReliabilityAppealSheetState extends State<_ReliabilityAppealSheet> {
+  final _controller = TextEditingController();
+  late ReliabilityAppealCategory _category =
+      widget.incident.allowedAppealCategories.first;
+  bool _submitting = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+    final message = _controller.text.trim();
+    if (message.length < 10) {
+      setState(() {
+        _error = 'Add at least 10 characters explaining what happened.';
+      });
+      return;
+    }
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      await widget.repository.submitAppeal(
+        attendanceRecordId: widget.incident.attendanceRecordId,
+        category: _category,
+        message: message,
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (caught) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _error = userFacingError(
+          caught,
+          fallback: 'We could not submit this appeal. Try again.',
+        );
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final allowedCategories = widget.incident.allowedAppealCategories;
+    return FieldrushModal(
+      key: const ValueKey('reliability-appeal-sheet'),
+      eyebrow: 'Appeal attendance outcome',
+      title: widget.incident.outcomeLabel,
+      description: widget.incident.appealDeadlineAt == null
+          ? null
+          : 'Submit by ${_formatDateTime(widget.incident.appealDeadlineAt!)}',
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (widget.incident.checkedInAt != null ||
+              widget.incident.checkInDeadlineAt != null ||
+              widget.incident.strikeDelta > 0) ...[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: FieldrushAuthTheme.border),
+              ),
+              child: Column(
+                children: [
+                  if (widget.incident.checkedInAt case final checkedIn?)
+                    _appealFact('Checked in', _formatDateTime(checkedIn)),
+                  if (widget.incident.checkInDeadlineAt case final deadline?)
+                    _appealFact('Check-in deadline', _formatDateTime(deadline)),
+                  if (widget.incident.strikeDelta > 0)
+                    _appealFact(
+                      'Strike added',
+                      '+${widget.incident.strikeDelta}',
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+          ],
+          DropdownButtonFormField<ReliabilityAppealCategory>(
+            key: const ValueKey('reliability-appeal-reason'),
+            initialValue: _category,
+            isExpanded: true,
+            dropdownColor: FieldrushAuthTheme.cream,
+            style: FieldrushModal.bodyStyle.copyWith(
+              color: FieldrushAuthTheme.ink,
+            ),
+            decoration: const InputDecoration(labelText: 'Reason'),
+            items: [
+              for (final option in allowedCategories)
+                DropdownMenuItem(
+                  value: option,
+                  child: Text(
+                    option.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+            onChanged: _submitting
+                ? null
+                : (value) {
+                    if (value != null) {
+                      setState(() => _category = value);
+                    }
+                  },
+          ),
+          const SizedBox(height: 13),
+          TextField(
+            key: const ValueKey('reliability-appeal-details'),
+            controller: _controller,
+            enabled: !_submitting,
+            minLines: 4,
+            maxLines: 6,
+            maxLength: 2000,
+            style: FieldrushModal.bodyStyle.copyWith(
+              color: FieldrushAuthTheme.ink,
+            ),
+            decoration: const InputDecoration(
+              labelText: 'What happened?',
+              hintText: 'Give the operations team the facts they need.',
+              alignLabelWithHint: true,
+            ),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              _error!,
+              key: const ValueKey('reliability-appeal-error'),
+              style: FieldrushModal.bodyStyle.copyWith(
+                color: FieldrushAuthTheme.danger,
+              ),
+            ),
+          ],
+          const SizedBox(height: 10),
+          const Text(
+            'The referee records attendance facts. Field operations reviews consequences privately.',
+            style: FieldrushModal.bodyStyle,
+          ),
+        ],
+      ),
+      actions: [
+        FilledButton(
+          key: const ValueKey('submit-reliability-appeal'),
+          onPressed: _submitting ? null : _submit,
+          style: FieldrushModal.primaryButtonStyle(),
+          child: Text(_submitting ? 'Submitting appeal…' : 'Submit appeal'),
+        ),
+        OutlinedButton(
+          onPressed: _submitting
+              ? null
+              : () => Navigator.of(context).pop(false),
+          style: FieldrushModal.secondaryButtonStyle(),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
+  }
 }
 
 String _formatDate(DateTime value) {
@@ -618,19 +610,19 @@ Widget _appealFact(String label, String value) {
         Expanded(
           child: Text(
             label,
-            style: const TextStyle(
-              color: fieldGray500,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
+            style: FieldrushModal.bodyStyle.copyWith(fontSize: 11),
           ),
         ),
-        Text(
-          value,
-          style: const TextStyle(
-            color: fieldGray900,
-            fontSize: 11,
-            fontWeight: FontWeight.w900,
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            style: FieldrushModal.bodyStyle.copyWith(
+              color: FieldrushAuthTheme.ink,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+            ),
           ),
         ),
       ],

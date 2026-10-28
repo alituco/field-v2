@@ -5,6 +5,8 @@ import 'auth/fieldrush_account.dart';
 import 'auth/fieldrush_account_gate.dart';
 import 'auth/fieldrush_account_repository.dart';
 import 'config/configuration_screen.dart';
+import 'home/navigation_profile_scope.dart';
+import 'notifications/fieldrush_push.dart';
 
 class FieldApp extends StatelessWidget {
   const FieldApp({
@@ -36,7 +38,11 @@ class FieldApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       builder: (context, child) {
         final content = _KeyboardDismissRegion(
-          child: child ?? const SizedBox.shrink(),
+          child: hasSupabaseConfig
+              ? FieldNavigationProfileScope(
+                  child: child ?? const SizedBox.shrink(),
+                )
+              : child ?? const SizedBox.shrink(),
         );
         final label = environmentLabel;
         if (label == null) {
@@ -80,9 +86,14 @@ class FieldApp extends StatelessWidget {
       ),
       home: hasSupabaseConfig
           ? FieldrushAccountGate(
-              authRepository: SupabaseAuthRepository(),
+              authRepository: SupabaseAuthRepository(
+                beforeSignOut: FieldrushPush.instance.prepareForSignOut,
+              ),
               accountRepository:
-                  accountRepository ?? SupabaseFieldrushAccountRepository(),
+                  accountRepository ??
+                  SupabaseFieldrushAccountRepository(
+                    beforeSignOut: FieldrushPush.instance.prepareForSignOut,
+                  ),
               isDev: isDev,
               profileSwitcherEnabled: profileSwitcherEnabled,
             )

@@ -3,6 +3,19 @@
 -- Run after the local development seed. Every mutation is rolled back.
 begin;
 
+-- Mirror the server API's service context while retaining actual player
+-- subjects for the participant-facing dispute and redaction checks.
+select set_config('request.jwt.claim.role', 'service_role', true);
+
+create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
+returns boolean language plpgsql as $availability$
+begin
+  perform public.assert_player_has_one_game(player_id,'SOLO','00000000-0000-0000-0000-000000000000',true);
+  return true;
+exception when raise_exception then return false;
+end;
+$availability$;
+
 do $verify$
 declare
   admin_id uuid;
@@ -49,6 +62,12 @@ declare
   solo_wallet_credit_fils_before integer;
   solo_participant_result jsonb;
   function_definition text;
+  expected_clan_rating_events integer;
+  expected_solo_rating_events integer;
+  clan_track_ratings_before jsonb;
+  clan_legacy_ratings_before jsonb;
+  solo_track_ratings_before jsonb;
+  solo_legacy_ratings_before jsonb;
 begin
   if to_regclass('public.match_resolution_cases') is null
     or to_regclass('public.match_resolution_revisions') is null
@@ -159,6 +178,7 @@ begin
   select referee.profile_id into admin_id
   from public.referee_profiles referee
   where referee.role = 'admin' and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -226,6 +246,14 @@ begin
     raise exception
       'Control-plane verification needs one active member from each clan.';
   end if;
+  select case when public.player_rating_effective_at_is_current(
+    public.fixture_start_at(f.match_date,f.time_slot)) then 2 else 0 end
+  into expected_clan_rating_events from public.fixtures f where f.id=fixture_to_test.id;
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+  into clan_track_ratings_before from public.fieldrush_player_rating_tracks r
+  where r.profile_id=any(member_ids);
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+  into clan_legacy_ratings_before from public.player_ratings r where r.profile_id=any(member_ids);
 
   select clan.skill_rating, clan.wins, clan.losses
   into initial_home_rating, initial_home_wins, initial_home_losses
@@ -246,6 +274,9 @@ begin
   -- Reproduce a legacy/corrupt FINAL record with only one score. Trigger
   -- bypass is confined to this rolled-back verifier setup; the detector and
   -- every control-plane action below run with normal triggers enabled.
+  -- Drain deferred observers before fixture DDL, then restore their normal mode.
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.fixtures disable trigger user';
   update public.fixtures
   set status = 'FINAL',
@@ -345,6 +376,8 @@ begin
   legacy_case_id := review_case.id;
   delete from public.match_resolution_cases
   where id = legacy_case_id;
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.fixtures disable trigger user';
   update public.fixtures
   set status = 'SCHEDULED',
@@ -366,6 +399,8 @@ begin
   perform public.ensure_match_attendance_records(
     'CLAN', fixture_to_test.id
   );
+  set constraints all immediate;
+  set constraints all deferred;
   execute
     'alter table public.match_attendance_records disable trigger user';
   update public.match_attendance_records
@@ -636,21 +671,32 @@ begin
       from public.player_rating_events event
       where event.source_type = 'CLAN_FIXTURE'
         and event.source_id = fixture_to_test.id
-    ) <> 2
+    ) <> expected_clan_rating_events
     or (
       select count(distinct event.profile_id)
       from public.player_rating_events event
       where event.source_type = 'CLAN_FIXTURE'
         and event.source_id = fixture_to_test.id
-    ) <> 2
+    ) <> expected_clan_rating_events
+    or (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+      from public.fieldrush_player_rating_tracks r where r.profile_id=any(member_ids))
+      is distinct from clan_track_ratings_before
+    or (expected_clan_rating_events=0 and
+      (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+       from public.player_ratings r where r.profile_id=any(member_ids))
+      is distinct from clan_legacy_ratings_before)
   then
     raise exception
-      'Same-score clan correction did not restore exactly the explicit Player SR lineup.';
+      'Same-score clan correction did not restore exactly the explicit Player SR lineup (replayed %, appearances %, rating events %).',
+      played_correction_result #>> '{consequences,initial_player_sr_pipeline_replayed}',
+      (select count(*) from public.fixture_player_appearances where fixture_id=fixture_to_test.id and played),
+      (select count(*) from public.player_rating_events where source_type='CLAN_FIXTURE' and source_id=fixture_to_test.id);
   end if;
 
   -- Two different affected members may dispute the same current revision.
   -- The first dispute clears resolved_at, so the second call also verifies
   -- that the deadline is revision-based rather than case-state-based.
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform set_config('request.jwt.claim.sub', member_ids[1]::text, true);
   dispute_result := public.submit_match_resolution_dispute(
     review_case.id,
@@ -696,6 +742,7 @@ begin
     raise exception 'Participant dispute lifecycle or finance redaction is incorrect.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   -- Build a rollback-only solo match in a future slot so normal booking
   -- guards run, then backdate the match/terms to exercise No Data detection.
   select array_agg(candidate.profile_id order by candidate.profile_id)
@@ -707,15 +754,7 @@ begin
       and not public.profile_has_active_reliability_booking_restriction(
         profile.id
       )
-      and (
-        select count(*)
-        from public.open_queue_bookings booking
-        join public.open_queue_games game on game.id = booking.game_id
-        where booking.profile_id = profile.id
-          and booking.status = 'CONFIRMED'
-          and game.status in ('OPEN', 'FULL')
-          and game.starts_at > clock_timestamp()
-      ) < 2
+      and pg_temp.verification_player_has_free_game_slot(profile.id)
     order by profile.id
     limit 3
   ) candidate;
@@ -723,6 +762,11 @@ begin
     raise exception
       'Control-plane verification needs three unrestricted solo players.';
   end if;
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+  into solo_track_ratings_before from public.fieldrush_player_rating_tracks r
+  where r.profile_id=any(solo_player_ids);
+  select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+  into solo_legacy_ratings_before from public.player_ratings r where r.profile_id=any(solo_player_ids);
   select candidate.starts_at into solo_game_starts_at
   from (
     select
@@ -767,8 +811,11 @@ begin
   end if;
 
   insert into public.open_queue_games (
+    format_version, currency, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     status, venue, starts_at, ends_at, timezone, created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 12, 2, 4, 4, 2,
     'OPEN',
     'Match resolution rollback verification',
     solo_game_starts_at,
@@ -821,6 +868,8 @@ begin
   set status = 'CANCELLED', cancelled_at = clock_timestamp()
   where id = solo_cancelled_booking_id;
 
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.open_queue_games disable trigger user';
   update public.open_queue_games
   set starts_at = solo_past_starts_at,
@@ -833,7 +882,24 @@ begin
     operational_reason_code = null
   where id = solo_game_id;
   execute 'alter table public.open_queue_games enable trigger user';
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.match_reliability_terms disable trigger user';
+  -- This rollback-only fixture deliberately models legacy attendance after
+  -- moving its schedule into the past. A current arrival contract bound while
+  -- the fixture was future inventory must not survive that artificial warp.
+  -- Clear its complete optional contract together, retaining the production
+  -- constraint and compatibility with replays before the arrival migration.
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema='public' and table_name='match_reliability_terms'
+      and column_name='arrival_policy_version_id'
+  ) then
+    execute 'update public.match_reliability_terms
+      set arrival_policy_version_id=null,arrival_check_in_opens_at=null,
+        arrival_check_in_deadline_at=null where open_queue_game_id=$1'
+      using solo_game_id;
+  end if;
   update public.match_reliability_terms
   set kickoff_at = solo_past_starts_at,
     check_in_opens_at = solo_past_starts_at - interval '3 hours',
@@ -841,6 +907,8 @@ begin
     no_show_cutoff_at = solo_past_starts_at + interval '15 minutes'
   where open_queue_game_id = solo_game_id;
   execute 'alter table public.match_reliability_terms enable trigger user';
+  set constraints all immediate;
+  set constraints all deferred;
   execute 'alter table public.match_attendance_records disable trigger user';
   update public.match_attendance_records
   set check_in_deadline_at = solo_past_starts_at,
@@ -853,6 +921,12 @@ begin
     strike_delta = 0
   where booking_id = solo_cancelled_booking_id;
   execute 'alter table public.match_attendance_records enable trigger user';
+
+  -- This legacy match remains a finance/lineup correction scenario. The new
+  -- rating era must not import a historical 6v6 match into either discipline.
+  select case when g.format_version='FIELDRUSH_7V7'
+    and public.player_rating_effective_at_is_current(g.starts_at) then 2 else 0 end
+  into expected_solo_rating_events from public.open_queue_games g where g.id=solo_game_id;
 
   detected_count := public.detect_due_match_resolution_cases();
   select * into solo_case
@@ -988,10 +1062,17 @@ begin
       from public.player_rating_events event
       where event.source_type = 'OPEN_QUEUE'
         and event.source_id = solo_game_id
-    ) <> 2
+    ) <> expected_solo_rating_events
     or jsonb_array_length(
       solo_correction_result #> '{consequences,restored_booking_ids}'
     ) <> 2
+    or (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id,r.rating_track)
+      from public.fieldrush_player_rating_tracks r where r.profile_id=any(solo_player_ids))
+      is distinct from solo_track_ratings_before
+    or (expected_solo_rating_events=0 and
+      (select jsonb_agg(to_jsonb(r)-'updated_at' order by r.profile_id)
+       from public.player_ratings r where r.profile_id=any(solo_player_ids))
+      is distinct from solo_legacy_ratings_before)
     or jsonb_array_length(
       solo_correction_result #> '{consequences,player_sr_lineup_profile_ids}'
     ) <> 2
@@ -1000,8 +1081,8 @@ begin
       'Solo correction did not restore exactly the admin-cancelled played lineup.';
   end if;
 
-  -- A repeated correction must preserve the immutable two-event Player SR
-  -- ledger and the already-paid refund.
+  -- A repeated correction must preserve the exact era-appropriate ledger and
+  -- the already-paid refund, including zero SR events for historical games.
   solo_repeat_result := public.admin_resolve_match_case(
     admin_id,
     'SOLO',
@@ -1034,7 +1115,7 @@ begin
       from public.player_rating_events event
       where event.source_type = 'OPEN_QUEUE'
         and event.source_id = solo_game_id
-    ) <> 2
+    ) <> expected_solo_rating_events
     or (
       select coalesce(booking.refund_amount_fils, 0)
       from public.open_queue_bookings booking
@@ -1057,6 +1138,7 @@ begin
       'Solo correction duplicated Player SR or clawed back/duplicated a refund.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform set_config(
     'request.jwt.claim.sub', solo_player_ids[1]::text, true
   );

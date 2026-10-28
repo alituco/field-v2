@@ -2,14 +2,18 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { adminGameStartTimestamp } from "@/lib/admin-game-time";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { isStaffBrowserSession, STAFF_SIGN_IN_REQUIRED } from "@/lib/staff-browser-session";
 import type {
   AdminGameParticipant,
   AdminGameParticipants,
 } from "@/lib/admin-game-participants";
 import {
   filterAdminWaitlist,
+  isLaunchUpdatesSubscriber,
   WAITLIST_INTERESTS,
   WAITLIST_POSITIONS,
   WAITLIST_STATUSES,
@@ -27,10 +31,25 @@ import type {
 
 import forfeitStyles from "./forfeit-review.module.css";
 import { ReliabilitySection } from "./reliability-section";
+import { GamePaymentSettingsPanel } from "./game-payment-settings";
+import { refundRetryNotice } from "@/lib/payment-refunds";
+import { FieldsPanel } from "./fields-panel";
+import { SchedulesPanel } from "./schedules-panel";
+import { CitiesPanel } from "./cities-panel";
+import { SeasonsPanel } from "./seasons-panel";
+import { ReferralsPanel } from "./referrals-panel";
+import type { AdminField } from "@/lib/admin-fields";
+import { DEFAULT_SOLO_FORMATION, parseSoloFormation, type SoloFormation } from "@/lib/admin-solo-games";
+import { SoloFormationFields } from "./solo-formation-fields";
 
 type AdminSection =
   | "overview"
   | "games"
+  | "schedules"
+  | "fields"
+  | "cities"
+  | "seasons"
+  | "referrals"
   | "reliability"
   | "support"
   | "reports"
@@ -61,6 +80,7 @@ type AttentionItem = {
   gameId: string | null;
   resolution: string | null;
   dismissible: boolean;
+  paymentRefundId: string | null;
 };
 
 type AuditItem = {
@@ -183,7 +203,9 @@ type FlaggedSubject = {
 type AdminStaffMember = {
   profileId: string;
   displayName: string;
-  phone: string;
+  phone: string | null;
+  email: string | null;
+  setupRequired?: boolean;
   role: "admin" | "referee";
   isActive: boolean;
   createdAt: string | null;
@@ -204,9 +226,20 @@ type GameDialog =
   | null;
 
 type SoloGameDialog =
-  | { kind: "create" }
+  | { kind: "create"; fieldId?: string }
   | { kind: "remove"; fixture: RefereeFixture }
   | null;
+
+type SoloGameDraft = SoloFormation & {
+  minimumPlayers: number;
+  matchDate: string;
+  kickoffTime: string;
+  durationMinutes: number;
+  priceUsd: string;
+  ageLabel: string;
+  highestDivision: number;
+  lowestDivision: number;
+};
 
 type ReportDialog =
   | { report: AdminReport; action: "RESOLVE" | "DISMISS" }
@@ -264,6 +297,17 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [gameDialog, setGameDialog] = useState<GameDialog>(null);
   const [soloGameDialog, setSoloGameDialog] = useState<SoloGameDialog>(null);
+  const [fields, setFields] = useState<AdminField[]>([]);
+  const [soloDraft, setSoloDraft] = useState<SoloGameDraft | null>(null);
+  const [addingField, setAddingField] = useState(false);
+  const [returnToSolo, setReturnToSolo] = useState(false);
+  const [returnToSchedules, setReturnToSchedules] = useState(false);
+  const [schedulesRefreshKey, setSchedulesRefreshKey] = useState(0);
+  const [scheduleAddedFieldId, setScheduleAddedFieldId] = useState<string | null>(null);
+  const [fieldsRefreshKey, setFieldsRefreshKey] = useState(0);
+  const [citiesRefreshKey, setCitiesRefreshKey] = useState(0);
+  const [seasonsRefreshKey, setSeasonsRefreshKey] = useState(0);
+  const [referralsRefreshKey, setReferralsRefreshKey] = useState(0);
   const [reportDialog, setReportDialog] = useState<ReportDialog>(null);
   const [supportDialog, setSupportDialog] = useState<SupportDialog>(null);
   const [moderationSubject, setModerationSubject] =
@@ -351,7 +395,7 @@ export default function AdminPage() {
         setWaitlistLoaded(true);
       } catch (loadError) {
         setError(
-          errorMessage(loadError, "Could not load the Season Zero waitlist."),
+          errorMessage(loadError, "Could not load interest signups."),
         );
       } finally {
         setWaitlistLoading(false);
@@ -431,11 +475,21 @@ export default function AdminPage() {
     if (loadedSession.current) return;
     loadedSession.current = true;
     void supabase.auth.getSession().then(({ data }) => {
-      setAccessToken(data.session?.access_token ?? null);
+      const valid = isStaffBrowserSession(data.session);
+      setAccessToken(isStaffBrowserSession(data.session) ? data.session.access_token : null);
+      if (data.session && !valid) {
+        setError(STAFF_SIGN_IN_REQUIRED);
+        void supabase.auth.signOut({ scope: "local" });
+      }
       setSessionChecked(true);
     });
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
-      setAccessToken(session?.access_token ?? null);
+      const valid = isStaffBrowserSession(session);
+      setAccessToken(valid ? session.access_token : null);
+      if (session && !valid) {
+        setError(STAFF_SIGN_IN_REQUIRED);
+        queueMicrotask(() => void supabase.auth.signOut({ scope: "local" }));
+      }
       setSessionChecked(true);
     });
     return () => listener.subscription.unsubscribe();
@@ -443,6 +497,25 @@ export default function AdminPage() {
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("section");
+    if (window.location.pathname.startsWith("/admin/fields")) {
+      setSection("fields");
+      setAddingField(window.location.pathname.endsWith("/new"));
+      setReturnToSolo(new URLSearchParams(window.location.search).get("returnTo") === "solo");
+      setReturnToSchedules(new URLSearchParams(window.location.search).get("returnTo") === "schedules");
+      return;
+    }
+    if (window.location.pathname.startsWith("/admin/schedules")) {
+      setSection("schedules");
+      return;
+    }
+    if (window.location.pathname.startsWith("/admin/cities")) {
+      setSection("cities");
+      return;
+    }
+    if (window.location.pathname.startsWith("/admin/seasons")) {
+      setSection("seasons");
+      return;
+    }
     if (adminNavItems.some((item) => item.id === requested)) {
       setSection(requested as AdminSection);
     }
@@ -524,10 +597,18 @@ export default function AdminPage() {
   }
 
   async function createSoloGame(input: {
-    venue: string;
+    minimumPlayers: number;
+    fieldId: string;
     matchDate: string;
-    priceBhd: string;
+    kickoffTime: string;
+    durationMinutes: number;
+    priceUsd: string;
     ageLabel: string;
+    highestDivision: number;
+    lowestDivision: number;
+    goalkeepersPerSide: number;
+    defendersPerSide: number;
+    attackersPerSide: number;
   }) {
     setSubmitting("create-solo-game");
     setError(null);
@@ -542,6 +623,43 @@ export default function AdminPage() {
       await Promise.all([loadGames(), loadOverview()]);
     } catch (actionError) {
       setError(errorMessage(actionError, "Could not create the solo game."));
+    } finally {
+      setSubmitting(null);
+    }
+  }
+
+  function navigateSection(next: AdminSection) {
+    setSection(next);
+    setAddingField(false);
+    setReturnToSolo(false);
+    setReturnToSchedules(false);
+    window.history.replaceState(null, "", ["fields", "schedules", "cities", "seasons"].includes(next) ? `/admin/${next}` : `/admin?section=${next}`);
+  }
+
+  function addFieldForGame(draft?: SoloGameDraft) {
+    if (draft) setSoloDraft(draft);
+    setSoloGameDialog(null);
+    setSection("fields");
+    setAddingField(true);
+    setReturnToSolo(true);
+    setReturnToSchedules(false);
+    window.history.replaceState(null, "", "/admin/fields/new?returnTo=solo");
+  }
+
+  async function startSoloGame() {
+    setSoloDraft(null);
+    setSubmitting("load-fields");
+    setError(null);
+    try {
+      const payload = await fetchJson<{ fields: AdminField[] }>("/api/referee/admin/fields", {
+        headers: authHeaders(), cache: "no-store",
+      });
+      const available = payload.fields.filter((field) => field.isActive && field.marketActive);
+      setFields(available);
+      if (!available.length) addFieldForGame();
+      else setSoloGameDialog({ kind: "create" });
+    } catch (loadError) {
+      setError(errorMessage(loadError, "Could not load fields. Try again before creating a game."));
     } finally {
       setSubmitting(null);
     }
@@ -593,7 +711,7 @@ export default function AdminPage() {
     }
   }
 
-  async function createReferee(input: { displayName: string; phone: string }) {
+  async function createReferee(input: { displayName: string; email: string }) {
     setSubmitting("create-referee");
     setError(null);
     try {
@@ -602,12 +720,12 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           displayName: input.displayName,
-          phone: input.phone,
+          email: input.email,
           role: "referee",
           sendOtp: true,
         }),
       });
-      setNotice(result.warning ?? `Referee account created for ${input.displayName}.`);
+      setNotice(result.warning ?? `A separate staff account is ready for ${input.displayName}. A login code was requested by email.`);
       await Promise.all([loadGames(), loadStaff()]);
       return true;
     } catch (createError) {
@@ -620,8 +738,9 @@ export default function AdminPage() {
 
   async function createStaff(input: {
     displayName: string;
-    phone: string;
+    email: string;
     role: "admin" | "referee";
+    existingStaffProfileId?: string;
   }) {
     setSubmitting("create-staff");
     setError(null);
@@ -631,7 +750,7 @@ export default function AdminPage() {
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ ...input, sendOtp: true }),
       });
-      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} account created and a login code was requested.`);
+      setNotice(result.warning ?? `${input.role === "admin" ? "Admin" : "Referee"} staff email is ready and a login code was requested.`);
       await Promise.all([loadStaff(), loadGames()]);
       return true;
     } catch (createError) {
@@ -833,10 +952,10 @@ export default function AdminPage() {
         <section className="admin-entry-card">
           <div className="admin-entry-mark">F</div>
           <span className="admin-eyebrow">Field operations</span>
-          <h1>Admin access requires a referee session</h1>
-          <p>Sign in through the referee console, then open the admin panel again.</p>
+          <h1>Sign in with your staff email</h1>
+          <p>{error ?? "Use your dedicated staff email and six-digit code. Ask an administrator to set up your staff email if you previously used phone sign-in."}</p>
           <a className="admin-primary-link" href="/">
-            Go to referee sign in
+            Go to staff sign in
           </a>
         </section>
       </main>
@@ -855,24 +974,34 @@ export default function AdminPage() {
             overview.attention.length +
             forfeits.filter((decision) => decision.status === "PENDING_REVIEW").length,
         }}
-        onSection={setSection}
+        onSection={navigateSection}
         onSignOut={() => void signOut()}
       />
 
       <div className="admin-main">
         <header className="admin-topbar">
           <div>
-            <div className="admin-mobile-brand">FIELD ADMIN</div>
+            <div className="admin-mobile-brand">FIELDRUSH OPERATIONS</div>
             <h1>{sectionTitle(section)}</h1>
             <p>{sectionSubtitle(section)}</p>
           </div>
           <div className="admin-topbar-actions">
-            <span className="admin-live-system"><i /> Systems online</span>
+            <span className="admin-live-system"><i /> Operations workspace</span>
             <button
               className="admin-icon-button"
               disabled={refreshing}
               onClick={() => {
-                if (section === "reliability") {
+                if (section === "fields") {
+                  setFieldsRefreshKey((value) => value + 1);
+                } else if (section === "schedules") {
+                  setSchedulesRefreshKey((value) => value + 1);
+                } else if (section === "cities") {
+                  setCitiesRefreshKey((value) => value + 1);
+                } else if (section === "seasons") {
+                  setSeasonsRefreshKey((value) => value + 1);
+                } else if (section === "referrals") {
+                  setReferralsRefreshKey((value) => value + 1);
+                } else if (section === "reliability") {
                   setReliabilityRefreshKey((value) => value + 1);
                 } else if (section === "waitlist") {
                   void loadWaitlist(true);
@@ -893,7 +1022,7 @@ export default function AdminPage() {
             <button
               className={section === item.id ? "active" : ""}
               key={item.id}
-              onClick={() => setSection(item.id)}
+              onClick={() => navigateSection(item.id)}
               type="button"
             >
               <AdminIcon name={item.icon} />
@@ -922,11 +1051,16 @@ export default function AdminPage() {
             <AdminPageSkeleton />
           ) : section === "overview" ? (
             <OverviewSection
+              accessToken={accessToken}
+              onRefundRetried={async (message) => {
+                setNotice(message);
+                await loadAll(true);
+              }}
               overview={overview}
               games={games}
               reports={reports}
               forfeits={forfeits}
-              onNavigate={setSection}
+              onNavigate={navigateSection}
             />
           ) : section === "games" ? (
             <GamesSection
@@ -936,12 +1070,43 @@ export default function AdminPage() {
               submitting={submitting}
               onAssignReferee={assignReferee}
               onCancel={(fixture) => setGameDialog({ kind: "cancel", fixture })}
-              onCreateSoloGame={() => setSoloGameDialog({ kind: "create" })}
+              onCreateSoloGame={() => void startSoloGame()}
               onCreateReferee={createReferee}
               onOverrideScore={(fixture) => setGameDialog({ kind: "score", fixture })}
               onRemoveSoloGame={(fixture) =>
                 setSoloGameDialog({ kind: "remove", fixture })
               }
+            />
+          ) : section === "cities" ? (
+            <CitiesPanel accessToken={accessToken} refreshKey={citiesRefreshKey} />
+          ) : section === "seasons" ? (
+            <SeasonsPanel accessToken={accessToken} refreshKey={seasonsRefreshKey} />
+          ) : section === "referrals" ? (
+            <ReferralsPanel accessToken={accessToken} refreshKey={referralsRefreshKey} />
+          ) : section === "schedules" ? (
+            <SchedulesPanel accessToken={accessToken} refreshKey={schedulesRefreshKey} newlyAddedFieldId={scheduleAddedFieldId ?? undefined} onAddField={() => {
+              setSection("fields"); setAddingField(true); setReturnToSolo(false); setReturnToSchedules(true);
+              window.history.replaceState(null, "", "/admin/fields/new?returnTo=schedules");
+            }} />
+          ) : section === "fields" ? (
+            <FieldsPanel
+              accessToken={accessToken}
+              startAdding={addingField}
+              returnToSolo={returnToSolo || returnToSchedules}
+              returnToSchedules={returnToSchedules}
+              refreshKey={fieldsRefreshKey}
+              onNavigate={(adding) => {
+                setAddingField(adding);
+                window.history.replaceState(null, "", `/admin/fields${adding ? "/new" : ""}${returnToSolo ? "?returnTo=solo" : returnToSchedules ? "?returnTo=schedules" : ""}`);
+              }}
+              onReturnToGame={(field) => {
+                if (returnToSchedules) { setScheduleAddedFieldId(field?.id ?? null); navigateSection("schedules"); return; }
+                navigateSection("games");
+                if (field) {
+                  setFields((current) => [...current.filter((item) => item.id !== field.id), field]);
+                  setSoloGameDialog({ kind: "create", fieldId: field.id });
+                }
+              }}
             />
           ) : section === "reports" ? (
             <ReportsSection
@@ -1035,6 +1200,10 @@ export default function AdminPage() {
       {soloGameDialog ? (
         <SoloGameManagementDialog
           dialog={soloGameDialog}
+          fields={fields}
+          draft={soloDraft}
+          error={error}
+          onAddField={addFieldForGame}
           submitting={submitting !== null}
           onClose={() => setSoloGameDialog(null)}
           onCreate={(input) => void createSoloGame(input)}
@@ -1122,10 +1291,15 @@ const adminNavItems: Array<{
 }> = [
   { id: "overview", label: "Overview", shortLabel: "Home", icon: "overview" },
   { id: "games", label: "Games", shortLabel: "Games", icon: "games" },
+  { id: "schedules", label: "Schedules", shortLabel: "Schedules", icon: "games" },
+  { id: "fields", label: "Fields", shortLabel: "Fields", icon: "location" },
+  { id: "cities", label: "Cities", shortLabel: "Cities", icon: "location" },
+  { id: "seasons", label: "Seasons & rewards", shortLabel: "Seasons", icon: "policy" },
+  { id: "referrals", label: "Referrals", shortLabel: "Referrals", icon: "people" },
   { id: "reliability", label: "Reliability policy", shortLabel: "Policy", icon: "policy" },
   { id: "support", label: "Support", shortLabel: "Support", icon: "support" },
   { id: "reports", label: "Reports", shortLabel: "Reports", icon: "reports" },
-  { id: "waitlist", label: "Season Zero waitlist", shortLabel: "Waitlist", icon: "waitlist" },
+  { id: "waitlist", label: "Interest", shortLabel: "Interest", icon: "waitlist" },
   { id: "people", label: "Players & clans", shortLabel: "People", icon: "people" },
   { id: "staff", label: "Admins & referees", shortLabel: "Staff", icon: "referee" },
   { id: "audit", label: "Audit log", shortLabel: "Audit", icon: "audit" },
@@ -1149,7 +1323,7 @@ function AdminSidebar({
       <a className="admin-sidebar-brand" href="/admin">
         <span>F</span>
         <div>
-          <strong>FIELD</strong>
+          <strong>Fieldrush</strong>
           <small>OPERATIONS</small>
         </div>
       </a>
@@ -1205,12 +1379,16 @@ type NormalizedOverview = {
 };
 
 function OverviewSection({
+  accessToken,
+  onRefundRetried,
   overview,
   games,
   reports,
   forfeits,
   onNavigate,
 }: {
+  accessToken: string;
+  onRefundRetried: (message: string) => Promise<void>;
   overview: NormalizedOverview;
   games: RefereeFixture[];
   reports: AdminReport[];
@@ -1218,6 +1396,8 @@ function OverviewSection({
   onNavigate: (section: AdminSection) => void;
 }) {
   const router = useRouter();
+  const [retryPaymentRefund, setRetryPaymentRefund] = useState<AttentionItem | null>(null);
+  const [showAllAttention, setShowAllAttention] = useState(false);
   const now = Date.now();
   const upcoming = games
     .filter((game) =>
@@ -1282,7 +1462,7 @@ function OverviewSection({
             />
           ) : (
             <div className="admin-attention-list">
-              {overview.attention.slice(0, 7).map((item) => (
+              {(showAllAttention ? overview.attention : overview.attention.slice(0, 7)).map((item) => (
                 <article className={item.gameId ? "actionable" : ""} key={item.id}>
                   <span className={`admin-severity-dot ${item.severity.toLowerCase()}`} />
                   <div>
@@ -1290,7 +1470,11 @@ function OverviewSection({
                     <p>{item.detail}</p>
                     {!item.dismissible ? (
                       <small className="admin-required-resolution">
-                        {item.resolution === "RESOLVE_NO_DATA"
+                        {item.resolution === "PAYMENT_MANUAL_RECONCILIATION"
+                          ? "Manual Stripe reconciliation required · cannot dismiss or retry"
+                          : item.resolution?.startsWith("PAYMENT") || item.resolution === "RETRY_PAYMENT_REFUND"
+                          ? "Payment resolution required · cannot dismiss"
+                          : item.resolution === "RESOLVE_NO_DATA"
                           ? "Admin resolution required · cannot dismiss"
                           : "Assignment required · cannot dismiss"}
                       </small>
@@ -1299,7 +1483,9 @@ function OverviewSection({
                   <div className="admin-attention-meta">
                     <span>{humanize(item.kind)}</span>
                     <time>{relativeTime(item.createdAt)}</time>
-                    {item.gameId && item.matchKind ? (
+                    {item.paymentRefundId ? (
+                      <button onClick={() => setRetryPaymentRefund(item)} type="button">Review refund →</button>
+                    ) : item.gameId && item.matchKind ? (
                       <button
                         onClick={() => router.push(`/admin/games/${item.matchKind!.toLowerCase()}/${item.gameId}`)}
                         type="button"
@@ -1312,6 +1498,11 @@ function OverviewSection({
                   </div>
                 </article>
               ))}
+              {overview.attention.length > 7 ? (
+                <button className="admin-row-action" onClick={() => setShowAllAttention((value) => !value)} type="button">
+                  {showAllAttention ? "Show fewer items" : `Show all ${overview.attention.length} items`}
+                </button>
+              ) : null}
             </div>
           )}
         </section>
@@ -1384,7 +1575,69 @@ function OverviewSection({
           <CompactAuditList items={overview.audit.slice(0, 5)} />
         </section>
       </div>
+      {retryPaymentRefund ? (
+        <PaymentRefundRetryDialog
+          accessToken={accessToken}
+          item={retryPaymentRefund}
+          onClose={() => setRetryPaymentRefund(null)}
+          onSaved={async (message) => {
+            setRetryPaymentRefund(null);
+            await onRefundRetried(message);
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function PaymentRefundRetryDialog({ accessToken, item, onClose, onSaved }: {
+  accessToken: string;
+  item: AttentionItem;
+  onClose: () => void;
+  onSaved: (message: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function retry() {
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetchJson<{ result?: { status?: string; already_settled?: boolean } }>(
+        `/api/referee/admin/payments/refunds/${item.paymentRefundId}/retry`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: reason.trim() }),
+        },
+      );
+      await onSaved(refundRetryNotice({
+        status: response.result?.status,
+        alreadySettled: response.result?.already_settled,
+        destination: "ORIGINAL_PAYMENT_METHOD",
+      }));
+    } catch (error) {
+      setError(errorMessage(error, "Could not retry this refund."));
+      setSaving(false);
+    }
+  }
+  return (
+    <AdminModal onClose={() => { if (!saving) onClose(); }}>
+      <span className="admin-eyebrow">Payment refund</span>
+      <h2>{item.title}</h2>
+      <p className="admin-modal-lead">{item.detail}</p>
+      <p>The refund returns to the original payment method. A retry checks the existing processor reference and never creates a duplicate refund.</p>
+      <label className="admin-modal-field">
+        <span>Reason for retry</span>
+        <textarea value={reason} onChange={(event) => setReason(event.target.value)} maxLength={2000} disabled={saving} rows={4} />
+        <small>Minimum 10 characters. Your reason is recorded in the audit trail.</small>
+      </label>
+      {error ? <p role="alert">{error}</p> : null}
+      <div className="admin-modal-actions">
+        <button type="button" disabled={saving} onClick={onClose} className="admin-secondary-button">Close</button>
+        <button type="button" disabled={saving || reason.trim().length < 10} onClick={() => void retry()} className="admin-primary-button">{saving ? "Checking refund…" : "Retry refund"}</button>
+      </div>
+    </AdminModal>
   );
 }
 
@@ -1398,7 +1651,7 @@ function CompactGameList({ games }: { games: RefereeFixture[] }) {
           </div>
           <div>
             <strong>{game.homeClan.tag} <span>vs</span> {game.awayClan.tag}</strong>
-            <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}</p>
+            <p>{formatAdminDate(game.matchDate)} · {game.timeSlot}{game.timezone ? ` (${game.timezone})` : ""}</p>
           </div>
           <StatusBadge status={adminDisplayStatus(game)} />
         </article>
@@ -1632,7 +1885,7 @@ function GamesSection({
   onAssignReferee: (fixture: RefereeFixture, refereeId: string) => Promise<boolean>;
   onCancel: (fixture: RefereeFixture) => void;
   onCreateSoloGame: () => void;
-  onCreateReferee: (input: { displayName: string; phone: string }) => Promise<boolean>;
+  onCreateReferee: (input: { displayName: string; email: string }) => Promise<boolean>;
   onOverrideScore: (fixture: RefereeFixture) => void;
   onRemoveSoloGame: (fixture: RefereeFixture) => void;
 }) {
@@ -1655,7 +1908,7 @@ function GamesSection({
   const [participantsLoading, setParticipantsLoading] = useState(false);
   const [participantsError, setParticipantsError] = useState<string | null>(null);
   const [newRefereeName, setNewRefereeName] = useState("");
-  const [newRefereePhone, setNewRefereePhone] = useState("");
+  const [newRefereeEmail, setNewRefereeEmail] = useState("");
 
   useEffect(() => {
     const requestedGameId = new URLSearchParams(window.location.search).get("gameId");
@@ -1769,11 +2022,11 @@ function GamesSection({
     event.preventDefault();
     const created = await onCreateReferee({
       displayName: newRefereeName.trim(),
-      phone: newRefereePhone.trim(),
+      email: newRefereeEmail.trim().toLowerCase(),
     });
     if (created) {
       setNewRefereeName("");
-      setNewRefereePhone("");
+      setNewRefereeEmail("");
     }
   }
 
@@ -1786,6 +2039,7 @@ function GamesSection({
             <h2>Games</h2>
           </div>
           <div className="admin-games-head-actions">
+            <a className="admin-secondary-button" href="/admin/schedules">Recurring schedules</a>
             <div className="admin-display-switch" aria-label="Games display" role="group">
               <button className={display === "LIST" ? "active" : ""} onClick={() => setDisplay("LIST")} type="button">List</button>
               <button className={display === "CALENDAR" ? "active" : ""} onClick={() => {
@@ -1807,6 +2061,7 @@ function GamesSection({
             </button>
           </div>
         </div>
+        <GamePaymentSettingsPanel accessToken={accessToken} />
         <div className="admin-game-view-tabs" role="tablist" aria-label="Game timing">
           <button
             aria-selected={view === "SCHEDULED"}
@@ -1992,7 +2247,7 @@ function GamesSection({
                   <option value="">Unassigned</option>
                   {assignments.referees.map((referee) => (
                     <option key={referee.profileId} value={referee.profileId}>
-                      {referee.displayName} · {referee.phone}
+                      {referee.displayName} · {referee.email ?? "Staff email setup required"}
                     </option>
                   ))}
                 </select>
@@ -2001,28 +2256,31 @@ function GamesSection({
                 <p className="admin-detail-hint">Live assignments are locked to avoid an accidental handoff.</p>
               ) : null}
               <details className="admin-add-referee">
-                <summary>+ Add a new referee</summary>
+                <summary>+ Add referee access</summary>
                 <form onSubmit={submitNewReferee}>
                   <input
                     placeholder="Full name"
+                    maxLength={50}
                     required
                     value={newRefereeName}
                     onChange={(event) => setNewRefereeName(event.target.value)}
                   />
                   <input
-                    inputMode="tel"
-                    placeholder="Phone number"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="Dedicated staff email"
                     required
-                    value={newRefereePhone}
-                    onChange={(event) => setNewRefereePhone(event.target.value)}
+                    value={newRefereeEmail}
+                    onChange={(event) => setNewRefereeEmail(event.target.value)}
                   />
                   <button
                     className="admin-secondary-button"
                     disabled={submitting !== null}
                     type="submit"
                   >
-                    {submitting === "create-referee" ? "Creating…" : "Create and send login"}
+                    {submitting === "create-referee" ? "Adding access…" : "Add access and send login"}
                   </button>
+                  <p className="admin-detail-hint">Creates a separate email-only staff account. Use an email that is not used by a player account.</p>
                 </form>
               </details>
             </div>
@@ -2233,9 +2491,7 @@ function AdminGamePlayersPanel({
         {participants ? <b>{signedUpLabel}</b> : null}
       </div>
       {loading ? (
-        <div className="admin-player-loading" aria-label="Loading signed-up players">
-          <i /><i /><i />
-        </div>
+        <LoadingSkeleton label="Loading signed-up players" layout="rows" />
       ) : error ? (
         <p className="admin-inline-error">{error}</p>
       ) : !participants || signedUpPlayers.length === 0 ? (
@@ -2614,25 +2870,30 @@ function WaitlistSection({
   const onboardedCount = applicants.filter(
     (applicant) => applicant.status === "ONBOARDED",
   ).length;
+  const subscriberCount = applicants.filter(isLaunchUpdatesSubscriber).length;
 
   return (
     <section className="admin-card admin-waitlist-card">
       <div className="admin-waitlist-head">
         <div>
-          <span className="admin-eyebrow">Season Zero pipeline</span>
-          <h2>Waitlist applications</h2>
+          <span className="admin-eyebrow">Fieldrush signups</span>
+          <h2>Interest</h2>
           <p>
-            Review private applications collected through field.bh. Contact
+            Launch updates and player applications share one list. Contact
             details stay inside the admin workspace.
           </p>
         </div>
         <span className="admin-waitlist-total">
           <strong>{applicants.length}</strong>
-          <small>Applications loaded</small>
+          <small>Signups loaded</small>
         </span>
       </div>
 
-      <div className="admin-waitlist-summary" aria-label="Waitlist summary">
+      <div className="admin-waitlist-summary" aria-label="Interest summary">
+        <div>
+          <span>Launch updates</span>
+          <strong>{subscriberCount}</strong>
+        </div>
         <div>
           <span>Waiting</span>
           <strong>{waitingCount}</strong>
@@ -2644,18 +2905,6 @@ function WaitlistSection({
         <div>
           <span>Onboarded</span>
           <strong>{onboardedCount}</strong>
-        </div>
-        <div>
-          <span>Other</span>
-          <strong>
-            {Math.max(
-              0,
-              applicants.length -
-                waitingCount -
-                selectedCount -
-                onboardedCount,
-            )}
-          </strong>
         </div>
       </div>
 
@@ -2670,7 +2919,7 @@ function WaitlistSection({
           />
         </label>
         <select
-          aria-label="Filter waitlist by status"
+          aria-label="Filter interest by status"
           onChange={(event) =>
             setStatus(event.target.value as WaitlistStatus | "ALL")
           }
@@ -2684,7 +2933,7 @@ function WaitlistSection({
           ))}
         </select>
         <select
-          aria-label="Filter waitlist by interest"
+          aria-label="Filter by interest"
           onChange={(event) =>
             setInterest(event.target.value as WaitlistInterest | "ALL")
           }
@@ -2698,7 +2947,7 @@ function WaitlistSection({
           ))}
         </select>
         <select
-          aria-label="Filter waitlist by position"
+          aria-label="Filter interest by position"
           onChange={(event) =>
             setPosition(event.target.value as WaitlistPosition | "ALL")
           }
@@ -2714,21 +2963,21 @@ function WaitlistSection({
       </div>
 
       <div className="admin-table-count">
-        {filtered.length} of {applicants.length} loaded applications
+        {filtered.length} of {applicants.length} loaded signups
       </div>
 
       {filtered.length === 0 ? (
         <AdminEmpty
           detail={
             applicants.length === 0
-              ? "New Season Zero applications will appear here."
+              ? "Launch updates and player applications will appear here."
               : "Try changing the search or filters."
           }
           icon="waitlist"
           title={
             applicants.length === 0
-              ? "No applications yet"
-              : "No matching applications"
+              ? "No signups yet"
+              : "No matching signups"
           }
         />
       ) : (
@@ -2736,12 +2985,13 @@ function WaitlistSection({
           <table className="admin-data-table admin-waitlist-table">
             <thead>
               <tr>
-                <th>Applicant</th>
+                <th>Person</th>
                 <th>Contact</th>
                 <th>Player details</th>
                 <th>Interested in</th>
+                <th>Launch updates</th>
                 <th>Status</th>
-                <th>Applied</th>
+                <th>Signed up</th>
               </tr>
             </thead>
             <tbody>
@@ -2750,11 +3000,14 @@ function WaitlistSection({
                   <td>
                     <div className="admin-person-cell">
                       <div className="admin-subject-avatar small">
-                        {initials(applicant.fullName)}
+                        {initials(applicant.fullName ?? applicant.email)}
                       </div>
                       <div>
-                        <strong>{applicant.fullName}</strong>
-                        <small>{humanize(applicant.source)}</small>
+                        <strong>{applicant.fullName ?? applicant.email}</strong>
+                        <small>{waitlistSourceLabel(applicant.source)}</small>
+                        {applicant.signupPlacement ? (
+                          <small>{waitlistPlacementLabel(applicant.signupPlacement)}</small>
+                        ) : null}
                       </div>
                     </div>
                   </td>
@@ -2764,23 +3017,42 @@ function WaitlistSection({
                     </a>
                     {applicant.phone ? (
                       <a href={`tel:${applicant.phone}`}>{applicant.phone}</a>
-                    ) : (
+                    ) : applicant.interest !== "LAUNCH_UPDATES" ? (
                       <small>Phone not provided</small>
-                    )}
+                    ) : null}
                   </td>
                   <td>
-                    <strong>
-                      {applicant.age !== null
-                        ? `Age ${applicant.age}`
-                        : "Age not recorded"}
-                    </strong>
-                    <small>
-                      {applicant.preferredPosition
-                        ? humanize(applicant.preferredPosition)
-                        : "No preferred position"}
-                    </small>
+                    {applicant.interest === "LAUNCH_UPDATES" ? (
+                      <small>Not requested for email signup</small>
+                    ) : (
+                      <>
+                        <strong>
+                          {applicant.age !== null
+                            ? `Age ${applicant.age}`
+                            : "Age not recorded"}
+                        </strong>
+                        <small>
+                          {applicant.preferredPosition
+                            ? humanize(applicant.preferredPosition)
+                            : "No preferred position"}
+                        </small>
+                      </>
+                    )}
                   </td>
                   <td>{waitlistInterestLabel(applicant.interest)}</td>
+                  <td>
+                    {isLaunchUpdatesSubscriber(applicant) ? (
+                      <>
+                        <strong>Subscribed</strong>
+                        <small>{formatDateTime(applicant.launchUpdatesConsentedAt)}</small>
+                        {applicant.launchUpdatesConsentVersion ? (
+                          <small>Consent {applicant.launchUpdatesConsentVersion}</small>
+                        ) : null}
+                      </>
+                    ) : (
+                      <small>No signup recorded</small>
+                    )}
+                  </td>
                   <td>
                     <StatusBadge status={applicant.status} />
                   </td>
@@ -2797,8 +3069,8 @@ function WaitlistSection({
 
       <p className="admin-waitlist-privacy">
         <AdminIcon name="lock" />
-        This table contains private application data. Use it only for Season
-        Zero selection and player contact.
+        This table contains private contact details. Send launch updates only
+        to people with a recorded subscription.
       </p>
     </section>
   );
@@ -2999,25 +3271,33 @@ function StaffSection({
   submitting: string | null;
   onCreate: (input: {
     displayName: string;
-    phone: string;
+    email: string;
     role: "admin" | "referee";
+    existingStaffProfileId?: string;
   }) => Promise<boolean>;
 }) {
   const [displayName, setDisplayName] = useState("");
-  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "referee">("referee");
+  const [existingStaffProfileId, setExistingStaffProfileId] = useState<string | null>(null);
+
+  function resetForm() {
+    setDisplayName("");
+    setEmail("");
+    setRole("referee");
+    setExistingStaffProfileId(null);
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const created = await onCreate({
       displayName: displayName.trim(),
-      phone: phone.trim(),
+      email: email.trim().toLowerCase(),
       role,
+      ...(existingStaffProfileId ? { existingStaffProfileId } : {}),
     });
     if (created) {
-      setDisplayName("");
-      setPhone("");
-      setRole("referee");
+      resetForm();
     }
   }
 
@@ -3025,17 +3305,19 @@ function StaffSection({
     <div className="admin-staff-layout">
       <section className="admin-card admin-staff-create">
         <span className="admin-eyebrow">Controlled access</span>
-        <h2>Add an admin or referee</h2>
+        <h2>{existingStaffProfileId ? "Set up staff email" : "Add an admin or referee"}</h2>
         <p>
-          Register their phone number, create their Field account, and send the
-          first one-time login code in one step.
+          Staff use a separate email-only account and a six-digit login code.
+          Choose a dedicated email that is not already used by a player account.
+          {existingStaffProfileId ? " Existing assignments and staff records will stay with this staff member." : ""}
         </p>
         <form onSubmit={(event) => void submit(event)}>
           <label>
-            <span>Full name</span>
+            <span>Staff display name</span>
             <input
               autoComplete="name"
-              maxLength={80}
+              disabled={existingStaffProfileId !== null}
+              maxLength={50}
               onChange={(event) => setDisplayName(event.target.value)}
               placeholder="Mohamed Ali"
               required
@@ -3043,21 +3325,23 @@ function StaffSection({
             />
           </label>
           <label>
-            <span>Phone number</span>
+            <span>Dedicated staff email</span>
             <input
-              autoComplete="tel"
-              inputMode="tel"
-              onChange={(event) => setPhone(event.target.value)}
-              placeholder="+973 3XXX XXXX"
+              aria-label="Dedicated staff email"
+              type="email"
+              autoComplete="email"
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="referee@example.com"
               required
-              value={phone}
+              value={email}
             />
-            <small>This exact number becomes their login identity.</small>
+            <small>A staff account cannot sign in to the player app. Phone and Google sign-in are not used for staff.</small>
           </label>
           <fieldset>
             <legend>Access level</legend>
             <button
               className={role === "referee" ? "active" : ""}
+              disabled={existingStaffProfileId !== null}
               onClick={() => setRole("referee")}
               type="button"
             >
@@ -3066,6 +3350,7 @@ function StaffSection({
             </button>
             <button
               className={role === "admin" ? "active" : ""}
+              disabled={existingStaffProfileId !== null}
               onClick={() => setRole("admin")}
               type="button"
             >
@@ -3079,11 +3364,12 @@ function StaffSection({
           </div>
           <button
             className="admin-primary-button"
-            disabled={submitting !== null || displayName.trim().length < 2 || phone.trim().length < 8}
+            disabled={submitting !== null || displayName.trim().length < 2 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())}
             type="submit"
           >
-            {submitting === "create-staff" ? "Creating account…" : `Create ${role} account`}
+            {submitting === "create-staff" ? "Setting up staff…" : existingStaffProfileId ? "Set up email and send code" : `Add ${role} access`}
           </button>
+          {existingStaffProfileId ? <button className="admin-secondary-button" onClick={resetForm} type="button">Cancel setup</button> : null}
         </form>
       </section>
 
@@ -3093,7 +3379,7 @@ function StaffSection({
           <b>{staff.filter((member) => member.isActive).length} active</b>
         </header>
         {staff.length === 0 ? (
-          <AdminEmpty icon="referee" title="No staff accounts found" detail="Create the first referee or administrator." />
+          <AdminEmpty icon="referee" title="No staff accounts found" detail="Create a dedicated email account for an administrator or referee." />
         ) : (
           <div className="admin-staff-list">
             {staff.map((member) => (
@@ -3101,11 +3387,18 @@ function StaffSection({
                 <span className="admin-subject-avatar small">{initials(member.displayName)}</span>
                 <div>
                   <strong>{member.displayName}</strong>
-                  <small>{member.phone} · Added {member.createdAt ? formatAdminDate(member.createdAt) : "date unavailable"}</small>
+                  <small>{member.email ?? "Dedicated staff email required"} · Added {member.createdAt ? formatAdminDate(member.createdAt) : "date unavailable"}</small>
+                  {member.phone ? <small>Previous staff contact: {member.phone}</small> : null}
+                  {member.isActive && (member.setupRequired ?? !member.email) ? <button className="admin-secondary-button" type="button" disabled={submitting !== null} onClick={() => {
+                    setExistingStaffProfileId(member.profileId);
+                    setDisplayName(member.displayName);
+                    setEmail(member.email ?? "");
+                    setRole(member.role);
+                  }}>Set up staff email for {member.displayName}</button> : null}
                 </div>
                 <span className={`admin-staff-role ${member.role}`}>{member.role}</span>
                 <span className={member.isActive ? "admin-clear-status" : "admin-action-status"}>
-                  {member.isActive ? <><i /> Active</> : "Inactive"}
+                  {!member.isActive ? "Inactive" : (member.setupRequired ?? !member.email) ? "Setup required" : <><i /> Active</>}
                 </span>
               </article>
             ))}
@@ -3282,34 +3575,70 @@ function AuditSection({ audit }: { audit: AuditItem[] }) {
 
 function SoloGameManagementDialog({
   dialog,
+  fields,
+  draft,
+  error,
+  onAddField,
   submitting,
   onClose,
   onCreate,
   onRemove,
 }: {
   dialog: NonNullable<SoloGameDialog>;
+  fields: AdminField[];
+  draft: SoloGameDraft | null;
+  error: string | null;
+  onAddField: (draft: SoloGameDraft) => void;
   submitting: boolean;
   onClose: () => void;
   onCreate: (input: {
-    venue: string;
+    minimumPlayers: number;
+    fieldId: string;
     matchDate: string;
-    priceBhd: string;
+    kickoffTime: string;
+    durationMinutes: number;
+    priceUsd: string;
     ageLabel: string;
+    highestDivision: number;
+    lowestDivision: number;
+    goalkeepersPerSide: number;
+    defendersPerSide: number;
+    attackersPerSide: number;
   }) => void;
   onRemove: (fixture: RefereeFixture, reason: string) => void;
 }) {
-  const [venue, setVenue] = useState("TFA, Saar");
-  const [matchDate, setMatchDate] = useState(nextSoloMatchDate());
-  const [priceBhd, setPriceBhd] = useState("3.000");
-  const [ageLabel, setAgeLabel] = useState("16+");
+  const [fieldId, setFieldId] = useState(dialog.kind === "create" ? dialog.fieldId ?? "" : "");
+  const selectedField = fields.find((field) => field.id === fieldId && field.isActive && field.marketActive);
+  const [matchDate, setMatchDate] = useState(draft?.matchDate ?? nextSoloMatchDate());
+  const [kickoffTime, setKickoffTime] = useState(draft?.kickoffTime ?? "20:30");
+  const [durationMinutes, setDurationMinutes] = useState(draft?.durationMinutes ?? 60);
+  const [minimumPlayers, setMinimumPlayers] = useState(draft?.minimumPlayers ?? 10);
+  const [priceUsd, setPriceUsd] = useState(draft?.priceUsd ?? "13.00");
+  const [ageLabel, setAgeLabel] = useState(draft?.ageLabel ?? "18+");
+  const [highestDivision, setHighestDivision] = useState(draft?.highestDivision ?? 1);
+  const [lowestDivision, setLowestDivision] = useState(draft?.lowestDivision ?? 5);
+  const [formation, setFormation] = useState<SoloFormation>(draft ? {
+    goalkeepersPerSide: draft.goalkeepersPerSide, defendersPerSide: draft.defendersPerSide, attackersPerSide: draft.attackersPerSide,
+  } : DEFAULT_SOLO_FORMATION);
+  let validFormation = false;
+  try { parseSoloFormation(formation); validFormation = true; } catch { /* Form remains unsaveable until valid. */ }
   const [reason, setReason] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const creating = dialog.kind === "create";
+  const priceFils = /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim())
+    ? Math.round(Number(priceUsd.trim()) * 1000) : null;
+  const validPrice = priceFils !== null && (priceFils === 0 || priceFils >= 500 && priceFils <= 100_000);
   const createReady =
-    venue.trim().length >= 2 &&
+    !!selectedField &&
     matchDate.length === 10 &&
-    /^\d{1,3}(?:\.\d{1,3})?$/.test(priceBhd.trim()) &&
-    ageLabel.trim().length >= 2;
+    /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(kickoffTime) &&
+    Number.isInteger(durationMinutes) && durationMinutes >= 30 && durationMinutes <= 180 &&
+    validPrice &&
+    ageLabel.trim().length >= 2 &&
+    Number.isInteger(highestDivision) && highestDivision >= 1 && highestDivision <= 5 &&
+    Number.isInteger(lowestDivision) && lowestDivision >= 1 && lowestDivision <= 5 &&
+    highestDivision <= lowestDivision && validFormation &&
+    Number.isInteger(minimumPlayers) && minimumPlayers >= 2 && minimumPlayers <= 14;
   const removeReady =
     reason.trim().length >= 8 &&
     confirmation.trim().toUpperCase() === "REMOVE";
@@ -3323,23 +3652,26 @@ function SoloGameManagementDialog({
         {creating ? "Open Queue schedule" : "Permanent audit record"}
       </span>
       <h2>{creating ? "Create a solo game" : "Remove this empty game?"}</h2>
+      {error ? <div role="alert" className="admin-banner danger">{error}</div> : null}
       {creating ? (
         <>
           <p className="admin-modal-lead">
             The game opens for player bookings as soon as it is created.
           </p>
           <div className="admin-modal-warning">
-            Solo Queue has a permanent slot: Tuesday or Friday · 8:30–9:30 PM Bahrain time.
+            Up to 7-a-side · Any day · The saved field determines the city and local time. Games at the same pitch cannot overlap. Prices are in USD.
           </div>
           <label className="admin-modal-field">
-            <span>Venue</span>
-            <input
-              maxLength={80}
-              onChange={(event) => setVenue(event.target.value)}
-              placeholder="TFA, Saar"
-              value={venue}
-            />
+            <span>Field / pitch <span aria-hidden="true">*</span></span>
+            <select required value={fieldId} onChange={(event) => setFieldId(event.target.value)}>
+              <option value="">Select a saved field</option>
+              {fields.filter((field) => field.isActive && field.marketActive).map((field) => (
+                <option key={field.id} value={field.id}>{field.name} · {field.marketCityName}</option>
+              ))}
+            </select>
+            <small>{selectedField ? `${selectedField.address}, ${selectedField.city}, ${selectedField.state}` : "Players will see this field’s address and map pin in the app."}</small>
           </label>
+          <button className="admin-secondary-button" type="button" disabled={submitting} onClick={() => onAddField({ matchDate, kickoffTime, durationMinutes, minimumPlayers, priceUsd, ageLabel, highestDivision, lowestDivision, ...formation })}>+ Add a new field</button>
           <div className="admin-solo-game-fields">
             <label className="admin-modal-field">
               <span>Match date</span>
@@ -3348,17 +3680,50 @@ function SoloGameManagementDialog({
                 type="date"
                 value={matchDate}
               />
-              <small>Tuesday or Friday</small>
+              <small>Choose any future date, including weekends.</small>
             </label>
             <label className="admin-modal-field">
-              <span>Price (BHD)</span>
+              <span>Kickoff time</span>
+              <input type="time" value={kickoffTime} onChange={(event) => setKickoffTime(event.target.value)} />
+              <small>{selectedField ? `${selectedField.marketCityName} · ${selectedField.marketTimezone}` : "Choose a field to set the local timezone."}</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Duration (minutes)</span>
+              <input type="number" min={30} max={180} step={1} value={durationMinutes || ""} onChange={(event) => setDurationMinutes(Number(event.target.value))} />
+              <small>30–180 minutes. Default: 60 minutes.</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Price per player (USD)</span>
               <input
+                type="number"
+                min={0}
+                max={100}
+                step="0.01"
                 inputMode="decimal"
-                onChange={(event) => setPriceBhd(event.target.value)}
-                placeholder="3.000"
-                value={priceBhd}
+                aria-invalid={!validPrice}
+                onChange={(event) => setPriceUsd(event.target.value)}
+                placeholder="13.00"
+                value={priceUsd}
               />
-              <small>Up to 3 decimals</small>
+              <small>Defaults to $13.00. Use $0 for free, or $0.50–$100 with up to 2 decimals.</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Highest division</span>
+              <select value={highestDivision} onChange={(event) => setHighestDivision(Number(event.target.value))}>
+                {[1, 2, 3, 4, 5].map((division) => (
+                  <option key={division} value={division}>Division {division}</option>
+                ))}
+              </select>
+              <small>Division 1 is the highest competitive division.</small>
+            </label>
+            <label className="admin-modal-field">
+              <span>Lowest division</span>
+              <select value={lowestDivision} onChange={(event) => setLowestDivision(Number(event.target.value))}>
+                {[1, 2, 3, 4, 5].map((division) => (
+                  <option key={division} value={division}>Division {division}</option>
+                ))}
+              </select>
+              <small>Placement players (fewer than 2 matches) can only book unrestricted Division 1–5 games.</small>
             </label>
           </div>
           <label className="admin-modal-field">
@@ -3366,10 +3731,17 @@ function SoloGameManagementDialog({
             <input
               maxLength={40}
               onChange={(event) => setAgeLabel(event.target.value)}
-              placeholder="16+"
+              placeholder="18+"
               value={ageLabel}
             />
           </label>
+          <SoloFormationFields value={formation} onChange={setFormation} disabled={submitting} />
+          <label className="admin-modal-field">
+            <span>Minimum players (both teams)</span>
+            <input required type="number" min={2} max={14} step={1} value={minimumPlayers || ""} onChange={(event) => setMinimumPlayers(Number(event.target.value))} />
+            <small>2–14 players total. 2 allows 1v1; odd counts allow uneven teams. Booking capacity stays 14. At kickoff and during play, at least this many actual players and one on each team are required.</small>
+          </label>
+          <p className="admin-detail-hint">Formation can be changed from the game overview until its first booking or payment attempt.</p>
         </>
       ) : (
         <>
@@ -3417,10 +3789,16 @@ function SoloGameManagementDialog({
           onClick={() => {
             if (creating) {
               onCreate({
-                venue: venue.trim(),
+                fieldId,
                 matchDate,
-                priceBhd: priceBhd.trim(),
+                kickoffTime,
+                durationMinutes,
+                minimumPlayers,
+                priceUsd: priceUsd.trim(),
                 ageLabel: ageLabel.trim(),
+                highestDivision,
+                lowestDivision,
+                ...formation,
               });
             } else {
               onRemove(dialog.fixture, reason.trim());
@@ -3471,6 +3849,9 @@ function GameActionDialog({
       <p className="admin-modal-lead">
         {dialog.fixture.homeClan.tag} vs {dialog.fixture.awayClan.tag} · {formatAdminDate(dialog.fixture.matchDate)}
       </p>
+      {!isCancel && dialog.fixture.matchKind === "SOLO" && dialog.fixture.ratingPolicyId !== "field-sr-season0-v2" ? (
+        <div className="admin-modal-warning">Legacy rating awards are fixed. Once SR has been awarded, a score correction must keep the same result and rating margin multiplier. Changing either requires a separately reviewed rating migration; it cannot silently retain the old SR. Use live “Undo goal” before finalizing a recording mistake.</div>
+      ) : null}
       {isCancel ? (
         <div className="admin-modal-warning">
           Scheduled participants will be notified. Solo-game payments follow the admin cancellation refund policy.
@@ -4113,20 +4494,14 @@ function CompactAuditList({ items }: { items: AuditItem[] }) {
 }
 
 function AdminLoadingScreen({ label }: { label: string }) {
-  return (
-    <main className="admin-loading-screen">
-      <div className="admin-loading-mark">F</div>
-      <div><span /><span /><span /></div>
-      <p>{label}</p>
-    </main>
-  );
+  return <main><LoadingSkeleton label={label} layout="dashboard" fullPage /></main>;
 }
 
 function AdminPageSkeleton() {
   return (
-    <div className="admin-page-skeleton">
-      <div className="admin-skeleton-metrics">{[1, 2, 3, 4].map((item) => <span key={item} />)}</div>
-      <div className="admin-skeleton-panels"><span /><span /></div>
+    <div className="admin-page-skeleton" role="status" aria-label="Loading admin overview">
+      <div className="admin-skeleton-metrics" aria-hidden="true">{[1, 2, 3, 4].map((item) => <span key={item} />)}</div>
+      <div className="admin-skeleton-panels" aria-hidden="true"><span /><span /></div>
     </div>
   );
 }
@@ -4135,10 +4510,11 @@ type AdminIconName =
   | "overview" | "games" | "policy" | "support" | "reports" | "waitlist" | "people" | "audit" | "referee"
   | "logout" | "refresh" | "alert" | "check" | "arrow" | "search"
   | "replay" | "external" | "edit" | "cancel" | "lock" | "dismiss"
-  | "close" | "live" | "shield";
+  | "close" | "live" | "shield" | "location";
 
 function AdminIcon({ name }: { name: AdminIconName }) {
   const paths: Record<AdminIconName, React.ReactNode> = {
+    location: <><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="3" /></>,
     overview: <><path d="M4 13h6V4H4v9Zm0 7h6v-4H4v4Zm10 0h6v-9h-6v9Zm0-16v4h6V4h-6Z" /></>,
     games: <><path d="M5 5h14v14H5z" /><path d="M8 3v4M16 3v4M5 10h14" /></>,
     policy: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" /><path d="M8 9h8M8 13h5M8 17h3" /></>,
@@ -4255,6 +4631,7 @@ function normalizeAttention(row: JsonRecord, index: number): AttentionItem {
     gameId: stringFrom(row.gameId ?? row.game_id ?? row.fixtureId ?? row.fixture_id),
     resolution: stringFrom(row.resolution),
     dismissible: row.dismissible !== false,
+    paymentRefundId: stringFrom(row.paymentRefundId),
   };
 }
 
@@ -4431,12 +4808,17 @@ function upperString(value: unknown, fallback: string) {
 
 function sectionTitle(section: AdminSection) {
   return {
-    overview: "Good overview. Fast decisions.",
-    games: "Games control",
+    overview: "Every game starts here.",
+    games: "Games",
+    schedules: "Game schedules",
+    fields: "Fields & pitches",
+    cities: "Competition cities",
+    seasons: "Seasons & rewards",
+    referrals: "Referrals",
     reliability: "Reliability policy",
     support: "Player support",
     reports: "Reports inbox",
-    waitlist: "Season Zero waitlist",
+    waitlist: "Interest",
     people: "Players & clans",
     staff: "Admins & referees",
     audit: "Audit log",
@@ -4445,14 +4827,19 @@ function sectionTitle(section: AdminSection) {
 
 function sectionSubtitle(section: AdminSection) {
   return {
-    overview: "See what needs attention across Field today.",
+    overview: "Your Fieldrush matchdays, people and priorities in one place.",
     games: "Review, correct, cancel and watch every match.",
+    schedules: "Choose when and where you play. Publish upcoming games automatically.",
+    fields: "Save real locations once. Assign them to games. Help players find the pitch.",
+    cities: "Choose where Fieldrush is available. Keep game discovery, timezones and rankings connected.",
+    seasons: "Plan each season and publish city-by-city cash rewards for Outfield and Keeper ladders.",
+    referrals: "Review referral standings and resolve ties with an audited decision.",
     reliability: "Schedule fair attendance, refund, strike and SR rules without rewriting history.",
     support: "Handle account, booking, match and technical requests without mixing them into moderation.",
     reports: "Triage player reports privately and consistently.",
-    waitlist: "Review the players and clan leaders asking to join the private pilot.",
+    waitlist: "Review launch update signups and player applications in one place.",
     people: "Understand patterns before taking proportionate action.",
-    staff: "Register trusted phone numbers and control who can operate Field.",
+    staff: "Set up dedicated staff email accounts and control who can operate Field.",
     audit: "A permanent trail of sensitive admin decisions.",
   }[section];
 }
@@ -4550,24 +4937,6 @@ function isFinalAdminGame(fixture: RefereeFixture) {
   return ["FINAL", "CANCELLED"].includes(fixture.status);
 }
 
-function adminGameStartTimestamp(fixture: RefereeFixture) {
-  const dateMatch = fixture.matchDate.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  const timeMatch = fixture.timeSlot.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (dateMatch && timeMatch) {
-    const [, year, month, day] = dateMatch;
-    const rawHour = Number(timeMatch[1]);
-    const minute = Number(timeMatch[2]);
-    const period = timeMatch[3].toUpperCase();
-    const hour = rawHour % 12 + (period === "PM" ? 12 : 0);
-    const timestamp = Date.parse(
-      `${year}-${month}-${day}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00+03:00`,
-    );
-    if (Number.isFinite(timestamp)) return timestamp;
-  }
-
-  const fallback = Date.parse(`${fixture.matchDate}T12:00:00+03:00`);
-  return Number.isFinite(fallback) ? fallback : 0;
-}
 
 function sortScheduledAdminGames(left: RefereeFixture, right: RefereeFixture) {
   if (left.status === "LIVE" && right.status !== "LIVE") return -1;
@@ -4625,12 +4994,30 @@ function humanize(value: string) {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function waitlistInterestLabel(value: WaitlistInterest) {
+function waitlistInterestLabel(value: WaitlistInterest | null) {
+  if (value === null) return "Not recorded";
   return {
+    LAUNCH_UPDATES: "Launch updates",
     SOLO_PLAYER: "Solo player",
     CLAN_PLAYER: "Clan player",
     CLAN_LEADER: "Clan leader",
   }[value];
+}
+
+function waitlistSourceLabel(value: string) {
+  if (value === "FIELDRUSH_GG") return "fieldrush.gg";
+  if (value === "FIELD_BH") return "field.bh";
+  return humanize(value);
+}
+
+function waitlistPlacementLabel(value: string) {
+  const labels: Record<string, string> = {
+    "desktop-hero": "Desktop hero",
+    "desktop-footer": "Desktop footer",
+    "mobile-hero": "Mobile hero",
+    "mobile-footer": "Mobile footer",
+  };
+  return labels[value] ?? humanize(value);
 }
 
 function initials(value: string) {
@@ -4644,22 +5031,21 @@ function truncate(value: string, limit: number) {
 
 function nextSoloMatchDate() {
   const now = new Date();
-  const bahrainCalendar = new Date(now.getTime() + 3 * 60 * 60 * 1000);
+  const phoenixCalendar = new Date(now.getTime() - 7 * 60 * 60 * 1000);
   const candidate = new Date(Date.UTC(
-    bahrainCalendar.getUTCFullYear(),
-    bahrainCalendar.getUTCMonth(),
-    bahrainCalendar.getUTCDate(),
+    phoenixCalendar.getUTCFullYear(),
+    phoenixCalendar.getUTCMonth(),
+    phoenixCalendar.getUTCDate(),
   ));
 
   for (let offset = 0; offset < 14; offset += 1) {
-    const weekday = candidate.getUTCDay();
     const value = [
       candidate.getUTCFullYear(),
       String(candidate.getUTCMonth() + 1).padStart(2, "0"),
       String(candidate.getUTCDate()).padStart(2, "0"),
     ].join("-");
-    const kickoff = new Date(`${value}T20:30:00+03:00`);
-    if ((weekday === 2 || weekday === 5) && kickoff.getTime() > now.getTime()) {
+    const kickoff = new Date(`${value}T20:30:00-07:00`);
+    if (kickoff.getTime() > now.getTime()) {
       return value;
     }
     candidate.setUTCDate(candidate.getUTCDate() + 1);

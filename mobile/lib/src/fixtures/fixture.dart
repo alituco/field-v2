@@ -1,4 +1,5 @@
 import '../clans/clan.dart';
+import '../ranking/player_rating_visibility.dart';
 
 enum FixtureStatus { open, scheduled, live, finalResult, cancelled }
 
@@ -100,6 +101,8 @@ class ClanFixtureCancellationPreview {
     required this.currency,
     this.depositRefundFils = 0,
     this.policyVersionId,
+    this.refundDestination,
+    this.refundStatus,
   });
 
   final bool canCancel;
@@ -115,11 +118,19 @@ class ClanFixtureCancellationPreview {
   final String currency;
   final int depositRefundFils;
   final String? policyVersionId;
+  final String? refundDestination;
+  final String? refundStatus;
 
   int get refundPercent => (refundBps / 100).round();
   String get refundLabel => _fixtureMoneyLabel(refundAmountFils, currency);
   String get depositRefundLabel =>
       _fixtureMoneyLabel(depositRefundFils, currency);
+  String get refundDestinationLabel =>
+      switch (refundDestination?.trim().toUpperCase()) {
+        'ORIGINAL_PAYMENT_METHOD' || 'STRIPE' => 'Original payment method',
+        'FIELD_WALLET' => 'Field Wallet',
+        _ => 'Refund',
+      };
 
   bool hasSameConsequencesAs(ClanFixtureCancellationPreview other) {
     return canCancel == other.canCancel &&
@@ -134,6 +145,7 @@ class ClanFixtureCancellationPreview {
         forfeitScore == other.forfeitScore &&
         currency == other.currency &&
         depositRefundFils == other.depositRefundFils &&
+        refundDestination == other.refundDestination &&
         policyVersionId == other.policyVersionId;
   }
 
@@ -152,6 +164,8 @@ class ClanFixtureCancellationPreview {
       currency: (json['currency'] as String? ?? 'BHD').trim(),
       depositRefundFils: _asInt(json['deposit_refund_fils']),
       policyVersionId: (json['policy_version_id'] as String?)?.trim(),
+      refundDestination: (json['refund_destination'] as String?)?.trim(),
+      refundStatus: (json['refund_status'] as String?)?.trim(),
     );
   }
 }
@@ -190,11 +204,12 @@ class FixtureClan {
   final String emblem;
   final String themeId;
   final String patternId;
-  final int skillRating;
+  final int? skillRating;
   final String region;
   final int? regionRank;
 
-  RatingDivision get rank => divisionFromRating(skillRating);
+  RatingDivision? get rank =>
+      skillRating == null ? null : divisionFromRating(skillRating!);
 
   ClanTheme get theme => clanThemeById(themeId);
 
@@ -206,7 +221,7 @@ class FixtureClan {
       emblem: json['emblem'] as String? ?? '⚽',
       themeId: json['theme_id'] as String? ?? 'pitch',
       patternId: json['pattern_id'] as String? ?? 'solid',
-      skillRating: _asInt(json['skill_rating'], fallback: 1500),
+      skillRating: _asNullableInt(json['skill_rating']),
       region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
       regionRank: _asNullableInt(json['region_rank']),
     );
@@ -469,6 +484,8 @@ class FixtureTimelineEvent {
     this.profileId,
     this.assistProfileId,
     this.note,
+    this.goalId,
+    this.isGoalValid,
     this.player,
     this.assist,
   });
@@ -482,6 +499,10 @@ class FixtureTimelineEvent {
   final int minute;
   final int second;
   final String? note;
+
+  /// Links a recorded goal and its later removal without deleting audit events.
+  final String? goalId;
+  final bool? isGoalValid;
   final DateTime? createdAt;
   final DateTime? occurredAt;
   final FixtureParticipant? player;
@@ -492,6 +513,11 @@ class FixtureTimelineEvent {
   String get assistName => assist?.displayName ?? 'Unknown';
 
   DateTime? get highlightTimestamp => occurredAt ?? createdAt;
+
+  bool get isCreditedGoal =>
+      eventType.trim().toUpperCase() == 'GOAL' &&
+      isGoalValid != false &&
+      note?.trim().toLowerCase() != 'admin correction';
 
   factory FixtureTimelineEvent.fromJson(Map<String, dynamic> json) {
     final player = _nestedMap(json['player'] ?? json['profiles']);
@@ -507,6 +533,8 @@ class FixtureTimelineEvent {
       minute: _asInt(json['minute']),
       second: _asInt(json['second']),
       note: (json['note'] as String?)?.trim(),
+      goalId: json['goal_id'] as String?,
+      isGoalValid: json['is_goal_valid'] as bool?,
       createdAt: _asDate(json['created_at']),
       occurredAt: _asDate(json['occurred_at']),
       player: player == null ? null : FixtureParticipant.fromJson(player),
@@ -552,6 +580,8 @@ class Fixture {
     this.awayPaidAt,
     this.homePayer,
     this.awayPayer,
+    this.currency,
+    this.basePriceFils,
     this.cancelledAt,
     this.cancellationCode,
     this.cancellationReason,
@@ -599,6 +629,11 @@ class Fixture {
   final DateTime? awayPaidAt;
   final FixtureParticipant? homePayer;
   final FixtureParticipant? awayPayer;
+  final String? currency;
+  final int? basePriceFils;
+  String get teamPriceLabel => basePriceFils == null || currency == null
+      ? 'Price shown at checkout'
+      : '${_fixtureMoneyLabel(basePriceFils!, currency!)} each';
   final DateTime? cancelledAt;
   final String? cancellationCode;
   final String? cancellationReason;
@@ -621,6 +656,23 @@ class Fixture {
   final DateTime? teamsAssignedAt;
   final List<FixtureLineupPlayer> homeLineup;
   final List<FixtureLineupPlayer> awayLineup;
+
+  /// Matches the existing clan fixture_start_at database function. The stored
+  /// matchDate is a calendar date, not midnight in the viewer's time zone.
+  DateTime get scheduledStartAt {
+    final (hour, minute) = switch (timeSlot) {
+      '7:00 PM - 8:00 PM' => (19, 0),
+      '8:30 PM - 9:30 PM' => (20, 30),
+      _ => (0, 0),
+    };
+    return DateTime.utc(
+      matchDate.year,
+      matchDate.month,
+      matchDate.day,
+      hour - 3,
+      minute,
+    );
+  }
 
   bool get isOpen => status == FixtureStatus.open;
 
@@ -722,9 +774,14 @@ class Fixture {
     final moments = <FixtureHighlightMoment>[];
     final goals =
         timeline.where((event) {
-          return event.eventType.toUpperCase() == 'GOAL' &&
+          return event.isCreditedGoal &&
               event.highlightTimestamp != null &&
-              event.note?.toLowerCase() != 'admin correction';
+              !timeline.any(
+                (correction) =>
+                    event.goalId != null &&
+                    correction.eventType.toUpperCase() == 'CORRECTION' &&
+                    correction.goalId == event.goalId,
+              );
         }).toList()..sort((left, right) {
           return left.highlightTimestamp!.compareTo(right.highlightTimestamp!);
         });
@@ -845,13 +902,19 @@ class Fixture {
     final homeLineup = _fixtureLineupFromJson(
       json['fixture_player_appearances'],
       'HOME',
+      ratingStatus: json['rating_status'] as String?,
     );
     final awayLineup = _fixtureLineupFromJson(
       json['fixture_player_appearances'],
       'AWAY',
+      ratingStatus: json['rating_status'] as String?,
     );
-    final homeAverage = _lineupAverageRating(homeLineup);
-    final awayAverage = _lineupAverageRating(awayLineup);
+    final homeAverage = json.containsKey('home_average_player_rating')
+        ? _asNullableInt(json['home_average_player_rating'])
+        : _lineupAverageRating(homeLineup);
+    final awayAverage = json.containsKey('away_average_player_rating')
+        ? _asNullableInt(json['away_average_player_rating'])
+        : _lineupAverageRating(awayLineup);
     final matchAverage = homeAverage == null || awayAverage == null
         ? null
         : ((homeAverage + awayAverage) / 2).round();
@@ -892,6 +955,8 @@ class Fixture {
       awayPayer: awayPayer == null
           ? null
           : FixtureParticipant.fromJson(awayPayer),
+      currency: _nonEmptyString(json['currency']),
+      basePriceFils: _asNullableInt(json['base_price_fils']),
       cancelledAt: _asDate(json['cancelled_at']),
       cancellationCode: json['cancellation_code'] as String?,
       cancellationReason: json['cancellation_reason'] as String?,
@@ -915,17 +980,16 @@ class Fixture {
           : FixtureBroadcast.fromJson(broadcast),
       scorers: _scorersFromJson(json['fixture_scorers']),
       timeline: _timelineFromJson(json['fixture_events']),
-      homeAveragePlayerRating:
-          _asNullableInt(json['home_average_player_rating']) ?? homeAverage,
-      awayAveragePlayerRating:
-          _asNullableInt(json['away_average_player_rating']) ?? awayAverage,
-      matchAveragePlayerRating:
-          _asNullableInt(json['match_average_player_rating']) ?? matchAverage,
-      teamRatingSpread:
-          _asNullableInt(json['team_rating_spread']) ??
-          (homeAverage == null || awayAverage == null
-              ? null
-              : (homeAverage - awayAverage).abs()),
+      homeAveragePlayerRating: homeAverage,
+      awayAveragePlayerRating: awayAverage,
+      matchAveragePlayerRating: json.containsKey('match_average_player_rating')
+          ? _asNullableInt(json['match_average_player_rating'])
+          : matchAverage,
+      teamRatingSpread: json.containsKey('team_rating_spread')
+          ? _asNullableInt(json['team_rating_spread'])
+          : (homeAverage == null || awayAverage == null
+                ? null
+                : (homeAverage - awayAverage).abs()),
       teamsAssignedAt: _asDate(json['teams_assigned_at']),
       homeLineup: homeLineup,
       awayLineup: awayLineup,
@@ -983,7 +1047,11 @@ Map<String, dynamic> _jsonMap(Object? value) {
   return const {};
 }
 
-List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
+List<FixtureLineupPlayer> _fixtureLineupFromJson(
+  Object? value,
+  String side, {
+  String? ratingStatus,
+}) {
   if (value is! List) return const [];
   final players = <FixtureLineupPlayer>[];
   for (final rawRow in value) {
@@ -992,6 +1060,12 @@ List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
     if ((row['side'] as String? ?? '').toUpperCase() != side) continue;
     final profile = _nestedMap(row['player']);
     if (profile == null) continue;
+    final numeric =
+        permitsPublicRatingResult(
+          row['rating_status'] as String? ?? ratingStatus,
+        )
+        ? row
+        : {...row, 'rating_visible': false};
     players.add(
       FixtureLineupPlayer(
         id: row['profile_id'] as String? ?? profile['id'] as String? ?? '',
@@ -1002,8 +1076,8 @@ List<FixtureLineupPlayer> _fixtureLineupFromJson(Object? value, String side) {
         side: side,
         played: row['played'] as bool? ?? false,
         isMe: row['is_me'] as bool? ?? false,
-        ratingAtMatchStart: _asNullableInt(row['rating_at_start']),
-        ratingChange: _asNullableInt(row['rating_change']),
+        ratingAtMatchStart: publicRatingNumber(row, 'rating_at_start'),
+        ratingChange: publicRatingNumber(numeric, 'rating_change'),
       ),
     );
   }
@@ -1022,7 +1096,8 @@ int? _lineupAverageRating(List<FixtureLineupPlayer> players) {
       .map((player) => player.displayedRating)
       .whereType<int>()
       .toList();
-  if (ratings.isEmpty) return null;
+  // A partial average would look authoritative while excluding hidden players.
+  if (ratings.isEmpty || ratings.length != included.length) return null;
   return (ratings.reduce((total, rating) => total + rating) / ratings.length)
       .round();
 }
@@ -1035,10 +1110,13 @@ int _asInt(Object? value, {int fallback = 0}) {
 }
 
 String _fixtureMoneyLabel(int fils, String currency) {
-  final dinars = fils / 1000;
-  final amount = dinars == dinars.roundToDouble()
-      ? dinars.toInt().toString()
-      : dinars.toStringAsFixed(3);
+  final units = fils / 1000;
+  if (currency.toUpperCase() == 'USD') {
+    return '\$${units.toStringAsFixed(fils % 10 == 0 ? 2 : 3)} USD';
+  }
+  final amount = units == units.roundToDouble()
+      ? units.toInt().toString()
+      : units.toStringAsFixed(3);
   return '$amount $currency';
 }
 

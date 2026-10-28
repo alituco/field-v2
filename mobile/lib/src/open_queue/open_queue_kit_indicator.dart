@@ -20,7 +20,12 @@ class OpenQueueKitIndicator extends StatelessWidget {
     if (!booking.game.isUpcomingMatchConfirmed) {
       return const SizedBox.shrink();
     }
-    if (!booking.game.isTeamAssignmentDue) {
+    if (booking.game.hasConfigurableMinimum &&
+        !booking.game.hasActiveTeamAssignment) {
+      return const SizedBox.shrink();
+    }
+    if (!booking.game.hasConfigurableMinimum &&
+        !booking.game.isTeamAssignmentDue) {
       return _ScheduledOpenQueueKitIndicator(
         compact: compact,
         inline: inline,

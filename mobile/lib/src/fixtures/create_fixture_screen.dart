@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'fixture.dart';
@@ -73,6 +75,15 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     }
 
     try {
+      if (!await clanGamesAvailable(widget.fixtureRepository)) {
+        if (!mounted) return false;
+        setState(() {
+          _accessReady = false;
+          _accessMessage =
+              'Clan games are currently unavailable. Existing bookings and refunds are unaffected.';
+        });
+        return false;
+      }
       final latest = await widget.fixtureRepository.getMyClanMembership();
       if (!mounted) return false;
 
@@ -184,11 +195,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
     }
 
     if (fixture.homeClanId == _membership.clan.id) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Your clan is already hosting this match.'),
-        ),
-      );
+      showFieldrushToast(context, 'Your clan is already hosting this match.');
       return;
     }
 
@@ -266,16 +273,8 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
         clanId: _membership.clan.id,
       );
     }
-    // Test repositories written before policy-backed checkout keep the legacy
-    // beta amount. The production Supabase repository always uses the quote RPC.
-    return const ClanFixtureChargePreview(
-      currency: 'BHD',
-      baseAmountFils: 20000,
-      reliabilityDepositRequired: false,
-      reliabilityDepositBps: 2000,
-      reliabilityDepositFils: 0,
-      totalFils: 20000,
-      activeClanStrikes: 0,
+    throw StateError(
+      'We could not load the current match price. Please try again.',
     );
   }
 
@@ -371,10 +370,9 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
   }
 
   void _showOwnerSnack() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Only clan owners and leaders can schedule matches.'),
-      ),
+    showFieldrushToast(
+      context,
+      'Only clan owners and leaders can schedule matches.',
     );
   }
 
@@ -534,7 +532,7 @@ class _CreateFixtureScreenState extends State<CreateFixtureScreen>
               ? const SizedBox(
                   width: 18,
                   height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
+                  child: FieldLoadingIndicator(),
                 )
               : const Icon(Icons.lock_rounded),
           label: Text(
@@ -577,29 +575,7 @@ class _ClanAccessLoadingStep extends StatelessWidget {
     return ListView(
       padding: fieldHeaderAwarePadding(context, top: 72, bottom: 40),
       children: const [
-        Center(
-          child: Column(
-            children: [
-              SizedBox(
-                width: 34,
-                height: 34,
-                child: CircularProgressIndicator(
-                  color: fieldEmerald600,
-                  strokeWidth: 3,
-                ),
-              ),
-              SizedBox(height: 18),
-              Text(
-                'Checking clan access…',
-                style: TextStyle(
-                  color: fieldGray700,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ),
-        ),
+        FieldLoadingContent(label: 'Checking clan access', rows: 3),
       ],
     );
   }
@@ -1869,23 +1845,10 @@ class _ChargePreviewLoading extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
-        ),
-        SizedBox(width: 10),
-        Text(
-          'Calculating the exact checkout total…',
-          style: TextStyle(
-            color: fieldGray500,
-            fontSize: 13,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
+    return const FieldLoadingContent(
+      label: 'Calculating the exact checkout total',
+      rows: 2,
+      compact: true,
     );
   }
 }
@@ -2063,7 +2026,7 @@ class _ConfirmationTeam extends StatelessWidget {
         ),
         const SizedBox(height: 5),
         Text(
-          '${clan.tag} · ${clan.rank.label}',
+          '${clan.tag}${clan.rank == null ? '' : ' · ${clan.rank!.label}'}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
@@ -2072,15 +2035,17 @@ class _ConfirmationTeam extends StatelessWidget {
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 4),
-        Text(
-          '${clan.skillRating} SR',
-          style: const TextStyle(
-            color: fieldEmerald600,
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
+        if (clan.skillRating != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '${clan.skillRating} SR',
+            style: const TextStyle(
+              color: fieldEmerald600,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
           ),
-        ),
+        ],
         if (rankLabel != null) ...[
           const SizedBox(height: 3),
           Text(

@@ -6,6 +6,7 @@ import {
   loadRefereeOpenQueueGames,
 } from "@/lib/open-queue-referee-data";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
+import { sortAssignedRefereeMatches } from "@/lib/referee-assigned-matches";
 
 export async function GET(request: NextRequest) {
   const context = await requireReferee(request);
@@ -22,13 +23,11 @@ export async function GET(request: NextRequest) {
             loadRefereeOpenQueueGames(context.db, context.referee.profileId),
           ],
     );
-    const fixtures = [...clanFixtures, ...soloGames].sort((left, right) => {
-      const leftKey = `${left.matchDate} ${left.timeSlot}`;
-      const rightKey = `${right.matchDate} ${right.timeSlot}`;
-      return isAdminScope
-        ? rightKey.localeCompare(leftKey)
-        : leftKey.localeCompare(rightKey);
-    });
+    const combined = [...clanFixtures, ...soloGames];
+    const fixtures = isAdminScope
+      ? combined.sort((left, right) =>
+          `${right.matchDate} ${right.timeSlot}`.localeCompare(`${left.matchDate} ${left.timeSlot}`))
+      : sortAssignedRefereeMatches(combined);
 
     return NextResponse.json({ me: context.referee, fixtures });
   } catch (error) {

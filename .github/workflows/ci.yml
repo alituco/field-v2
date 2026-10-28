@@ -10,6 +10,17 @@ on:
       - staging
       - prod
   workflow_dispatch:
+    inputs:
+      mode:
+        description: "Staging diagnostic scope (never publishes TestFlight or the PWA)"
+        required: true
+        default: full
+        type: choice
+        options:
+          - full
+          - backend
+          - player
+          - journey
 
 permissions:
   contents: read
@@ -21,27 +32,49 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/staging' }}
 
 jobs:
-  flutter:
-    name: Flutter Android, analyze, and test
+  preflight:
+    name: Fast CI contracts and change plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      flutter: ${{ steps.plan.outputs.flutter }}
+      android: ${{ steps.plan.outputs.android }}
+      ios: ${{ steps.plan.outputs.ios }}
+      referee: ${{ steps.plan.outputs.referee }}
+      broadcaster: ${{ steps.plan.outputs.broadcaster }}
+      database: ${{ steps.plan.outputs.database }}
+      backend: ${{ steps.plan.outputs.backend }}
+      player: ${{ steps.plan.outputs.player }}
+      browser: ${{ steps.plan.outputs.browser }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+        with:
+          fetch-depth: 0
+      - name: Test deployment and workflow contracts before expensive jobs
+        run: bash .github/scripts/check-ci.sh
+      - name: Select checks and staging diagnostic scope
+        id: plan
+        env:
+          CI_MODE: ${{ inputs.mode || 'full' }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node .github/scripts/ci-plan.mjs
+
+  flutter:
+    name: Flutter analyze and test
+    needs: preflight
+    if: needs.preflight.outputs.flutter == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: mobile
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-
-      - name: Reserve disk space for Android builds
-        working-directory: .
-        run: bash .github/scripts/prepare-android-runner.sh
-
-      - name: Set up Java
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
-        with:
-          distribution: temurin
-          java-version: "17"
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -53,33 +86,55 @@ jobs:
       - name: Install Flutter dependencies
         run: flutter pub get
 
-      # Tap's published checkout_flutter 1.0.4 still calls the repository
-      # method removed by AGP 9. Keep this version-pinned patch explicit and
-      # fail closed if Tap changes the package contents.
-      - name: Patch Tap Checkout for AGP 9
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_dir="$PUB_CACHE/hosted/pub.dev/checkout_flutter-1.0.4"
-          patch_file="$PWD/patches/checkout_flutter-1.0.4-agp9.patch"
-
-          if patch --batch --dry-run --forward --strip=1 \
-            --directory="$package_dir" < "$patch_file"; then
-            patch --batch --forward --strip=1 \
-              --directory="$package_dir" < "$patch_file"
-          elif patch --batch --dry-run --reverse --strip=1 \
-            --directory="$package_dir" < "$patch_file"; then
-            echo "Tap Checkout AGP 9 patch is already applied in the restored cache."
-          else
-            echo "Tap Checkout 1.0.4 no longer matches the reviewed AGP 9 patch." >&2
-            exit 1
-          fi
-
       - name: Analyze Flutter app
         run: flutter analyze
 
       - name: Run Flutter tests
+        id: flutter-tests
         run: flutter test
+
+      - name: Upload Flutter golden failure images
+        if: failure() && steps.flutter-tests.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        continue-on-error: true
+        with:
+          name: flutter-golden-failures-${{ runner.os }}
+          path: mobile/test/failures/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  android-builds:
+    name: Flutter Android flavor builds
+    needs: preflight
+    if: needs.preflight.outputs.android == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+      - name: Reserve disk space for Android builds
+        working-directory: .
+        run: bash .github/scripts/prepare-android-runner.sh
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+      - name: Install Flutter dependencies
+        run: flutter pub get
 
       - name: Build Android staging flavor
         run: >-
@@ -91,6 +146,7 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=true
           --dart-define=PROFILE_SWITCHER_ENABLED=true
+          --dart-define=EMAIL_DELIVERY_ENABLED=true
 
       - name: Build Android production flavor
         run: >-
@@ -102,18 +158,34 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=false
           --dart-define=PROFILE_SWITCHER_ENABLED=false
+          --dart-define=EMAIL_DELIVERY_ENABLED=false
 
   flutter-ios:
     name: Flutter iOS flavor builds
-    runs-on: macos-15
-    timeout-minutes: 35
+    needs: preflight
+    if: needs.preflight.outputs.ios == 'true'
+    runs-on: macos-26
+    # Cold simulator and device builds share this budget; macOS runner variance
+    # can use 28 minutes for the simulator alone. Keep both flavors mandatory.
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: mobile
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      - name: Require Xcode 26 for Stripe SDK builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / {split($2, version, "."); print version[1]}')"
+          if [[ -z "$xcode_major" || "$xcode_major" -lt 26 ]]; then
+            echo "::error::The Stripe iOS SDK requires Xcode 26 or newer."
+            exit 1
+          fi
 
       - name: Set up Flutter
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -147,6 +219,7 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=true
           --dart-define=PROFILE_SWITCHER_ENABLED=true
+          --dart-define=EMAIL_DELIVERY_ENABLED=true
 
       - name: Build iOS production release flavor
         run: >-
@@ -159,9 +232,12 @@ jobs:
           --dart-define=SUPABASE_PUBLISHABLE_KEY=ci-placeholder
           --dart-define=DEV=false
           --dart-define=PROFILE_SWITCHER_ENABLED=false
+          --dart-define=EMAIL_DELIVERY_ENABLED=false
 
   referee:
     name: Referee web checks
+    needs: preflight
+    if: needs.preflight.outputs.referee == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
@@ -184,10 +260,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -202,11 +278,19 @@ jobs:
       - name: Run referee tests
         run: npm test
 
+      - name: Install Chromium for isolated admin navigation checks
+        run: npx playwright install --with-deps chromium
+
+      - name: Check admin inbox navigation before hosted journeys
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-overview-timezone.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts referee-assigned-games.spec.ts season-zero-operations.spec.ts broadcaster-pairing.spec.ts broadcaster-desktop.spec.ts admin-game-bots.spec.ts broadcast-scoreboard.spec.ts --project=chromium
+
       - name: Build referee app
         run: npm run build
 
   broadcaster:
     name: Broadcaster checks
+    needs: preflight
+    if: needs.preflight.outputs.broadcaster == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
@@ -215,10 +299,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm
@@ -228,13 +312,25 @@ jobs:
         run: npm ci
 
       - name: Syntax-check broadcaster agent
-        run: node --check src/index.mjs
+        run: |
+          node --check src/index.mjs
+          node --check src/desktop/main.mjs
+          node --check src/desktop/preload.cjs
+          node --check src/desktop/app.js
+          npm test
 
   database:
     name: Supabase schema and behavior
+    needs: preflight
+    if: needs.preflight.outputs.database == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
     env:
+      # The prefetch stage caches these exact names for the pinned CLI.
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: ghcr.io
       # config.toml references these values, but the corresponding local
       # integrations are disabled. These are deliberately non-secret values.
       OPENAI_API_KEY: ci-placeholder
@@ -247,7 +343,14 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      - name: Set up Node.js for isolated database tools
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
@@ -260,27 +363,6 @@ jobs:
         with:
           deno-version: v2.8.2
 
-      - name: Check deployment safety scripts
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash -n .github/scripts/configure-staging-e2e-auth.sh
-          bash -n .github/scripts/deploy-supabase.sh
-          bash -n .github/scripts/run-staging-android-e2e.sh
-          bash -n .github/scripts/upload-staging-testflight.sh
-          node --check .github/scripts/smoke-supabase.mjs
-          node --test .github/scripts/smoke-supabase.test.mjs
-          grep -q "deploy_function dev-phone-login --no-verify-jwt" \
-            .github/scripts/deploy-supabase.sh
-          grep -q "Hosted schema has no published reliability policy" \
-            .github/scripts/verify-hosted-schema.sql
-          if SUPABASE_ACCESS_TOKEN=dummy SUPABASE_DB_PASSWORD=dummy \
-            .github/scripts/deploy-supabase.sh \
-              production nfdkdhdevpstfspazbfn; then
-            echo "The production deploy accepted the staging project ref." >&2
-            exit 1
-          fi
-
       - name: Check Edge Functions and database verifier
         shell: bash
         run: |
@@ -291,23 +373,190 @@ jobs:
           deno fmt --check supabase/functions "${script_files[@]}"
           deno check supabase/functions/*/index.ts "${script_files[@]}"
           deno test \
+            supabase/functions/_shared/stripe_checkout_test.ts \
+            supabase/functions/_shared/stripe_staging_fixture_test.ts \
+            supabase/functions/_shared/stripe_recovery_test.ts \
+            supabase/functions/_shared/stripe_reconcile_test.ts \
+            supabase/functions/_shared/stripe_resume_test.ts \
             supabase/functions/_shared/staging_guard_test.ts \
+            supabase/functions/_shared/dev_auth_test.ts \
             supabase/functions/fieldrush-delete-account/request_test.ts \
+            supabase/functions/fieldrush-delete-account/environment_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
+            supabase/functions/_shared/staging_admin_session_test.ts \
+            supabase/functions/fieldrush-push-dispatch/handler_test.ts \
+            supabase/functions/cloudflare-stream-webhook/replay_test.ts \
+            supabase/functions/profile-goal-clip/credited-goals_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
-            supabase/scripts/e2e/_shared_test.ts
+            supabase/scripts/e2e/_shared_test.ts \
+            supabase/scripts/e2e/rating_tracks_test.ts \
+            supabase/scripts/e2e/checkouts_test.ts
+          deno test supabase/scripts/e2e/game_slots_test.ts supabase/scripts/e2e/completion_evidence_test.ts
+
+      - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix "$RUNNER_TEMP/fieldrush-market-sql-tools" \
+            --no-package-lock --no-save --ignore-scripts @electric-sql/pglite@0.5.8
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_fieldrush_market.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_fieldrush_leaderboard.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_saved_fields.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_game_schedules.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_solo_schedule_timezone_validation.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_game_prices.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_single_active_game.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_home_activity_dismissals.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_e2e_checkout_cleanup.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_unpaid_legacy_checkout_repair.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_e2e_captured_checkout_reconciliation.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_game_division_ranges.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_game_formations.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_staging_game_bots.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_solo_rebooking.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_staff_provisioning.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_notification_push_delivery.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_notification_events.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_push_dispatch_schedule.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_stripe_checkout_recovery.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_paired_broadcasters.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_broadcast_recording_recovery.mjs
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            node supabase/scripts/test_profile_clip_recommendations.mjs
+
+      - name: Check featured fields, unassigned players, and reliability display
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          node supabase/scripts/test_featured_city_fields.mjs
+          node supabase/scripts/test_season_zero_rebalance.mjs
+          for verifier in \
+            supabase/scripts/verify_reliability_policy_display.sql \
+            supabase/scripts/verify_admin_unassigned_players.sql; do
+            THROUGH_MIGRATION=20261027999999 REPLAY_SQL_FILE="$verifier" \
+              node supabase/scripts/test_season_zero_migration_chain.mjs
+          done
+
+      - name: Replay the account and push migration chain without provider access
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          THROUGH_MIGRATION=20261016000600 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_reliability_policy_system.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261016000600 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_push_priority.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261016000600 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_legacy_solo_resume.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+
+      - name: Verify existing Solo bookings across the arrival migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite" \
+            THROUGH_MIGRATION=20261022999999 \
+            BEFORE_MIGRATION=20261022000700 \
+            BEFORE_MIGRATION_SQL_FILE=supabase/scripts/seed_solo_arrival_before_migration.sql \
+            REPLAY_SQL_FILE=supabase/scripts/assert_solo_arrival_backfill.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+
+      - name: Verify prospective Season 0 rating math, evidence, replay, privacy, and transfers
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          node supabase/scripts/test_season_zero_sr_calculator.mjs
+          node supabase/scripts/test_season_zero_rating_initialization.mjs
+          node supabase/scripts/test_season_zero_sr_timeline.mjs
+          node supabase/scripts/test_season_zero_match_evidence.mjs
+          node supabase/scripts/test_season_zero_sr_settlement.mjs
+          node supabase/scripts/test_lifetime_rating_visibility.mjs
+          node supabase/scripts/test_current_roster_ratings.mjs
+          node supabase/scripts/test_player_rating_read_cost.mjs
+          node supabase/scripts/test_season_zero_rebalance.mjs
+          node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261024000100 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_referee_match_reopen.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261024000100 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_referee_early_ratings.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261024000200 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_player_referrals.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261023000200 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_credited_replay_goals.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+          THROUGH_MIGRATION=20261023000300 \
+            REPLAY_SQL_FILE=supabase/scripts/verify_party_context_read_lock.sql \
+            node supabase/scripts/test_season_zero_migration_chain.mjs
+
+      - name: Verify party context reads do not wait for game writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          for candidate in "$(pg_config --bindir)" /usr/lib/postgresql/*/bin; do
+            if [[ -x "$candidate/postgres" && -x "$candidate/initdb" ]]; then
+              export PG_BINDIR="$candidate"
+              break
+            fi
+          done
+          node supabase/scripts/test_party_context_read_lock.mjs
+          node supabase/scripts/test_player_referral_concurrency.mjs
+
+      - name: Authenticate read-only container downloads
+        shell: bash
+        env:
+          GHCR_PULL_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$GHCR_PULL_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Download local Supabase images before schema initialization
+        run: node .github/scripts/prefetch-ci-supabase-images.mjs
 
       - name: Replay migrations on a fresh local Supabase stack
-        run: >-
-          supabase start
-          --exclude
-          studio,imgproxy,mailpit,logflare,vector,realtime,storage-api,edge-runtime,postgres-meta,supavisor
+        run: node .github/scripts/start-ci-supabase.mjs
 
       - name: Lint the local database
         run: supabase db lint --local --level error
 
       - name: Show local migration status
         run: supabase migration list --local
+
+      - name: Verify privacy RPC transaction contracts and real party context
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_rating_privacy_rpc_volatility.sql
 
       - name: Verify Fieldrush account security and lifecycle
         shell: bash
@@ -317,6 +566,222 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_fieldrush_accounts.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_fieldrush_google_email.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_safe_staff_provisioning.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_staging_game_bots.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_notification_push_security.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_notification_events.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_clan_write_containment.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_replacement_notifications.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_atomic_solo_goals.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_credited_replay_goals.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_party_context_read_lock.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_atomic_clan_goals.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_push_priority.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_legacy_solo_resume.sql
+
+      - name: Verify protected career records and complete lobby averages
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_stats_and_lobby_average.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_team_assignment_notice_contract.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_solo_arrival_contract.sql
+
+      - name: Verify injury evidence for audited early solo matches
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_audited_early_match_injuries.sql
+
+      - name: Verify staff offboarding and atomic account-deletion wallet forfeiture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_staff_offboarding_account_deletion.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_account_deletion_wallet_forfeiture.sql
+
+      - name: Verify independent staff email accounts and player deletion isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_independent_staff_accounts.sql
+
+      - name: Verify once-only assessment initialization on the full schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_season_zero_rating_initialization.sql
+
+      - name: Verify Season 0 assignment and settlement on the full schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_season_zero_assignment.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_season_zero_full_schema.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_unstarted_season_zero_resolution.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_referee_match_reopen.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_referee_early_ratings.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_referrals.sql
+
+      - name: Verify registration recovery, capture and private history
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_registration_recovery.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_authorized_booking_capture.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_booking_history.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_game_notifications.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_player_checkout_reliability_notifications.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_push_delivery.sql
+
+      - name: Verify flexible referee arrivals and audited match corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          for verifier in \
+            supabase/scripts/verify_referee_flexible_attendance.sql \
+            supabase/scripts/verify_referee_match_record.sql; do
+            docker exec -i supabase_db_field_v2 \
+              psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+              -c BEGIN -f /dev/stdin -c ROLLBACK <"$verifier"
+          done
+
+      - name: Verify configurable solo minimum, start window, and stream readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          for verifier in \
+            supabase/scripts/verify_configurable_solo_minimum.sql \
+            supabase/scripts/verify_solo_start_window.sql \
+            supabase/scripts/verify_solo_minimum_streaming.sql; do
+            docker exec -i supabase_db_field_v2 \
+              psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+              -c BEGIN -f /dev/stdin -c ROLLBACK <"$verifier"
+          done
+
+      - name: Verify private launch interest capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_launch_interest.sql
+
+      - name: Verify independent rating tracks and city rankings
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_city_keeper_rankings.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_clans.sql
+
+      - name: Verify season settings and published city rewards
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_season_rewards.sql
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            <supabase/scripts/verify_fieldrush_season_management.sql
+          node supabase/scripts/verify_fieldrush_season_concurrency.mjs
 
       - name: Verify reliability schema contracts
         shell: bash
@@ -358,45 +823,46 @@ jobs:
 
           docker exec supabase_db_field_v2 \
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
-            -c "insert into public.referee_profiles (
-                  profile_id, display_name, phone, role
-                )
-                select id, 'CI Admin', phone, 'admin'
-                from public.profiles
-                where phone is not null
-                order by created_at
-                limit 1
-                on conflict (profile_id) do update
-                  set role = 'admin', is_active = true"
+            -c "do \$fixture\$ declare staff_id uuid := gen_random_uuid(); begin
+                  insert into auth.users(id,email,email_confirmed_at,raw_app_meta_data)
+                    values(staff_id, staff_id::text || '@ci-staff.example', now(),
+                      '{\"fieldrush_account_type\":\"staff\"}'::jsonb);
+                  insert into public.referee_profiles(profile_id,auth_user_id,email,display_name,role)
+                    values(staff_id,staff_id,staff_id::text || '@ci-staff.example','CI Admin','admin');
+                end \$fixture\$"
 
           for verifier in \
             supabase/scripts/verify_admin_game_reserves.sql \
             supabase/scripts/verify_clan_attendance_flexibility.sql \
             supabase/scripts/verify_clan_forfeit_workflow.sql \
             supabase/scripts/verify_match_resolution_control_plane.sql \
+            supabase/scripts/verify_match_resolution_rating_era.sql \
             supabase/scripts/verify_moderation_system.sql \
             supabase/scripts/verify_support_ticket_system.sql \
-            supabase/scripts/verify_tap_payment_system.sql
+            supabase/scripts/verify_stripe_payment_system.sql
           do
             docker exec -i supabase_db_field_v2 \
               psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
               <"$verifier"
           done
 
-  deploy-staging:
-    name: Deploy and end-to-end test staging
-    needs:
-      - flutter
-      - flutter-ios
-      - referee
-      - broadcaster
-      - database
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+      - name: Remove container registry credentials
+        if: always()
+        run: docker logout ghcr.io
+
+  backend-staging:
+    name: Deploy and smoke-test staging backend
+    needs: [preflight, flutter, database]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.preflight.outputs.backend == 'true' &&
+      (needs.flutter.result == 'success' ||
+        (inputs.mode == 'backend' && needs.flutter.result == 'skipped')) &&
+      (needs.database.result == 'success' ||
+        (inputs.mode == 'backend' && needs.database.result == 'skipped'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
-    permissions:
-      contents: read
-      deployments: write
+    timeout-minutes: 15
     environment:
       name: staging
     env:
@@ -410,13 +876,12 @@ jobs:
       E2E_DEV_OTP_CODE: "000000"
       E2E_ONBOARDING_PHONE: "+97339009100"
       PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
-      TAP_PUBLIC_KEY: ${{ vars.TAP_PUBLIC_KEY }}
-      TAP_MERCHANT_ID: ${{ vars.TAP_MERCHANT_ID }}
-      TAP_APPLE_PAY_ENABLED: ${{ vars.TAP_APPLE_PAY_ENABLED }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      STRIPE_WEBHOOK_ENDPOINT_ID: ${{ vars.STRIPE_WEBHOOK_ENDPOINT_ID }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Verify staging target
         shell: bash
@@ -424,7 +889,9 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_RECONCILE_SECRET: ${{ secrets.STRIPE_RECONCILE_SECRET }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF" != "refs/heads/staging" ]]; then
@@ -447,13 +914,10 @@ jobs:
             echo "::error::The staging GitHub environment is missing Supabase credentials."
             exit 1
           fi
-          if [[ -z "$TAP_SECRET_KEY" || -z "$TAP_PUBLIC_KEY" || -z "$TAP_MERCHANT_ID" ]]; then
-            echo "::error::The staging GitHub environment is missing Tap credentials."
+          if [[ "$STRIPE_SECRET_KEY" != sk_test_* || "$STRIPE_PUBLISHABLE_KEY" != pk_test_* || "$STRIPE_WEBHOOK_SECRET" != whsec_* || -z "$STRIPE_RECONCILE_SECRET" ]]; then
+            echo "::error::The staging GitHub environment is missing Stripe sandbox/webhook/worker credentials."
             exit 1
           fi
-
-      - name: Reserve disk space for Android E2E
-        run: bash .github/scripts/prepare-android-runner.sh
 
       - name: Set up Supabase CLI
         uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
@@ -465,17 +929,61 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-          TAP_SECRET_KEY: ${{ secrets.TAP_SECRET_KEY }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_RECONCILE_SECRET: ${{ secrets.STRIPE_RECONCILE_SECRET }}
         run: .github/scripts/deploy-supabase.sh staging "$SUPABASE_PROJECT_REF"
 
       - name: Smoke-test hosted staging
         run: node .github/scripts/smoke-supabase.mjs
+
+  prepare-staging-e2e:
+    name: Prepare and build staging player E2E
+    needs: [preflight, backend-staging]
+    if: needs.preflight.outputs.player == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      handoff-artifact-id: ${{ steps.handoff-upload.outputs.artifact-id }}
+    environment:
+      name: staging
+    env:
+      SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+      E2E_BOOTSTRAP_PHONE: "+97339009098"
+      E2E_DEV_OTP_CODE: "000000"
+      E2E_ONBOARDING_PHONE: "+97339009100"
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      # Jobs do not share installed tools. Auth configuration below still
+      # calls the CLI even though deployment now runs on a different runner.
+      - name: Set up Supabase CLI for E2E authentication
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2
+        with:
+          version: 2.105.0
+          github-token: ${{ github.token }}
+
+      - name: Verify the E2E authentication CLI before native tooling setup
+        run: supabase --version
+
+      - name: Reserve disk space for Android E2E
+        run: bash .github/scripts/prepare-android-runner.sh
 
       - name: Set up Java for Android E2E
         uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Set up Flutter for Android E2E
         uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
@@ -483,13 +991,6 @@ jobs:
           flutter-version: 3.44.1
           channel: stable
           cache: true
-
-      - name: Set up Node.js for referee E2E
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: referee/package-lock.json
 
       - name: Set up Deno for E2E fixtures
         uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
@@ -511,21 +1012,9 @@ jobs:
             "$GITHUB_WORKSPACE/mobile/build/e2e-artifacts" \
             "$GITHUB_WORKSPACE/referee/e2e-artifacts"
 
-      - name: Configure and verify staging E2E authentication
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-        run: .github/scripts/configure-staging-e2e-auth.sh
-
-      - name: Install staging E2E dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          (cd mobile && flutter pub get)
-          (cd referee && npm ci)
-
-      - name: Install Playwright Chromium
-        working-directory: referee
-        run: npx playwright install --with-deps chromium
+      - name: Install player E2E dependencies
+        working-directory: mobile
+        run: flutter pub get
 
       - name: Create isolated staging E2E fixtures
         env:
@@ -536,6 +1025,11 @@ jobs:
           --allow-net
           --allow-write
           supabase/scripts/e2e/setup_staging.ts
+
+      - name: Configure and verify staging E2E authentication
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: .github/scripts/configure-staging-e2e-auth.sh
 
       - name: Export non-secret E2E fixture identifiers
         shell: bash
@@ -570,43 +1064,218 @@ jobs:
         timeout-minutes: 15
         run: bash .github/scripts/run-staging-android-e2e.sh build-only
 
-      - name: Enable KVM for the Android emulator
+      - name: Encrypt E2E handoff for fresh runners
+        id: handoff
+        if: always() && env.E2E_MANIFEST_PATH != ''
         shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
           set -euo pipefail
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          if [[ ! -s "$E2E_MANIFEST_PATH" ]]; then
+            echo "No manifest exists; there are no fixtures to hand off."
+            exit 0
+          fi
+          payload_dir="$RUNNER_TEMP/field-e2e-payload"
+          mkdir -m 700 "$payload_dir"
+          cp "$E2E_MANIFEST_PATH" "$payload_dir/manifest.json"
+          printf '%s' "$E2E_TEST_PASSWORD" >"$payload_dir/password.txt"
+          apk="$GITHUB_WORKSPACE/mobile/build/app/outputs/flutter-apk/app-staging-debug.apk"
+          if [[ -s "$apk" ]]; then
+            cp "$apk" "$payload_dir/player-journey.apk"
+          fi
+          chmod 600 "$payload_dir"/*
+          node .github/scripts/staging-e2e-handoff.mjs pack \
+            --source-dir "$payload_dir" \
+            --output "$RUNNER_TEMP/field-e2e-handoff.bin"
+          echo "created=true" >>"$GITHUB_OUTPUT"
 
-      - name: Run staging player journey on Android
-        timeout-minutes: 25
-        uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+      - name: Transfer encrypted APK and fixture state
+        id: handoff-upload
+        if: always() && steps.handoff.outputs.created == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          api-level: 34
-          # ATD images are purpose-built for headless automated tests and use
-          # substantially fewer runner resources than the full Google APIs
-          # image. This journey only talks to Supabase, so Play services are
-          # neither required nor useful here.
-          target: aosp_atd
-          arch: x86_64
-          profile: pixel_2
-          cores: 2
-          ram-size: 2048M
-          heap-size: 512M
-          disk-size: 4096M
-          disable-animations: true
-          emulator-boot-timeout: 600
-          emulator-options: >-
-            -no-window
-            -gpu swiftshader_indirect
-            -feature -Vulkan
-            -no-snapshot
-            -noaudio
-            -no-boot-anim
-            -no-metrics
-            -camera-back none
-          script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh"
+          name: staging-e2e-handoff-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/field-e2e-handoff.bin
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - name: Clean up fixtures after preparation failure
+        if: failure() || cancelled()
+        shell: bash
+        env:
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          trap 'bash .github/scripts/close-staging-e2e-auth.sh' EXIT
+          if [[ -n "${E2E_MANIFEST_PATH:-}" && -s "$E2E_MANIFEST_PATH" ]]; then
+            deno run --allow-env --allow-net --allow-read \
+              supabase/scripts/e2e/cleanup_staging.ts
+          fi
+
+  android-staging-e2e:
+    name: Staging Android player E2E
+    needs: [preflight, prepare-staging-e2e]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    environment:
+      name: staging
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      - name: Set up Flutter for the prebuilt test driver
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Install test driver dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Download encrypted player APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+          path: ${{ runner.temp }}/field-e2e-download
+          merge-multiple: true
+
+      - name: Restore prebuilt player APK
+        shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/staging-e2e-handoff.mjs unpack \
+            --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
+            --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-restored/manifest.json" >>"$GITHUB_ENV"
+          test -s "$RUNNER_TEMP/field-e2e-restored/player-journey.apk"
+          echo "E2E_APK_PATH=$RUNNER_TEMP/field-e2e-restored/player-journey.apk" >>"$GITHUB_ENV"
+          rm -f "$RUNNER_TEMP/field-e2e-restored/password.txt"
+
+      # This fresh runner does not install Playwright, deploy Supabase, or
+      # compile Android. Flutter drive installs the already-tested binary.
+      - name: Run staging player journey on a fresh Android runner
+        uses: ./.github/actions/staging-android-emulator
+        with:
+          script: bash "$GITHUB_WORKSPACE/.github/scripts/run-staging-android-e2e.sh" run-prebuilt
+
+      - name: Encrypt Android failure diagnostics
+        id: android-diagnostics
+        if: failure() || cancelled()
+        continue-on-error: true
+        shell: bash
+        env:
+          STAGING_DIAGNOSTICS_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [[ ! -d mobile/build/e2e-artifacts ]]; then
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/field-android-diagnostics.tar.gz"
+          trap 'rm -f "$archive"' EXIT
+          tar -czf "$archive" -- mobile/build/e2e-artifacts
+          node .github/scripts/staging-diagnostics.mjs encrypt \
+            --input "$archive" \
+            --output "$RUNNER_TEMP/field-android-diagnostics.bin" \
+            --context "$GITHUB_RUN_ID:android"
+          echo "created=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload encrypted Android failure diagnostics
+        if: always() && steps.android-diagnostics.outputs.created == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staging-android-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/field-android-diagnostics.bin
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 0
+
+      - name: Clean up failed or player-only diagnostic fixtures
+        if: always() && (failure() || cancelled() || needs.preflight.outputs.browser != 'true')
+        uses: ./.github/actions/cleanup-staging-e2e
+        with:
+          handoff-artifact-id: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FIELD_ENVIRONMENT: staging
+          E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+
+  browser-staging-e2e:
+    name: Staging referee and admin E2E
+    needs: [preflight, prepare-staging-e2e, android-staging-e2e]
+    if: needs.preflight.outputs.browser == 'true'
+    runs-on: ubuntu-24.04
+    # Includes the real 30-minute S0 match plus build, verification and cleanup.
+    timeout-minutes: 55
+    environment:
+      name: staging
+    env:
+      SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.STAGING_SUPABASE_PUBLISHABLE_KEY }}
+      FIELD_ENVIRONMENT: staging
+      E2E_CONFIRM_TARGET: FIELD_STAGING_E2E
+      PLAYWRIGHT_BASE_URL: http://127.0.0.1:3000
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      - name: Set up Node.js for referee E2E
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Set up Deno for outcome verification
+        uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2
+        with:
+          deno-version: v2.8.2
+
+      - name: Download encrypted fixture state
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+          path: ${{ runner.temp }}/field-e2e-download
+          merge-multiple: true
+
+      - name: Restore isolated E2E fixture state
+        shell: bash
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/staging-e2e-handoff.mjs unpack \
+            --file "$RUNNER_TEMP/field-e2e-download/field-e2e-handoff.bin" \
+            --output-dir "$RUNNER_TEMP/field-e2e-restored"
+          echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-restored/manifest.json" >>"$GITHUB_ENV"
+          password="$(cat "$RUNNER_TEMP/field-e2e-restored/password.txt")"
+          echo "::add-mask::$password"
+          {
+            echo "E2E_TEST_PASSWORD=$password"
+            echo "E2E_MANIFEST_PATH=$RUNNER_TEMP/field-e2e-restored/manifest.json"
+          } >>"$GITHUB_ENV"
+          mkdir -p referee/e2e-artifacts
+
+      - name: Install referee E2E dependencies
+        working-directory: referee
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: referee
+        run: npx playwright install --with-deps chromium
 
       - name: Build staging referee app
         working-directory: referee
@@ -671,23 +1340,6 @@ jobs:
           supabase/scripts/e2e/verify_staging.ts
           --phase=complete
 
-      - name: Clean up mutable staging E2E fixtures
-        if: always()
-        shell: bash
-        env:
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-        run: |
-          set -euo pipefail
-          if [[ -z "${E2E_MANIFEST_PATH:-}" || ! -s "$E2E_MANIFEST_PATH" ]]; then
-            echo "No E2E manifest was created; cleanup is not required."
-            exit 0
-          fi
-          deno run \
-            --allow-env \
-            --allow-net \
-            --allow-read \
-            supabase/scripts/e2e/cleanup_staging.ts
-
       - name: Stop staging referee app
         if: always()
         shell: bash
@@ -696,20 +1348,93 @@ jobs:
             kill "$(cat "$RUNNER_TEMP/field-referee-e2e.pid")" || true
           fi
 
-      - name: Upload staging E2E failure diagnostics
+      # Traces contain Authorization headers and session state. Log masking does
+      # not sanitize artifact contents, especially in a public repository.
+      - name: Encrypt staging browser failure diagnostics
+        id: browser-diagnostics
         if: failure() || cancelled()
+        continue-on-error: true
+        shell: bash
+        env:
+          STAGING_DIAGNOSTICS_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          paths=()
+          for directory in referee/e2e-artifacts referee/playwright-report referee/test-results; do
+            if [[ -d "$directory" ]]; then
+              paths+=("$directory")
+            fi
+          done
+          if [[ ${#paths[@]} -eq 0 ]]; then
+            exit 0
+          fi
+          archive="$RUNNER_TEMP/field-browser-diagnostics.tar.gz"
+          trap 'rm -f "$archive"' EXIT
+          tar -czf "$archive" -- "${paths[@]}"
+          node .github/scripts/staging-diagnostics.mjs encrypt \
+            --input "$archive" \
+            --output "$RUNNER_TEMP/field-browser-diagnostics.bin" \
+            --context "$GITHUB_RUN_ID:browser"
+          echo "created=true" >>"$GITHUB_OUTPUT"
+
+      - name: Upload encrypted staging browser failure diagnostics
+        if: always() && steps.browser-diagnostics.outputs.created == 'true'
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: staging-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: ignore
           retention-days: 7
-          path: |
-            mobile/build/e2e-artifacts/
-            referee/e2e-artifacts/
-            referee/playwright-report/
-            referee/test-results/
+          path: ${{ runner.temp }}/field-browser-diagnostics.bin
+          compression-level: 0
 
+      - name: Clean up staging E2E fixtures
+        if: always()
+        uses: ./.github/actions/cleanup-staging-e2e
+        with:
+          handoff-artifact-id: ${{ needs.prepare-staging-e2e.outputs.handoff-artifact-id }}
+        env:
+          STAGING_E2E_HANDOFF_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+
+  deploy-staging:
+    name: Required checks and staging release gate
+    needs: [preflight, flutter, android-builds, flutter-ios, referee, broadcaster, database, backend-staging, prepare-staging-e2e, android-staging-e2e, browser-staging-e2e]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      # This gate has no staging secrets or protected environment. It cannot
+      # require another deployment approval just to report an earlier failure.
+      - name: Require every planned check to pass
+        env:
+          CI_PLAN: ${{ toJSON(needs.preflight.outputs) }}
+          CI_RESULTS: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-results.mjs
+
+  record-staging:
+    name: Record verified staging release
+    needs: [preflight, deploy-staging]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.preflight.outputs.release == 'true' &&
+      needs.deploy-staging.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      # Never check out PR-controlled code in a job with a deployment-write token.
       - name: Record successful staging deployment
         shell: bash
         env:
@@ -752,11 +1477,11 @@ jobs:
 
   upload-testflight-staging:
     name: Upload staging build to TestFlight
-    needs: deploy-staging
+    needs: record-staging
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/staging' &&
-      needs.deploy-staging.result == 'success'
+      needs.record-staging.result == 'success'
     runs-on: macos-26
     timeout-minutes: 45
     environment:
@@ -766,12 +1491,14 @@ jobs:
       SUPABASE_URL: https://${{ vars.STAGING_SUPABASE_PROJECT_REF }}.supabase.co
       SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      APPLE_MERCHANT_ID: merchant.com.alialtaraif.fieldrush
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
       IOS_STAGING_BUNDLE_ID: ${{ vars.IOS_STAGING_BUNDLE_ID }}
       TESTFLIGHT_INTERNAL_GROUP: ${{ vars.TESTFLIGHT_INTERNAL_GROUP }}
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Require Xcode 26
         shell: bash
@@ -814,11 +1541,11 @@ jobs:
 
   deploy-referee-staging:
     name: Deploy Field Ops staging PWA
-    needs: deploy-staging
+    needs: record-staging
     if: >-
       github.event_name == 'push' &&
       github.ref == 'refs/heads/staging' &&
-      needs.deploy-staging.result == 'success'
+      needs.record-staging.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
@@ -830,10 +1557,10 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
 
       - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0 (Node 24)
         with:
           node-version: 22
           cache: npm

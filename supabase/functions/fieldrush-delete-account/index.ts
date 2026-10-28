@@ -1,9 +1,9 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
+import { isAccountDeletionEnabled } from "./environment.ts";
 import {
-  isExactFieldStagingSupabaseUrl,
-  isLocalSupabaseUrl,
-} from "../_shared/staging_guard.ts";
-import { readDeletionConfirmation } from "./request.ts";
+  isStaffDeletionIdentity,
+  readDeletionConfirmation,
+} from "./request.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -27,10 +27,7 @@ Deno.serve(async (request) => {
     return json({ error: "Method not allowed." }, 405);
   }
   const url = Deno.env.get("SUPABASE_URL");
-  if (
-    (!isExactFieldStagingSupabaseUrl(url) && !isLocalSupabaseUrl(url)) ||
-    Deno.env.get("FIELDRUSH_ACCOUNT_DELETION_ENABLED") !== "true"
-  ) {
+  if (!isAccountDeletionEnabled((name) => Deno.env.get(name))) {
     return json(
       { error: "Account deletion is not enabled. Contact support." },
       503,
@@ -49,7 +46,10 @@ Deno.serve(async (request) => {
   }
   try {
     if (!readDeletionConfirmation(await request.json())) {
-      return json({ error: "Confirm account deletion first." }, 400);
+      return json({
+        error:
+          "Confirm account deletion and permanent loss of your remaining wallet balance first.",
+      }, 400);
     }
   } catch {
     return json({ error: "Invalid request body." }, 400);
@@ -62,12 +62,19 @@ Deno.serve(async (request) => {
   if (authError || !identity.user) {
     return json({ error: "Your session has expired. Sign in again." }, 401);
   }
+  if (isStaffDeletionIdentity(identity.user)) {
+    return json({
+      error:
+        "This is a staff login, not a player account. Manage staff access from the staff website.",
+    }, 403);
+  }
   const user = createClient(url!, anonKey, {
     ...options,
     global: { headers: { Authorization: `Bearer ${bearer}` } },
   });
   const { error: preparationError } = await user.rpc(
     "prepare_fieldrush_account_deletion",
+    { wallet_forfeiture_confirmed: true },
   );
   if (preparationError) {
     // These messages are deliberately actionable business/auth errors, never

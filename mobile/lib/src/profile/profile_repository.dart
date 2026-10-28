@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'profile.dart';
+import '../core/read_timeout.dart';
 
 abstract class ProfileRepository {
   String? get currentUserId;
@@ -58,10 +60,51 @@ abstract class ProfileRepository {
   Future<int> recordHighlightView(String highlightId);
 }
 
-class SupabaseProfileRepository implements ProfileRepository {
+abstract interface class ProfileClipRecommendationsRepository {
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  });
+}
+
+/// Identity-only snapshot for navigation/Home. Loading an avatar and greeting
+/// must not wait for clips, career history, follow counts or rating history.
+abstract interface class ProfileSummaryRepository {
+  Future<PlayerProfile> getCurrentProfileSummary();
+}
+
+/// Public identity can render while optional statistics and clips are loading.
+abstract interface class PublicProfileSummaryRepository {
+  Future<PlayerProfile> getProfileSummary(String profileId);
+}
+
+extension ProfileClipRecommendationsAccess on ProfileRepository {
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  }) async {
+    final repository = this;
+    if (repository is ProfileClipRecommendationsRepository) {
+      return (repository as ProfileClipRecommendationsRepository)
+          .getClipRecommendations(highlightId: highlightId, limit: limit);
+    }
+    return const [];
+  }
+}
+
+class SupabaseProfileRepository
+    implements
+        ProfileRepository,
+        ProfileClipRecommendationsRepository,
+        ProfileSummaryRepository,
+        PublicProfileSummaryRepository {
+  SupabaseProfileRepository({SupabaseClient? client})
+    : _injectedClient = client;
+
   static const _avatarBucket = 'profile-avatars';
 
-  SupabaseClient get _client => Supabase.instance.client;
+  final SupabaseClient? _injectedClient;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
 
   @override
   String? get currentUserId => _client.auth.currentUser?.id;
@@ -203,6 +246,44 @@ class SupabaseProfileRepository implements ProfileRepository {
     throw StateError('The clip view could not be recorded.');
   }
 
+  @override
+  Future<List<ProfileClipRecommendation>> getClipRecommendations({
+    required String highlightId,
+    int limit = 8,
+  }) async {
+    final id = highlightId.trim();
+    if (id.isEmpty) throw ArgumentError('A clip is required.');
+    if (limit < 1 || limit > 20) {
+      throw ArgumentError.value(limit, 'limit', 'Use a limit from 1 to 20.');
+    }
+    final response = await _client.rpc(
+      'get_profile_clip_recommendations',
+      params: {'highlight_id_to_use': id, 'limit_to_use': limit},
+    );
+    if (response is! List) {
+      throw StateError('The next clips could not be loaded.');
+    }
+    final recommendations = [
+      for (final row in response)
+        if (row is Map)
+          ProfileClipRecommendation.fromJson(Map<String, dynamic>.from(row))
+        else
+          throw StateError('The next clips returned an invalid response.'),
+    ];
+    // Keep the display boundary private even if an older server returns an
+    // overbroad recommendation response during a coordinated rollout.
+    return recommendations
+        .where(
+          (recommendation) =>
+              recommendation.highlight.id != id &&
+              recommendation.highlight.hasPlayableVideo &&
+              (recommendation.highlight.isPublic ||
+                  recommendation.profileId == currentUserId),
+        )
+        .take(limit)
+        .toList(growable: false);
+  }
+
   ProfileHighlight _highlightFromFunctionResponse(Object? data) {
     final value = data is Map && data['highlight'] is Map
         ? data['highlight']
@@ -228,9 +309,41 @@ class SupabaseProfileRepository implements ProfileRepository {
       throw const AuthException('You need to sign in again.');
     }
 
-    await _ensureProfile(user);
+    await _ensureProfile(user).timeout(fieldReadTimeout);
 
     return _getProfile(user.id);
+  }
+
+  @override
+  Future<PlayerProfile> getCurrentProfileSummary() async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw const AuthException('You need to sign in again.');
+    }
+    return getProfileSummary(user.id);
+  }
+
+  @override
+  Future<PlayerProfile> getProfileSummary(String profileId) async {
+    final id = profileId.trim();
+    if (id.isEmpty) {
+      throw ArgumentError.value(profileId, 'profileId', 'Profile is required.');
+    }
+    final profile = await _loadProfile(id).timeout(fieldReadTimeout);
+    return PlayerProfile(
+      id: id,
+      displayName: profile.displayName,
+      username: profile.username,
+      bio: profile.bio,
+      avatarUrl: profile.avatarUrl,
+      followingCount: 0,
+      fansCount: 0,
+      appearances: 0,
+      goals: 0,
+      assists: 0,
+      highlights: const [],
+      career: const [],
+    );
   }
 
   @override
@@ -243,15 +356,28 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<PlayerProfile> _getProfile(String profileId) async {
-    final results = await Future.wait<dynamic>([
-      _loadProfile(profileId),
-      _loadCurrentClan(profileId),
-      _loadConnectionCounts(profileId),
-      _loadHighlights(profileId),
-      _loadCareer(profileId),
-      _loadPreviousGames(profileId),
-      _loadPlayerRating(profileId),
-    ]);
+    final pending = <String>{};
+    Future<T> part<T>(String name, Future<T> request) {
+      pending.add(name);
+      return request.whenComplete(() => pending.remove(name));
+    }
+
+    final results =
+        await Future.wait<dynamic>([
+          part('identity', _loadProfile(profileId)),
+          part('clan', _loadCurrentClan(profileId)),
+          part('connections', _loadConnectionCounts(profileId)),
+          part('clips', _loadHighlights(profileId)),
+          part('career', _loadCareer(profileId)),
+          part('history', _loadPreviousGames(profileId)),
+          part('rating', _loadPlayerRating(profileId)),
+        ]).timeout(
+          fieldReadTimeout,
+          onTimeout: () => throw TimeoutException(
+            'Profile read timed out; pending sections: ${pending.join(', ')}',
+            fieldReadTimeout,
+          ),
+        );
     final profile = results[0] as _ProfileRow;
     final clan = results[1] as ProfileClan?;
     final connectionCounts = results[2] as _ConnectionCounts;
@@ -261,7 +387,7 @@ class SupabaseProfileRepository implements ProfileRepository {
     final playerRating = results[6] as ProfilePlayerRating?;
     final stats = clan == null
         ? const _ProfileStats(appearances: 0, goals: 0, assists: 0)
-        : await _loadStats(profileId, clan.id);
+        : await _loadStats(profileId, clan.id).timeout(fieldReadTimeout);
 
     return PlayerProfile(
       id: profileId,
@@ -272,6 +398,7 @@ class SupabaseProfileRepository implements ProfileRepository {
       clan: clan,
       followingCount: connectionCounts.following,
       fansCount: connectionCounts.fans,
+      isFollowedByMe: connectionCounts.isFollowedByMe,
       appearances: stats.appearances,
       goals: stats.goals,
       assists: stats.assists,
@@ -289,25 +416,12 @@ class SupabaseProfileRepository implements ProfileRepository {
       throw const AuthException('You need to sign in again.');
     }
 
-    final followingRows = await _client
-        .from('profile_follows')
-        .select('following_id')
-        .eq('follower_id', user.id)
-        .order('created_at', ascending: false);
-    final fanRows = await _client
-        .from('profile_follows')
-        .select('follower_id')
-        .eq('following_id', user.id)
-        .order('created_at', ascending: false);
-
-    final followingIds = [
-      for (final row in followingRows as List<dynamic>)
-        Map<String, dynamic>.from(row as Map)['following_id'] as String,
-    ];
-    final fanIds = [
-      for (final row in fanRows as List<dynamic>)
-        Map<String, dynamic>.from(row as Map)['follower_id'] as String,
-    ];
+    final relatedIds = await Future.wait([
+      _loadConnectionIds(user.id, following: true),
+      _loadConnectionIds(user.id, following: false),
+    ]);
+    final followingIds = relatedIds[0];
+    final fanIds = relatedIds[1];
     final followedByMe = followingIds.toSet();
 
     final profilesResponse = await _client
@@ -319,10 +433,16 @@ class SupabaseProfileRepository implements ProfileRepository {
       for (final row in profilesResponse as List<dynamic>)
         Map<String, dynamic>.from(row as Map),
     ];
-    final profilesById = {
-      for (final row in profileRows) row['id'] as String: row,
-    };
-    final clansByProfileId = await _loadClansForProfiles(profilesById.keys);
+    // Discovery is intentionally one page, but relationships must not depend
+    // on that page. Direct profile reads still enforce active-account RLS.
+    final profilesById = await _loadConnectionProfiles({
+      ...followingIds,
+      ...fanIds,
+    });
+    final clansByProfileId = await _loadClansForProfiles({
+      ...profilesById.keys,
+      for (final row in profileRows) row['id'] as String,
+    });
 
     ProfileConnection? buildConnection(String profileId) {
       final row = profilesById[profileId];
@@ -357,6 +477,47 @@ class SupabaseProfileRepository implements ProfileRepository {
       fans: fans,
       discover: discover,
     );
+  }
+
+  Future<List<String>> _loadConnectionIds(
+    String userId, {
+    required bool following,
+  }) async {
+    const pageSize = 500;
+    final relatedColumn = following ? 'following_id' : 'follower_id';
+    final ownerColumn = following ? 'follower_id' : 'following_id';
+    final ids = <String>{};
+    for (var offset = 0; ; offset += pageSize) {
+      final rows = await _client
+          .from('profile_follows')
+          .select(relatedColumn)
+          .eq(ownerColumn, userId)
+          .order('created_at', ascending: false)
+          .order(relatedColumn, ascending: true)
+          .range(offset, offset + pageSize - 1)
+          .timeout(fieldReadTimeout);
+      ids.addAll([for (final row in rows) row[relatedColumn] as String]);
+      if (rows.length < pageSize) break;
+    }
+    return ids.toList(growable: false);
+  }
+
+  Future<Map<String, Map<String, dynamic>>> _loadConnectionProfiles(
+    Set<String> profileIds,
+  ) async {
+    final ids = profileIds.toList(growable: false);
+    final profiles = <String, Map<String, dynamic>>{};
+    for (var offset = 0; offset < ids.length; offset += 100) {
+      final end = (offset + 100).clamp(0, ids.length);
+      final rows = await _client
+          .from('profiles')
+          .select('id, display_name, username, avatar_url')
+          .inFilter('id', ids.sublist(offset, end));
+      for (final row in rows) {
+        profiles[row['id'] as String] = Map<String, dynamic>.from(row);
+      }
+    }
+    return profiles;
   }
 
   @override
@@ -510,9 +671,12 @@ class SupabaseProfileRepository implements ProfileRepository {
     final ids = profileIds.toList();
     if (ids.isEmpty) return const {};
 
-    final response = await _client
-        .from('clan_members')
-        .select('''
+    final clans = <String, ProfileClan>{};
+    for (var offset = 0; offset < ids.length; offset += 100) {
+      final end = (offset + 100).clamp(0, ids.length);
+      final response = await _client
+          .from('clan_members')
+          .select('''
           profile_id,
           clans(
             id,
@@ -523,17 +687,15 @@ class SupabaseProfileRepository implements ProfileRepository {
             pattern_id,
             skill_rating
           )
-        ''')
-        .inFilter('profile_id', ids)
-        .isFilter('left_at', null);
-    final rows = response as List<dynamic>;
-
-    return {
-      for (final row in rows)
-        if (_connectionClanFromRow(Map<String, dynamic>.from(row as Map))
-            case final entry?)
-          entry.key: entry.value,
-    };
+          ''')
+          .inFilter('profile_id', ids.sublist(offset, end))
+          .isFilter('left_at', null);
+      for (final row in response) {
+        final entry = _connectionClanFromRow(Map<String, dynamic>.from(row));
+        if (entry != null) clans[entry.key] = entry.value;
+      }
+    }
+    return clans;
   }
 
   Future<_ProfileStats> _loadStats(String userId, String clanId) async {
@@ -579,9 +741,9 @@ class SupabaseProfileRepository implements ProfileRepository {
     final response = await _client
         .from('profile_highlights')
         .select(
-          'id, title, thumbnail_url, video_url, duration, views, clan_tag, '
+          'id, profile_id, title, thumbnail_url, video_url, duration, views, clan_tag, '
           'download_url, source_type, source_match_id, source_event_id, '
-          'is_public, provider_video_id, processing_status, processing_error',
+          'is_public, provider_video_id, processing_status, processing_error, created_at',
         )
         .eq('profile_id', userId)
         .order('sort_order')
@@ -602,18 +764,40 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<_ConnectionCounts> _loadConnectionCounts(String userId) async {
-    final followingRows = await _client
+    final viewerId = currentUserId;
+    // Count only relationships whose other profile is visible under RLS, as
+    // getConnections does. Exact totals are independent of server page caps.
+    final following = await _client
         .from('profile_follows')
-        .select('following_id')
-        .eq('follower_id', userId);
-    final fanRows = await _client
+        .select(
+          'following_id, profile:profiles!profile_follows_following_id_fkey!inner(id)',
+        )
+        .eq('follower_id', userId)
+        .limit(1)
+        .count(CountOption.exact);
+    final fans = await _client
         .from('profile_follows')
-        .select('follower_id')
-        .eq('following_id', userId);
+        .select(
+          'follower_id, profile:profiles!profile_follows_follower_id_fkey!inner(id)',
+        )
+        .eq('following_id', userId)
+        .limit(1)
+        .count(CountOption.exact);
+    // List responses can be capped by the server. Check the unique viewer /
+    // player pair directly rather than inferring it from a page of fans.
+    final viewerFollow = viewerId == null || viewerId == userId
+        ? null
+        : await _client
+              .from('profile_follows')
+              .select('follower_id')
+              .eq('following_id', userId)
+              .eq('follower_id', viewerId)
+              .maybeSingle();
 
     return _ConnectionCounts(
-      following: (followingRows as List<dynamic>).length,
-      fans: (fanRows as List<dynamic>).length,
+      following: following.count,
+      fans: fans.count,
+      isFollowedByMe: viewerFollow != null,
     );
   }
 
@@ -635,18 +819,92 @@ class SupabaseProfileRepository implements ProfileRepository {
   }
 
   Future<List<ProfilePreviousGame>> _loadPreviousGames(String userId) async {
-    final response = await _client.rpc(
-      'list_profile_previous_games',
-      params: {'profile_id_to_use': userId},
-    );
-    final rows = switch (response) {
-      final List value => value,
-      final Map value => [value],
-      _ => const <dynamic>[],
-    };
+    // This table-returning RPC is subject to PostgREST's 1,000-row cap.
+    // Public lifetime totals must not silently become the most recent page.
+    const pageSize = 500;
+    final records = <Map<String, dynamic>>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final response = await _client
+          .rpc(
+            'list_profile_previous_games',
+            params: {'profile_id_to_use': userId},
+          )
+          .range(offset, offset + pageSize - 1)
+          .timeout(fieldReadTimeout);
+      final rows = switch (response) {
+        final List value => value,
+        final Map value => [value],
+        _ => const <dynamic>[],
+      };
+      records.addAll([
+        for (final row in rows) Map<String, dynamic>.from(row as Map),
+      ]);
+      if (rows.length < pageSize) break;
+    }
+    final games = [
+      for (final row in records) ProfilePreviousGame.fromJson(row),
+    ];
+    final soloIds = games
+        .where((game) => game.isSolo && game.id.trim().isNotEmpty)
+        .map((game) => game.id)
+        .toSet()
+        .toList();
+    final timezones = <String, String>{};
+    final actualStarts = <String, DateTime>{};
+    // The historical RPC does not return timezone. Fetch only public game
+    // metadata in bounded batches, without changing its database signature.
+    // Date metadata has one shared budget across all batches. An outage must
+    // not spend the full profile deadline on optional enrichment.
+    final metadataTimer = Stopwatch()..start();
+    for (var start = 0; start < soloIds.length; start += 100) {
+      final end = start + 100 < soloIds.length ? start + 100 : soloIds.length;
+      final remaining = const Duration(seconds: 4) - metadataTimer.elapsed;
+      if (remaining <= Duration.zero) break;
+      try {
+        final metadata = await _client
+            .from('open_queue_games')
+            .select('id,timezone,open_queue_events(occurred_at)')
+            .inFilter('id', soloIds.sublist(start, end))
+            .eq('open_queue_events.event_type', 'MATCH_STARTED')
+            .timeout(remaining);
+        for (final row in metadata) {
+          final timezone = row['timezone'];
+          if (timezone is String && timezone.trim().isNotEmpty) {
+            timezones[row['id'] as String] = timezone.trim();
+          }
+          // An early or delayed kickoff is the played time, not its advertised
+          // booking slot. Use the first actual start for position tie-breaking.
+          final events = row['open_queue_events'];
+          if (events is List) {
+            for (final event in events.whereType<Map>()) {
+              final value = event['occurred_at'];
+              final occurredAt = value is String
+                  ? DateTime.tryParse(value)
+                  : null;
+              if (occurredAt == null) continue;
+              final id = row['id'] as String;
+              final previous = actualStarts[id];
+              if (previous == null || occurredAt.isBefore(previous)) {
+                actualStarts[id] = occurredAt;
+              }
+            }
+          }
+        }
+      } catch (_) {
+        // The screen labels unknown solo dates rather than guessing a market.
+        break;
+      }
+    }
     return [
-      for (final row in rows)
-        ProfilePreviousGame.fromJson(Map<String, dynamic>.from(row as Map)),
+      for (var index = 0; index < records.length; index++)
+        ProfilePreviousGame.fromJson({
+          ...records[index],
+          if (games[index].isSolo && actualStarts[games[index].id] != null)
+            'played_at': actualStarts[games[index].id]!.toIso8601String(),
+          'timezone': games[index].isSolo
+              ? timezones[games[index].id]
+              : 'Asia/Bahrain',
+        }),
     ];
   }
 
@@ -722,10 +980,15 @@ class _ProfileStats {
 }
 
 class _ConnectionCounts {
-  const _ConnectionCounts({required this.following, required this.fans});
+  const _ConnectionCounts({
+    required this.following,
+    required this.fans,
+    required this.isFollowedByMe,
+  });
 
   final int following;
   final int fans;
+  final bool isFollowedByMe;
 }
 
 MapEntry<String, ProfileClan>? _connectionClanFromRow(

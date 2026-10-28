@@ -12,6 +12,67 @@ Profile photos use Supabase Storage bucket `profile-avatars`. The migration
 creates the bucket and storage policies. Users can upload only into a folder
 named after their own auth user id.
 
+## Season 0 v2 rating rollout
+
+Migrations `20261014001000` through `20261014001800` add the prospective
+`field-sr-season0-v2` solo-match policy. The activation flag defaults to **off**.
+Existing games retain their pinned policy; activation does not reset players,
+seed existing accounts again, or convert previously created games.
+
+The approved adaptations retain independent Outfield and Keeper pools, with one
+new-account assessment seeding both. Each pool reveals SR after two lifetime
+counted appearances; season-specific minimums still govern leaderboard/prize
+qualification. During placement the signed-in player sees their own current SR
+as **Predicted**. The owner-only snapshot is separate from public ranks, profiles,
+and match history, which continue hiding numeric SR until two counted games.
+Blue cards last 120 wall-clock seconds (including pauses), and
+the referee confirms actual return. While suspended, the player retains their
+rating contribution but earns no participation/protection time. Below ten actual
+playing minutes, conduct permits negative adjustments only and no counted
+appearance. Pre-kickoff moves preserve parties and formation, with recorded
+consent for present movers; already revealed teams are not silently reshuffled.
+
+The flag controls **new-game policy assignment only**, not the entire migration:
+new-account assessment requirements and public lifetime-rating visibility take
+effect when their migrations are installed. Coordinate the mobile, referee/admin
+and database release; an older client cannot complete the newly required
+assessment. Do not treat switching the flag off as a schema/client rollback.
+
+Before enabling the policy:
+
+1. Run the workflow's fresh-schema replay, normal local seed and SQL verifiers,
+   Flutter tests/builds, and referee tests/browser checks. The isolated PGlite
+   suites verify application SQL but substitute managed auth/storage/cron/network
+   contracts; they do not replace the real Supabase checks.
+2. On a disposable multi-connection PostgreSQL/Supabase database, test duplicate
+   finish requests, finish versus correction, activation versus game creation,
+   and booking/party mutations versus assignment/start. Verify atomic rollback,
+   no duplicate active awards, and bounded lock/statement behavior.
+3. Verify the updated mobile onboarding and hidden/revealed ratings, and the
+   referee participation, blue-card return, pause, finish and admin-review paths
+   against staging. Keep the policy disabled until compatible clients and
+   referee tools are available. Do not use live bookings as test fixtures.
+4. An authorized admin can then use **Season settings → Solo rating policy →
+   Enable Season 0 v2 for future games**, entering a reason and confirming scope.
+   Subsequent manually created and schedule-generated games receive the policy;
+   already-created future games do not change.
+
+If rollout needs to stop, disable it for future games through the same audited
+control. Games already pinned to v2 still require the v2 tools. Do not delete
+audit evidence, rewrite settled history, or reset ratings as a rollback strategy.
+
+## Account deletion and wallet forfeiture
+
+Account deletion permanently removes wallet access and forfeits the remaining
+BHD and USD balances; it does not refund or transfer those balances. The mobile
+confirmation and deletion endpoint require explicit acknowledgement. Migration
+`20261014002000`, the deletion Edge Function and the updated mobile client must
+roll out together. Older deletion requests fail closed without acknowledgement.
+Wallet debits are append-only `ACCOUNT_DELETION_FORFEITURE` records in the final
+Auth deletion transaction, not in the preparation/Storage step. A failed deletion
+rolls back the debit. Unsettled payments/refunds and other deletion obligations
+still block deletion; historical ledger and transaction evidence remain intact.
+
 ## Server-side environment files
 
 The legacy root `.env` and `.env.staging` point to Field Staging. Create them
@@ -161,65 +222,43 @@ through the normal rating path.
 Seeded fake follows connect the fake users so the Profile screen's Following
 and Fans counts open populated People lists.
 
-## Fixed-Code Dev Login
+## Local seed login and isolated staging E2E authentication
 
-The Flutter app skips real SMS for the seeded fake phones and sends verification
-to the `dev-phone-login` Edge Function. Configure the function with Supabase
-secrets:
+Loopback-only local seed login still accepts the development code for an
+existing local seed user. It never creates users or resets their passwords.
 
-```sh
-supabase secrets set \
-  DEV_OTP_ENABLED=true \
-  DEV_OTP_CODE=000000 \
-  DEV_OTP_PASSWORD='replace-with-a-strong-dev-password' \
-  DEV_OTP_USERS_JSON='{"+97338883671":"Zara Haddad","+97338883672":"Omar Saleh","+97338883673":"Noor Khalid","+97338883674":"Maya Faris","+97338883675":"Sami Nasser","+97338883676":"Lina Abbas","+97338883677":"Rami Darwish","+97338883678":"Hala Mansour"}'
-```
+Hosted fixed-code login and switching are **not** human account-switching
+features. They reject production and remain unavailable unless a protected CI
+run has configured all of the following:
 
-The existing single-phone dev login still works if these secrets are also set:
+- A service-owned synthetic fixture with matching protected
+  `app_metadata.fieldrush_e2e`, reserved role/phone and current run ID.
+- A generated per-run capability, separate from the public six-digit code,
+  supplied only by test entrypoints in `x-fieldrush-e2e-secret`.
+- A valid explicit UTC expiry, at most two hours away. CI selects 90 minutes.
+- For switching, a valid JWT belonging to another fixture in that same run.
 
-```sh
-supabase secrets set \
-  DEV_OTP_PHONE=+97338883670 \
-  DEV_OTP_NAME='Dev Player'
-```
+The service fixture setup runs before enabling the auth window. Existing real
+players and ordinary staff cannot be tagged or reset by these endpoints.
+Neither endpoint creates users, modifies metadata, resets passwords or mints
+magic links. Historical phone allowlists and unauthenticated recovery flags
+cannot bypass these checks.
 
-Deploy the function after changing secrets or code:
+The serialized staging workflow always closes its auth window after the final
+journey or preparation failure. Owned-fixture cleanup revokes refresh sessions,
+rotates synthetic passwords, clears current-run markers and retires temporary
+staff access. The cleanup action then disables both functions' gates, expires
+their windows and removes capability/password secrets. Supabase access JWTs can
+remain cryptographically valid until expiry; no immediate JWT invalidation is
+claimed. Real account credentials are never part of this cleanup.
 
-```sh
-supabase functions deploy dev-phone-login
-```
-
-To test as a fake user, sign out in the app, enter one of the fake phone
-numbers, and use code `000000`.
-
-Do not enable `DEV_OTP_ENABLED=true` on any production Supabase project.
-
-## Dev User Switching
-
-With `DEV=true` in `mobile/.env.mobile`, the current user's Profile screen
-shows a searchable account switcher. The switch is performed by the
-authenticated `dev-switch-user` Edge Function, so the service-role key never
-ships in Flutter.
-
-Enable and deploy it only on the hosted development project:
-
-```sh
-supabase secrets set DEV=true
-supabase secrets set DEV_SWITCH_ALLOW_UNAUTHENTICATED=true
-supabase functions deploy dev-switch-user --no-verify-jwt
-```
-
-Phone-only users use the existing `DEV_OTP_PASSWORD` secret. You can instead
-set a separate strong password with:
-
-```sh
-supabase secrets set DEV_SWITCH_PASSWORD='replace-with-a-strong-dev-password'
-```
-
-Set `DEV=false` in both Flutter and Supabase, or do not deploy this function,
-for production. Client-side `DEV=true` alone cannot enable impersonation.
-`DEV_SWITCH_ALLOW_UNAUTHENTICATED` exists only to recover revoked fake-user
-sessions and must never be enabled outside the isolated development project.
+If a runner is forcibly terminated before cleanup executes, the HTTP run window
+still expires, but Supabase Auth does not itself give fixture passwords an
+expiry. A leaked test password could remain usable until verified synthetic
+cleanup rotates it. Keep encrypted handoffs/APKs private, and run ownership-
+checked cleanup before reusing accounts from an interrupted run. The next
+service setup also rotates the approved synthetic pool's passwords; it must
+never auto-tag or repair an ordinary account at a reserved test phone.
 
 ## Cloudflare Stream Recording Webhook
 

@@ -1,15 +1,26 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
 
+import { verifyAdminRequestInboxes } from "./support/admin-request-navigation";
+import { finishSoloMatch } from "./support/finish-solo-match";
+import { waitForPlayingDuration } from "./support/season-zero-journey";
+import { refereeMatchKey } from "../src/lib/referee-assigned-matches";
 import {
   installAdminSession,
   loadStagingManifest,
 } from "./support/staging-session";
 
+test.use({ actionTimeout: 15_000 });
+
 test("referee runs the match and admin sees player-created requests", async ({
   context,
   page,
 }) => {
+  // S0 requires the agreed playing duration; the fixture is a real 30-minute
+  // game. Keep individual UI assertions bounded instead of masking hangs.
+  test.setTimeout(35 * 60 * 1000);
   const manifest = await loadStagingManifest();
+  expect(Math.abs(Date.parse(manifest.games.match.startsAt) - Date.now()),
+    "The test match must be inside the real +/-24h referee check-in window.").toBeLessThanOrEqual(24 * 60 * 60 * 1000);
   const session = await installAdminSession(context, manifest);
 
   await page.goto("/");
@@ -17,7 +28,7 @@ test("referee runs the match and admin sees player-created requests", async ({
 
   const matchSelector = page.getByLabel("Choose assigned match");
   if (await matchSelector.count() > 0) {
-    await matchSelector.selectOption(manifest.games.match.id);
+    await matchSelector.selectOption(refereeMatchKey({ matchKind: "SOLO", id: manifest.games.match.id }));
   }
   await expect(page.locator(".referee-kickoff-details")).toContainText(
     manifest.games.match.venue,
@@ -26,6 +37,8 @@ test("referee runs the match and admin sees player-created requests", async ({
   const playersTab = page.getByRole("button", { name: /Players/ }).first();
   await playersTab.click();
   await openRoster(page.locator("details.attendance-roster"));
+  await expect(page.getByText("Ready for check-in", { exact: true }),
+    "Server attendance is closed; check fixture kickoff and review state.").toBeVisible();
 
   const correctedPlayerName = manifest.accounts.main.displayName;
   const correctedPlayer = page.locator(".attendance-player").filter({
@@ -66,7 +79,14 @@ test("referee runs the match and admin sees player-created requests", async ({
   ).toBeVisible();
 
   await checkInEveryPlayer(page, page.locator("details.attendance-roster"));
-  await expect(playersTab).toContainText("12/12");
+  await expect(playersTab).toContainText("14/14");
+  await page.getByRole("button", { name: /^Match/ }).first().click();
+  const assignment = page.getByRole("button", { name: "Assign booked players to teams", exact: true });
+  if (await assignment.count() > 0) {
+    await expect(assignment).toBeEnabled();
+    await assignment.click();
+    await expect(assignment).toBeHidden();
+  }
   await expect(page.getByRole("button", {
     name: "Start game",
     exact: true,
@@ -92,18 +112,36 @@ test("referee runs the match and admin sees player-created requests", async ({
   }).click();
   await expect(goalDialog).toBeHidden();
 
+  await waitForPlayingDuration(page, manifest.games.match.id, session.accessToken);
+
   const endMatch = page.locator("details.timer-end-disclosure");
   await endMatch.locator("summary").click();
-  await endMatch.getByRole("button", {
-    name: "Finish match",
-    exact: true,
-  }).click();
+  await finishSoloMatch(
+    page,
+    manifest.games.match.id,
+    endMatch.getByRole("button", {
+      name: "Finish match",
+      exact: true,
+    }),
+  );
   await expect(page.locator(".fixture-status")).toHaveText("Finished", {
     timeout: 30_000,
   });
-  await expect(page.locator(".result-locked-note")).toContainText(
-    "Final result saved. Admin corrections remain fully audited.",
+  const resultNotice = page.locator(".result-locked-note");
+  await expect(resultNotice).toContainText("Final result saved.");
+  await expect(resultNotice).toContainText(
+    "Correct a mistake from More → Correct match record.",
   );
+  await expect(resultNotice).toContainText(
+    "Use Reopen match if play needs to continue.",
+  );
+  const reopenMatch = page.locator("details.timer-end-disclosure");
+  await expect(reopenMatch.locator("summary")).toHaveText("Reopen match");
+  await reopenMatch.locator("summary").click();
+  await expect(reopenMatch.getByRole("button", {
+    name: "Confirm reopen match",
+    exact: true,
+  })).toBeEnabled();
 
   await expectAdminApiMarkers(
     page,
@@ -112,32 +150,7 @@ test("referee runs the match and admin sees player-created requests", async ({
     manifest.markers.reportDetails,
   );
 
-  await page.goto("/admin");
-  await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
-
-  await page.locator(".admin-sidebar-nav").getByRole("button", {
-    name: /Support/,
-  }).click();
-  const supportSearch = page.getByPlaceholder("Search tickets");
-  await expect(supportSearch).toBeVisible();
-  await supportSearch.fill(manifest.markers.supportDetails);
-  await expect(
-    page.locator(
-      ".admin-support-detail .admin-report-description p",
-    ),
-  ).toHaveText(manifest.markers.supportDetails);
-
-  await page.locator(".admin-sidebar-nav").getByRole("button", {
-    name: /Reports/,
-  }).click();
-  const reportSearch = page.getByPlaceholder("Search reports");
-  await expect(reportSearch).toBeVisible();
-  await reportSearch.fill(manifest.markers.reportDetails);
-  await expect(
-    page.locator(
-      ".admin-report-detail:not(.admin-support-detail) .admin-report-description p",
-    ),
-  ).toHaveText(manifest.markers.reportDetails);
+  await verifyAdminRequestInboxes(page, manifest.markers);
 });
 
 async function openRoster(roster: Locator) {
@@ -152,6 +165,8 @@ async function checkInPlayer(
   player: Locator,
   timing: "Check in early" | "Check in late" | "Check in after kickoff",
 ) {
+  await expect(player.getByRole("button", { name: "Check in", exact: true }),
+    "Expected an eligible missing player with server-authorized check-in.").toBeVisible();
   await player.getByRole("button", {
     name: "Check in",
     exact: true,

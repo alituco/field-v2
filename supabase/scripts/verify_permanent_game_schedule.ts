@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
+import { legacyOpenQueueFormat } from "./_shared/legacy_open_queue_format.ts";
 
 type FixtureRow = {
   id: string;
@@ -239,8 +240,8 @@ for (const booking of bookings) {
   }
 }
 assert(
-  [...upcomingSoloCounts.values()].every((count) => count <= 2),
-  "A player exceeds two upcoming solo games.",
+  [...upcomingSoloCounts.values()].every((count) => count <= 1),
+  "A player exceeds one upcoming solo game.",
 );
 
 const currentFixtureIds = new Set(finalFixtures.map((fixture) => fixture.id));
@@ -306,6 +307,7 @@ async function verifyDatabaseRejectsInvalidSchedules(
   const invalidStart = new Date(game.starts_at);
   invalidStart.setUTCHours(invalidStart.getUTCHours() - 1);
   const invalidSolo = await admin.from("open_queue_games").insert({
+    ...legacyOpenQueueFormat,
     venue: `${SEED_PREFIX} Invalid Solo Slot`,
     starts_at: invalidStart.toISOString(),
     ends_at: new Date(invalidStart.getTime() + 60 * 60 * 1000).toISOString(),
@@ -316,12 +318,13 @@ async function verifyDatabaseRejectsInvalidSchedules(
   }
   assert(
     invalidSolo.error?.message.includes(
-      "Open Queue games must start at 8:30 PM Bahrain time.",
+      "Solo games run Tuesday or Friday, 8:30–9:30 PM in the game timezone.",
     ),
     "The database did not reject a 7:30 PM solo game with the schedule rule.",
   );
 
   const duplicateSolo = await admin.from("open_queue_games").insert({
+    ...legacyOpenQueueFormat,
     venue: `${SEED_PREFIX} Duplicate Solo Slot`,
     starts_at: game.starts_at,
     ends_at: game.ends_at,

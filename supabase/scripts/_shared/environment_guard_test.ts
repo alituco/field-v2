@@ -3,6 +3,7 @@ import {
   FIELD_PRODUCTION_PROJECT_REF,
   FIELD_STAGING_PROJECT_REF,
 } from "./environment_guard.ts";
+import { withLocalClanSeedCheckout } from "./local_clan_seed.ts";
 
 Deno.test("allows the exact Field Staging project over HTTPS", () => {
   const target = assertSafeDevDataTarget(
@@ -132,3 +133,66 @@ function assertThrows(run: () => unknown, expectedMessage: string): void {
     );
   }
 }
+Deno.test("clan seed restores the local pause after success and failure", async () => {
+  for (const fails of [false, true]) {
+    const writes: boolean[] = [];
+    let receivedError = false;
+    try {
+      const result = await withLocalClanSeedCheckout({
+        url: "http://127.0.0.1:54321",
+        readEnabled: () => Promise.resolve(false),
+        writeEnabled: (enabled) => {
+          writes.push(enabled);
+          return Promise.resolve();
+        },
+      }, () => {
+        if (fails) throw new Error("Synthetic seed failed");
+        return Promise.resolve("seeded");
+      });
+      assertEquals(result, "seeded");
+    } catch (error) {
+      if (
+        !(error instanceof Error) || error.message !== "Synthetic seed failed"
+      ) {
+        throw error;
+      }
+      receivedError = true;
+    }
+    assertEquals(receivedError, fails);
+    assertEquals(JSON.stringify(writes), "[true,false]");
+  }
+});
+
+Deno.test("clan seed cannot temporarily enable any hosted environment", async () => {
+  for (const ref of [FIELD_STAGING_PROJECT_REF, FIELD_PRODUCTION_PROJECT_REF]) {
+    let touchedSettings = false;
+    let rejected = false;
+    try {
+      await withLocalClanSeedCheckout({
+        url: `https://${ref}.supabase.co`,
+        readEnabled: () => {
+          touchedSettings = true;
+          return Promise.resolve(false);
+        },
+        writeEnabled: () => Promise.resolve(),
+      }, () => Promise.resolve());
+    } catch {
+      rejected = true;
+    }
+    assertEquals(rejected, true);
+    assertEquals(touchedSettings, false);
+  }
+});
+
+Deno.test("clan seed preserves an already-enabled local setting", async () => {
+  let writes = 0;
+  await withLocalClanSeedCheckout({
+    url: "http://localhost:54321",
+    readEnabled: () => Promise.resolve(true),
+    writeEnabled: () => {
+      writes++;
+      return Promise.resolve();
+    },
+  }, () => Promise.resolve());
+  assertEquals(writes, 0);
+});

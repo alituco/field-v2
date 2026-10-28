@@ -1,6 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'date_of_birth.dart';
+import 'staging_account_switch.dart';
+import 'player_identity.dart';
 
 abstract class AuthRepository {
   Session? get currentSession;
@@ -16,6 +18,11 @@ abstract class AuthRepository {
 }
 
 class SupabaseAuthRepository implements AuthRepository {
+  SupabaseAuthRepository({this.beforeSignOut});
+
+  /// Device-token cleanup supplied by the app, while the current JWT is usable.
+  final Future<void> Function()? beforeSignOut;
+
   static const _appEnvironment = String.fromEnvironment('APP_ENV');
   static const _devOtpPhones = {
     '+97338883670',
@@ -51,20 +58,26 @@ class SupabaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> verifyPhoneOtp({required String phone, required String token}) {
+  Future<void> verifyPhoneOtp({
+    required String phone,
+    required String token,
+  }) async {
+    User? verifiedUser;
     if (_isLocalEnvironment ||
         (_appEnvironment == 'staging' && _isDevOtpPhone(phone))) {
-      return _verifyDevOtp(phone: phone, token: token);
+      verifiedUser = await _verifyDevOtp(phone: phone, token: token);
+    } else {
+      final response = await _client.auth.verifyOTP(
+        phone: phone,
+        token: token,
+        type: OtpType.sms,
+      );
+      verifiedUser = response.user;
     }
-
-    return _client.auth.verifyOTP(
-      phone: phone,
-      token: token,
-      type: OtpType.sms,
-    );
+    await requirePlayerIdentity(_client, authenticatedUser: verifiedUser);
   }
 
-  Future<void> _verifyDevOtp({
+  Future<User?> _verifyDevOtp({
     required String phone,
     required String token,
   }) async {
@@ -88,7 +101,11 @@ class SupabaseAuthRepository implements AuthRepository {
         throw const AuthException('Dev login returned an invalid session.');
       }
 
-      await _client.auth.setSession(refreshToken, accessToken: accessToken);
+      final session = await _client.auth.setSession(
+        refreshToken,
+        accessToken: accessToken,
+      );
+      return session.user;
     } on FunctionException catch (error) {
       final details = error.details;
       final message = details is Map && details['error'] is String
@@ -103,6 +120,7 @@ class SupabaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> updateDisplayName(String displayName) async {
+    await requirePlayerIdentity(_client);
     final trimmedName = displayName.trim();
     final user = currentUser;
     if (user == null) {
@@ -124,6 +142,7 @@ class SupabaseAuthRepository implements AuthRepository {
 
   @override
   Future<void> updateDateOfBirth(DateTime dateOfBirth) async {
+    await requirePlayerIdentity(_client);
     if (!isEligibleDateOfBirth(dateOfBirth)) {
       throw const AuthException('You must be at least 18 years old to play.');
     }
@@ -152,6 +171,10 @@ class SupabaseAuthRepository implements AuthRepository {
     if (targetProfileId == currentUser?.id) return;
 
     try {
+      if (_appEnvironment == 'staging') {
+        await StagingAccountSwitch.switchTo(_client, targetProfileId);
+        return;
+      }
       final session = currentSession;
       final response = await _client.functions.invoke(
         'dev-switch-user',
@@ -194,7 +217,18 @@ class SupabaseAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<void> signOut() {
-    return _client.auth.signOut();
+  Future<void> signOut() async {
+    if (isStaffIdentity(currentUser)) {
+      await _client.auth.signOut(scope: SignOutScope.local);
+      return;
+    }
+    final userId = currentUser?.id;
+    if (userId != null) {
+      await beforeSignOut?.call();
+      if (currentUser?.id != userId) {
+        throw const AuthException('The account changed. Please try again.');
+      }
+    }
+    await _client.auth.signOut();
   }
 }

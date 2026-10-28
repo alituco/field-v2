@@ -1,13 +1,20 @@
 import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
 
 import { PwaInstallPrompt } from "@/components/pwa-install-prompt";
 import { resolveFieldEnvironment } from "@/lib/app-environment";
 
 import "./globals.css";
 
+const fieldrushFont = localFont({
+  src: "./fonts/PlusJakartaSans.ttf",
+  variable: "--font-fieldrush",
+  weight: "200 800",
+  display: "swap",
+});
+
 export function generateMetadata(): Metadata {
   const isStaging = process.env.NEXT_PUBLIC_APP_ENV === "staging";
-  const iconPrefix = isStaging ? "field-ops-staging" : "field-ops";
 
   return {
     title: isStaging ? "Field Ops Staging" : "Field Ops",
@@ -25,13 +32,15 @@ export function generateMetadata(): Metadata {
     },
     icons: {
       icon: [
-        { url: `/${iconPrefix}-192.png`, sizes: "192x192", type: "image/png" },
-        { url: `/${iconPrefix}-512.png`, sizes: "512x512", type: "image/png" },
+        { url: "/favicon.ico", sizes: "any", type: "image/x-icon" },
+        { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
+        { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
+        { url: "/favicon.svg", sizes: "any", type: "image/svg+xml" },
       ],
       apple: [
         {
-          url: `/${iconPrefix}-192.png`,
-          sizes: "192x192",
+          url: "/apple-touch-icon.png",
+          sizes: "180x180",
           type: "image/png",
         },
       ],
@@ -52,7 +61,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   viewportFit: "cover",
-  themeColor: "#f8fafc",
+  themeColor: "#386641",
 };
 
 export default function RootLayout({
@@ -66,7 +75,7 @@ export default function RootLayout({
   }
 
   return (
-    <html lang="en">
+    <html lang="en" className={fieldrushFont.variable}>
       <body className={environment.label ? "field-nonproduction" : undefined}>
         {environment.label ? (
           <div

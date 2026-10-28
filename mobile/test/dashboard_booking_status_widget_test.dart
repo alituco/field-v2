@@ -1,11 +1,23 @@
+import 'dart:async';
+
 import 'package:field/src/clans/clan.dart';
 import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/home/dashboard_home.dart';
+import 'package:field/src/home/activity_revision.dart';
+import 'package:field/src/home/fieldrush_home_widgets.dart';
+import 'package:field/src/home/home_discovery_repository.dart';
+import 'package:field/src/home/home_discovery_screen.dart';
 import 'package:field/src/leaderboard/leaderboard.dart';
 import 'package:field/src/leaderboard/leaderboard_repository.dart';
+import 'package:field/src/leaderboard/fieldrush_seasons.dart';
+import 'package:field/src/markets/fieldrush_city.dart';
+import 'package:field/src/markets/fieldrush_city_repository.dart';
 import 'package:field/src/open_queue/open_queue.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
+import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
+import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
 import 'package:field/src/open_queue/open_queue_party.dart';
 import 'package:field/src/open_queue/open_queue_party_repository.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
@@ -14,1015 +26,570 @@ import 'package:field/src/profile/profile_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../integration_test/helpers/staging_test_helpers.dart';
+
 void main() {
-  testWidgets('home booking card shows pending count and a prominent TODAY', (
+  setUp(clearFieldrushActivityOpenRequest);
+  tearDown(clearFieldrushActivityOpenRequest);
+
+  testWidgets('a cold push tap opens canonical Activity after Home mounts', (
     tester,
   ) async {
-    await _setPhoneSize(tester);
-    final game = _game(
-      daysFromToday: 0,
-      confirmedCount: 8,
-      staleAssignment: true,
-      teamAssignmentDue: false,
-      venue: '[SCHEDULE SEED] Solo Future 5',
-    );
-
-    await _pumpDashboard(tester, game, team: openQueueWhiteTeamId);
-
-    expect(find.text('WAITING FOR 4 PLAYERS'), findsOneWidget);
-    expect(find.text('8/12'), findsOneWidget);
-    expect(find.text('MATCH IS ON'), findsNothing);
-    expect(find.text('Your booking is reserved'), findsOneWidget);
-    expect(find.text('YOUR SPOT IS RESERVED'), findsNothing);
-    expect(find.text('MIDFIELDER'), findsOneWidget);
-    expect(find.text('TODAY · 8:30 PM'), findsOneWidget);
-    expect(find.text('TFA, Saar'), findsOneWidget);
-    expect(find.textContaining('SCHEDULE SEED'), findsNothing);
-    expect(find.textContaining('Solo Future'), findsNothing);
-    expect(find.textContaining('AVG RATING'), findsNothing);
-    expect(
-      find.byKey(const ValueKey('pending-kit-info-panel')),
-      findsOneWidget,
-    );
-    expect(find.text('KIT'), findsOneWidget);
-    expect(find.text('Assigned 3 hours before kickoff'), findsOneWidget);
-    expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
-    expect(find.byKey(const ValueKey('kit-assignment-updating')), findsNothing);
-    expect(find.textContaining('WHITE ·'), findsNothing);
+    requestFieldrushActivityOpen();
+    await _pump(tester, _Queue(), discovery: _Discovery());
+    expect(find.byType(HomeDiscoveryScreen), findsOneWidget);
+    expect(find.text('Activity'), findsOneWidget);
+    expect(fieldrushActivityOpenRequested.value, isFalse);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('full home booking schedules its kit reveal before the cutoff', (
+  testWidgets('push taps do not stack duplicate Activity screens', (
     tester,
   ) async {
-    await _setPhoneSize(tester);
-    final game = _game(daysFromToday: 1, confirmedCount: 12);
-
-    await _pumpDashboard(tester, game, team: openQueueBlackTeamId);
-
-    expect(find.text('MATCH IS ON'), findsOneWidget);
-    expect(find.text('12/12'), findsOneWidget);
-    expect(find.textContaining('WAITING FOR'), findsNothing);
-    expect(find.textContaining('TOMORROW ·'), findsOneWidget);
-    expect(find.text('Assigned 3 hours before kickoff'), findsOneWidget);
-    expect(find.text('WEAR BLACK'), findsNothing);
-    expect(find.textContaining('AVG RATING'), findsNothing);
-    expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
-    final card = tester.getRect(
-      find.byKey(const ValueKey('home-solo-booking-booking')),
-    );
-    final action = tester.getRect(find.text('Match details  ›'));
-    expect(card.bottom - action.bottom, lessThanOrEqualTo(34));
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('due confirmed home booking reveals its assigned kit', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final game = _game(
-      daysFromToday: 0,
-      confirmedCount: 12,
-      startsIn: const Duration(hours: 2),
-    );
-
-    await _pumpDashboard(tester, game, team: openQueueBlackTeamId);
-
-    expect(find.text('MATCH IS ON'), findsOneWidget);
-    expect(find.text('WEAR BLACK'), findsOneWidget);
-    expect(find.text('AVG RATING 1200'), findsOneWidget);
-    expect(find.byKey(const ValueKey('kit-instruction')), findsOneWidget);
-    expect(find.text('Assigned 3 hours before kickoff'), findsNothing);
+    await _pump(tester, _Queue(), discovery: _Discovery());
+    requestFieldrushActivityOpen();
+    await tester.pumpAndSettle();
+    requestFieldrushActivityOpen();
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeDiscoveryScreen), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.byType(HomeDiscoveryScreen), findsNothing);
+    expect(find.byType(DashboardHome), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
   testWidgets(
-    'an active booking never presents an impossible zero-player count',
+    'Home Take a spot opens the game and Join goes straight to position checkout',
     (tester) async {
-      await _setPhoneSize(tester);
-      final game = _game(daysFromToday: 2, confirmedCount: 0);
-
-      await _pumpDashboard(tester, game);
-
-      expect(find.text('WAITING FOR 11 PLAYERS'), findsOneWidget);
-      expect(find.text('1/12'), findsOneWidget);
-      expect(find.text('Your booking is reserved'), findsOneWidget);
+      final queue = _Queue(games: [_game('night')]);
+      await _pump(tester, queue);
+      final night = find.byKey(const ValueKey('home-open-night-night'));
+      await tester.ensureVisible(night);
+      await tester.tap(night);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('game-main-action')),
+      );
+      await tester.tap(find.byKey(const ValueKey('game-main-action')));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushCheckoutSheet), findsOneWidget);
+      expect(find.byType(FieldrushBookingFlow), findsNothing);
+      expect(find.text('Pay for your spot'), findsOneWidget);
+      expect(find.text('Pick a position'), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushCheckoutSheet>(find.byType(FieldrushCheckoutSheet))
+            .role,
+        isNull,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+  testWidgets(
+    'empty Home shows the reference position picker and placement card',
+    (tester) async {
+      await _pump(tester, _Queue());
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      expect(find.byType(FieldrushQuickGameCard), findsOneWidget);
+      expect(find.byType(FieldrushHomeRating), findsOneWidget);
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      expect(find.textContaining('Dana'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('reactivating Home reloads a newly created solo booking', (
-    tester,
-  ) async {
-    final game = _game(daysFromToday: 2, confirmedCount: 7);
-    final repository = _FakeOpenQueueRepository(null);
-
-    await _pumpHome(tester, openQueueRepository: repository, activationTick: 0);
-    expect(
-      find.byKey(ValueKey('home-solo-booking-booking-${game.id}')),
-      findsNothing,
-    );
-
-    repository.booking = _bookingFor(game);
-    await _pumpHome(tester, openQueueRepository: repository, activationTick: 1);
-
-    expect(
-      find.byKey(ValueKey('home-solo-booking-booking-${game.id}')),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('confirmed home booking never guesses a missing kit color', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final game = _game(
-      daysFromToday: 0,
-      confirmedCount: 12,
-      startsIn: const Duration(hours: 2),
-    );
-
-    await _pumpDashboard(tester, game);
-
-    expect(find.text('MATCH IS ON'), findsOneWidget);
-    expect(find.text('KIT ASSIGNMENT UPDATING'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('kit-assignment-updating')),
-      findsOneWidget,
-    );
-    expect(find.text('WEAR WHITE'), findsNothing);
-    expect(find.text('WEAR BLACK'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('one solo booking offers a second-game carousel page', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final game = _game(daysFromToday: 2, confirmedCount: 8);
-
-    await _pumpHome(tester, booking: _bookingFor(game));
-
-    expect(find.text('YOUR SOLO GAMES'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('home-solo-carousel-page-1')),
-      findsOneWidget,
-    );
-    expect(find.text('WAITING FOR 4 PLAYERS').hitTestable(), findsOneWidget);
-    final initialCarouselSize = tester.getSize(
-      find.byKey(const ValueKey('home-solo-bookings-carousel')),
-    );
-    expect(initialCarouselSize.height, 272);
-    final initialMatchdayTop = tester.getTopLeft(find.text('MATCHDAY')).dy;
-
-    await tester.drag(
-      find.byKey(const ValueKey('home-solo-bookings-carousel')),
-      const Offset(-320, 0),
-    );
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const ValueKey('home-solo-carousel-page-2')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('home-book-another-solo-game')),
-      findsOneWidget,
-    );
-    expect(find.text('REGISTER FOR A SECOND GAME'), findsOneWidget);
-    expect(find.text('FIND A GAME'), findsOneWidget);
-    expect(
-      tester.getSize(find.byKey(const ValueKey('home-solo-bookings-carousel'))),
-      initialCarouselSize,
-    );
-    expect(tester.getTopLeft(find.text('MATCHDAY')).dy, initialMatchdayTop);
-
-    await tester.drag(
-      find.byKey(const ValueKey('home-solo-bookings-carousel')),
-      const Offset(320, 0),
-    );
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const ValueKey('home-solo-carousel-page-1')),
-      findsOneWidget,
-    );
-    expect(find.text('WAITING FOR 4 PLAYERS').hitTestable(), findsOneWidget);
-
-    await tester.drag(
-      find.byKey(const ValueKey('home-solo-bookings-carousel')),
-      const Offset(-320, 0),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('REGISTER FOR A SECOND GAME'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('OPEN QUEUE'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('no solo bookings preserves the Find Game hero', (tester) async {
-    await _setPhoneSize(tester);
-
-    await _pumpHome(tester);
-
-    expect(find.text('READY FOR A MATCH?'), findsOneWidget);
-    expect(find.text('FIND A GAME'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('home-solo-bookings-section')),
-      findsNothing,
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('two solo bookings are kickoff ordered and individually open', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final today = _bahrainDateNow();
-    final earlierGame = _fixtureGame(
-      id: 'booked-earlier',
-      date: today.add(const Duration(days: 2)),
-      status: 'OPEN',
-      confirmedCount: 8,
-      myBookingId: 'booking-earlier',
-      myBookingRole: OpenQueueRole.defender,
-    );
-    final laterGame = _fixtureGame(
-      id: 'booked-later',
-      date: today.add(const Duration(days: 5)),
-      status: 'FULL',
-      confirmedCount: 12,
-      myBookingId: 'booking-later',
-      myBookingRole: OpenQueueRole.attacker,
-    );
-    final earlierBooking = _bookingFor(earlierGame);
-    final laterBooking = _bookingFor(laterGame, role: OpenQueueRole.attacker);
-
-    await _pumpHome(
-      tester,
-      booking: laterBooking,
-      additionalBookings: [earlierBooking],
-    );
-
-    final earlierCard = find.byKey(
-      ValueKey('home-solo-booking-${earlierBooking.id}'),
-    );
-    final laterCard = find.byKey(
-      ValueKey('home-solo-booking-${laterBooking.id}'),
-    );
-    expect(find.text('YOUR SOLO GAMES'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('home-solo-carousel-page-1')),
-      findsOneWidget,
-    );
-    expect(earlierCard, findsOneWidget);
-    expect(earlierCard.hitTestable(), findsOneWidget);
-    expect(laterCard.hitTestable(), findsNothing);
-    expect(
-      find.byKey(const ValueKey('home-book-another-solo-game')),
-      findsNothing,
-    );
-
-    await tester.tap(earlierCard);
-    await tester.pumpAndSettle();
-    expect(find.text('BOOKING DETAILS'), findsOneWidget);
-    expect(find.text(earlierGame.prominentDateLabel), findsOneWidget);
-
-    Navigator.of(tester.element(find.text('BOOKING DETAILS'))).pop();
-    await tester.pumpAndSettle();
-
-    await tester.drag(
-      find.byKey(const ValueKey('home-solo-bookings-carousel')),
-      const Offset(-320, 0),
-    );
-    await tester.pumpAndSettle();
-
-    expect(
-      find.byKey(const ValueKey('home-solo-carousel-page-2')),
-      findsOneWidget,
-    );
-    expect(earlierCard.hitTestable(), findsNothing);
-    expect(laterCard.hitTestable(), findsOneWidget);
-
-    await tester.tap(laterCard.hitTestable());
-    await tester.pumpAndSettle();
-    expect(find.text('BOOKING DETAILS'), findsOneWidget);
-    expect(find.text(laterGame.prominentDateLabel), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets(
-    'pending party invite is prominent and opens its booking details',
+    'confirmed booking replaces discovery and preserves the E2E booking key',
     (tester) async {
-      await _setPhoneSize(tester);
-      final game = _game(daysFromToday: 2, confirmedCount: 8);
-      final booking = _bookingFor(game);
-      final partyContext = _partyContextWithInvite(game);
-
-      await _pumpHome(tester, booking: booking, partyContext: partyContext);
-
-      final alert = find.byKey(ValueKey('home-party-invite-${game.id}'));
-      expect(alert, findsOneWidget);
-      expect(find.text('PARTY INVITE WAITING'), findsOneWidget);
-      expect(find.text('Sami Nasser wants to team up'), findsOneWidget);
-      expect(find.text('REVIEW'), findsOneWidget);
+      await _pump(tester, _Queue(bookings: [_booking(_game('first'))]));
       expect(
-        tester.getTopLeft(alert).dy,
-        lessThan(tester.getTopLeft(find.text('WAITING FOR 4 PLAYERS')).dy),
-      );
-
-      await tester.tap(alert);
-      await tester.pumpAndSettle();
-
-      expect(find.text('BOOKING DETAILS'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('open-queue-party-invite')),
+        find.byKey(const ValueKey('home-solo-booking-booking-first')),
         findsOneWidget,
       );
+      expect(find.byType(FieldrushQuickGameCard), findsNothing);
+      final hero = tester.widget<FieldrushSoloHero>(
+        find.byType(FieldrushSoloHero),
+      );
+      expect(hero.booking.game.capacity, 14);
+      expect(hero.booking.assignedTeam, isNull);
+      expect(find.textContaining('Streak'), findsNothing);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('party invite alert remains visible while already grouped', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final game = _game(daysFromToday: 3, confirmedCount: 8);
-    final partyContext = _partyContextWithInvite(
-      game,
-      myParty: const OpenQueueParty(
-        id: 'my-current-party',
-        ownerProfileId: 'profile',
-        isOwner: true,
-        acceptedCount: 1,
-        members: [],
-      ),
+  testWidgets(
+    'bookings are sorted and later games use the compact also-booked row',
+    (tester) async {
+      final later = _booking(_game('later', days: 3));
+      final earlier = _booking(_game('earlier', days: 1));
+      await _pump(tester, _Queue(bookings: [later, earlier]));
+      expect(
+        tester
+            .widget<FieldrushSoloHero>(find.byType(FieldrushSoloHero))
+            .booking
+            .id,
+        earlier.id,
+      );
+      expect(
+        find.byKey(const ValueKey('home-also-booked-later')),
+        findsOneWidget,
+      );
+      expect(find.byType(FieldrushSoloHero), findsOneWidget);
+    },
+  );
+
+  testWidgets('reactivating Home reloads a newly made booking', (tester) async {
+    final repo = _Queue();
+    await _pump(tester, repo);
+    expect(find.byType(FieldrushQuickGameCard), findsOneWidget);
+    repo.bookings = [_booking(_game('new'))];
+    await _pump(tester, repo, tick: 1);
+    expect(
+      find.byKey(const ValueKey('home-solo-booking-booking-new')),
+      findsOneWidget,
     );
-
-    await _pumpHome(
-      tester,
-      booking: _bookingFor(game),
-      partyContext: partyContext,
-    );
-
-    final alert = find.byKey(ValueKey('home-party-invite-${game.id}'));
-    expect(alert, findsOneWidget);
-
-    await tester.tap(alert);
-    await tester.pumpAndSettle();
-
-    expect(find.text('BOOKING DETAILS'), findsOneWidget);
-    expect(tester.takeException(), isNull);
+    expect(find.byType(FieldrushQuickGameCard), findsNothing);
   });
 
   testWidgets(
-    'notification opens the invited game when another booking is first',
+    'cancelled games stay excluded and unresolved games show a nonbooking notice',
     (tester) async {
-      await _setPhoneSize(tester);
-      final firstGame = _game(daysFromToday: 1, confirmedCount: 8);
-      final invitedGame = _game(daysFromToday: 4, confirmedCount: 8);
-      final invitedBooking = _bookingFor(invitedGame);
-      final repository = _NotificationOpenQueueRepository(
-        _bookingFor(firstGame),
-        inviteBooking: invitedBooking,
-        notification: OpenQueuePartyInviteNotification(
-          id: 'notification-one',
-          gameId: invitedGame.id,
-          partyId: 'party-one',
-          membershipId: 'invite-one',
-          createdAt: DateTime.now(),
-          isRead: false,
-          inviter: const OpenQueuePartyNotificationInviter(
-            profileId: 'sami',
-            displayName: 'Sami Nasser',
-            username: 'sami',
-          ),
-          gameStartsAt: invitedGame.startsAt,
-          venue: invitedGame.venue,
-          gameStatus: invitedGame.status,
-        ),
-        partyContext: _partyContextWithInvite(invitedGame),
-      );
-
-      await _pumpHome(tester, openQueueRepository: repository);
-
-      final alert = find.byKey(ValueKey('home-party-invite-${invitedGame.id}'));
-      expect(alert, findsOneWidget);
-
-      await tester.tap(alert);
-      await tester.pumpAndSettle();
-
-      expect(repository.markedNotificationIds, ['notification-one']);
-      expect(find.text('BOOKING DETAILS'), findsOneWidget);
-      expect(find.text(invitedGame.prominentDateLabel), findsWidgets);
-      expect(
-        find.byKey(const ValueKey('open-queue-party-invite')),
-        findsOneWidget,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'matchday shows up next before recent and caps the feed at three',
-    (tester) async {
-      await _setPhoneSize(tester);
-      final today = _bahrainDateNow();
-      final openedFixtures = ValueNotifier(false);
-      addTearDown(openedFixtures.dispose);
-      final upcomingOne = _fixtureGame(
-        id: 'upcoming-one',
-        date: today.add(const Duration(days: 2)),
-        status: 'OPEN',
-        confirmedCount: 8,
-      );
-      final upcomingTwo = _fixtureGame(
-        id: 'upcoming-two',
-        date: today.add(const Duration(days: 3)),
-        status: 'OPEN',
-        confirmedCount: 8,
-      );
-      final upcomingThree = _fixtureGame(
-        id: 'upcoming-three',
-        date: today.add(const Duration(days: 4)),
-        status: 'OPEN',
-        confirmedCount: 8,
-      );
-      final recentOne = _fixtureGame(
-        id: 'recent-one',
-        date: today.subtract(const Duration(days: 1)),
-        status: 'FINAL',
-      );
-      final recentTwo = _fixtureGame(
-        id: 'recent-two',
-        date: today.subtract(const Duration(days: 2)),
-        status: 'FINAL',
-      );
-
-      await _pumpHome(
+      final cancelled = _game('cancelled', status: 'CANCELLED');
+      final noData = _game('missing', state: MatchOperationalState.noData);
+      await _pump(
         tester,
-        soloGames: [
-          upcomingThree,
-          recentTwo,
-          upcomingTwo,
-          recentOne,
-          upcomingOne,
+        _Queue(
+          bookings: [_booking(cancelled), _booking(noData)],
+          games: [cancelled, noData],
+        ),
+      );
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      expect(
+        find.byKey(const ValueKey('home-live-game-cancelled')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-live-game-missing')),
+        findsOneWidget,
+      );
+      expect(find.text('No data'), findsOneWidget);
+      expect(find.textContaining('You can book another game'), findsOneWidget);
+      expect(noData.supportedRoles.any(noData.canBook), isFalse);
+      expect(cancelled.isActiveReservation, isFalse);
+      expect(noData.blocksNewBooking, isFalse);
+    },
+  );
+
+  testWidgets(
+    'a live booked game stays accessible when the booking lookup fails',
+    (tester) async {
+      await _pump(
+        tester,
+        _Queue(
+          bookingsFail: true,
+          fixtures: [_game('live', status: 'LIVE', bookingId: 'live-booking')],
+        ),
+      );
+      expect(find.byKey(const ValueKey('home-live-game-live')), findsOneWidget);
+      expect(find.text('Your game is live'), findsOneWidget);
+      expect(find.byType(FieldrushQuickGameCard), findsNothing);
+    },
+  );
+
+  testWidgets('noncritical ranking failure does not hide a confirmed booking', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      _Queue(bookings: [_booking(_game('safe'))]),
+      ratingFails: true,
+      profile: _profileWithLifetimeRating,
+    );
+    expect(
+      find.byKey(const ValueKey('home-solo-booking-booking-safe')),
+      findsOneWidget,
+    );
+    expect(find.byKey(const Key('home-rating-unavailable')), findsOneWidget);
+    expect(find.byType(FieldrushHomeRating), findsNothing);
+    expect(find.textContaining('Placement'), findsNothing);
+    expect(find.textContaining('1700'), findsNothing);
+    expect(
+      tester
+          .widget<FieldrushHomeHeader>(find.byType(FieldrushHomeHeader))
+          .ratingUnavailable,
+      isTrue,
+    );
+    await tester.drag(
+      find.byKey(const Key('fieldrush-home-scroll')),
+      const Offset(0, -700),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Could not refresh rating'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Home requests Phoenix discovery before the server feed limit', (
+    tester,
+  ) async {
+    final game = _game('phoenix-market');
+    final queue = _MarketQueue(game);
+    await _pump(tester, queue);
+    expect(queue.markets, ['America/Phoenix']);
+    expect(queue.allMarketCalls, 0);
+    expect(
+      tester
+          .widget<FieldrushQuickGameCard>(find.byType(FieldrushQuickGameCard))
+          .games,
+      [game],
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'booked games are excluded from discovery options even if listGames includes them',
+    (tester) async {
+      final game = _game('booked', bookingId: 'existing');
+      await _pump(tester, _Queue(games: [game]));
+      expect(
+        tester
+            .widget<FieldrushQuickGameCard>(find.byType(FieldrushQuickGameCard))
+            .games,
+        isEmpty,
+      );
+    },
+  );
+
+  testWidgets(
+    'party invitation for a later game is not lost behind the first booking',
+    (tester) async {
+      final repo = _Invites(
+        bookings: [
+          _booking(_game('first')),
+          _booking(_game('invited', days: 3)),
         ],
-        onOpenFixtures: () => openedFixtures.value = true,
       );
-      await tester.scrollUntilVisible(
-        find.text('MATCHDAY'),
-        300,
-        scrollable: find.byType(Scrollable).first,
+      await _pump(tester, repo);
+      await tester.drag(
+        find.byKey(const Key('fieldrush-home-scroll')),
+        const Offset(0, -650),
       );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('home-party-invite-invited')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Sami invited'), findsOneWidget);
+    },
+  );
 
-      expect(find.text('MATCHDAY'), findsOneWidget);
-      expect(find.text('All matches'), findsOneWidget);
-      expect(find.text('ACTIVITY'), findsNothing);
-      expect(find.text('NEXT MATCHDAY'), findsNothing);
-      expect(find.text('LAST MATCHDAY'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('home-matchday-up-next')),
-        findsOneWidget,
+  testWidgets(
+    'View invitation opens the invited game and exposes its response controls',
+    (tester) async {
+      final invitedBooking = _booking(_game('invited', days: 3));
+      final repo = _Invites(
+        bookings: [_booking(_game('first')), invitedBooking],
       );
-      expect(
-        find.byKey(const ValueKey('home-matchday-recent')),
-        findsOneWidget,
+      await _pump(tester, repo);
+      final alert = find.byKey(const ValueKey('home-party-invite-invited'));
+      // Use the same scoped action finder as the hosted journey. The card's
+      // container is hit-testable, but only this button opens the booking.
+      await tapAfterScroll(
+        tester,
+        find.descendant(of: alert, matching: find.byType(FilledButton)),
       );
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
       expect(
-        tester.getTopLeft(find.text('UP NEXT')).dy,
-        lessThan(tester.getTopLeft(find.text('RECENT')).dy),
+        tester
+            .widget<FieldrushGameDetailScreen>(
+              find.byType(FieldrushGameDetailScreen),
+            )
+            .gameId,
+        invitedBooking.gameId,
       );
-      expect(
-        find.byKey(const ValueKey('home-activity-solo-upcoming-one')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('home-activity-solo-upcoming-two')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('home-activity-solo-recent-one')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('home-activity-solo-upcoming-three')),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('home-activity-solo-recent-two')),
-        findsNothing,
-      );
-      expect(_homeActivityRows(), findsNWidgets(3));
-
-      await tester.tap(find.text('All matches'));
-      await tester.pump();
-      expect(openedFixtures.value, isTrue);
+      await tester.scrollUntilVisible(find.text('Accept'), 250);
+      expect(find.text('Accept'), findsOneWidget);
+      expect(find.textContaining('Sami'), findsWidgets);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('matchday omits the solo game already shown in booking hero', (
+  testWidgets('header search works and empty activity is honest', (
     tester,
   ) async {
-    await _setPhoneSize(tester);
-    final today = _bahrainDateNow();
-    final bookedGame = _fixtureGame(
-      id: 'booked-game',
-      date: today.add(const Duration(days: 2)),
-      status: 'OPEN',
-      confirmedCount: 8,
-    );
-    final nextGame = _fixtureGame(
-      id: 'next-available-game',
-      date: today.add(const Duration(days: 3)),
-      status: 'OPEN',
-      confirmedCount: 7,
-    );
+    final discovery = _Discovery();
+    await _pump(tester, _Queue(), discovery: discovery);
+    tester
+        .widget<FieldrushHomeHeader>(find.byType(FieldrushHomeHeader))
+        .onSearch();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('home-player-search')), 'Dana');
+    await tester.pump(const Duration(milliseconds: 310));
+    await tester.pumpAndSettle();
+    expect(discovery.query, 'Dana');
+    expect(find.text('No player @Dana'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    tester
+        .widget<FieldrushHomeHeader>(find.byType(FieldrushHomeHeader))
+        .onActivity();
+    await tester.pumpAndSettle();
+    expect(find.text("You're all caught up."), findsOneWidget);
+  });
 
-    await _pumpHome(
+  testWidgets(
+    'a booked invitation opens while season, city, fixtures and activity remain pending',
+    (tester) async {
+      final ranks = _PendingSeasons();
+      final city = _PendingCity();
+      final fixtures = _PendingFixtures();
+      final discovery = _PendingDiscovery();
+      final invited = _booking(_game('invited'));
+      final queue = _Invites(bookings: [invited]);
+      await _pump(
+        tester,
+        queue,
+        ranks: ranks,
+        city: city,
+        fixtures: fixtures,
+        discovery: discovery,
+      );
+
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-solo-booking-booking-invited')),
+        findsOneWidget,
+      );
+      expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+      await tapAfterScroll(
+        tester,
+        find.descendant(
+          of: find.byKey(const ValueKey('home-party-invite-invited')),
+          matching: find.byType(FilledButton),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+      expect(
+        tester
+            .widget<FieldrushGameDetailScreen>(
+              find.byType(FieldrushGameDetailScreen),
+            )
+            .gameId,
+        invited.gameId,
+      );
+      await tester.scrollUntilVisible(find.text('Accept'), 250);
+      expect(find.text('Accept'), findsOneWidget);
+
+      // These never completed while the real invitation was opened. Resolve
+      // only after assertions to retire their bounded-read timers in the test.
+      ranks.pending.complete(_catalog());
+      city.pending.complete(FieldrushCity.phoenix);
+      fixtures.pending.complete([]);
+      discovery.pending.complete([]);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('slow rating and profile history do not gate core Home data', (
+    tester,
+  ) async {
+    final ranks = _PendingRating();
+    final profiles = _SummaryProfiles();
+    await _pump(
       tester,
-      booking: _bookingFor(bookedGame),
-      soloGames: [bookedGame, nextGame],
+      _Invites(bookings: [_booking(_game('invited'))]),
+      ranks: ranks,
+      profiles: profiles,
     );
-    await tester.scrollUntilVisible(
-      find.text('MATCHDAY'),
-      300,
-      scrollable: find.byType(Scrollable).first,
+    expect(profiles.summaryReads, 1);
+    expect(profiles.fullReads, 0);
+    expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+    await tester.drag(
+      find.byKey(const Key('fieldrush-home-scroll')),
+      const Offset(0, -650),
     );
-
-    expect(find.text('WAITING FOR 4 PLAYERS'), findsOneWidget);
+    await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey('home-activity-solo-booked-game')),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('home-activity-solo-next-available-game')),
+      find.byKey(const ValueKey('home-party-invite-invited')),
       findsOneWidget,
     );
-    expect(_homeActivityRows(), findsOneWidget);
+    ranks.pending.complete(
+      await _Ranks(false).loadCurrentPlayerRating(activeLeaderboardSeason),
+    );
+    await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
 
   testWidgets(
-    'matchday keeps unresolved past matches in recent without scores',
+    'late responses from an older Home refresh never replace newer sections',
     (tester) async {
-      await _setPhoneSize(tester);
-      final yesterday = _bahrainDateNow().subtract(const Duration(days: 1));
-      final noDataSolo = _fixtureGame(
-        id: 'no-data-solo',
-        date: yesterday,
-        status: 'FINAL',
-        operationalState: MatchOperationalState.noData,
-        whiteScore: 4,
-        blackScore: 2,
+      final oldProfile = Completer<PlayerProfile>();
+      final newProfile = Completer<PlayerProfile>();
+      final oldBookings = Completer<List<OpenQueueBooking>>();
+      final newBookings = Completer<List<OpenQueueBooking>>();
+      final profiles = _ControlledProfiles([
+        oldProfile.future,
+        newProfile.future,
+      ]);
+      final queue = _ControlledBookings([
+        oldBookings.future,
+        newBookings.future,
+      ]);
+      await _pump(tester, queue, profiles: profiles);
+      await _pump(tester, queue, profiles: profiles, tick: 1);
+      newProfile.complete(
+        const PlayerProfile(
+          id: 'profile',
+          displayName: 'Newer Player',
+          username: 'newer',
+          bio: '',
+          followingCount: 0,
+          fansCount: 0,
+          appearances: 0,
+          goals: 0,
+          assists: 0,
+          highlights: [],
+          career: [],
+        ),
       );
-      final reviewedClan = _clanFixture(
-        id: 'reviewed-clan',
-        date: yesterday,
-        status: FixtureStatus.scheduled,
-        operationalState: MatchOperationalState.underReview,
-        homeScore: 3,
-        awayScore: 0,
-      );
-
-      await _pumpHome(
-        tester,
-        fixtures: [reviewedClan],
-        soloGames: [noDataSolo],
-      );
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('home-matchday-recent')),
-        200,
-        scrollable: find.byType(Scrollable).first,
-      );
-
-      expect(find.text('NO DATA'), findsOneWidget);
-      expect(find.text('UNDER REVIEW'), findsOneWidget);
-      expect(find.text('Awaiting admin resolution'), findsOneWidget);
-      expect(find.text('Result is being reviewed'), findsOneWidget);
-      expect(find.textContaining('4–2'), findsNothing);
-      expect(find.textContaining('3–0'), findsNothing);
+      newBookings.complete([_booking(_game('newer'))]);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Newer'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('home-activity-solo-no-data-solo')),
+        find.byKey(const ValueKey('home-solo-booking-booking-newer')),
+        findsOneWidget,
+      );
+      oldProfile.complete(_profile);
+      oldBookings.complete([_booking(_game('older'))]);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Newer'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('home-solo-booking-booking-newer')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey('home-activity-clan-reviewed-clan')),
-        findsOneWidget,
+        find.byKey(const ValueKey('home-solo-booking-booking-older')),
+        findsNothing,
       );
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('open solo match uses exact spots-left copy and join flow', (
+  testWidgets('refresh failures retain an existing booking and invitation', (
     tester,
   ) async {
-    await _setPhoneSize(tester);
-    final game = _fixtureGame(
-      id: 'joinable-game',
-      date: _bahrainDateNow().add(const Duration(days: 2)),
-      status: 'OPEN',
-      confirmedCount: 8,
-      venue: '[SCHEDULE SEED] Solo Future 1',
+    final queue = _FailingRefreshInvites(
+      bookings: [_booking(_game('invited'))],
     );
-
-    await _pumpHome(tester, soloGames: [game]);
-
-    final joinCta = find.byKey(
-      const ValueKey('home-activity-join-joinable-game'),
-    );
-    await tester.scrollUntilVisible(
-      joinCta,
-      120,
-      scrollable: find.byType(Scrollable).first,
-    );
-    expect(find.text('Solo match · 4 spots left'), findsOneWidget);
-    expect(find.text('JOIN'), findsOneWidget);
-    expect(find.textContaining('8/12 JOINED'), findsNothing);
-    expect(find.text(game.timeLabel), findsOneWidget);
-    expect(find.text('Solo Future 1'), findsOneWidget);
-    expect(find.textContaining('[SCHEDULE SEED]'), findsNothing);
-    final headline = find.text('Solo match · 4 spots left');
-    final time = find.text(game.timeLabel);
-    final venue = find.text('Solo Future 1');
-    expect(tester.widget<Text>(headline).style?.fontSize, 15);
+    final profiles = _FailingRefreshProfiles();
+    await _pump(tester, queue, profiles: profiles);
+    queue.fails = true;
+    profiles.fails = true;
+    await _pump(tester, queue, profiles: profiles, tick: 1);
+    expect(find.byType(FieldrushHomeHeader), findsOneWidget);
     expect(
-      tester.getTopLeft(headline).dy,
-      lessThan(tester.getTopLeft(time).dy),
+      find.byKey(const ValueKey('home-solo-booking-booking-invited')),
+      findsOneWidget,
     );
-    expect(tester.getTopLeft(time).dy, lessThan(tester.getTopLeft(venue).dy));
-
-    await tester.drag(find.byType(ListView).first, const Offset(0, -100));
-    await tester.pump();
-    await tester.tap(joinCta);
+    await tester.drag(
+      find.byKey(const Key('fieldrush-home-scroll')),
+      const Offset(0, -650),
+    );
     await tester.pumpAndSettle();
-    expect(find.text('AVAILABLE SPOTS'), findsOneWidget);
-    expect(find.text('8 of 12 confirmed'), findsOneWidget);
-    await tester.tap(find.text('Close'));
-    await tester.pumpAndSettle();
-
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('scored future game is recent and shows the player SR change', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final today = _bahrainDateNow();
-    final scoredFutureGame = _fixtureGame(
-      id: 'scored-future-game',
-      date: today.add(const Duration(days: 10)),
-      status: 'OPEN',
-      confirmedCount: 8,
-      whiteScore: 5,
-      blackScore: 3,
-    );
-    final genuinelyUpcomingGame = _fixtureGame(
-      id: 'genuinely-upcoming-game',
-      date: today.add(const Duration(days: 2)),
-      status: 'OPEN',
-      confirmedCount: 8,
-    );
-    final previousGame = ProfilePreviousGame(
-      id: scoredFutureGame.id,
-      type: ProfileGameType.solo,
-      playedAt: scoredFutureGame.startsAt,
-      venue: scoredFutureGame.venue,
-      homeName: 'White Team',
-      homeTag: 'WHITE',
-      homeEmblem: '⚪',
-      awayName: 'Black Team',
-      awayTag: 'BLACK',
-      awayEmblem: '⚫',
-      homeScore: 5,
-      awayScore: 3,
-      playerSide: 'WHITE',
-      playerRole: 'DEF',
-    );
-    final ratingEvent = ProfileRatingEvent(
-      id: 'rating-event',
-      sourceType: 'OPEN_QUEUE',
-      sourceId: scoredFutureGame.id,
-      playedAt: scoredFutureGame.startsAt,
-      opponentLabel: 'Black Team',
-      side: 'WHITE',
-      result: 'WIN',
-      ratingBefore: 1200,
-      ratingChange: 18,
-      ratingAfter: 1218,
-    );
-    final profile = _profileWithMatch(
-      previousGame: previousGame,
-      ratingEvent: ratingEvent,
-    );
-    final detail = OpenQueueMatchDetail(
-      game: scoredFutureGame,
-      scorers: const [],
-      timeline: const [],
-      players: const [],
-    );
-
-    await _pumpHome(
-      tester,
-      profile: profile,
-      soloGames: [scoredFutureGame, genuinelyUpcomingGame],
-      matchDetails: {scoredFutureGame.id: detail},
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('home-matchday-recent')),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-
-    final scoredRow = find.byKey(
-      const ValueKey('home-activity-solo-scored-future-game'),
-    );
     expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('home-matchday-recent')),
-        matching: scoredRow,
-      ),
+      find.byKey(const ValueKey('home-party-invite-invited')),
       findsOneWidget,
     );
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('home-matchday-up-next')),
-        matching: scoredRow,
-      ),
-      findsNothing,
-    );
-    expect(find.textContaining('YOUR RESULT'), findsOneWidget);
-    expect(find.textContaining('+18 SR'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('home-activity-join-scored-future-game')),
-      findsNothing,
-    );
+    expect(find.textContaining('Could not refresh'), findsOneWidget);
+    expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('compact empty clan summary sits below Matchday', (tester) async {
-    await _setPhoneSize(tester);
-    final game = _fixtureGame(
-      id: 'matchday-before-clan',
-      date: _bahrainDateNow().add(const Duration(days: 2)),
-      status: 'OPEN',
-      confirmedCount: 8,
-    );
+  testWidgets(
+    'a stalled core profile read ends in a retryable error, never an endless skeleton',
+    (tester) async {
+      final pending = Completer<PlayerProfile>();
+      await _pump(
+        tester,
+        _Queue(),
+        profiles: _ControlledProfiles([pending.future, Future.value(_profile)]),
+      );
+      expect(
+        find.byKey(const ValueKey('home-loading-skeleton')),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+      expect(find.text('Try again'), findsOneWidget);
+      expect(find.textContaining('your profile'), findsOneWidget);
+      pending.complete(_profile);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushHomeHeader), findsNothing);
+      await tester.tap(find.text('Try again'));
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
-    await _pumpHome(
-      tester,
-      soloGames: [game],
-      clans: const [_testClan],
-      clanMembership: const ClanMembership(clanId: 'home', role: 'member'),
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('home-clan-summary-compact')),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-
-    expect(
-      find.byKey(const ValueKey('home-clan-summary-compact')),
-      findsOneWidget,
-    );
-    expect(find.byKey(const ValueKey('home-clan-compact')), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('home-clan-summary-expanded')),
-      findsNothing,
-    );
-    expect(find.text(_testClan.name), findsOneWidget);
-    expect(find.text('No upcoming fixture'), findsNothing);
-    expect(find.text('View Clan'), findsNothing);
-    expect(
-      tester.getTopLeft(find.text('MATCHDAY')).dy,
-      lessThan(tester.getTopLeft(find.text('YOUR CLAN')).dy),
-    );
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('replay-ready clan result shows highlights and opens Watch', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final streamStartedAt = DateTime.utc(2026, 7, 10, 16);
-    final fixture = _clanFixture(
-      id: 'clan-highlights',
-      date: _bahrainDateNow().subtract(const Duration(days: 1)),
-      status: FixtureStatus.finalResult,
-      homeScore: 2,
-      awayScore: 1,
-      broadcast: FixtureBroadcast(
-        status: 'REPLAY_READY',
-        replayHlsUrl: 'https://example.com/clan-highlights.m3u8',
-        streamStartedAt: streamStartedAt,
-        streamStoppedAt: streamStartedAt.add(const Duration(hours: 1)),
-      ),
-      timeline: [
-        _goalEvent(
-          id: 'first-goal',
-          minute: 12,
-          occurredAt: streamStartedAt.add(const Duration(minutes: 12)),
-        ),
-        _goalEvent(
-          id: 'second-goal',
-          minute: 38,
-          occurredAt: streamStartedAt.add(const Duration(minutes: 38)),
-        ),
-      ],
-    );
-
-    await _pumpHome(tester, fixtures: [fixture]);
-    final resultRow = find.byKey(
-      const ValueKey('home-activity-clan-clan-highlights'),
-    );
-    await tester.scrollUntilVisible(
-      resultRow,
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-
-    expect(find.textContaining('2 highlights ready'), findsOneWidget);
-    expect(find.text('WATCH'), findsOneWidget);
-
-    await tester.drag(find.byType(ListView).first, const Offset(0, -90));
-    await tester.pump();
-    await tester.tap(resultRow);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(find.byKey(const ValueKey('fixture-section-watch')), findsOneWidget);
-    expect(find.text('WATCH MATCH'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-
-    // Disposes the video retry timer created by the unavailable test URL.
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-  });
-
-  testWidgets('only a valid future clan fixture expands the clan summary', (
-    tester,
-  ) async {
-    await _setPhoneSize(tester);
-    final today = _bahrainDateNow();
-    final pastFixture = _clanFixture(
-      id: 'past-clan-fixture',
-      date: today.subtract(const Duration(days: 1)),
-      status: FixtureStatus.scheduled,
-    );
-    final scoredStaleFixture = _clanFixture(
-      id: 'scored-stale-clan-fixture',
-      date: today.add(const Duration(days: 2)),
-      status: FixtureStatus.scheduled,
-      homeScore: 3,
-      awayScore: 1,
-    );
-    final validFutureFixture = _clanFixture(
-      id: 'valid-future-clan-fixture',
-      date: today.add(const Duration(days: 5)),
-      status: FixtureStatus.scheduled,
-    );
-    final joinableSolo = _fixtureGame(
-      id: 'joinable-below-clan',
-      date: today.add(const Duration(days: 2)),
-      status: 'OPEN',
-      confirmedCount: 8,
-    );
-
-    await _pumpHome(
-      tester,
-      fixtures: [pastFixture, scoredStaleFixture, validFutureFixture],
-      soloGames: [joinableSolo],
-      clans: const [_testClan],
-      clanMembership: const ClanMembership(clanId: 'home', role: 'member'),
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('home-clan-summary-expanded')),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-
-    expect(
-      find.byKey(const ValueKey('home-clan-summary-expanded')),
-      findsOneWidget,
-    );
-    expect(find.text('UPCOMING CLAN FIXTURE'), findsOneWidget);
-    expect(find.text('vs Away Clan'), findsOneWidget);
-    final upNext = find.byKey(const ValueKey('home-matchday-up-next'));
-    final clanCard = find.byKey(const ValueKey('home-clan-summary-expanded'));
-    final soloRow = find.byKey(
-      const ValueKey('home-activity-solo-joinable-below-clan'),
-    );
-    expect(find.descendant(of: upNext, matching: clanCard), findsOneWidget);
-    expect(find.descendant(of: upNext, matching: soloRow), findsOneWidget);
-    expect(
-      tester.getTopLeft(clanCard).dy,
-      lessThan(tester.getTopLeft(soloRow).dy),
-    );
-    expect(
-      find.byKey(
-        const ValueKey('home-activity-clan-valid-future-clan-fixture'),
-      ),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const ValueKey('home-clan-summary-compact')),
-      findsNothing,
-    );
-
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump();
-    await _pumpHome(
-      tester,
-      fixtures: [pastFixture, scoredStaleFixture],
-      clans: const [_testClan],
-      clanMembership: const ClanMembership(clanId: 'home', role: 'member'),
-    );
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('home-clan-summary-compact')),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-
-    expect(
-      find.byKey(const ValueKey('home-clan-summary-compact')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const ValueKey('home-clan-summary-expanded')),
-      findsNothing,
-    );
-    expect(find.text('UPCOMING CLAN FIXTURE'), findsNothing);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'a stalled booking read reports an error and ignores a late response',
+    (tester) async {
+      final pending = Completer<List<OpenQueueBooking>>();
+      await _pump(tester, _ControlledBookings([pending.future]));
+      expect(find.byType(FieldrushHomeHeader), findsOneWidget);
+      await tester.pump(const Duration(seconds: 31));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byKey(const Key('fieldrush-home-scroll')),
+        const Offset(0, -650),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Could not refresh bookings'), findsOneWidget);
+      pending.complete([_booking(_game('late'))]);
+      await tester.pumpAndSettle();
+      expect(find.byType(FieldrushSoloHero), findsNothing);
+      expect(find.byKey(const ValueKey('home-loading-skeleton')), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
-Future<void> _setPhoneSize(WidgetTester tester) async {
+Future<void> _pump(
+  WidgetTester tester,
+  _Queue queue, {
+  int tick = 0,
+  bool ratingFails = false,
+  PlayerProfile profile = _profile,
+  HomeDiscoveryRepository? discovery,
+  ProfileRepository? profiles,
+  LeaderboardRepository? ranks,
+  FieldrushCityRepository? city,
+  FixtureRepository? fixtures,
+}) async {
   tester.view.physicalSize = const Size(390, 844);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-}
-
-Future<void> _pumpDashboard(
-  WidgetTester tester,
-  OpenQueueGame game, {
-  String? team,
-}) async {
-  final booking = OpenQueueBooking(
-    id: 'booking',
-    gameId: game.id,
-    profileId: 'profile',
-    role: OpenQueueRole.midfielder,
-    status: 'CONFIRMED',
-    amountPaidFils: game.priceFils,
-    bookedAt: DateTime.now(),
-    team: team,
-    game: game,
-  );
-  await _pumpHome(tester, booking: booking);
-}
-
-Future<void> _pumpHome(
-  WidgetTester tester, {
-  int activationTick = 0,
-  PlayerProfile profile = _defaultProfile,
-  OpenQueueBooking? booking,
-  List<OpenQueueGame> soloGames = const [],
-  Map<String, OpenQueueMatchDetail> matchDetails = const {},
-  List<Fixture> fixtures = const [],
-  List<Clan> clans = const [],
-  ClanMembership? clanMembership,
-  VoidCallback? onOpenFixtures,
-  OpenQueuePartyContext? partyContext,
-  OpenQueueRepository? openQueueRepository,
-  List<OpenQueueBooking> additionalBookings = const [],
-}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
         body: DashboardHome(
-          activationTick: activationTick,
-          profileRepository: _FakeProfileRepository(profile),
-          clanRepository: _FakeClanRepository(
-            clans: clans,
-            membership: clanMembership,
-          ),
-          fixtureRepository: _FakeFixtureRepository(fixtures),
-          leaderboardRepository: const _FakeLeaderboardRepository(),
-          openQueueRepository:
-              openQueueRepository ??
-              _FakeOpenQueueRepository(
-                booking,
-                fixtureGames: soloGames,
-                matchDetails: matchDetails,
-                partyContext: partyContext,
-                additionalBookings: additionalBookings,
-              ),
+          activationTick: tick,
+          profileRepository: profiles ?? _Profiles(profile),
+          clanRepository: _Clans(),
+          fixtureRepository: fixtures ?? _Fixtures(),
+          leaderboardRepository: ranks ?? _Ranks(ratingFails),
+          cityRepository: city,
+          openQueueRepository: queue,
+          discoveryRepository: discovery,
           onOpenClans: () {},
-          onOpenFixtures: onOpenFixtures ?? () {},
+          onOpenFixtures: () {},
           onOpenRanks: () {},
           onOpenProfile: () {},
           onNavigateTab: (_) {},
@@ -1033,288 +600,45 @@ Future<void> _pumpHome(
   await tester.pumpAndSettle();
 }
 
-Finder _homeActivityRows() {
-  return find.byWidgetPredicate((widget) {
-    final key = widget.key;
-    if (key is! ValueKey<String>) return false;
-    return key.value.startsWith('home-activity-solo-') ||
-        key.value.startsWith('home-activity-clan-');
-  });
-}
-
-OpenQueueBooking _bookingFor(
-  OpenQueueGame game, {
-  OpenQueueRole role = OpenQueueRole.defender,
-}) {
-  return OpenQueueBooking(
-    id: 'booking-${game.id}',
-    gameId: game.id,
-    profileId: 'profile',
-    role: role,
-    status: 'CONFIRMED',
-    amountPaidFils: game.priceFils,
-    bookedAt: DateTime.now(),
-    game: game,
-  );
-}
-
-OpenQueuePartyContext _partyContextWithInvite(
-  OpenQueueGame game, {
-  OpenQueueParty? myParty,
-}) {
-  const owner = OpenQueuePartyPlayer(
-    profileId: 'sami',
-    displayName: 'Sami Nasser',
-    username: 'sami',
-    role: OpenQueueRole.defender,
-  );
-  return OpenQueuePartyContext(
-    gameId: game.id,
-    gameStatus: game.status,
-    canUseParties: true,
-    maxPartySize: 4,
-    teamAssignmentLeadMinutes: 180,
-    partyLockLeadMinutes: 180,
-    receivedInvites: const [
-      OpenQueuePartyInvite(
-        membershipId: 'invite-one',
-        partyId: 'party-one',
-        invitedAt: null,
-        owner: owner,
-        acceptedCount: 1,
-        members: [],
-      ),
-    ],
-    eligiblePlayers: const [],
-    myParty: myParty,
-  );
-}
-
-PlayerProfile _profileWithMatch({
-  required ProfilePreviousGame previousGame,
-  required ProfileRatingEvent ratingEvent,
-}) {
-  return PlayerProfile(
-    id: 'profile',
-    displayName: 'Dana Alawi',
-    username: 'dana',
-    bio: '',
-    followingCount: 0,
-    fansCount: 0,
-    appearances: 1,
-    goals: 0,
-    assists: 0,
-    highlights: const [],
-    career: const [],
-    previousGames: [previousGame],
-    playerRating: ProfilePlayerRating(
-      skillRating: ratingEvent.ratingAfter,
-      matchesPlayed: 1,
-      wins: 1,
-      losses: 0,
-      draws: 0,
-      lastChange: ratingEvent.ratingChange,
-      region: 'bahrain',
-      events: [ratingEvent],
-    ),
-  );
-}
-
-OpenQueueGame _game({
-  required int daysFromToday,
-  required int confirmedCount,
-  bool staleAssignment = false,
-  bool? teamAssignmentDue,
-  String venue = 'TFA, Saar',
-  Duration? startsIn,
-}) {
-  final nowInBahrain = DateTime.now().toUtc().add(const Duration(hours: 3));
-  final bahrainStart = DateTime.utc(
-    nowInBahrain.year,
-    nowInBahrain.month,
-    nowInBahrain.day + daysFromToday,
-    20,
-    30,
-  );
-  final startsAt = startsIn == null
-      ? bahrainStart.subtract(const Duration(hours: 3))
-      : DateTime.now().add(startsIn);
-  final teamAssignmentAt = switch (teamAssignmentDue) {
-    true => DateTime.now().subtract(const Duration(days: 1)),
-    false => DateTime.now().add(const Duration(days: 1)),
-    null => startsAt.subtract(const Duration(hours: 3)),
-  };
-  final hasAssignmentMetadata = confirmedCount == 12 || staleAssignment;
-  return OpenQueueGame(
-    id: 'game-$daysFromToday-$confirmedCount',
-    status: confirmedCount == 12 ? 'FULL' : 'OPEN',
-    venue: venue,
-    startsAt: startsAt,
-    endsAt: startsAt.add(const Duration(hours: 1)),
-    timezone: 'Asia/Bahrain',
-    priceFils: 3000,
-    ageLabel: 'Ages 16-20',
-    capacity: 12,
-    confirmedCount: confirmedCount,
-    spots: const {},
-    whiteAverageSr: hasAssignmentMetadata ? 1200 : null,
-    blackAverageSr: hasAssignmentMetadata ? 1200 : null,
-    matchAverageSr: hasAssignmentMetadata ? 1200 : null,
-    teamSrSpread: hasAssignmentMetadata ? 0 : null,
-    teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
-    teamAssignmentAt: teamAssignmentAt,
-    partyLockAt: startsAt.subtract(const Duration(hours: 3)),
-    teamAssignmentLeadMinutes: 180,
-    partyLockLeadMinutes: 180,
-    maxPartySize: 4,
-  );
-}
-
-DateTime _bahrainDateNow() {
-  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
-  return DateTime(now.year, now.month, now.day);
-}
-
-OpenQueueGame _fixtureGame({
-  required String id,
-  required DateTime date,
-  required String status,
-  int confirmedCount = 12,
-  int capacity = 12,
-  int? whiteScore,
-  int? blackScore,
-  String? myBookingId,
-  OpenQueueRole? myBookingRole,
-  String? myBookingTeam,
-  String venue = 'TFA, Saar',
-  MatchOperationalState operationalState = MatchOperationalState.normal,
-}) {
-  final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
-  return OpenQueueGame(
-    id: id,
-    status: status,
-    operationalState: operationalState,
-    venue: venue,
-    startsAt: startsAt,
-    endsAt: startsAt.add(const Duration(hours: 1)),
-    timezone: 'Asia/Bahrain',
-    priceFils: 3000,
-    ageLabel: 'Ages 16-20',
-    capacity: capacity,
-    confirmedCount: confirmedCount,
-    spots: status == 'OPEN'
-        ? const {
-            OpenQueueRole.goalkeeper: 1,
-            OpenQueueRole.defender: 1,
-            OpenQueueRole.midfielder: 1,
-            OpenQueueRole.attacker: 1,
-          }
-        : const {},
-    whiteScore: whiteScore ?? (status == 'FINAL' ? 4 : null),
-    blackScore: blackScore ?? (status == 'FINAL' ? 3 : null),
-    myBookingId: myBookingId,
-    myBookingRole: myBookingRole,
-    myBookingTeam: myBookingTeam,
-  );
-}
-
-Fixture _clanFixture({
-  required String id,
-  required DateTime date,
-  required FixtureStatus status,
-  int? homeScore,
-  int? awayScore,
-  MatchOperationalState operationalState = MatchOperationalState.normal,
-  FixtureBroadcast? broadcast,
-  List<FixtureTimelineEvent> timeline = const [],
-}) {
-  return Fixture(
-    id: id,
-    status: status,
-    operationalState: operationalState,
-    homeClanId: _homeFixtureClan.id,
-    awayClanId: _awayFixtureClan.id,
-    venue: 'TFA, Saar',
-    day: _weekday(date.weekday),
-    timeSlot: FixtureTimeSlot.early.label,
-    matchDate: date,
-    createdBy: 'owner',
-    homeClan: _homeFixtureClan,
-    awayClan: _awayFixtureClan,
-    homeScore: homeScore,
-    awayScore: awayScore,
-    broadcast: broadcast,
-    timeline: timeline,
-  );
-}
-
-FixtureTimelineEvent _goalEvent({
-  required String id,
-  required int minute,
-  required DateTime occurredAt,
-}) {
-  return FixtureTimelineEvent(
-    id: id,
-    fixtureId: 'clan-highlights',
-    eventType: 'GOAL',
-    clanId: _homeFixtureClan.id,
-    minute: minute,
-    second: 0,
-    createdAt: occurredAt,
-    occurredAt: occurredAt,
-  );
-}
-
-String _weekday(int weekday) {
-  return const [
-    'MONDAY',
-    'TUESDAY',
-    'WEDNESDAY',
-    'THURSDAY',
-    'FRIDAY',
-    'SATURDAY',
-    'SUNDAY',
-  ][weekday - 1];
-}
-
-const _homeFixtureClan = FixtureClan(
-  id: 'home',
-  name: 'Home Clan',
-  tag: 'HOME',
-  emblem: '⚡',
-  themeId: 'mint',
-  patternId: 'solid',
-  skillRating: 1200,
+OpenQueueGame _game(
+  String id, {
+  int days = 2,
+  String status = 'OPEN',
+  String? bookingId,
+  MatchOperationalState state = MatchOperationalState.normal,
+}) => OpenQueueGame(
+  id: id,
+  status: status,
+  venue: 'Phoenix Sports Park',
+  startsAt: DateTime.now().add(Duration(days: days)),
+  endsAt: DateTime.now().add(Duration(days: days, hours: 1)),
+  timezone: 'America/Phoenix',
+  currency: 'USD',
+  priceFils: 13000,
+  ageLabel: '18+',
+  capacity: 14,
+  confirmedCount: 8,
+  spots: const {
+    OpenQueueRole.goalkeeper: 1,
+    OpenQueueRole.defender: 3,
+    OpenQueueRole.attacker: 2,
+  },
+  myBookingId: bookingId,
+  operationalState: state,
 );
-
-const _awayFixtureClan = FixtureClan(
-  id: 'away',
-  name: 'Away Clan',
-  tag: 'AWAY',
-  emblem: '🛡️',
-  themeId: 'shadow',
-  patternId: 'solid',
-  skillRating: 1200,
+OpenQueueBooking _booking(OpenQueueGame game) => OpenQueueBooking(
+  id: 'booking-${game.id}',
+  gameId: game.id,
+  profileId: 'profile',
+  role: OpenQueueRole.defender,
+  status: 'CONFIRMED',
+  amountPaidFils: game.priceFils,
+  bookedAt: DateTime.now(),
+  game: game,
 );
-
-const _testClan = Clan(
-  id: 'home',
-  name: 'Home Clan',
-  tag: 'HOME',
-  motto: 'Play together',
-  emblem: '⚡',
-  themeId: 'mint',
-  patternId: 'solid',
-  skillRating: 1200,
-  wins: 2,
-  losses: 1,
-  memberCount: 12,
-  createdBy: 'owner',
-);
-
-const _defaultProfile = PlayerProfile(
+const _profile = PlayerProfile(
   id: 'profile',
-  displayName: 'Dana Alawi',
+  displayName: 'Dana A.',
   username: 'dana',
   bio: '',
   followingCount: 0,
@@ -1326,180 +650,263 @@ const _defaultProfile = PlayerProfile(
   career: [],
 );
 
-class _FakeProfileRepository implements ProfileRepository {
-  const _FakeProfileRepository([this.profile = _defaultProfile]);
+const _profileWithLifetimeRating = PlayerProfile(
+  id: 'profile',
+  displayName: 'Dana A.',
+  username: 'dana',
+  bio: '',
+  followingCount: 0,
+  fansCount: 0,
+  appearances: 0,
+  goals: 0,
+  assists: 0,
+  highlights: [],
+  career: [],
+  playerRating: ProfilePlayerRating(
+    skillRating: 1700,
+    matchesPlayed: 60,
+    wins: 40,
+    losses: 10,
+    draws: 10,
+    lastChange: 20,
+    region: 'phoenix',
+    events: [],
+  ),
+);
 
+class _Profiles extends Fake implements ProfileRepository {
+  _Profiles(this.profile);
   final PlayerProfile profile;
-
   @override
   Future<PlayerProfile> getCurrentProfile() async => profile;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-class _FakeLeaderboardRepository implements LeaderboardRepository {
-  const _FakeLeaderboardRepository();
+class _SummaryProfiles extends _Profiles implements ProfileSummaryRepository {
+  _SummaryProfiles() : super(_profile);
+  int summaryReads = 0;
+  int fullReads = 0;
+  @override
+  Future<PlayerProfile> getCurrentProfileSummary() async {
+    summaryReads++;
+    return profile;
+  }
 
+  @override
+  Future<PlayerProfile> getCurrentProfile() {
+    fullReads++;
+    throw StateError('Full profile history must not be requested by Home.');
+  }
+}
+
+class _ControlledProfiles extends _Profiles {
+  _ControlledProfiles(this.responses) : super(_profile);
+  final List<Future<PlayerProfile>> responses;
+  @override
+  Future<PlayerProfile> getCurrentProfile() => responses.removeAt(0);
+}
+
+class _FailingRefreshProfiles extends _Profiles {
+  _FailingRefreshProfiles() : super(_profile);
+  bool fails = false;
+  @override
+  Future<PlayerProfile> getCurrentProfile() async {
+    if (fails) throw StateError('Profile temporarily unavailable');
+    return profile;
+  }
+}
+
+class _Ranks extends Fake implements LeaderboardRepository {
+  _Ranks(this.fails);
+  final bool fails;
   @override
   Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
     LeaderboardSeason season,
-  ) async => const PlayerRatingLeaderboardEntry(
-    rank: 0,
-    profileId: 'profile',
-    displayName: 'Dana Alawi',
-    username: 'dana',
-    skillRating: 1200,
-    matchesPlayed: 0,
-    wins: 0,
-    losses: 0,
-    draws: 0,
-    lastChange: 0,
-    region: 'bahrain',
-  );
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  ) async {
+    if (fails) throw Exception('offline');
+    return const PlayerRatingLeaderboardEntry(
+      rank: 0,
+      profileId: 'profile',
+      displayName: 'Dana A.',
+      username: 'dana',
+      skillRating: 1200,
+      matchesPlayed: 0,
+      wins: 0,
+      losses: 0,
+      draws: 0,
+      lastChange: 0,
+      region: 'phoenix',
+    );
+  }
 }
 
-class _FakeOpenQueueRepository
-    implements
-        OpenQueueRepository,
-        OpenQueuePartyRepository,
-        OpenQueueBookingLookupRepository {
-  _FakeOpenQueueRepository(
-    this.booking, {
-    this.fixtureGames = const [],
-    this.matchDetails = const {},
-    this.partyContext,
-    this.additionalBookings = const [],
-  });
-
-  OpenQueueBooking? booking;
-  final List<OpenQueueGame> fixtureGames;
-  final Map<String, OpenQueueMatchDetail> matchDetails;
-  final OpenQueuePartyContext? partyContext;
-  final List<OpenQueueBooking> additionalBookings;
-
+class _PendingSeasons extends _Ranks implements SeasonLeaderboardRepository {
+  _PendingSeasons() : super(false);
+  final pending = Completer<FieldrushSeasonCatalog>();
   @override
-  Future<OpenQueueBooking?> getMyUpcomingBooking() async => booking;
+  Future<FieldrushSeasonCatalog> loadSeasons() => pending.future;
+}
 
+class _PendingRating extends _Ranks {
+  _PendingRating() : super(false);
+  final pending = Completer<PlayerRatingLeaderboardEntry>();
+  @override
+  Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
+    LeaderboardSeason season,
+  ) => pending.future;
+}
+
+FieldrushSeasonCatalog _catalog() => FieldrushSeasonCatalog(
+  seasons: [activeLeaderboardSeason],
+  currentSeasonId: activeLeaderboardSeason.id,
+  today: DateTime.parse(activeLeaderboardSeason.startsOn),
+);
+
+class _PendingCity extends Fake implements FieldrushCityRepository {
+  final pending = Completer<FieldrushCity>();
+  @override
+  Future<FieldrushCity> loadPreferredCity() => pending.future;
+}
+
+class _PendingFixtures extends _Fixtures {
+  final pending = Completer<List<Fixture>>();
+  @override
+  Future<List<Fixture>> listFixtures() => pending.future;
+}
+
+class _PendingDiscovery extends _Discovery {
+  final pending = Completer<List<HomeNotification>>();
+  @override
+  Future<List<HomeNotification>> notifications() => pending.future;
+}
+
+class _Queue extends Fake implements OpenQueueRepository {
+  _Queue({
+    this.bookings = const [],
+    this.games = const [],
+    this.fixtures = const [],
+    this.bookingsFail = false,
+  });
+  List<OpenQueueBooking> bookings;
+  List<OpenQueueGame> games;
+  List<OpenQueueGame> fixtures;
+  final bool bookingsFail;
   @override
   Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
-    final bookings = [
-      if (booking case final value?) value,
-      ...additionalBookings,
-    ]..sort((left, right) => left.game.startsAt.compareTo(right.game.startsAt));
+    if (bookingsFail) throw StateError('Bookings temporarily unavailable');
     return bookings;
   }
 
   @override
-  Future<List<OpenQueueGame>> listGames() async => [
-    if (booking case final value?) value.game,
-    for (final value in additionalBookings) value.game,
-  ];
-
+  Future<List<OpenQueueGame>> listGames() async => games;
   @override
-  Future<List<OpenQueueGame>> listFixtureGames() async => fixtureGames;
-
+  Future<List<OpenQueueGame>> listFixtureGames() async => fixtures;
   @override
   Future<OpenQueueMatchDetail> getMatchDetail(String gameId) async =>
-      matchDetails[gameId]!;
-
-  @override
-  Future<OpenQueuePartyContext> getPartyContext(String gameId) async {
-    return partyContext ??
-        OpenQueuePartyContext(
-          gameId: gameId,
-          gameStatus: booking?.game.status ?? 'OPEN',
-          canUseParties: true,
-          maxPartySize: 4,
-          teamAssignmentLeadMinutes: 180,
-          partyLockLeadMinutes: 180,
-          receivedInvites: const [],
-          eligiblePlayers: const [],
-        );
-  }
-
-  @override
-  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async {
-    for (final candidate in [
-      if (booking case final value?) value,
-      ...additionalBookings,
-    ]) {
-      if (candidate.gameId == gameId) return candidate;
-    }
-    return null;
-  }
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+      OpenQueueMatchDetail(
+        game: [
+          ...games,
+          ...fixtures,
+          ...bookings.map((booking) => booking.game),
+        ].firstWhere((game) => game.id == gameId),
+        scorers: const [],
+        timeline: const [],
+      );
 }
 
-class _NotificationOpenQueueRepository extends _FakeOpenQueueRepository
-    implements
-        OpenQueuePartyNotificationRepository,
-        OpenQueueBookingLookupRepository {
-  _NotificationOpenQueueRepository(
-    super.booking, {
-    required this.inviteBooking,
-    required this.notification,
-    required super.partyContext,
-  });
-
-  final OpenQueueBooking inviteBooking;
-  final OpenQueuePartyInviteNotification notification;
-  final List<String> markedNotificationIds = [];
-
+class _Invites extends _Queue implements OpenQueuePartyRepository {
+  _Invites({super.bookings});
   @override
-  Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId) async {
-    return gameId == inviteBooking.gameId ? inviteBooking : null;
+  Future<OpenQueuePartyContext> getPartyContext(String id) async =>
+      OpenQueuePartyContext.fromJson({
+        'game_id': id,
+        'game_status': 'OPEN',
+        'can_use_parties': true,
+        'max_party_size': 4,
+        'received_invites': id != 'invited'
+            ? []
+            : [
+                {
+                  'id': 'membership',
+                  'party_id': 'party',
+                  'owner': {
+                    'profile_id': 'sami',
+                    'display_name': 'Sami',
+                    'username': 'sami',
+                    'role': 'DEF',
+                  },
+                },
+              ],
+      });
+}
+
+class _ControlledBookings extends _Queue {
+  _ControlledBookings(this.responses);
+  final List<Future<List<OpenQueueBooking>>> responses;
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() =>
+      responses.removeAt(0);
+}
+
+class _FailingRefreshInvites extends _Invites {
+  _FailingRefreshInvites({super.bookings});
+  bool fails = false;
+  @override
+  Future<List<OpenQueueBooking>> getMyUpcomingBookings() async {
+    if (fails) throw StateError('Bookings temporarily unavailable');
+    return bookings;
   }
 
   @override
-  Future<List<OpenQueuePartyInviteNotification>>
-  listPartyInviteNotifications() async => [notification];
+  Future<OpenQueuePartyContext> getPartyContext(String id) {
+    if (fails) throw StateError('Invitations temporarily unavailable');
+    return super.getPartyContext(id);
+  }
+}
 
+class _MarketQueue extends _Queue implements OpenQueueMarketRepository {
+  _MarketQueue(this.game);
+  final OpenQueueGame game;
+  final markets = <String>[];
+  int allMarketCalls = 0;
   @override
-  Future<void> markPartyInviteNotificationRead(String notificationId) async {
-    markedNotificationIds.add(notificationId);
+  Future<List<OpenQueueGame>> listGames() async {
+    allMarketCalls++;
+    throw StateError('Home should use the market-filtered API');
   }
 
   @override
-  Stream<void> watchPartyInviteNotifications() => const Stream<void>.empty();
+  Future<List<OpenQueueGame>> listMarketGames(String timezone) async {
+    markets.add(timezone);
+    return [game];
+  }
 }
 
-class _FakeClanRepository implements ClanRepository {
-  const _FakeClanRepository({this.clans = const [], this.membership});
-
-  final List<Clan> clans;
-  final ClanMembership? membership;
-
+class _Clans extends Fake implements ClanRepository {
   @override
-  Future<List<Clan>> listClans() async => clans;
-
+  Future<List<Clan>> listClans() async => [];
   @override
-  Future<ClanMembership?> getMyClanMembership() async => membership;
-
-  @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  Future<ClanMembership?> getMyClanMembership() async => null;
 }
 
-class _FakeFixtureRepository implements FixtureRepository {
-  const _FakeFixtureRepository([this.fixtures = const []]);
-
-  final List<Fixture> fixtures;
-
+class _Fixtures extends Fake implements FixtureRepository {
   @override
   Future<MyClanMembership?> getMyClanMembership() async => null;
+  @override
+  Future<List<Fixture>> listFixtures() async => [];
+}
+
+class _Discovery implements HomeDiscoveryRepository {
+  String? query;
+  @override
+  Future<List<HomePlayerResult>> searchPlayers(String value) async {
+    query = value;
+    return [];
+  }
 
   @override
-  Future<Fixture> getFixture(String fixtureId) async =>
-      fixtures.firstWhere((fixture) => fixture.id == fixtureId);
-
+  Future<List<HomeNotification>> notifications() async => [];
   @override
-  Future<List<Fixture>> listFixtures() async => fixtures;
-
+  Future<void> markRead(String id) async {}
   @override
-  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+  Future<void> dismiss(String id) async {}
 }

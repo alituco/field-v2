@@ -1,9 +1,13 @@
-const STATIC_CACHE = "field-ops-static-v1";
+const STATIC_CACHE_PREFIX = "field-ops-static-";
+const STATIC_CACHE = `${STATIC_CACHE_PREFIX}v3`;
 const STATIC_PATHS = new Set([
-  "/field-ops-icon-192.png",
-  "/field-ops-icon-512.png",
-  "/field-ops-staging-icon-192.png",
-  "/field-ops-staging-icon-512.png",
+  "/favicon.ico",
+  "/favicon.svg",
+  "/favicon-16x16.png",
+  "/favicon-32x32.png",
+  "/icon-192.png",
+  "/icon-512.png",
+  "/icon-maskable-512.png",
   "/apple-touch-icon.png",
 ]);
 
@@ -12,18 +16,17 @@ self.addEventListener("install", () => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(
-          keys
-            .filter((key) => key !== STATIC_CACHE)
-            .map((key) => caches.delete(key)),
-        ),
-      )
-      .then(() => self.clients.claim()),
-  );
+  event.waitUntil((async () => {
+    try {
+      const keys = await caches.keys();
+      await Promise.all(keys
+        .filter((key) => key.startsWith(STATIC_CACHE_PREFIX) && key !== STATIC_CACHE)
+        .map((key) => caches.delete(key)));
+    } catch {
+      // Storage can be unavailable or full. It must not prevent activation.
+    }
+    await self.clients.claim();
+  })());
 });
 
 self.addEventListener("fetch", (event) => {
@@ -47,14 +50,24 @@ self.addEventListener("fetch", (event) => {
   const isVersionedNextAsset = url.pathname.startsWith("/_next/static/");
   if (!isVersionedNextAsset && !STATIC_PATHS.has(url.pathname)) return;
 
-  event.respondWith(
-    caches.open(STATIC_CACHE).then(async (cache) => {
+  event.respondWith((async () => {
+    let cache;
+    try {
+      cache = await caches.open(STATIC_CACHE);
       const cached = await cache.match(request);
       if (cached) return cached;
+    } catch {
+      // A failed cache lookup still gets a fresh response from the network.
+    }
 
-      const response = await fetch(request);
-      if (response.ok) await cache.put(request, response.clone());
-      return response;
-    }),
-  );
+    const response = await fetch(request);
+    if (response.ok && cache) {
+      // Persist in the background: a quota/write failure must never discard a
+      // working script or stylesheet response, or delay delivery to the page.
+      event.waitUntil((async () => {
+        try { await cache.put(request, response.clone()); } catch { /* Optional cache. */ }
+      })());
+    }
+    return response;
+  })());
 });

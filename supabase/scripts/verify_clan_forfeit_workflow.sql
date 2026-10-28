@@ -6,6 +6,10 @@
 
 begin;
 
+-- These are server-side staff/admin calls. The independent verified staff
+-- binding remains required in addition to the service context.
+select set_config('request.jwt.claim.role', 'service_role', true);
+
 do $$
 declare
   admin_id uuid;
@@ -33,6 +37,7 @@ begin
   select referee.profile_id into admin_id
   from public.referee_profiles referee
   where referee.role = 'admin' and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -68,6 +73,23 @@ begin
   if admin_id is null or confirm_fixture.id is null or overturn_fixture.id is null then
     raise exception 'Forfeit verification needs one active admin and two unplayed clan fixtures.';
   end if;
+
+  -- These representative historical clan scenarios start real LIVE states.
+  -- Retire conflicting synthetic solo-seed commitments within this rollback
+  -- transaction instead of allowing the same players into two active games.
+  update public.open_queue_games game
+  set status='CANCELLED',cancellation_code='ADMIN_DECISION',
+    cancellation_reason='Isolate clan forfeit rollback verification.',
+    cancelled_at=clock_timestamp(),cancelled_by=null,cancelled_by_staff_id=admin_id,
+    cancellation_context=jsonb_build_object('source','CLAN_FORFEIT_ROLLBACK_VERIFICATION')
+  where public.player_game_blocks_registration(game.status,game.ends_at,game.operational_state)
+    and exists (
+      select 1 from public.open_queue_bookings booking
+      join public.clan_members member on member.profile_id=booking.profile_id and member.left_at is null
+      join public.fixtures fixture on member.clan_id in (fixture.home_clan_id,fixture.away_clan_id)
+      where booking.game_id=game.id and booking.status='CONFIRMED'
+        and fixture.id in (confirm_fixture.id,overturn_fixture.id)
+    );
 
   insert into public.fixture_referee_assignments (
     fixture_id, referee_id, assigned_by

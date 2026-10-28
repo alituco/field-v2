@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fieldrush Broadcaster</title><link rel="stylesheet" href="app.css"></head>
+<body>
+  <header><div class="brand"><span class="brand-mark">F</span><div><strong>Fieldrush</strong><small>BROADCASTER</small></div></div><span class="environment">STAGING</span><button class="quiet" id="guide">Setup guide ↗</button></header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">MATCH DAY, MADE SIMPLE</p><h1>Bring the game closer.</h1><p>Connect your Osmo by USB-C. We’ll take care of the scoreboard.</p></div><span id="connection" class="pill">Getting ready</span></div>
+    <div id="error" role="alert" hidden></div>
+    <div id="progress-panel" class="card" role="status" hidden><p id="progress"></p><button class="secondary" id="pause-upload" hidden>Pause upload</button></div>
+    <div id="warning" role="status" hidden></div>
+    <div class="layout">
+      <section class="setup">
+        <article class="card"><div class="step-heading"><span class="step">1</span><div><h2>Connect your camera</h2><p>Plug in your Osmo and choose <strong>Webcam</strong> on its screen.</p></div></div>
+          <div class="obs-help"><button id="open-obs" class="secondary">Open / install OBS ↗</button><p>In OBS: <strong>Tools → WebSocket Server Settings</strong>. Enable the server on port 4455 with authentication.</p></div>
+          <form id="connect-form"><label for="obs-password">OBS connection password</label><div class="inline"><input id="obs-password" type="password" autocomplete="off" placeholder="Password from OBS"><button class="primary" id="connect">Connect OBS</button></div><small>Saved securely on this Mac. Your personal OBS scenes stay separate.</small></form>
+          <div id="devices-section" hidden><div class="separator"></div><label for="camera">USB camera</label><select id="camera"><option value="">Select your camera</option></select><label for="microphone">Field audio</label><select id="microphone"><option value="">Muted — no audio</option></select><div class="meter"><span id="audio-level"></span></div><div class="row"><small id="audio-label">Choose the Osmo microphone if available.</small><button class="text" id="refresh-devices">Refresh devices</button></div>
+            <label>Backup recordings</label><button class="folder" id="choose-folder">Choose a folder on this Mac <span>›</span></button><small id="disk">Local recording keeps a copy if the internet drops.</small><button id="configure" class="primary full">Save camera setup</button></div>
+        </article>
+        <article class="card"><div class="step-heading"><span class="step">2</span><div><h2>Pair your match</h2><p>On your referee match page, open <strong>Camera and broadcast</strong> and create a pairing code.</p></div></div>
+          <form id="pair-form"><label for="device-name">Laptop name</label><input id="device-name" maxlength="80" placeholder="Ali’s MacBook"><label for="pair-code">Pairing code</label><div class="inline"><input id="pair-code" maxlength="14" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH-JKLM"><button class="primary">Pair laptop</button></div><small>This laptop can only broadcast the paired match.</small></form>
+          <div id="paired" hidden><p class="eyebrow">CONNECTED TO</p><h3 id="match-name"></h3><p id="match-details"></p><div class="row"><span id="expires"></span><button class="text danger-text" id="forget">Forget pairing</button></div></div>
+          <button class="text" id="referee">Open referee website ↗</button>
+          <div id="dev-server" hidden><label for="server">Development server</label><select id="server"><option value="https://ops-staging.field.bh">Fieldrush staging</option><option value="http://127.0.0.1:3000">Local development</option></select></div>
+        </article>
+      </section>
+      <aside>
+        <article class="preview-card"><div class="row"><span class="eyebrow">CAMERA PREVIEW</span><span id="preview-label">Local preview</span></div><div class="preview"><img id="preview" alt="Selected camera preview" hidden><div id="preview-empty"><div class="camera-icon">▣</div><h3>Your pitch goes here.</h3><p>Connect OBS and save your camera setup to check the framing.</p></div></div><div class="preview-footer"><span id="video-status">Camera not connected</span><span id="recording-status">Backup not recording</span></div></article>
+        <article class="card readiness"><h2>Before kickoff</h2><ul id="checks"><li id="check-camera">Camera setup</li><li id="check-recording">Local recording test</li><li id="check-pairing">Match pairing</li><li id="check-upload">Private stream test</li></ul><button class="secondary full" id="local-test" disabled>Test recording · 10 seconds</button><button class="secondary full" id="stream-test" disabled>Test private stream</button><p class="hint">When the checks pass, tap <strong>Start Stream</strong> on your phone. Start the match clock separately at kickoff.</p><button class="primary full" id="open-controls">Open match controls ↗</button><button class="danger full" id="stop-local" hidden>Stop video and recording</button></article>
+        <article class="backup"><div><strong>Keep a local match backup.</strong><p>If the internet drops, leave OBS recording. Recover the full video after the match, before disconnecting this laptop or its 24-hour pairing expires.</p></div><button class="text" id="open-recordings">View recordings ↗</button><button class="text" id="recover-recording">Recover a recording ↗</button><button class="text" id="restart-recovery" hidden>Start recovery over</button></article>
+      </aside>
+    </div>
+  </main>
+  <footer><span>Keep your Mac plugged in and its lid open during the match.</span><span id="version"></span></footer>
+  <div id="toast" role="status" hidden></div>
+  <script src="app.js"></script>
+</body></html>

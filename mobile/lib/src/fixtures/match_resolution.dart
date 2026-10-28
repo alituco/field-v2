@@ -168,6 +168,7 @@ class MatchResolutionRefund {
     required this.status,
     required this.failureReason,
     required this.createdAt,
+    this.currency = 'BHD',
   });
 
   factory MatchResolutionRefund.fromJson(Map<String, dynamic> json) {
@@ -183,6 +184,7 @@ class MatchResolutionRefund {
       status: (json['status'] as String? ?? 'PENDING').trim().toUpperCase(),
       failureReason: (json['failure_reason'] as String?)?.trim(),
       createdAt: _dateTime(json['created_at']),
+      currency: (json['currency'] as String? ?? 'BHD').trim().toUpperCase(),
     );
   }
 
@@ -195,22 +197,25 @@ class MatchResolutionRefund {
   final String status;
   final String? failureReason;
   final DateTime? createdAt;
+  final String currency;
 
   int get displayAmountFils =>
       targetAmountFils > 0 ? targetAmountFils : amountFils;
 
   String get amountLabel {
-    final dinars = displayAmountFils / 1000;
-    return '${dinars.toStringAsFixed(3)} BHD';
+    final amount = displayAmountFils / 1000;
+    if (currency == 'USD') return '\$${amount.toStringAsFixed(2)}';
+    return '${amount.toStringAsFixed(3)} $currency';
   }
 
   String get destinationLabel => switch (destination) {
     'FIELD_WALLET' => 'Field Wallet',
+    'ORIGINAL_PAYMENT_METHOD' || 'STRIPE' => 'Original payment method',
     _ => _readableCode(destination, fallback: 'Original payment method'),
   };
 
   String get statusLabel => switch (status) {
-    'COMPLETED' => 'Refund complete',
+    'COMPLETED' || 'SUCCEEDED' => 'Refund complete',
     'FAILED' => 'Refund needs attention',
     'NOT_DUE' => 'No refund due',
     'PROCESSING' => 'Refund processing',

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
@@ -41,6 +43,21 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   bool _loading = true;
   String? _error;
 
+  List<OpenQueueRole> get _roleOptions {
+    final supported = _games.isEmpty
+        ? fieldrushOpenQueueRoles.toSet()
+        : {for (final game in _games) ...game.supportedRoles};
+    return _queueRoleOrder.where(supported.contains).toList(growable: false);
+  }
+
+  void _sanitizeRoleSelections() {
+    final supported = _roleOptions.toSet();
+    if (!supported.contains(_mainRole)) _mainRole = null;
+    _backupRoles.removeWhere(
+      (role) => !supported.contains(role) || role == _mainRole,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -63,10 +80,12 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       setState(() {
         _games = results[0] as List<OpenQueueGame>;
         _upcomingBookings = results[1] as List<OpenQueueBooking>;
+        _sanitizeRoleSelections();
       });
     } catch (error) {
       if (!mounted) return;
       setState(() {
+        _sanitizeRoleSelections();
         _error = userFacingError(
           error,
           fallback: 'We could not load Open Queue games.',
@@ -78,20 +97,26 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
   }
 
   void _selectMain(OpenQueueRole role) {
+    if (!_roleOptions.contains(role)) return;
     setState(() {
       final wasAnywhere = _isAnywhere;
       _mainRole = _mainRole == role ? null : role;
       _backupRoles.remove(role);
       if (wasAnywhere && _mainRole != null) {
-        _backupRoles = _queueRoleOrder.where((item) => item != role).toSet();
+        _backupRoles = _roleOptions.where((item) => item != role).toSet();
       }
     });
   }
 
   bool get _isAnywhere =>
-      _mainRole != null && _backupRoles.length == _queueRoleOrder.length - 1;
+      _mainRole != null &&
+      _backupRoles.length == _roleOptions.length - 1 &&
+      _roleOptions
+          .where((role) => role != _mainRole)
+          .every(_backupRoles.contains);
 
   void _toggleBackup(OpenQueueRole role) {
+    if (!_roleOptions.contains(role) || role == _mainRole) return;
     setState(() {
       if (_isAnywhere) _backupRoles.clear();
       if (_backupRoles.contains(role)) {
@@ -109,7 +134,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       if (_isAnywhere) {
         _backupRoles.clear();
       } else {
-        _backupRoles = _queueRoleOrder.where((role) => role != main).toSet();
+        _backupRoles = _roleOptions.where((role) => role != main).toSet();
       }
     });
   }
@@ -130,7 +155,9 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   Future<void> _continue() async {
     final role = _mainRole;
-    if (role == null || _upcomingBookings.length >= 2) return;
+    if (role == null || _upcomingBookings.any((b) => b.game.blocksNewBooking)) {
+      return;
+    }
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => OpenQueueGamesScreen(
@@ -164,7 +191,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_loading && _upcomingBookings.length >= 2) {
+    if (!_loading && _upcomingBookings.any((b) => b.game.blocksNewBooking)) {
       return _buildBookingLimitScreen();
     }
     return Scaffold(
@@ -172,7 +199,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Open Queue', showBack: true),
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: fieldEmerald600,
           onRefresh: _load,
           child: ListView(
@@ -183,10 +210,6 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
               bottom: _mainRole == null ? 116 : 218,
             ),
             children: [
-              if (_upcomingBookings case [final booking]) ...[
-                _QueueBookingAllowanceCard(onTap: () => _openBooking(booking)),
-                const SizedBox(height: 18),
-              ],
               const Text(
                 'WHERE DO YOU PLAY?',
                 style: TextStyle(
@@ -207,6 +230,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
               ),
               const SizedBox(height: 20),
               _QueuePitch(
+                roles: _roleOptions,
                 mainRole: _mainRole,
                 backupRoles: _backupRoles,
                 onSelect: _selectMain,
@@ -225,7 +249,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
                 crossAxisSpacing: 10,
                 childAspectRatio: 2.8,
                 children: [
-                  for (final role in _queueRoleOrder)
+                  for (final role in _roleOptions)
                     _RoleButton(
                       role: role,
                       selected: _mainRole == role,
@@ -259,7 +283,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
-                    for (final role in _queueRoleOrder)
+                    for (final role in _roleOptions)
                       if (role != mainRole)
                         _BackupRoleChip(
                           label: role.label,
@@ -378,7 +402,7 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Open Queue', showBack: true),
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: fieldEmerald600,
           onRefresh: _load,
           child: ListView(
@@ -386,7 +410,9 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
             padding: fieldHeaderAwarePadding(context, top: 22, bottom: 116),
             children: [
               _QueueBookingLimitCard(
-                bookings: _upcomingBookings.take(2).toList(growable: false),
+                bookings: _upcomingBookings
+                    .where((b) => b.game.blocksNewBooking)
+                    .toList(),
                 onBooking: _openBooking,
               ),
             ],
@@ -396,50 +422,6 @@ class _OpenQueueScreenState extends State<OpenQueueScreen> {
       bottomNavigationBar: FieldBottomNav(
         selectedIndex: null,
         onSelected: _navigateTab,
-      ),
-    );
-  }
-}
-
-class _QueueBookingAllowanceCard extends StatelessWidget {
-  const _QueueBookingAllowanceCard({required this.onTap});
-
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      key: const ValueKey('open-queue-one-of-two-booked'),
-      color: fieldEmerald50,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-          decoration: BoxDecoration(
-            border: Border.all(color: fieldEmerald100),
-            borderRadius: BorderRadius.circular(18),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.event_available_rounded, color: fieldEmerald700),
-              const SizedBox(width: 11),
-              const Expanded(
-                child: Text(
-                  '1 OF 2 GAMES BOOKED',
-                  style: TextStyle(
-                    color: fieldEmerald700,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .7,
-                  ),
-                ),
-              ),
-              const Icon(Icons.chevron_right_rounded, color: fieldEmerald700),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -457,7 +439,7 @@ class _QueueBookingLimitCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      key: const ValueKey('open-queue-two-game-limit'),
+      key: const ValueKey('open-queue-game-limit'),
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: Colors.white,
@@ -494,7 +476,7 @@ class _QueueBookingLimitCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '2 / 2 SOLO GAME LIMIT',
+                      'ONE GAME AT A TIME',
                       style: TextStyle(
                         color: fieldEmerald700,
                         fontSize: 10,
@@ -504,7 +486,7 @@ class _QueueBookingLimitCard extends StatelessWidget {
                     ),
                     SizedBox(height: 4),
                     Text(
-                      'You’re already booked for two games',
+                      'You’re already in a game',
                       style: TextStyle(
                         color: fieldGray900,
                         fontSize: 19,
@@ -583,7 +565,7 @@ class _QueueBookedGameRow extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      '${game.prominentDateLabel} · ${game.startTimeLabel}',
+                      '${game.displayProminentDateLabel} · ${game.isUpcoming ? 'Check-in ' : ''}${game.displayTimeLabel}',
                       style: const TextStyle(
                         color: fieldGray900,
                         fontSize: 13,
@@ -615,11 +597,13 @@ class _QueueBookedGameRow extends StatelessWidget {
 
 class _QueuePitch extends StatelessWidget {
   const _QueuePitch({
+    required this.roles,
     required this.mainRole,
     required this.backupRoles,
     required this.onSelect,
   });
 
+  final List<OpenQueueRole> roles;
   final OpenQueueRole? mainRole;
   final Set<OpenQueueRole> backupRoles;
   final ValueChanged<OpenQueueRole> onSelect;
@@ -670,7 +654,9 @@ class _QueuePitch extends StatelessWidget {
                       Positioned.fill(
                         child: CustomPaint(painter: _PitchPainter()),
                       ),
-                      for (final node in nodes)
+                      for (final node in nodes.where(
+                        (node) => roles.contains(node.$1),
+                      ))
                         Positioned(
                           left: constraints.maxWidth * node.$2 - 34,
                           top: constraints.maxHeight * node.$3 - 34,

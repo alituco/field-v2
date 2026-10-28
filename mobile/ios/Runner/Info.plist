@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>FirebaseMessagingAutoInitEnabled</key>
+	<false/>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -40,7 +42,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Field uses your camera when you choose to take a profile photo.</string>
+	<string>Fieldrush uses your camera when you choose to take a profile photo or scan a payment card.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Field lets you choose a profile photo from your library.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

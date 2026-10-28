@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import '../open_queue/fieldrush_check_in_notice.dart';
 
 import 'package:flutter/material.dart';
 
@@ -781,10 +782,15 @@ class SoloFixtureCard extends StatelessWidget {
                         const SizedBox(width: 12),
                         _DetailIconText(
                           icon: Icons.access_time_rounded,
-                          label: game.timeLabel,
+                          label:
+                              '${game.isUpcoming ? 'Check-in ' : ''}${game.isUpcoming ? game.displayTimeLabel : game.timeLabel}',
                         ),
                       ],
                     ),
+                    if (game.isUpcoming) ...[
+                      const SizedBox(height: 12),
+                      FieldrushCheckInNotice(game: game),
+                    ],
                   ],
                 ),
               ),
@@ -1003,7 +1009,7 @@ class FixtureTeamSummary extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '${clan.tag} · ${clan.skillRating} SR${clan.regionRank == null ? '' : ' · #${clan.regionRank}'}',
+            '${clan.tag}${clan.skillRating == null ? '' : ' · ${clan.skillRating} SR'}${clan.regionRank == null ? '' : ' · #${clan.regionRank}'}',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             textAlign: alignEnd ? TextAlign.right : TextAlign.left,
@@ -1218,7 +1224,7 @@ String _soloStatusLabel(OpenQueueGame game) {
 }
 
 String _soloMonthDay(OpenQueueGame game) {
-  final date = game.bahrainStartsAt;
+  final date = game.localDisplayStartsAt;
   const months = [
     'Jan',
     'Feb',

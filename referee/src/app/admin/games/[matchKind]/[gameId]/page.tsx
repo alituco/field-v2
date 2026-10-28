@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
+import { SeasonZeroRatingReviewPanel } from "@/components/season-zero-rating-review-panel";
+import { AdminUnassignedPlayersPanel } from "@/components/admin-unassigned-players-panel";
+import { GameFormationPanel } from "../../../game-formation-panel";
 
 import type {
   AdminGameDetail,
@@ -10,6 +14,8 @@ import type {
   AdminGameResolutionRefund,
 } from "@/lib/admin-game-detail";
 import type { AdminGameParticipant } from "@/lib/admin-game-participants";
+import { formatGameMoney, type AdminGameCurrency } from "@/lib/admin-game-money";
+import type { AdminGamePricing } from "@/lib/admin-game-pricing";
 import type {
   AdminGameReserve,
   AdminReserveCandidate,
@@ -20,6 +26,13 @@ import {
 } from "@/lib/admin-match-resolution-ui";
 import type { MatchResolutionType } from "@/lib/match-action-input";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
+import { refundRetryNotice } from "@/lib/payment-refunds";
+import { soloGameReadiness, soloMinimumHint } from "@/lib/solo-game-readiness";
+import {
+  canFillGameWithBots,
+  isStagingGameBotsEnabled,
+  validateStagingBotFillReply,
+} from "@/lib/staging-game-bots";
 import type {
   BroadcastControlResponse,
   FixtureEvent,
@@ -48,12 +61,41 @@ export default function AdminGameDetailPage() {
   const [clanActionId, setClanActionId] = useState<string | null>(null);
   const [assignReferee, setAssignReferee] = useState(false);
   const [cancelGame, setCancelGame] = useState(false);
+  const [editingPrice, setEditingPrice] = useState(false);
+  const [confirmLockTeams, setConfirmLockTeams] = useState(false);
+  const [lockingTeams, setLockingTeams] = useState(false);
+  const [confirmFillBots, setConfirmFillBots] = useState(false);
+  const [fillingBots, setFillingBots] = useState(false);
   const [resolveCase, setResolveCase] = useState(false);
+  const [kickoffEvidence, setKickoffEvidence] = useState<{ gameId: string; hasKickoff: boolean } | null>(null);
+  const receiveKickoffEvidence = useCallback((evidenceGameId: string, hasKickoff: boolean | null) => {
+    setKickoffEvidence(hasKickoff === null ? null : { gameId: evidenceGameId, hasKickoff });
+  }, []);
   const [retryRefund, setRetryRefund] =
     useState<AdminGameResolutionRefund | null>(null);
+  const mounted = useRef(true);
+  const pageKey = `${matchKind}:${gameId}`;
+  const pageIdentity = `${pageKey}:${accessToken ?? ""}`;
+  const currentPageIdentity = useRef(pageIdentity);
+  currentPageIdentity.current = pageIdentity;
+  const botFillRequest = useRef<{ pageKey: string; requestId: string } | null>(null);
 
-  const load = useCallback(async (quiet = false) => {
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+
+  useEffect(() => {
+    setConfirmFillBots(false);
+    setFillingBots(false);
+    if (botFillRequest.current?.pageKey !== pageKey) botFillRequest.current = null;
+  }, [pageKey, accessToken]);
+
+  const load = useCallback(async (quiet = false, expectedPageIdentity?: string) => {
     if (!accessToken || !gameId || !["SOLO", "CLAN"].includes(matchKind)) return;
+    const canApply = () => mounted.current &&
+      (expectedPageIdentity === undefined || currentPageIdentity.current === expectedPageIdentity);
+    if (!canApply()) return;
     if (!quiet) setLoading(true);
     setError(null);
     try {
@@ -61,11 +103,13 @@ export default function AdminGameDetailPage() {
         `/api/referee/admin/games/${matchKind.toLowerCase()}/${gameId}`,
         { headers: auth(accessToken), cache: "no-store" },
       );
+      if (!canApply()) return;
       setDetail(payload.detail);
+      return payload.detail;
     } catch (loadError) {
-      setError(message(loadError, "Could not load this game."));
+      if (canApply()) setError(message(loadError, "Could not load this game."));
     } finally {
-      setLoading(false);
+      if (canApply()) setLoading(false);
     }
   }, [accessToken, gameId, matchKind]);
 
@@ -101,6 +145,48 @@ export default function AdminGameDetailPage() {
     }
   }
 
+  async function fillWithBots() {
+    if (!accessToken || !detail || detail.fixture.id !== gameId ||
+      detail.fixture.matchKind !== matchKind || fillingBots || lockingTeams ||
+      !isStagingGameBotsEnabled() || !canFillGameWithBots(detail.fixture)) return;
+    if (!confirmFillBots) {
+      setConfirmLockTeams(false);
+      setConfirmFillBots(true);
+      return;
+    }
+    const expectedPage = currentPageIdentity.current;
+    const targetGameId = detail.fixture.id;
+    const request = botFillRequest.current?.pageKey === pageKey
+      ? botFillRequest.current
+      : { pageKey, requestId: crypto.randomUUID() };
+    botFillRequest.current = request;
+    const canApply = () => mounted.current && currentPageIdentity.current === expectedPage;
+    setFillingBots(true);
+    setError(null);
+    try {
+      const payload = await fetchJson<unknown>(
+        `/api/referee/admin/games/solo/${targetGameId}/fill-bots`,
+        {
+          method: "POST",
+          headers: { ...auth(accessToken), "Content-Type": "application/json" },
+          body: JSON.stringify({ requestId: request.requestId, confirmation: "FILL_WITH_BOTS" }),
+        },
+      );
+      const result = validateStagingBotFillReply(payload, { gameId: targetGameId, requestId: request.requestId });
+      if (!canApply()) return;
+      botFillRequest.current = null;
+      setConfirmFillBots(false);
+      setNotice(result.createdBots > 0
+        ? `Added ${result.createdBots} staging bots. ${result.confirmedCount} / ${result.capacity} places are booked. Use Lock teams when you’re ready.`
+        : "This game is already full. No bots were added.");
+      await load(true, expectedPage);
+    } catch (fillError) {
+      if (canApply()) setError(message(fillError, "Could not fill this game with bots."));
+    } finally {
+      if (canApply()) setFillingBots(false);
+    }
+  }
+
   if (!sessionChecked || loading) return <GameDetailSkeleton />;
   if (!accessToken) {
     return (
@@ -123,13 +209,21 @@ export default function AdminGameDetailPage() {
   }
 
   const fixture = detail.fixture;
+  const seasonZero = fixture.matchKind === "SOLO" && fixture.ratingPolicyId === "field-sr-season0-v2";
   const activeReserve = detail.reserves.active[0];
   const resolutionCase = detail.resolutionCase;
   const needsResolution = Boolean(
     resolutionCase &&
     ["NO_DATA", "UNDER_REVIEW"].includes(resolutionCase.state),
   );
+  const unstartedSeasonZeroReview = seasonZero && needsResolution &&
+    ["OPEN", "FULL"].includes(fixture.status) &&
+    kickoffEvidence?.gameId === fixture.id && kickoffEvidence.hasKickoff === false;
+  const canReviewCase = !seasonZero || unstartedSeasonZeroReview;
   const displayedStatus = resolutionDisplayStatus(detail);
+  const rosterReadiness = soloGameReadiness(fixture,
+    detail.participants.matchKind === "SOLO" ? detail.participants.counts.registered : 0);
+  const canLockRoster = seasonZero ? rosterReadiness.minimumReached : fixture.status === "FULL";
   return (
     <main className={styles.page}>
       <header className={styles.topbar}>
@@ -145,7 +239,7 @@ export default function AdminGameDetailPage() {
         <ResolutionCaseBanner
           caseData={resolutionCase}
           detail={detail}
-          onResolve={() => setResolveCase(true)}
+          onResolve={canReviewCase ? () => setResolveCase(true) : undefined}
           onRetryRefund={setRetryRefund}
         />
       ) : null}
@@ -174,14 +268,15 @@ export default function AdminGameDetailPage() {
       <section className={styles.metrics}>
         <Metric label="Confirmed players" value={confirmedCount(detail)} detail={capacityLabel(detail)} />
         <Metric label="Checked in / played" value={String(detail.participants.actualPlayers.length)} detail="Official match record" />
-        <Metric label="Reserve player" value={`${detail.reserves.active.length} / 1`} detail="One game-wide standby" />
+        {!seasonZero ? <Metric label="Reserve player" value={`${detail.reserves.active.length} / 1`} detail="One game-wide standby" /> : <Metric label="Participation policy" value="Booked players only" detail="No substitutions or replacements" />}
         <Metric label="Reports" value={String(detail.reports.length)} detail={detail.reports.length ? "Needs awareness" : "No match reports"} tone={detail.reports.length ? "warning" : "good"} />
       </section>
 
       <div className={styles.grid}>
         <div className={styles.mainColumn}>
-          <section className={styles.card}>
-            <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the official six, or change rating eligibility." />
+          {seasonZero ? <SeasonZeroRatingReviewPanel key={fixture.id} fixture={fixture} accessToken={accessToken} onEvidenceLoaded={receiveKickoffEvidence} onSaved={async () => { await load(true); }} /> : null}
+          {!seasonZero ? <section className={styles.card}>
+            <SectionHead eyebrow="MATCHDAY COVER" title="Reserve player" detail="Choose any eligible Field player as the single standby for this game. Assigning them does not charge them, place them in the playing squad, or change rating eligibility." />
             <div className={styles.reserveGrid}>
               <ReserveSlot
                 reserve={activeReserve}
@@ -201,10 +296,65 @@ export default function AdminGameDetailPage() {
                 ))}
               </details>
             ) : null}
-          </section>
+          </section> : null}
+
+          {detail.pricing ? (
+            <GamePricingPanel pricing={detail.pricing} onEdit={() => setEditingPrice(true)} />
+          ) : null}
+          {detail.formation ? <GameFormationPanel formation={detail.formation} accessToken={accessToken} gameId={fixture.id} onSaved={async () => {
+            setNotice("Formation updated. Booking positions and party limits now use this game’s saved formation.");
+            await load(true);
+          }} /> : null}
+
+          {fixture.matchKind === "SOLO" ? <AdminUnassignedPlayersPanel key={`unassigned:${fixture.id}`} fixture={fixture} accessToken={accessToken}
+            busy={lockingTeams || fillingBots} onSaved={async () => {
+              setNotice("Player assignments saved. Existing teams have been preserved.");
+              await load(true);
+            }} /> : null}
 
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />
+            {fixture.matchKind === "SOLO" && ["OPEN", "FULL"].includes(fixture.status) ? <div>
+              <p className={styles.actionHint}>Lock the booked roster into balanced White and Black teams, preserving parties and the saved formation. This releases team assignments and closes outstanding party invitations; it does not start the match or check players in.</p>
+              {seasonZero ? <p className={styles.actionHint}>{rosterReadiness.minimumReached ? "Minimum reached" : `${rosterReadiness.minimumPlayers} confirmed players needed`} · {rosterReadiness.minimumPlayers} minimum / {rosterReadiness.capacity} maximum. {soloMinimumHint(fixture)}</p> : null}
+              {confirmLockTeams ? <p>Assign and release both teams now?</p> : null}
+              <button type="button" className={styles.primaryButton}
+                disabled={lockingTeams || fillingBots || !canLockRoster || Boolean(fixture.teamsAssignedAt) || fixture.operationalState !== "NORMAL"}
+                onClick={async () => {
+                  setConfirmFillBots(false);
+                  if (!confirmLockTeams) { setConfirmLockTeams(true); return; }
+                  setLockingTeams(true);
+                  setError(null);
+                  try {
+                    await fetchJson(`/api/referee/admin/games/solo/${fixture.id}/lock-teams`, {
+                      method: "POST", headers: auth(accessToken),
+                    });
+                    setConfirmLockTeams(false);
+                    setNotice("Teams locked. White and Black squads are ready; the match has not started.");
+                    await load(true);
+                  } catch (lockError) { setError(message(lockError, "Could not lock teams.")); }
+                  finally { setLockingTeams(false); }
+                }}>
+                {lockingTeams ? "Locking teams…" : fixture.teamsAssignedAt ? "Teams locked" : confirmLockTeams ? "Confirm lock teams" : "Lock teams"}
+              </button>
+              {confirmLockTeams ? <button type="button" className={styles.cancelButton} disabled={lockingTeams} onClick={() => setConfirmLockTeams(false)}>Cancel</button> : null}
+              {!canLockRoster ? <p className={styles.actionHint}>{seasonZero ? `Available once ${rosterReadiness.minimumPlayers} players are booked.` : "Available when all places are booked."}</p> : null}
+            </div> : null}
+            {fixture.id === gameId && fixture.matchKind === matchKind &&
+              isStagingGameBotsEnabled() && canFillGameWithBots(fixture) ? (
+              <div role="group" aria-label="Staging game tools">
+                {confirmFillBots ? (
+                  <p className={styles.actionHint}>Fill the remaining positions with clearly labeled staging bots? Existing players stay booked. No one is charged, checked in, or assigned to a team, and the match will not start.</p>
+                ) : <p className={styles.actionHint}>Staging only · Add test players to the remaining positions.</p>}
+                <button type="button" className={styles.cancelButton}
+                  disabled={fillingBots || lockingTeams}
+                  onClick={() => void fillWithBots()}>
+                  {fillingBots ? "Adding bots…" : confirmFillBots ? "Confirm fill with bots" : "Fill game with bots"}
+                </button>
+                {confirmFillBots ? <button type="button" className={styles.cancelButton}
+                  disabled={fillingBots} onClick={() => setConfirmFillBots(false)}>Cancel bot fill</button> : null}
+              </div>
+            ) : null}
             <ParticipantGroups detail={detail} onPlayerAction={setPlayerAction} />
           </section>
 
@@ -243,7 +393,7 @@ export default function AdminGameDetailPage() {
           <section className={styles.card}>
             <SectionHead eyebrow="ADMIN CONTROLS" title="Resolve game issues" detail="Every action requires a reason and is permanently audited." />
             <div className={styles.adminActions}>
-              {needsResolution ? (
+              {needsResolution && canReviewCase ? (
                 <button
                   className={styles.primaryButton}
                   onClick={() => setResolveCase(true)}
@@ -274,17 +424,19 @@ export default function AdminGameDetailPage() {
               ) : null}
               <button
                 className={styles.dangerButton}
-                disabled={needsResolution || !canCancelGame(fixture.status)}
-                onClick={() => setCancelGame(true)}
+                disabled={(needsResolution && !unstartedSeasonZeroReview) || !canCancelGame(fixture.status)}
+                onClick={() => unstartedSeasonZeroReview ? setResolveCase(true) : setCancelGame(true)}
                 type="button"
               >
                 Cancel game
               </button>
             </div>
             <p className={styles.actionHint}>
-              {needsResolution
+              {unstartedSeasonZeroReview ? "No kickoff was recorded. Review cancellation to preview full refunds and close this unresolved game without adding a result or changing ratings."
+                : seasonZero ? "Use Rating review for Season 0 outcomes and timeline corrections. Payment and refund controls remain separate."
+                : needsResolution
                 ? "Use the no-data review so attendance, refunds, SR and strikes are decided together."
-                : "Admin cancellation gives every payer a 100% Field Wallet refund, including held reliability deposits."}
+                : "Admin cancellation gives every payer a full refund, including held reliability deposits. Card and digital wallet payments return to the original payment method."}
             </p>
           </section>
 
@@ -314,7 +466,21 @@ export default function AdminGameDetailPage() {
         </aside>
       </div>
 
-      {addingReserve ? (
+      {editingPrice && detail.pricing ? (
+        <EditGamePriceDialog
+          accessToken={accessToken}
+          gameId={fixture.id}
+          pricing={detail.pricing}
+          onClose={() => setEditingPrice(false)}
+          onRefresh={async () => (await load(true))?.pricing ?? null}
+          onSaved={async () => {
+            setEditingPrice(false);
+            setNotice("Game price updated for new bookings. Existing payments and refund amounts are unchanged.");
+            await load(true);
+          }}
+        />
+      ) : null}
+      {addingReserve && !seasonZero ? (
         <AddReserveDialog
           accessToken={accessToken}
           detail={detail}
@@ -376,11 +542,12 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
-      {resolveCase && resolutionCase ? (
+      {resolveCase && resolutionCase && canReviewCase ? (
         <ResolveMatchCaseDialog
           accessToken={accessToken}
           caseData={resolutionCase}
           detail={detail}
+          cancellationOnly={unstartedSeasonZeroReview}
           onClose={() => setResolveCase(false)}
           onSaved={async (savedNotice) => {
             setResolveCase(false);
@@ -403,7 +570,7 @@ export default function AdminGameDetailPage() {
           }}
         />
       ) : null}
-      {removeReserve ? (
+      {removeReserve && !seasonZero ? (
         <RemoveReserveDialog
           accessToken={accessToken}
           detail={detail}
@@ -420,6 +587,179 @@ export default function AdminGameDetailPage() {
   );
 }
 
+function GamePricingPanel({ pricing, onEdit }: {
+  pricing: AdminGamePricing;
+  onEdit: () => void;
+}) {
+  function recordedMoney(amount: number | null, currency: AdminGameCurrency) {
+    return amount === null ? "Not recorded" : formatGameMoney(amount, currency);
+  }
+  return (
+    <section className={styles.card} aria-labelledby="game-pricing-title">
+      <header className={styles.pricingHeader}>
+        <div className={styles.sectionHead}>
+          <span>BOOKINGS & PAYMENTS</span>
+          <h2 id="game-pricing-title">Game price</h2>
+        </div>
+        {pricing.canEdit ? (
+          <button id="edit-game-price" className={styles.primaryButton} onClick={onEdit} type="button">Edit price</button>
+        ) : null}
+      </header>
+      <div className={styles.currentPrice}>
+        <span>Current price per player</span>
+        <strong>{formatGameMoney(pricing.priceFils, pricing.currency)}</strong>
+        <p>Price changes apply to new bookings only. Players who already paid keep their original price—no extra charge, refund, or adjustment.</p>
+      </div>
+      {!pricing.canEdit && pricing.lockedReason ? <p className={styles.actionHint}>{pricing.lockedReason}</p> : null}
+      <h3 className={styles.paymentHistoryTitle}>Payment history <span>{pricing.bookings.length}</span></h3>
+      <p className={styles.actionHint}>Each booking keeps its own recorded amounts, including cancelled bookings. Total paid is the original payment, before refunds. Refunded includes completed refunds only; unrecorded amounts are never estimated from today’s price.</p>
+      {pricing.bookings.length ? (
+        <div className={styles.paymentsScroll} tabIndex={0} role="region" aria-label="Booking payment history">
+          <table className={styles.paymentsTable}>
+            <thead><tr><th scope="col">Player / booking</th><th scope="col">Match fee</th><th scope="col">Deposit</th><th scope="col">Total paid</th><th scope="col">Refunded</th><th scope="col">Status</th></tr></thead>
+            <tbody>{pricing.bookings.map((booking) => (
+              <tr key={booking.bookingId}>
+                <th scope="row">
+                  <Link href={`/admin/people/player/${booking.profileId}`}>{booking.displayName}</Link>
+                  <small>Booked {formatBookingDateTime(booking.bookedAt)}</small>
+                  <small>#{booking.bookingId.slice(0, 8)}</small>
+                </th>
+                <td>{recordedMoney(booking.matchFeeFils, booking.currency)}</td>
+                <td>{recordedMoney(booking.depositFils, booking.currency)}</td>
+                <td><strong>{recordedMoney(booking.paidTotalFils, booking.currency)}</strong></td>
+                <td>{recordedMoney(booking.refundedFils, booking.currency)}</td>
+                <td><span>{humanize(booking.status)}</span><small>{humanize(booking.paymentStatus)}</small></td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <div className={styles.emptyList}>No bookings have been recorded for this game.</div>}
+    </section>
+  );
+}
+
+function EditGamePriceDialog({ accessToken, gameId, pricing, onClose, onRefresh, onSaved }: {
+  accessToken: string;
+  gameId: string;
+  pricing: AdminGamePricing;
+  onClose: () => void;
+  onRefresh: () => Promise<AdminGamePricing | null>;
+  onSaved: () => Promise<void>;
+}) {
+  const [priceUsd, setPriceUsd] = useState((pricing.priceFils / 1000).toFixed(2));
+  const [expectedPriceFils, setExpectedPriceFils] = useState(pricing.priceFils);
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const busyRef = useRef(false);
+  busyRef.current = saving || refreshing;
+  const inputPrice = /^\d{1,3}(?:\.\d{1,2})?$/.test(priceUsd.trim())
+    ? Math.round(Number(priceUsd.trim()) * 1000) : null;
+  const validPrice = inputPrice !== null && (inputPrice === 0 || inputPrice >= 500 && inputPrice <= 100_000);
+  const unchanged = inputPrice === expectedPriceFils;
+  const reasonLength = reason.trim().length;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLInputElement>("input")?.focus();
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape" && !busyRef.current) {
+        event.preventDefault();
+        closeRef.current();
+      }
+      if (event.key !== "Tab" || !dialog) return;
+      const controls = [...dialog.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled)")];
+      const first = controls[0];
+      const last = controls.at(-1);
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      // Safari does not always focus buttons on mouse click, so retain the
+      // explicit trigger as the return target rather than returning to <body>.
+      const trigger = document.getElementById("edit-game-price");
+      if (trigger instanceof HTMLElement) trigger.focus();
+      else if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, []);
+
+  async function refreshPrice() {
+    setRefreshing(true);
+    const refreshed = await onRefresh();
+    setRefreshing(false);
+    if (!refreshed) {
+      setError("Could not refresh the current price. Your changes are still here. Try again.");
+      return;
+    }
+    setExpectedPriceFils(refreshed.priceFils);
+    setConflict(false);
+    setError(null);
+    setRefreshNotice(`Current price refreshed to ${formatGameMoney(refreshed.priceFils, refreshed.currency)}. Your draft is unchanged; review it before saving.`);
+  }
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!validPrice || unchanged || reasonLength < 8 || reasonLength > 1000 || !pricing.canEdit || conflict || saving) return;
+    setSaving(true); setError(null); setRefreshNotice(null);
+    try {
+      const response = await fetch(`/api/referee/admin/games/solo/${gameId}/price`, {
+        method: "PATCH",
+        headers: { ...auth(accessToken), "Content-Type": "application/json" },
+        body: JSON.stringify({ priceUsd: priceUsd.trim(), expectedPriceFils, reason: reason.trim() }),
+      });
+      const payload = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) {
+        if (response.status === 409) setConflict(true);
+        throw new Error(payload.error ?? "Could not update this game’s price.");
+      }
+      await onSaved();
+    } catch (submitError) {
+      setError(message(submitError, "Could not update this game’s price. Your changes are still here."));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className={styles.modalBackdrop} role="presentation">
+      <section ref={dialogRef} aria-modal="true" aria-labelledby="edit-game-price-title" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
+        <header><div><span>THIS GAME ONLY</span><h2 id="edit-game-price-title">Edit game price</h2></div><button aria-label="Close price editor" disabled={saving || refreshing} onClick={onClose} type="button">×</button></header>
+        <p className={styles.modalIntro}>Current price: <strong>{formatGameMoney(expectedPriceFils, pricing.currency)}</strong> per player.</p>
+        <div className={styles.refundNotice}><strong>Existing payments stay exactly as they are</strong><p>No top-ups or automatic refunds. Cancellation refunds continue to use each booking’s original payment. Valid checkouts already in progress keep their quoted price until they expire. This changes only this game, not its recurring schedule or the default game price.</p></div>
+        <form onSubmit={(event) => void submit(event)}>
+          <label htmlFor="game-price-usd">New price per player (USD)</label>
+          <input id="game-price-usd" className={styles.priceInput} type="text" inputMode="decimal" autoComplete="off" value={priceUsd} disabled={saving || refreshing} onChange={(event) => setPriceUsd(event.target.value)} aria-describedby="game-price-help" aria-invalid={!validPrice} />
+          <p id="game-price-help" className={validPrice ? styles.actionHint : styles.priceError}>Enter $0 for free bookings, or $0.50–$100 with up to two decimal places. Card payments have a $0.50 minimum.</p>
+          <label htmlFor="game-price-reason">Reason for the price change</label>
+          <textarea id="game-price-reason" className={styles.priceInput} maxLength={1000} value={reason} disabled={saving || refreshing} onChange={(event) => setReason(event.target.value)} placeholder="For example, a discount for the remaining places." aria-describedby="game-price-reason-help" />
+          <p id="game-price-reason-help" className={styles.actionHint}>At least 8 characters. Stored in the game’s admin history.</p>
+          {!pricing.canEdit ? <p className={styles.modalError} role="alert">{pricing.lockedReason ?? "This game’s price can no longer be changed."}</p> : null}
+          {error ? <p className={styles.modalError} role="alert">{error}</p> : null}
+          {refreshNotice ? <p className={styles.refundNotice} role="status">{refreshNotice}</p> : null}
+          {conflict ? <button className={styles.secondaryButton} disabled={saving || refreshing} onClick={() => void refreshPrice()} type="button">{refreshing ? "Refreshing…" : "Refresh current price"}</button> : null}
+          <footer><button className={styles.cancelButton} disabled={saving || refreshing} onClick={onClose} type="button">Cancel</button><button className={styles.primaryButton} disabled={saving || refreshing || conflict || !pricing.canEdit || !validPrice || unchanged || reasonLength < 8 || reasonLength > 1000} type="submit">{saving ? "Saving…" : "Save new price"}</button></footer>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+function formatBookingDateTime(value: string | null) {
+  if (!value) return "Unknown time";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "Unknown time" : new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium", timeStyle: "short", timeZone: "America/Phoenix",
+  }).format(date) + " (Phoenix)";
+}
+
 function ResolutionCaseBanner({
   caseData,
   detail,
@@ -428,7 +768,7 @@ function ResolutionCaseBanner({
 }: {
   caseData: AdminGameResolutionCase;
   detail: AdminGameDetail;
-  onResolve: () => void;
+  onResolve?: () => void;
   onRetryRefund: (refund: AdminGameResolutionRefund) => void;
 }) {
   const open = ["NO_DATA", "UNDER_REVIEW"].includes(caseData.state);
@@ -455,8 +795,10 @@ function ResolutionCaseBanner({
   const retriableRefunds = failedRefunds.filter(
     (refund) =>
       refund.status === "FAILED" &&
+      !refund.requiresManualReview &&
       refund.revisionId === currentRevisionId,
   );
+  const manualRefunds = failedRefunds.filter((refund) => refund.requiresManualReview);
 
   return (
     <section
@@ -487,13 +829,13 @@ function ResolutionCaseBanner({
                   : "This case is closed and retained for audit."}
           </p>
         </div>
-        <button className={styles.resolutionButton} onClick={onResolve} type="button">
+        {onResolve ? <button className={styles.resolutionButton} onClick={onResolve} type="button">
           {open
             ? caseData.currentRevision
               ? "Review or correct"
               : "Resolve match"
             : "Create correction"}
-        </button>
+        </button> : null}
       </div>
       <dl className={styles.resolutionFacts}>
         <div><dt>Reason</dt><dd>{humanize(caseData.reasonCode)}</dd></div>
@@ -508,7 +850,8 @@ function ResolutionCaseBanner({
           {pendingRefunds.length ? <span>{pendingRefunds.length} refund{pendingRefunds.length === 1 ? "" : "s"} processing</span> : null}
           {completedRefunds.length ? <span>{completedRefunds.length} refund{completedRefunds.length === 1 ? "" : "s"} completed</span> : null}
           {retriableRefunds.length ? <span className={styles.failedFlag}>{retriableRefunds.length} refund{retriableRefunds.length === 1 ? "" : "s"} need retry</span> : null}
-          {failedRefunds.length > retriableRefunds.length ? <span>{failedRefunds.length - retriableRefunds.length} historical refund failure{failedRefunds.length - retriableRefunds.length === 1 ? "" : "s"} retained</span> : null}
+          {manualRefunds.length ? <span className={styles.failedFlag}>{manualRefunds.length} external refund{manualRefunds.length === 1 ? "" : "s"} require manual reconciliation · no retry</span> : null}
+          {failedRefunds.length > retriableRefunds.length + manualRefunds.length ? <span>{failedRefunds.length - retriableRefunds.length - manualRefunds.length} historical refund failure(s) retained</span> : null}
         </div>
       ) : null}
       {failedRefunds.length ? (
@@ -517,13 +860,15 @@ function ResolutionCaseBanner({
             <article key={refund.id}>
               <div>
                 <span>{refundSideLabel(refund, detail)} · {humanize(refund.status)}</span>
-                <strong>{formatBhd(refund.amountFils)}</strong>
+                <strong>{formatGameMoney(refund.amountFils, detail.currency)}</strong>
                 <small>
                   {humanize(refund.destination)} · {refund.refundBps / 100}% refund
                   {refund.failureReason ? ` · ${refund.failureReason}` : " · No failure detail was recorded"}
                 </small>
               </div>
-              {refund.status === "FAILED" && refund.revisionId === currentRevisionId ? (
+              {refund.requiresManualReview ? (
+                <em>Reconcile the Stripe Dashboard refund with the booking and payment ledger. Retry cannot release this hold.</em>
+              ) : refund.status === "FAILED" && refund.revisionId === currentRevisionId ? (
                 <button onClick={() => onRetryRefund(refund)} type="button">
                   Retry refund
                 </button>
@@ -581,11 +926,11 @@ function RetryResolutionRefundDialog({
           body: JSON.stringify({ reason: trimmedReason }),
         },
       );
-      const status = result.result?.status?.toUpperCase() ?? "COMPLETED";
-      const creditedFils = numericValue(result.result?.amount_fils);
-      const savedNotice = result.result?.already_settled
-        ? `This refund was already ${humanize(status).toLowerCase()}. No second credit was issued.`
-        : `Refund retry completed. ${formatBhd(creditedFils)} was credited to the original payer through ${humanize(refund.destination)}.`;
+      const savedNotice = refundRetryNotice({
+        status: result.result?.status,
+        alreadySettled: result.result?.already_settled,
+        destination: refund.destination,
+      });
       await onSaved(savedNotice);
     } catch (retryError) {
       setError(message(retryError, "Could not retry this refund."));
@@ -615,20 +960,20 @@ function RetryResolutionRefundDialog({
           <button aria-label="Close refund retry" disabled={saving} onClick={onClose}>×</button>
         </header>
         <p className={styles.modalIntro}>
-          This retries the missing Field Wallet credit for the original payer.
-          It does not reverse completed refunds or issue a duplicate credit.
+          This retries the outstanding refund to the recorded destination.
+          Completed refunds are retained, and the server prevents duplicate refunds.
         </p>
         <dl className={styles.refundRetryFacts}>
           <div><dt>Recipient</dt><dd>{refundSideLabel(refund, detail)}</dd></div>
-          <div><dt>Amount due</dt><dd>{formatBhd(refund.amountFils)}</dd></div>
+          <div><dt>Amount due</dt><dd>{formatGameMoney(refund.amountFils, detail.currency)}</dd></div>
           <div><dt>Destination</dt><dd>{humanize(refund.destination)}</dd></div>
           <div><dt>Failed because</dt><dd>{refund.failureReason ?? "No failure detail was recorded."}</dd></div>
         </dl>
         <div className={styles.modalWarning}>
           <strong>This action is audited</strong>
           <p>
-            The retry reason, admin, prior failure and resulting wallet
-            transaction are permanently recorded against this match.
+            The retry reason, admin, prior failure and processor or wallet
+            result are permanently recorded against this match.
           </p>
         </div>
         <label>
@@ -637,7 +982,7 @@ function RetryResolutionRefundDialog({
             autoFocus
             disabled={saving}
             maxLength={2000}
-            placeholder="Example: Payer account was reconciled and the wallet credit can now be issued."
+            placeholder="Example: The payment processor issue has been resolved and the refund can be retried."
             value={reason}
             onChange={(event) => setReason(event.target.value)}
           />
@@ -661,10 +1006,11 @@ function RetryResolutionRefundDialog({
   );
 }
 
-function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSaved }: {
+function ResolveMatchCaseDialog({ accessToken, caseData, detail, cancellationOnly = false, onClose, onSaved }: {
   accessToken: string;
   caseData: AdminGameResolutionCase;
   detail: AdminGameDetail;
+  cancellationOnly?: boolean;
   onClose: () => void;
   onSaved: (notice: string) => Promise<void>;
 }) {
@@ -751,7 +1097,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
       if (!resolutionType) return;
       setPreviewing(true);
       try {
-        const payload = buildResolutionPayload(
+        const payload = cancellationOnly ? {} : buildResolutionPayload(
           resolutionType,
           homeScore,
           awayScore,
@@ -793,7 +1139,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
     setSaving(true);
     setError(null);
     try {
-      const payload = buildResolutionPayload(
+      const payload = cancellationOnly ? {} : buildResolutionPayload(
         resolutionType,
         homeScore,
         awayScore,
@@ -861,7 +1207,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
               Choose only what the evidence supports. “No data” is not itself a no-show, so no attendance or reliability consequence is assumed.
             </p>
             <div className={styles.outcomeGrid}>
-              {RESOLUTION_OUTCOMES.map((item) => (
+              {RESOLUTION_OUTCOMES.filter(item => !cancellationOnly || ["FIELD_OR_VENUE_CANCELLATION", "ADMINISTRATIVE_VOID"].includes(item.type)).map((item) => (
                 <button
                   aria-pressed={resolutionType === item.type}
                   className={resolutionType === item.type ? styles.selectedOutcome : ""}
@@ -942,7 +1288,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
               />
             ) : null}
 
-            <details
+            {!cancellationOnly ? <details
               className={styles.advancedResolution}
               open={advanced}
               onToggle={(event) => setAdvanced(event.currentTarget.open)}
@@ -1001,7 +1347,7 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
                 Player attendance is selected by name above so the result and
                 rating history cannot be attached to an unknown lineup.
               </p>
-            </details>
+            </details> : <p className={styles.actionHint}>This game has no recorded kickoff. Cancellation returns all paid fees and held deposits to the original payers, with no SR change or new reliability penalty.</p>}
           </>
         ) : null}
 
@@ -1035,8 +1381,8 @@ function ResolveMatchCaseDialog({ accessToken, caseData, detail, onClose, onSave
                 <div className={styles.modalWarning}>
                   <strong>Exact server-calculated preview</strong>
                   <p>
-                    {previewRefundLine(preview, "home", homeLabel)}{" · "}
-                    {previewRefundLine(preview, "away", awayLabel)}
+                    {previewRefundLine(preview, "home", homeLabel, detail.currency)}{" · "}
+                    {previewRefundLine(preview, "away", awayLabel, detail.currency)}
                   </p>
                 </div>
               </>
@@ -1241,7 +1587,7 @@ function AssignRefereeDialog({ accessToken, detail, onClose, onSaved }: {
       <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
         <header><div><span>MATCH OFFICIAL</span><h2>Assign referee</h2></div><button onClick={onClose}>×</button></header>
         <p className={styles.modalIntro}>Choose the official for this game without leaving its operations page. Only active referee and admin accounts appear here.</p>
-        <label>
+        {loading ? <LoadingSkeleton label="Loading available referees" layout="form" /> : <label>
           <span>Assigned official</span>
           <select autoFocus disabled={loading} onChange={(event) => setSelectedId(event.target.value)} value={selectedId}>
             <option value="">No referee assigned</option>
@@ -1251,7 +1597,7 @@ function AssignRefereeDialog({ accessToken, detail, onClose, onSaved }: {
               </option>
             ))}
           </select>
-        </label>
+        </label>}
         {error ? <p className={styles.modalError}>{error}</p> : null}
         <footer><button className={styles.cancelButton} disabled={saving} onClick={onClose}>Close</button><button className={styles.primaryButton} disabled={loading || saving || selectedId === (detail.assignedReferee?.profileId ?? "")} onClick={() => void save()}>{saving ? "Saving…" : "Save assignment"}</button></footer>
       </section>
@@ -1365,7 +1711,7 @@ function AddReserveDialog({ accessToken, detail, onClose, onSaved }: {
         <p className={styles.modalIntro}>Search every player on Field. Confirmed participants are excluded because the reserve must remain outside the official roster.</p>
         <label className={styles.search}><span>Search players</span><input autoFocus placeholder="Name or username" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
         <div className={styles.candidates}>
-          {loading ? <p>Searching players…</p> : candidates.length === 0 ? <p>No matching players found.</p> : candidates.map((candidate) => (
+          {loading ? <LoadingSkeleton label="Searching players" layout="rows" /> : candidates.length === 0 ? <p>No matching players found.</p> : candidates.map((candidate) => (
             <button
               className={selected?.profileId === candidate.profileId ? styles.selectedCandidate : ""}
               disabled={!candidate.eligible}
@@ -1374,7 +1720,7 @@ function AddReserveDialog({ accessToken, detail, onClose, onSaved }: {
               type="button"
             >
               <Avatar name={candidate.displayName} url={candidate.avatarUrl} />
-              <span><strong>{candidate.displayName}</strong><small>{candidate.username ? `@${candidate.username.replace(/^@/, "")} · ` : ""}{candidate.skillRating} SR</small></span>
+              <span><strong>{candidate.displayName}</strong><small>{candidate.username ? `@${candidate.username.replace(/^@/, "")} · ` : ""}Outfield {candidate.outfieldRating} SR · Keeper {candidate.keeperRating} SR</small></span>
               <em>{candidate.unavailableReason ?? (selected?.profileId === candidate.profileId ? "Selected" : "Choose")}</em>
             </button>
           ))}
@@ -1514,7 +1860,7 @@ function CancelGameDialog({ accessToken, detail, onClose, onSaved }: {
     <div className={styles.modalBackdrop} role="presentation">
       <section aria-modal="true" className={`${styles.modal} ${styles.smallModal}`} role="dialog">
         <header><div><span>ADMIN CANCELLATION</span><h2>Cancel this game?</h2></div><button onClick={onClose}>×</button></header>
-        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers through Field Wallet.</p></div>
+        <div className={styles.refundNotice}><strong>100% refund</strong><p>All paid match fees and held reliability deposits are returned to their original payers. Card and digital wallet payments are refunded to the original payment method; historical wallet payments keep their recorded destination.</p></div>
         <label><span>Cancellation category</span><select value={reasonCode} onChange={(event) => setReasonCode(event.target.value)}>{CANCELLATION_REASONS.map((item) => <option key={item} value={item}>{humanize(item)}</option>)}</select></label>
         <label><span>Reason</span><textarea maxLength={1000} placeholder="Why is Field cancelling this game?" value={reason} onChange={(event) => setReason(event.target.value)} /></label>
         <label><span>Type CANCEL to confirm</span><input value={confirmation} onChange={(event) => setConfirmation(event.target.value)} /></label>
@@ -1640,7 +1986,7 @@ function Avatar({ name, url }: { name: string; url: string | null }) {
 }
 
 function GameDetailSkeleton() {
-  return <main className={styles.skeleton}><header /><section /><div><i /><i /><i /><i /></div></main>;
+  return <main className={styles.skeleton} role="status" aria-label="Loading game overview"><header aria-hidden="true" /><section aria-hidden="true" /><div aria-hidden="true"><i /><i /><i /><i /></div></main>;
 }
 
 function canManageReserves(status: string) { return ["OPEN", "FULL", "SCHEDULED"].includes(status); }
@@ -1652,7 +1998,9 @@ function confirmedCount(detail: AdminGameDetail) {
 }
 
 function capacityLabel(detail: AdminGameDetail) {
-  return detail.participants.matchKind === "SOLO" ? `${detail.participants.capacity} game places` : "Confirmed clan roster";
+  if (detail.participants.matchKind !== "SOLO") return "Confirmed clan roster";
+  const rules = soloGameReadiness(detail.fixture, detail.participants.counts.registered);
+  return `${rules.minimumPlayers} minimum · ${detail.participants.capacity} maximum`;
 }
 
 function score(fixture: RefereeFixture) {
@@ -2065,6 +2413,7 @@ function previewRefundLine(
   preview: AdminResolutionPreview,
   side: "home" | "away",
   label: string,
+  currency: AdminGameCurrency,
 ) {
   const acceptedSides = side === "home"
     ? new Set(["HOME", "WHITE"])
@@ -2081,7 +2430,7 @@ function previewRefundLine(
   const statuses = [...new Set(
     refunds.map((refund) => refund.status?.toUpperCase()).filter(Boolean),
   )];
-  return `${label}: ${formatBhd(targetFils)} total · ${
+  return `${label}: ${formatGameMoney(targetFils, currency)} total · ${
     statuses.length ? statuses.map((status) => humanize(status!)).join(", ") : "Calculated"
   }`;
 }
@@ -2112,13 +2461,6 @@ function nestedNumber(
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
-}
-
-function formatBhd(fils: number) {
-  return `${(fils / 1000).toLocaleString("en-BH", {
-    minimumFractionDigits: 3,
-    maximumFractionDigits: 3,
-  })} BHD`;
 }
 
 const REPORT_CATEGORIES = [

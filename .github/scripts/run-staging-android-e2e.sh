@@ -10,31 +10,36 @@ player_journey_target="integration_test/staging_player_journey_test.dart"
 # Gradle and Kotlin daemons resident while the app journey is running.
 export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.daemon=false"
 
-required_variables=(
-  E2E_ADMIN_PHONE
-  E2E_BOOTSTRAP_PHONE
-  E2E_CANCELLATION_GAME_ID
-  E2E_DEV_OTP_CODE
-  E2E_MAIN_PHONE
-  E2E_MAIN_PROFILE_ID
-  E2E_MATCH_GAME_ID
-  E2E_ONBOARDING_PHONE
-  E2E_ONBOARDING_PROFILE_ID
-  E2E_PARTY_TARGET_PHONE
-  E2E_PARTY_TARGET_PROFILE_ID
-  E2E_REPORT_DETAILS
-  E2E_RUN_ID
-  E2E_SUPPORT_DETAILS
-  E2E_TEST_PASSWORD
-  GITHUB_WORKSPACE
-  SUPABASE_PUBLISHABLE_KEY
-  SUPABASE_URL
-)
+required_variables=(GITHUB_WORKSPACE)
 
-if [[ "$mode" == "run" ]]; then
-  required_variables+=(ANDROID_SERIAL)
-elif [[ "$mode" != "build-only" ]]; then
-  echo "::error::Usage: $0 [build-only|run]"
+if [[ "$mode" == "run-prebuilt" ]]; then
+  required_variables+=(ANDROID_SERIAL E2E_APK_PATH)
+elif [[ "$mode" == "run" || "$mode" == "build-only" ]]; then
+  required_variables+=(
+    E2E_ADMIN_PHONE
+    E2E_BOOTSTRAP_PHONE
+    E2E_CANCELLATION_GAME_ID
+    E2E_DEV_OTP_CODE
+    E2E_MAIN_PHONE
+    E2E_MAIN_PROFILE_ID
+    E2E_MATCH_GAME_ID
+    E2E_ONBOARDING_PHONE
+    E2E_ONBOARDING_PROFILE_ID
+    E2E_PARTY_TARGET_PHONE
+    E2E_PARTY_TARGET_PROFILE_ID
+    E2E_REPORT_DETAILS
+    E2E_RUN_ID
+    E2E_SUPPORT_DETAILS
+    E2E_TEST_PASSWORD
+    SUPABASE_PUBLISHABLE_KEY
+    SUPABASE_URL
+  )
+
+  if [[ "$mode" == "run" ]]; then
+    required_variables+=(ANDROID_SERIAL)
+  fi
+else
+  echo "::error::Usage: $0 [build-only|run|run-prebuilt]"
   exit 2
 fi
 
@@ -44,6 +49,18 @@ for variable_name in "${required_variables[@]}"; do
     exit 1
   fi
 done
+
+if [[ "$mode" == "run-prebuilt" ]]; then
+  if [[ ! -f "$E2E_APK_PATH" || ! -s "$E2E_APK_PATH" ]]; then
+    echo "::error::E2E_APK_PATH must point to an existing, non-empty APK."
+    exit 1
+  fi
+  # Validation runs before changing directories or contacting the emulator.
+  # Keep a caller-provided relative APK path valid after entering mobile/.
+  if [[ "$E2E_APK_PATH" != /* ]]; then
+    E2E_APK_PATH="$PWD/$E2E_APK_PATH"
+  fi
+fi
 
 artifact_dir="$GITHUB_WORKSPACE/mobile/build/e2e-artifacts"
 mkdir -p "$artifact_dir"
@@ -85,46 +102,52 @@ wait_for_android_online() {
   return 1
 }
 
-common_flutter_configuration_args=(
-  --flavor staging
-  --dart-define=APP_ENV=staging
-  --dart-define=SUPABASE_URL="$SUPABASE_URL"
-  --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
-  --dart-define=DEV=true
-  --dart-define=PROFILE_SWITCHER_ENABLED=true
-  --dart-define=FIELD_E2E_PAYMENT_BYPASS=true
-  --dart-define=E2E_MAIN_PHONE="$E2E_MAIN_PHONE"
-  --dart-define=E2E_MAIN_PROFILE_ID="$E2E_MAIN_PROFILE_ID"
-  --dart-define=E2E_PARTY_TARGET_PHONE="$E2E_PARTY_TARGET_PHONE"
-  --dart-define=E2E_PARTY_TARGET_PROFILE_ID="$E2E_PARTY_TARGET_PROFILE_ID"
-  --dart-define=E2E_ADMIN_PHONE="$E2E_ADMIN_PHONE"
-  --dart-define=E2E_ONBOARDING_PHONE="$E2E_ONBOARDING_PHONE"
-  --dart-define=E2E_ONBOARDING_PROFILE_ID="$E2E_ONBOARDING_PROFILE_ID"
-  --dart-define=E2E_TEST_PASSWORD="$E2E_TEST_PASSWORD"
-  --dart-define=E2E_RUN_ID="$E2E_RUN_ID"
-  --dart-define=E2E_MATCH_GAME_ID="$E2E_MATCH_GAME_ID"
-  --dart-define=E2E_CANCELLATION_GAME_ID="$E2E_CANCELLATION_GAME_ID"
-  --dart-define=E2E_REPORT_DETAILS="$E2E_REPORT_DETAILS"
-  --dart-define=E2E_SUPPORT_DETAILS="$E2E_SUPPORT_DETAILS"
-  --dart-define=E2E_BOOTSTRAP_PHONE="$E2E_BOOTSTRAP_PHONE"
-  --dart-define=E2E_DEV_OTP_CODE="$E2E_DEV_OTP_CODE"
-)
+common_flutter_args=()
+if [[ "$mode" != "run-prebuilt" ]]; then
+  # Every define is already embedded in a prebuilt APK. That mode intentionally
+  # does not require or forward fixture credentials from the emulator job.
+  common_flutter_configuration_args=(
+    --flavor staging
+    --dart-define=APP_ENV=staging
+    --dart-define=SUPABASE_URL="$SUPABASE_URL"
+    --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
+    --dart-define=DEV=true
+    --dart-define=PROFILE_SWITCHER_ENABLED=true
+    --dart-define=EMAIL_DELIVERY_ENABLED=true
+    --dart-define=FIELD_E2E_PAYMENT_BYPASS=true
+    --dart-define=E2E_MAIN_PHONE="$E2E_MAIN_PHONE"
+    --dart-define=E2E_MAIN_PROFILE_ID="$E2E_MAIN_PROFILE_ID"
+    --dart-define=E2E_PARTY_TARGET_PHONE="$E2E_PARTY_TARGET_PHONE"
+    --dart-define=E2E_PARTY_TARGET_PROFILE_ID="$E2E_PARTY_TARGET_PROFILE_ID"
+    --dart-define=E2E_ADMIN_PHONE="$E2E_ADMIN_PHONE"
+    --dart-define=E2E_ONBOARDING_PHONE="$E2E_ONBOARDING_PHONE"
+    --dart-define=E2E_ONBOARDING_PROFILE_ID="$E2E_ONBOARDING_PROFILE_ID"
+    --dart-define=E2E_TEST_PASSWORD="$E2E_TEST_PASSWORD"
+    --dart-define=E2E_RUN_ID="$E2E_RUN_ID"
+    --dart-define=E2E_MATCH_GAME_ID="$E2E_MATCH_GAME_ID"
+    --dart-define=E2E_CANCELLATION_GAME_ID="$E2E_CANCELLATION_GAME_ID"
+    --dart-define=E2E_REPORT_DETAILS="$E2E_REPORT_DETAILS"
+    --dart-define=E2E_SUPPORT_DETAILS="$E2E_SUPPORT_DETAILS"
+    --dart-define=E2E_BOOTSTRAP_PHONE="$E2E_BOOTSTRAP_PHONE"
+    --dart-define=E2E_DEV_OTP_CODE="$E2E_DEV_OTP_CODE"
+  )
 
-if [[ "$mode" == "build-only" ]]; then
-  echo "::notice::Prebuilding $player_journey_target before starting the Android emulator."
-  cd "$GITHUB_WORKSPACE/mobile" || exit 1
-  flutter build apk \
-    --debug \
-    --target "$player_journey_target" \
+  if [[ "$mode" == "build-only" ]]; then
+    echo "::notice::Prebuilding $player_journey_target before starting the Android emulator."
+    cd "$GITHUB_WORKSPACE/mobile" || exit 1
+    flutter build apk \
+      --debug \
+      --target "$player_journey_target" \
+      "${common_flutter_configuration_args[@]}"
+    exit $?
+  fi
+
+  common_flutter_args=(
+    -d "$ANDROID_SERIAL"
+    --reporter expanded
     "${common_flutter_configuration_args[@]}"
-  exit $?
+  )
 fi
-
-common_flutter_args=(
-  -d "$ANDROID_SERIAL"
-  --reporter expanded
-  "${common_flutter_configuration_args[@]}"
-)
 
 capture_android_diagnostics() {
   local label="$1"
@@ -185,6 +208,23 @@ run_flutter_integration_test() {
   local target="$3"
   local package_name="com.field.field.staging"
   local test_status
+  local flutter_command
+
+  if [[ "$mode" == "run-prebuilt" ]]; then
+    # flutter test has no prebuilt-binary option. The integration_test driver
+    # runs on the host and obtains results from the test entrypoint in this APK.
+    flutter_command=(
+      drive
+      --debug
+      --target "$target"
+      --driver test_driver/integration_test.dart
+      --flavor staging
+      -d "$ANDROID_SERIAL"
+      --use-application-binary "$E2E_APK_PATH"
+    )
+  else
+    flutter_command=(test "$target" "${common_flutter_args[@]}")
+  fi
 
   if ! wait_for_android_online "$target"; then
     capture_android_diagnostics "$label"
@@ -200,7 +240,7 @@ run_flutter_integration_test() {
       --signal=INT \
       --kill-after=30s \
       "$watchdog" \
-      flutter test "$target" "${common_flutter_args[@]}"
+      flutter "${flutter_command[@]}"
   ) 2>&1 | tee "$artifact_dir/$label-flutter-integration.log"
   test_status="${PIPESTATUS[0]}"
 

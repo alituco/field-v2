@@ -50,7 +50,7 @@ export default function AdminSubjectDetailPage() {
   }, []);
   useEffect(() => { if (token) void load(); else if (sessionChecked) setLoading(false); }, [load, sessionChecked, token]);
 
-  if (!sessionChecked || loading) return <main className={styles.loading}><i /><i /><i /></main>;
+  if (!sessionChecked || loading) return <main className={styles.loading} role="status" aria-label="Loading account history"><i aria-hidden="true" /><i aria-hidden="true" /><i aria-hidden="true" /></main>;
   if (!token || !detail) return <State title={!token ? "Sign in required" : "Record unavailable"} detail={error ?? "This record could not be found."} />;
 
   const activeStrikes = detail.incidents.reduce((total, incident) => total + (incident.expiresAt && Date.parse(incident.expiresAt) <= Date.now() ? 0 : incident.strikeDelta), 0);
@@ -107,8 +107,8 @@ export default function AdminSubjectDetailPage() {
           )}
 
           {detail.subjectType === "PLAYER" ? (
-            <Section title="Player SR ledger" count={detail.ratingEvents.length} description="Every applied rating update, in reverse chronological order.">
-              {detail.ratingEvents.length ? <div className={styles.ledger}>{detail.ratingEvents.map((event) => <article key={event.id}><div><strong>{humanize(event.sourceType)} · {humanize(event.result)}</strong><small>{dateText(event.createdAt)} · {event.sourceId.slice(0, 8)}</small></div><span>{event.before} → {event.after}</span><b className={event.change >= 0 ? styles.positive : styles.negative}>{signed(event.change)}</b></article>)}</div> : <Empty text="No rating changes recorded." />}
+            <Section title="Player SR ledger" count={detail.ratingEvents.length} description="Independent Keeper and Outfield updates. Historical pre-reset entries stay labelled Legacy.">
+              {detail.ratingEvents.length ? <div className={styles.ledger}>{detail.ratingEvents.map((event) => <article key={event.id}><div><strong>{event.ratingTrack === "GOALKEEPER" ? "Keeper" : event.ratingTrack === "OUTFIELD" ? "Outfield" : "Legacy"} · {humanize(event.sourceType)} · {humanize(event.result)}</strong><small>{dateText(event.createdAt)} · {event.sourceId.slice(0, 8)}</small></div><span>{event.before} → {event.after}</span><b className={event.change >= 0 ? styles.positive : styles.negative}>{signed(event.change)}</b></article>)}</div> : <Empty text="No rating changes recorded." />}
             </Section>
           ) : null}
         </div>

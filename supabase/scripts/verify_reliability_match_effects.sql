@@ -73,6 +73,18 @@ begin
   select pg_get_functiondef(
     'public.apply_open_queue_reliability_rating_adjustments(uuid)'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.apply_open_queue_reliability_rating_adjustments_before_season_zero(uuid)') is not null then
+    if position('public.apply_open_queue_reliability_rating_adjustments_before_season_zero(game_id_to_apply)' in function_text)=0
+      or position('fieldrush_rating_private.apply_season_zero_financial_effects(game_id_to_apply)' in function_text)=0
+      or exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r,'public.apply_open_queue_reliability_rating_adjustments_before_season_zero(uuid)','EXECUTE')) then
+      raise exception 'Policy dispatch bypasses legacy reliability safeguards or exposes the internal writer.';
+    end if;
+    function_text:=function_text||pg_get_functiondef('public.apply_open_queue_reliability_rating_adjustments_before_season_zero(uuid)'::regprocedure);
+    if position('settle_verified_early_injury_refunds' in pg_get_functiondef('fieldrush_rating_private.apply_season_zero_financial_effects(uuid)'::regprocedure))=0 then
+      raise exception 'New-policy settlement lost the existing financial injury safeguards.';
+    end if;
+  end if;
   if position('period.started_match_second between 0 and 30' in function_text) = 0
     or position('coalesce(period.ended_match_second, match_seconds)' in function_text) = 0
     or position('base_amount_fils::bigint * injury_refund_bps' in function_text) = 0
@@ -122,6 +134,15 @@ begin
 
   select pg_get_functiondef(
     'public.cancel_clan_fixture_booking(uuid,text)'::regprocedure
+  ) into function_text;
+  if position('cancel_clan_fixture_booking_policy' in function_text) = 0
+    or has_function_privilege('authenticated',
+      'public.cancel_clan_fixture_booking_policy(uuid,text)', 'EXECUTE')
+  then
+    raise exception 'Clan refund wrapper bypasses its protected cancellation policy.';
+  end if;
+  select pg_get_functiondef(
+    'public.cancel_clan_fixture_booking_policy(uuid,text)'::regprocedure
   ) into function_text;
   if position('set played = false' in function_text) = 0
     or position('reliability_forfeit_without_play' in function_text) = 0
@@ -243,6 +264,9 @@ begin
   select pg_get_functiondef(
     'public.apply_open_queue_reliability_rating_adjustments(uuid)'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.apply_open_queue_reliability_rating_adjustments_before_season_zero(uuid)') is not null then
+    function_text:=function_text||pg_get_functiondef('public.apply_open_queue_reliability_rating_adjustments_before_season_zero(uuid)'::regprocedure);
+  end if;
   if position('settle_verified_early_injury_refunds' in function_text) = 0
     or position('''ON_TIME'', ''EXCUSED''' in function_text) = 0
   then
@@ -342,6 +366,14 @@ begin
   select pg_get_functiondef(
     'public.apply_late_appeal_sr_correction(uuid,uuid,uuid)'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.apply_late_appeal_sr_correction_before_season_zero(uuid,uuid,uuid)') is not null then
+    if position('public.apply_late_appeal_sr_correction_before_season_zero(actor_admin_id,appeal_id_to_correct,attendance_id_to_correct)' in function_text)=0
+      or exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r,'public.apply_late_appeal_sr_correction_before_season_zero(uuid,uuid,uuid)','EXECUTE')) then
+      raise exception 'Late-appeal policy dispatch bypasses its private audited legacy writer.';
+    end if;
+    function_text:=function_text||pg_get_functiondef('public.apply_late_appeal_sr_correction_before_season_zero(uuid,uuid,uuid)'::regprocedure);
+  end if;
   if position('pre_reliability_change' in function_text) = 0
     or position('neutral_multiplier_bps' in function_text) = 0
     or position('reliability_sr_appeal_adjustments' in function_text) = 0
@@ -372,6 +404,15 @@ begin
   select pg_get_functiondef(
     'public.get_player_rating_history(uuid,integer)'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.get_player_rating_history_before_sr_privacy(uuid,integer)') is not null then
+    if position('get_player_rating_history_before_sr_privacy' in function_text)=0
+      or position('mask_public_rating_payload' in function_text)=0
+      or exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r,'public.get_player_rating_history_before_sr_privacy(uuid,integer)','EXECUTE')) then
+      raise exception 'Player history bypasses its internal privacy boundary.';
+    end if;
+    function_text:=function_text||pg_get_functiondef('public.get_player_rating_history_before_sr_privacy(uuid,integer)'::regprocedure);
+  end if;
   if position('reliability_multiplier_bps' in function_text) = 0
     or position('sr_protection_reason' in function_text) = 0
   then

@@ -8,6 +8,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'small games show minimum reached without claiming a full squad or an automatic kit update',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpenQueueBookingScreen(
+            repository: _FakeOpenQueueRepository(),
+            booking: _booking(minimumPlayers: 2, confirmedCount: 2),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('MINIMUM REACHED'), findsOneWidget);
+      expect(find.text('Everyone is in'), findsNothing);
+      expect(
+        find.text('2 minimum reached. Up to 14 players can book.'),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('kit-assignment-updating')),
+        findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Go back home clears the open queue navigation stack', (
     tester,
   ) async {
@@ -143,7 +173,7 @@ void main() {
       FilledButton,
       'Continue to Secure Checkout',
     );
-    await tester.ensureVisible(checkoutButton);
+    await _bringAboveFloatingNav(tester, checkoutButton);
     await tester.pump();
     await tester.pump();
     await tester.tap(checkoutButton);
@@ -285,6 +315,32 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('private SR does not hide kit or invent a zero team spread', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueBookingScreen(
+          repository: _FakeOpenQueueRepository(),
+          booking: _booking(assigned: true, hideRatings: true),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('WEAR WHITE'), findsOneWidget);
+    expect(find.text('WHITE TEAM'), findsOneWidget);
+    final info = find.text('Teams assigned. Check your team and kit below.');
+    await _bringAboveFloatingNav(tester, info);
+    expect(info, findsOneWidget);
+    expect(find.textContaining('0 SR apart'), findsNothing);
+    expect(find.text('1210 AVG PLAYER RATING'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('confirmed booking renders the server policy kit cutoff', (
     tester,
   ) async {
@@ -316,12 +372,11 @@ void main() {
       find.text('ASSIGNED 1 HOUR 30 MINUTES BEFORE KICKOFF'),
       findsOneWidget,
     );
-    expect(
-      find.textContaining(
-        'Teams and kits are finalized 1 hour 30 minutes before kickoff',
-      ),
-      findsOneWidget,
+    final kitCutoff = find.textContaining(
+      'Teams and kits are finalized 1 hour 30 minutes before kickoff',
     );
+    await _bringAboveFloatingNav(tester, kitCutoff);
+    expect(kitCutoff, findsOneWidget);
     expect(find.text('WEAR WHITE'), findsNothing);
     expect(find.byKey(const ValueKey('kit-instruction')), findsNothing);
     expect(find.byKey(const ValueKey('kit-assignment-updating')), findsNothing);
@@ -730,18 +785,22 @@ void main() {
     await tester.tap(invite);
     await tester.pumpAndSettle();
 
-    expect(find.text('Invite confirmed players'), findsOneWidget);
+    expect(find.text('Invite to your party'), findsOneWidget);
     expect(find.text('Layla Abbas'), findsOneWidget);
     expect(find.textContaining('Midfielder'), findsOneWidget);
-    expect(find.textContaining('IN A PARTY · 2/4'), findsOneWidget);
+    expect(find.textContaining('In a party'), findsOneWidget);
     await tester.tap(
       find.byKey(const ValueKey('invite-party-player-player-layla')),
     );
     await tester.pumpAndSettle();
 
+    expect(repository.sentInvites, 0);
+    await tester.tap(find.byKey(const ValueKey('party-invite-send')));
+    await tester.pumpAndSettle();
     expect(repository.sentInvites, 1);
-    expect(find.text('Sent'), findsOneWidget);
+    expect(find.text('Invite sent to Layla'), findsOneWidget);
     expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(seconds: 3));
   });
 
   testWidgets('cancelling a party uses the themed confirmation', (
@@ -854,10 +913,13 @@ Future<void> _bringAboveFloatingNav(WidgetTester tester, Finder target) async {
 
 OpenQueueBooking _booking({
   bool assigned = false,
+  bool hideRatings = false,
   bool staleAssignment = false,
   bool fullBeforeCutoff = false,
   String assignedTeam = openQueueWhiteTeamId,
   int assignmentLeadMinutes = 180,
+  int? minimumPlayers,
+  int? confirmedCount,
 }) {
   final hasAssignmentMetadata = assigned || staleAssignment;
   final isFull = assigned || fullBeforeCutoff;
@@ -873,18 +935,22 @@ OpenQueueBooking _booking({
     timezone: 'Asia/Bahrain',
     priceFils: 3000,
     ageLabel: 'Ages 16-20',
-    capacity: 12,
-    confirmedCount: isFull ? 12 : 10,
+    capacity: minimumPlayers == null ? 12 : 14,
+    minimumPlayers: minimumPlayers ?? 10,
+    participationRulesVersion: minimumPlayers == null
+        ? 's0-standard-v1'
+        : 's0-configurable-v1',
+    confirmedCount: confirmedCount ?? (isFull ? 12 : 10),
     spots: const {
       OpenQueueRole.goalkeeper: 1,
       OpenQueueRole.defender: 1,
       OpenQueueRole.midfielder: 0,
       OpenQueueRole.attacker: 0,
     },
-    whiteAverageSr: hasAssignmentMetadata ? 1211 : null,
-    blackAverageSr: hasAssignmentMetadata ? 1209 : null,
-    matchAverageSr: hasAssignmentMetadata ? 1210 : null,
-    teamSrSpread: hasAssignmentMetadata ? 2 : null,
+    whiteAverageSr: hasAssignmentMetadata && !hideRatings ? 1211 : null,
+    blackAverageSr: hasAssignmentMetadata && !hideRatings ? 1209 : null,
+    matchAverageSr: hasAssignmentMetadata && !hideRatings ? 1210 : null,
+    teamSrSpread: hasAssignmentMetadata && !hideRatings ? 2 : null,
     teamsAssignedAt: hasAssignmentMetadata ? DateTime.now() : null,
     teamAssignmentAt: startsAt.subtract(
       Duration(minutes: assignmentLeadMinutes),

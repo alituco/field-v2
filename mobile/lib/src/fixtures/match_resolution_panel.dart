@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import 'match_resolution.dart';
@@ -60,12 +63,9 @@ class _MatchResolutionPanelState extends State<MatchResolutionPanel> {
         setState(() => _resolutionCase = refreshed);
         widget.onChanged?.call(refreshed);
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Your dispute was sent. Refund processing will continue.',
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        'Your dispute was sent. Refund processing will continue.',
       );
     } catch (error) {
       if (!mounted) return;
@@ -260,7 +260,7 @@ class _MatchResolutionPanelState extends State<MatchResolutionPanel> {
                 icon: _isSubmitting
                     ? const SizedBox.square(
                         dimension: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
+                        child: FieldLoadingIndicator(),
                       )
                     : const Icon(Icons.flag_outlined, size: 18),
                 label: Text(
@@ -437,10 +437,8 @@ class _DisputeStatus extends StatelessWidget {
 }
 
 Future<String?> showMatchResolutionDisputeSheet(BuildContext context) {
-  return showModalBottomSheet<String>(
+  return showFieldrushModal<String>(
     context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
     builder: (_) => const _MatchResolutionDisputeSheet(),
   );
 }
@@ -469,7 +467,7 @@ class _MatchResolutionDisputeSheetState
     if (reason.length < 10) {
       setState(
         () => _errorText =
-            'Add at least 10 characters so Field can understand the issue.',
+            'Add at least 10 characters so Fieldrush can understand the issue.',
       );
       return;
     }
@@ -478,139 +476,42 @@ class _MatchResolutionDisputeSheetState
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
-    return Padding(
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        key: const ValueKey('match-resolution-dispute-sheet'),
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(26)),
+    return FieldrushModal(
+      key: const ValueKey('match-resolution-dispute-sheet'),
+      eyebrow: 'Question this decision',
+      title: 'Tell us what needs another look.',
+      description:
+          'Be specific about the result, attendance, or refund. Your approved refund will keep processing while Fieldrush reviews this.',
+      content: TextField(
+        key: const ValueKey('match-resolution-dispute-reason'),
+        controller: _controller,
+        autofocus: true,
+        minLines: 3,
+        maxLines: 5,
+        maxLength: 1000,
+        textCapitalization: TextCapitalization.sentences,
+        decoration: InputDecoration(
+          hintText:
+              'Example: I checked in before kickoff, but I was marked as absent.',
+          errorText: _errorText,
         ),
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Align(
-                child: Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: fieldGray300,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'QUESTION THIS DECISION',
-                style: TextStyle(
-                  color: fieldEmerald600,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.1,
-                ),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Tell us what needs another look.',
-                style: TextStyle(
-                  color: fieldGray900,
-                  fontSize: 20,
-                  height: 1.15,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'Be specific about the result, attendance, or refund. Your approved refund will keep processing while Field reviews this.',
-                style: TextStyle(
-                  color: fieldGray600,
-                  fontSize: 12,
-                  height: 1.45,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                key: const ValueKey('match-resolution-dispute-reason'),
-                controller: _controller,
-                autofocus: true,
-                minLines: 3,
-                maxLines: 5,
-                maxLength: 1000,
-                textCapitalization: TextCapitalization.sentences,
-                decoration: InputDecoration(
-                  hintText:
-                      'Example: I checked in before kickoff, but I was marked as absent.',
-                  errorText: _errorText,
-                  filled: true,
-                  fillColor: const Color(0xFFF9FAFB),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: fieldGray200),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: fieldGray200),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(
-                      color: fieldEmerald600,
-                      width: 1.5,
-                    ),
-                  ),
-                ),
-                onChanged: (_) {
-                  if (_errorText != null) setState(() => _errorText = null);
-                },
-              ),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: TextButton.styleFrom(
-                        foregroundColor: fieldGray600,
-                        minimumSize: const Size.fromHeight(48),
-                      ),
-                      child: const Text(
-                        'Not now',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    flex: 2,
-                    child: FilledButton(
-                      key: const ValueKey('submit-match-resolution-dispute'),
-                      onPressed: _submit,
-                      style: FilledButton.styleFrom(
-                        backgroundColor: fieldGray900,
-                        foregroundColor: Colors.white,
-                        minimumSize: const Size.fromHeight(48),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                      ),
-                      child: const Text(
-                        'Send to Field',
-                        style: TextStyle(fontWeight: FontWeight.w900),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+        onChanged: (_) {
+          if (_errorText != null) setState(() => _errorText = null);
+        },
       ),
+      actions: [
+        FilledButton(
+          key: const ValueKey('submit-match-resolution-dispute'),
+          onPressed: _submit,
+          style: FieldrushModal.primaryButtonStyle(),
+          child: const Text('Send to Fieldrush'),
+        ),
+        OutlinedButton(
+          onPressed: () => Navigator.of(context).pop(),
+          style: FieldrushModal.secondaryButtonStyle(),
+          child: const Text('Not now'),
+        ),
+      ],
     );
   }
 }

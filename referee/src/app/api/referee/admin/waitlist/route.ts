@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
         error:
           error instanceof Error
             ? error.message
-            : "Could not load the Season Zero waitlist.",
+            : "Could not load interest signups.",
       },
       { status: 500 },
     );

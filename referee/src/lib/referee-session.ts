@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { createSupabaseAdmin } from "./supabase-admin";
+import { isStaffAuthIdentity, normalizeStaffEmail } from "./staff-identities";
 
 export type RefereeProfile = {
   profileId: string;
   displayName: string;
   phone: string;
+  email: string;
   role: "admin" | "referee";
   isActive: boolean;
 };
@@ -37,20 +39,26 @@ export async function requireReferee(
     );
   }
 
+  if (!isStaffAuthIdentity(userData.user, true)) {
+    return NextResponse.json({ error: "Sign in using your independent staff email account." }, { status: 403 });
+  }
+  const email = normalizeStaffEmail(userData.user.email);
+
   const { data: profile, error: profileError } = await db
     .from("referee_profiles")
-    .select("profile_id,display_name,phone,role,is_active")
-    .eq("profile_id", userData.user.id)
+    .select("profile_id,auth_user_id,email,display_name,phone,role,is_active")
+    .eq("auth_user_id", userData.user.id)
     .maybeSingle();
 
   if (profileError) {
     return NextResponse.json(
-      { error: `Could not load referee profile: ${profileError.message}` },
+      { error: "Staff sign-in is temporarily unavailable. Try again shortly." },
       { status: 500 },
     );
   }
 
-  if (!profile || profile.is_active !== true) {
+  if (!profile || profile.is_active !== true || profile.auth_user_id !== userData.user.id || profile.email !== email ||
+    (profile.role !== "admin" && profile.role !== "referee")) {
     return NextResponse.json(
       { error: "This account is not an active referee." },
       { status: 403 },
@@ -62,7 +70,8 @@ export async function requireReferee(
     referee: {
       profileId: String(profile.profile_id),
       displayName: String(profile.display_name),
-      phone: String(profile.phone),
+      phone: typeof profile.phone === "string" ? profile.phone : "",
+      email,
       role: String(profile.role) === "admin" ? "admin" : "referee",
       isActive: true,
     },

@@ -6,6 +6,134 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('new 14-player games offer only Keeper, Defender, and Attacker', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: OpenQueueScreen(
+          repository: _FakeOpenQueueRepository([_fieldrushGame()]),
+          initialMainRole: OpenQueueRole.attacker,
+          initialBackupRoles: const {
+            OpenQueueRole.midfielder,
+            OpenQueueRole.defender,
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('open-queue-main-role-mid')),
+      findsNothing,
+    );
+    expect(find.text('MID'), findsNothing);
+    expect(find.textContaining('Midfielder'), findsNothing);
+    for (final role in ['gk', 'def', 'att']) {
+      expect(
+        find.byKey(ValueKey('open-queue-main-role-$role')),
+        findsOneWidget,
+      );
+    }
+    await tester.drag(find.byType(ListView), const Offset(0, -450));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Anywhere'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('open-queue-see-matching-games')),
+    );
+    await tester.pumpAndSettle();
+    final screen = tester.widget<OpenQueueGamesScreen>(
+      find.byType(OpenQueueGamesScreen),
+    );
+    expect(screen.mainRole, OpenQueueRole.attacker);
+    expect(screen.backupRoles, {
+      OpenQueueRole.defender,
+      OpenQueueRole.goalkeeper,
+    });
+  });
+
+  testWidgets(
+    'unsupported initial main role is cleared for new or empty feeds',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      for (final games in <List<OpenQueueGame>>[
+        [_fieldrushGame()],
+        [],
+      ]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            key: UniqueKey(),
+            home: OpenQueueScreen(
+              repository: _FakeOpenQueueRepository(games),
+              initialMainRole: OpenQueueRole.midfielder,
+              initialBackupRoles: const {OpenQueueRole.midfielder},
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('MID'), findsNothing);
+        expect(find.textContaining('Midfielder'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('open-queue-see-matching-games')),
+          findsNothing,
+        );
+        expect(find.text('Tap your main position'), findsOneWidget);
+        for (final role in ['gk', 'def', 'att']) {
+          expect(
+            find.byKey(ValueKey('open-queue-main-role-$role')),
+            findsOneWidget,
+          );
+        }
+      }
+    },
+  );
+
+  testWidgets(
+    'legacy 12-player games preserve midfield and initial selections',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(390, 844));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: OpenQueueScreen(
+            repository: _FakeOpenQueueRepository([
+              _fieldrushGame(),
+              ..._games(),
+            ]),
+            initialMainRole: OpenQueueRole.midfielder,
+            initialBackupRoles: const {
+              OpenQueueRole.midfielder,
+              OpenQueueRole.defender,
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('open-queue-main-role-mid')),
+        findsOneWidget,
+      );
+      expect(
+        find.text('MID'),
+        findsNothing,
+      ); // both pitch midfield nodes are selected.
+      expect(find.text('MAIN'), findsNWidgets(2));
+      await tester.tap(
+        find.byKey(const ValueKey('open-queue-see-matching-games')),
+      );
+      await tester.pumpAndSettle();
+      final screen = tester.widget<OpenQueueGamesScreen>(
+        find.byType(OpenQueueGamesScreen),
+      );
+      expect(screen.mainRole, OpenQueueRole.midfielder);
+      expect(screen.backupRoles, {OpenQueueRole.defender});
+    },
+  );
+
   testWidgets('role selection follows the Concept formation and role order', (
     tester,
   ) async {
@@ -42,11 +170,10 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Anywhere'), findsOneWidget);
     expect(find.text('See matching games'), findsOneWidget);
-    expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Fixtures'), findsOneWidget);
-    expect(find.text('Clans'), findsOneWidget);
-    expect(find.text('Ranks'), findsOneWidget);
-    expect(find.text('Profile'), findsOneWidget);
+    for (final label in ['Home', 'Fixtures', 'Clans', 'Ranks', 'You']) {
+      expect(find.text(label), findsNothing);
+      expect(find.bySemanticsLabel(label), findsOneWidget);
+    }
   });
 
   testWidgets('games screen separates the main role from faster backup games', (
@@ -74,12 +201,22 @@ void main() {
     expect(find.text('Next Week Arena'), findsOneWidget);
     expect(find.text('BEST MATCHES FOR YOU'), findsOneWidget);
     expect(find.text('MORE GAMES YOU CAN JOIN'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Using your backup positions'),
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Using your backup positions'), findsOneWidget);
+    await tester.scrollUntilVisible(
+      find.text('Join as Defender').first,
+      240,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Join as Defender'), findsWidgets);
     expect(find.textContaining('waitlist', findRichText: true), findsNothing);
   });
 
-  testWidgets('one existing booking leaves a clear second-game slot', (
+  testWidgets('one existing booking replaces the wizard with that game', (
     tester,
   ) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
@@ -96,14 +233,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('open-queue-one-of-two-booked')),
-      findsOneWidget,
-    );
-    expect(find.text('1 OF 2 GAMES BOOKED'), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-queue-game-limit')), findsOneWidget);
+    expect(find.text('ONE GAME AT A TIME'), findsOneWidget);
     expect(find.textContaining('One slot left'), findsNothing);
-    expect(find.textContaining(booking.game.prominentDateLabel), findsNothing);
-    expect(find.text('WHERE DO YOU PLAY?'), findsOneWidget);
+    expect(find.text('You’re already in a game'), findsOneWidget);
+    expect(find.text('WHERE DO YOU PLAY?'), findsNothing);
   });
 
   testWidgets('two existing bookings replace the wizard with both games', (
@@ -131,12 +265,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.byKey(const ValueKey('open-queue-two-game-limit')),
-      findsOneWidget,
-    );
-    expect(find.text('2 / 2 SOLO GAME LIMIT'), findsOneWidget);
-    expect(find.text('You’re already booked for two games'), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-queue-game-limit')), findsOneWidget);
+    expect(find.text('ONE GAME AT A TIME'), findsOneWidget);
+    expect(find.text('You’re already in a game'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('open-queue-limit-booking-booking-one')),
       findsOneWidget,
@@ -149,7 +280,9 @@ void main() {
     expect(find.text('See matching games'), findsNothing);
   });
 
-  testWidgets('matching games hide the game already booked', (tester) async {
+  testWidgets('matching games block a second booking on another day', (
+    tester,
+  ) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final games = _delayedMainGames();
@@ -171,7 +304,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Next Week Arena'), findsNothing);
-    expect(find.text('Sooner Midfield'), findsWidgets);
+    expect(find.text('Sooner Midfield'), findsNothing);
+    expect(
+      find.textContaining('One upcoming or active game at a time.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Your next attacker option'), findsNothing);
   });
 
@@ -218,6 +355,28 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('Ordinary Arena 3', skipOffstage: false), findsNothing);
+    },
+  );
+}
+
+OpenQueueGame _fieldrushGame() {
+  final startsAt = DateTime.now().add(const Duration(days: 2));
+  return OpenQueueGame(
+    id: 'fieldrush',
+    status: 'OPEN',
+    venue: 'Reach 11 Fields',
+    startsAt: startsAt,
+    endsAt: startsAt.add(const Duration(hours: 1)),
+    timezone: 'America/Phoenix',
+    currency: 'USD',
+    priceFils: 13000,
+    ageLabel: 'All ages',
+    capacity: 14,
+    confirmedCount: 8,
+    spots: const {
+      OpenQueueRole.goalkeeper: 1,
+      OpenQueueRole.defender: 3,
+      OpenQueueRole.attacker: 2,
     },
   );
 }

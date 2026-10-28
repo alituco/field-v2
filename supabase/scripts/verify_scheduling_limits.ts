@@ -1,273 +1,225 @@
 import {
   createClient,
   type SupabaseClient,
-} from "https://esm.sh/@supabase/supabase-js@2.86.0";
+} from "npm:@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
+import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
 
 type ProfileRow = { id: string; phone: string };
-type FixtureSlot = {
-  matchDate: string;
-  timeSlot: "7:00 PM - 8:00 PM";
-};
-type FixtureRow = { id: string; status: string };
 type GameRow = { id: string; starts_at: string };
 type RpcError = { message: string };
-type FixtureAttempt = {
-  slot: FixtureSlot;
-  fixture: FixtureRow | null;
-  error: RpcError | null;
-};
 type BookingAttempt = {
   game: GameRow;
   bookingId: string | null;
   error: RpcError | null;
 };
-
-const CLAN_LIMIT_ERROR =
-  "Your clan can have a maximum of 2 upcoming matches. Finish or cancel one before scheduling another.";
 const SOLO_LIMIT_ERROR =
-  "You can have a maximum of 2 upcoming solo games. Cancel one before booking another.";
-
+  "You can only be registered in one upcoming or active game.";
+const CHECKOUT_LIMIT_ERROR = "Finish or cancel your earlier game checkout";
+const CLAN_PAUSED_ERROR = "Clan games are currently paused.";
 const url = requireEnv("SUPABASE_URL");
-assertSafeDevDataTarget(url, "scheduling-limit verification");
+assert(
+  assertSafeDevDataTarget(url, "scheduling-limit verification").environment ===
+    "local",
+  "Synthetic captured-payment verification is local-only.",
+);
 const publishableKey = requireEnv("SUPABASE_PUBLISHABLE_KEY");
 const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 const password = requireEnv("DEV_SEED_PASSWORD");
 const admin = createClient(url, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
-
 const userIds = new Set<string>();
-const clanIds = new Set<string>();
-const fixtureIds = new Set<string>();
 const gameIds = new Set<string>();
+const intentIds = new Set<string>();
+const slotSeed = 5000 + crypto.getRandomValues(new Uint32Array(1))[0] % 1000;
 
 try {
-  const homeProfiles = await createVerificationRoster("Home");
-  const awayProfiles = await createVerificationRoster("Away");
-  const homeOwner = homeProfiles[0];
-  const awayOwner = awayProfiles[0];
-  const homeClient = await signedInClient(homeOwner.phone);
-
-  const homeClanId = await createClanWithRoster("Home", homeProfiles);
-  const awayClanId = await createClanWithRoster("Away", awayProfiles);
-  const slots = await findAvailableFixtureSlots(5);
-
-  await verifyClanSchedulingLimit({
-    homeOwner,
-    awayOwner,
-    homeClanId,
-    awayClanId,
-    slots,
-  });
-  await verifySoloSchedulingLimit(homeClient, homeOwner);
-
+  const profile = await createVerificationProfile();
+  const client = await signedInClient(profile.phone);
+  await verifyClanCheckoutPaused(client, profile);
+  await verifySoloSchedulingLimit(client, profile);
   console.log(
-    "Scheduling limits verified: clans and solo players stop at 2 upcoming games, concurrent third attempts fail, and terminal games release their slots.",
+    "Scheduling verified locally: clan checkout stays paused at its future USD 80 default; 7v7/USD 13 solo bookings enforce one upcoming/active game, concurrent checkout limits, original-method refunds and released terminal slots.",
   );
 } finally {
   await cleanup();
 }
 
-async function verifyClanSchedulingLimit({
-  homeOwner,
-  awayOwner,
-  homeClanId,
-  awayClanId,
-  slots,
-}: {
-  homeOwner: ProfileRow;
-  awayOwner: ProfileRow;
-  homeClanId: string;
-  awayClanId: string;
-  slots: FixtureSlot[];
-}) {
-  const firstFixture = await createFixture(
-    homeOwner.id,
-    homeClanId,
-    slots[0],
-    "FIRST",
+async function verifyClanCheckoutPaused(
+  client: SupabaseClient,
+  profile: ProfileRow,
+) {
+  const { data: settings, error: settingsError } = await client.rpc(
+    "get_game_payment_settings",
   );
-  await joinFixture(firstFixture.id, awayClanId, awayOwner.id);
-
-  const concurrentAttempts = await Promise.all([
-    attemptCreateFixture(homeOwner.id, homeClanId, slots[1], "RACE-A"),
-    attemptCreateFixture(homeOwner.id, homeClanId, slots[2], "RACE-B"),
-  ]);
-  const concurrentSuccesses = concurrentAttempts.filter((attempt) =>
-    attempt.error === null
-  );
-  const concurrentFailures = concurrentAttempts.filter((attempt) =>
-    attempt.error !== null
-  );
+  if (settingsError) throw settingsError;
   assert(
-    concurrentSuccesses.length === 1,
-    "Exactly one concurrent clan fixture must claim the second upcoming slot.",
+    settings.clan_enabled === false && settings.currency === "USD" &&
+      settings.clan_price_fils === 80000,
+    "Fresh settings must leave clans paused with the future USD 80 team fee.",
   );
-  assert(
-    concurrentFailures.length === 1,
-    "Exactly one concurrent clan fixture must be rejected at the limit.",
-  );
-  assertLimitError(
-    concurrentFailures[0].error,
-    CLAN_LIMIT_ERROR,
-    "Concurrent third clan fixture",
-  );
-
-  const secondFixture = concurrentSuccesses[0].fixture;
-  assert(secondFixture, "The winning clan fixture must be returned.");
-  await joinFixture(secondFixture.id, awayClanId, awayOwner.id);
-
-  const awayThirdAttempt = await attemptCreateFixture(
-    awayOwner.id,
-    awayClanId,
-    slots[3],
-    "AWAY-THIRD",
-  );
-  assertLimitError(
-    awayThirdAttempt.error,
-    CLAN_LIMIT_ERROR,
-    "Clan with two away fixtures",
-  );
-  assert(
-    awayThirdAttempt.fixture === null,
-    "Two away fixtures must consume the clan's full upcoming allowance.",
-  );
-
-  await cancelFixture(firstFixture.id, homeOwner.id);
-
-  const rejectedConcurrentAttempt = concurrentFailures[0];
-  const replacementFixture = await createFixture(
-    homeOwner.id,
-    homeClanId,
-    rejectedConcurrentAttempt.slot,
-    "AFTER-CANCEL",
-  );
-  await joinFixture(replacementFixture.id, awayClanId, awayOwner.id);
-
-  await finalizeFixture(secondFixture.id);
-  await createFixture(
-    homeOwner.id,
-    homeClanId,
-    slots[3],
-    "AFTER-FINAL",
-  );
-
-  const homeUpcomingCount = await activeFixtureCount(homeClanId);
-  const awayUpcomingCount = await activeFixtureCount(awayClanId);
-  assert(
-    homeUpcomingCount === 2,
-    "The home clan must end with exactly two upcoming fixtures.",
-  );
-  assert(
-    awayUpcomingCount === 1,
-    "CANCELLED and FINAL fixtures must no longer count for the away clan.",
-  );
+  const clanId = crypto.randomUUID();
+  const fixtureId = crypto.randomUUID();
+  const matchDate = "2040-01-03";
+  const createArgs = {
+    clan_id_to_use: clanId,
+    match_date_to_use: matchDate,
+    time_slot_to_use: "7:00 PM - 8:00 PM",
+  };
+  for (
+    const [name, args] of [
+      ["preview_create_clan_fixture_charge", createArgs],
+      ["preview_join_clan_fixture_charge", {
+        fixture_id_to_use: fixtureId,
+        clan_id_to_use: clanId,
+      }],
+    ] as const
+  ) {
+    const { error } = await client.rpc(name, args);
+    assertError(error, CLAN_PAUSED_ERROR, name);
+  }
+  for (
+    const [name, args] of [
+      ["create_fixture", {
+        home_clan_id_to_use: clanId,
+        fixture_venue: "Limit verification",
+        fixture_date: matchDate,
+        fixture_time_slot: "7:00 PM - 8:00 PM",
+      }],
+      ["join_fixture", {
+        fixture_id_to_join: fixtureId,
+        away_clan_id_to_use: clanId,
+      }],
+    ] as const
+  ) {
+    const { error } = await admin.rpc(name, args);
+    assertError(error, CLAN_PAUSED_ERROR, name);
+  }
+  const { error } = await admin.from("fixtures").insert({
+    id: fixtureId,
+    home_clan_id: clanId,
+    venue: "Limit verification",
+    day: "TUESDAY",
+    match_date: matchDate,
+    time_slot: "7:00 PM - 8:00 PM",
+    created_by: profile.id,
+  });
+  assertError(error, CLAN_PAUSED_ERROR, "Direct fixture insertion");
 }
 
 async function verifySoloSchedulingLimit(
-  soloClient: SupabaseClient,
-  soloProfile: ProfileRow,
+  client: SupabaseClient,
+  profile: ProfileRow,
 ) {
-  const games = [
-    await createOpenQueueGame(0, "FIRST"),
-    await createOpenQueueGame(1, "RACE-A"),
-    await createOpenQueueGame(2, "RACE-B"),
-    await createOpenQueueGame(3, "AFTER-FINAL"),
-  ];
-
-  const firstBookingId = await bookOpenQueueGame(soloClient, games[0]);
-  const concurrentAttempts = await Promise.all([
-    attemptBookOpenQueueGame(soloClient, games[1]),
-    attemptBookOpenQueueGame(soloClient, games[2]),
+  const games = await Promise.all([0, 1, 2, 3].map(createOpenQueueGame));
+  const attempts = await Promise.all([
+    attemptBookOpenQueueGame(client, games[0]),
+    attemptBookOpenQueueGame(client, games[1]),
   ]);
-  const concurrentSuccesses = concurrentAttempts.filter((attempt) =>
-    attempt.error === null
-  );
-  const concurrentFailures = concurrentAttempts.filter((attempt) =>
-    attempt.error !== null
+  const successes = attempts.filter((attempt) => attempt.error === null);
+  const failures = attempts.filter((attempt) => attempt.error !== null);
+  assert(
+    successes.length === 1 && failures.length === 1,
+    "Exactly one concurrent solo checkout may claim the only upcoming slot.",
   );
   assert(
-    concurrentSuccesses.length === 1,
-    "Exactly one concurrent solo booking must claim the second upcoming slot.",
+    failures[0].error?.message.includes(SOLO_LIMIT_ERROR) === true ||
+      failures[0].error?.message.includes(CHECKOUT_LIMIT_ERROR) === true,
+    `The concurrent second checkout returned the wrong error: ${
+      failures[0].error?.message
+    }`,
   );
+  const firstBooking = successes[0].bookingId;
+  assert(firstBooking, "The winning checkout returned no booking id.");
   assert(
-    concurrentFailures.length === 1,
-    "Exactly one concurrent solo booking must be rejected at the limit.",
+    await activeSoloBookingCount(profile.id) === 1,
+    "Concurrent checkouts must leave exactly one active registration.",
   );
-  assertLimitError(
-    concurrentFailures[0].error,
+  const priorIntentCount = intentIds.size;
+  const secondGame = await attemptBookOpenQueueGame(client, games[2]);
+  assertError(
+    secondGame.error,
     SOLO_LIMIT_ERROR,
-    "Concurrent third solo booking",
+    "Non-overlapping second game",
+  );
+  assert(
+    intentIds.size === priorIntentCount,
+    "The single-game preflight must reject a second day before a payment intent exists.",
   );
 
-  const { data: cancelled, error: cancellationError } = await soloClient.rpc(
+  const { data: cancelled, error } = await client.rpc(
     "cancel_open_queue_booking",
-    { booking_id_to_cancel: firstBookingId },
+    { booking_id_to_cancel: firstBooking },
   );
-  if (cancellationError) throw cancellationError;
+  if (error) throw error;
   assert(
-    cancelled?.status === "CANCELLED",
-    "Cancelling a solo booking must store CANCELLED status.",
+    cancelled.status === "CANCELLED" &&
+      cancelled.refund_destination === "ORIGINAL_PAYMENT_METHOD",
+    "Cancellation must release the slot and return new payment money to its original method.",
+  );
+  const { data: refunds, error: refundsError } = await admin.from(
+    "payment_refunds",
+  ).select("currency,status,provider_status")
+    .eq("intent_id", cancelled.payment_intent_id);
+  if (refundsError) throw refundsError;
+  assert(
+    refunds.length === 1 && refunds[0].currency === "USD" &&
+      refunds[0].status === "SUCCEEDED" &&
+      refunds[0].provider_status === "staging_e2e",
+    "Local synthetic cancellation must record a settled USD original-method refund without external calls.",
+  );
+  const { data: credits, error: creditError } = await admin.from(
+    "field_wallet_transactions",
+  ).select("id").eq("booking_id", firstBooking);
+  if (creditError) throw creditError;
+  assert(
+    credits.length === 0,
+    "A new-payment cancellation must not credit Field Wallet.",
   );
 
-  const rejectedGame = concurrentFailures[0].game;
-  await bookOpenQueueGame(soloClient, rejectedGame);
-
-  const secondGame = concurrentSuccesses[0].game;
-  const { error: finalError } = await admin
-    .from("open_queue_games")
-    .update({
-      status: "CANCELLED",
-      cancellation_code: "ADMIN_DECISION",
-      cancellation_reason:
-        "Scheduling-limit verification terminal-state transition.",
-      cancelled_at: new Date().toISOString(),
-      cancelled_by: soloProfile.id,
-      cancellation_context: { source: "SCHEDULING_LIMIT_VERIFICATION" },
-    })
-    .eq("id", secondGame.id);
-  if (finalError) throw finalError;
-
-  await bookOpenQueueGame(soloClient, games[3]);
-  const scheduledCount = await activeSoloBookingCount(soloProfile.id);
+  await bookOpenQueueGame(client, games[2]);
+  const { error: terminalError } = await admin.from("open_queue_games").update({
+    status: "CANCELLED",
+    cancellation_code: "ADMIN_DECISION",
+    cancellation_reason:
+      "Scheduling-limit verification terminal-state transition.",
+    cancelled_at: new Date().toISOString(),
+    cancelled_by: profile.id,
+    cancellation_context: { source: "SCHEDULING_LIMIT_VERIFICATION" },
+  }).eq("id", games[2].id);
+  if (terminalError) throw terminalError;
+  await bookOpenQueueGame(client, games[3]);
   assert(
-    scheduledCount === 2,
-    "Cancelled bookings and games must not consume solo slots.",
+    await activeSoloBookingCount(profile.id) === 1,
+    "Cancelled bookings and terminal games must release the sole upcoming slot.",
   );
 }
 
-async function createVerificationRoster(label: string) {
-  const profiles: ProfileRow[] = [];
-  for (let index = 1; index <= 7; index += 1) {
-    profiles.push(await createVerificationProfile(`${label} ${index}`));
-  }
-  return profiles;
-}
-
-async function createVerificationProfile(label: string): Promise<ProfileRow> {
-  const digits = String(Math.floor(10_000_000 + Math.random() * 89_999_999));
-  const phone = `+973${digits}`;
+async function createVerificationProfile(): Promise<ProfileRow> {
+  const digits = String(Math.floor(1_000_000 + Math.random() * 8_999_999));
+  const phone = `+1480${digits}`;
   const { data, error } = await admin.auth.admin.createUser({
     phone,
     password,
     phone_confirm: true,
     user_metadata: {
-      display_name: `Limit Verify ${label}`,
+      display_name: "Scheduling Verification",
       date_of_birth: "2000-01-01",
     },
   });
   if (error) throw error;
   userIds.add(data.user.id);
-
-  const { error: profileError } = await admin.from("profiles").upsert({
-    id: data.user.id,
+  await completeLocalFieldrushFixture({
+    url,
+    publishableKey,
     phone,
-    display_name: `Limit Verify ${label}`,
-    date_of_birth: "2000-01-01",
+    password,
+    firstName: "Scheduling",
+    lastName: "Verification",
     username: `limit_verify_${digits}`,
+    dateOfBirth: "2000-01-01",
   });
-  if (profileError) throw profileError;
   return { id: data.user.id, phone };
 }
 
@@ -280,172 +232,28 @@ async function signedInClient(phone: string) {
   return client;
 }
 
-async function createClanWithRoster(
-  label: string,
-  profiles: ProfileRow[],
-) {
-  assert(profiles.length === 7, "Verification clans require seven profiles.");
-  const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 4)
-    .toUpperCase();
-  const { data, error } = await admin.from("clans").insert({
-    name: `Limit ${label} ${suffix}`,
-    tag: `L${suffix}`,
-    created_by: profiles[0].id,
-    region: "bahrain",
-  }).select("id").single();
-  if (error) throw error;
-  clanIds.add(data.id);
-
-  const { error: membersError } = await admin.from("clan_members").insert(
-    profiles.slice(1).map((profile) => ({
-      clan_id: data.id,
-      profile_id: profile.id,
-      role: "member",
-    })),
-  );
-  if (membersError) throw membersError;
-  return data.id as string;
-}
-
-async function findAvailableFixtureSlots(count: number) {
-  const { data, error } = await admin
-    .from("fixtures")
-    .select("match_date,time_slot")
-    .in("status", ["OPEN", "SCHEDULED", "LIVE"])
-    .limit(5000);
-  if (error) throw error;
-  const occupied = new Set(
-    (data ?? []).map((fixture) => `${fixture.match_date}|${fixture.time_slot}`),
-  );
-
-  const slots: FixtureSlot[] = [];
-  const cursor = new Date();
-  cursor.setUTCHours(12, 0, 0, 0);
-  cursor.setUTCDate(cursor.getUTCDate() + 3650);
-  for (
-    let dayOffset = 0;
-    dayOffset < 730 && slots.length < count;
-    dayOffset++
-  ) {
-    const date = new Date(cursor);
-    date.setUTCDate(cursor.getUTCDate() + dayOffset);
-    if (date.getUTCDay() !== 2 && date.getUTCDay() !== 5) continue;
-
-    const matchDate = date.toISOString().slice(0, 10);
-    const timeSlot = "7:00 PM - 8:00 PM" as const;
-    if (!occupied.has(`${matchDate}|${timeSlot}`)) {
-      slots.push({ matchDate, timeSlot });
-    }
-  }
-  assert(slots.length === count, "Could not find enough free fixture slots.");
-  return slots;
-}
-
-async function createFixture(
-  createdBy: string,
-  clanId: string,
-  slot: FixtureSlot,
-  suffix: string,
-) {
-  const attempt = await attemptCreateFixture(createdBy, clanId, slot, suffix);
-  if (attempt.error) throw attempt.error;
-  assert(attempt.fixture, "Fixture creation returned no fixture.");
-  return attempt.fixture;
-}
-
-async function attemptCreateFixture(
-  createdBy: string,
-  clanId: string,
-  slot: FixtureSlot,
-  suffix: string,
-): Promise<FixtureAttempt> {
-  const { data, error } = await admin.from("fixtures").insert({
-    home_clan_id: clanId,
-    venue: `Limit Verify ${suffix}`,
-    day: fixtureDay(slot.matchDate),
-    time_slot: slot.timeSlot,
-    match_date: slot.matchDate,
-    created_by: createdBy,
-    home_paid_by: createdBy,
-    home_paid_at: new Date().toISOString(),
-  }).select("id,status").single();
-  const fixture = data as FixtureRow | null;
-  if (fixture?.id) fixtureIds.add(fixture.id);
-  return { slot, fixture, error };
-}
-
-async function joinFixture(
-  fixtureId: string,
-  clanId: string,
-  paidBy: string,
-) {
-  const { data, error } = await admin.from("fixtures").update({
-    away_clan_id: clanId,
-    status: "SCHEDULED",
-    away_paid_by: paidBy,
-    away_paid_at: new Date().toISOString(),
-  }).eq("id", fixtureId).select("id,status").single();
-  if (error) throw error;
-  assert(
-    data?.status === "SCHEDULED",
-    "Joining a fixture must schedule it.",
-  );
-}
-
-async function cancelFixture(fixtureId: string, cancelledBy: string) {
-  const { data, error } = await admin.from("fixtures").update({
-    status: "CANCELLED",
-    cancellation_code: "ADMIN_CANCELLED",
-    cancellation_reason: "Scheduling limit verification cancellation.",
-    cancelled_at: new Date().toISOString(),
-    cancelled_by: cancelledBy,
-    cancellation_context: { source: "SCHEDULING_LIMIT_VERIFICATION" },
-  }).eq("id", fixtureId).select("status").single();
-  if (error) throw error;
-  assert(data.status === "CANCELLED", "Fixture cancellation must persist.");
-}
-
-async function finalizeFixture(fixtureId: string) {
-  const { data, error } = await admin.from("fixtures").update({
-    status: "FINAL",
-    home_score: 0,
-    away_score: 0,
-    winner_clan_id: null,
-  }).eq("id", fixtureId).select("status").single();
-  if (error) throw error;
-  assert(data.status === "FINAL", "Fixture final status must persist.");
-}
-
-async function activeFixtureCount(clanId: string) {
-  const now = new Date().toISOString();
-  const { data, error } = await admin
-    .from("fixtures")
-    .select("id,match_date,time_slot")
-    .in("status", ["OPEN", "SCHEDULED"])
-    .or(`home_clan_id.eq.${clanId},away_clan_id.eq.${clanId}`);
-  if (error) throw error;
-  return (data ?? []).filter((fixture) =>
-    fixtureStartAt(fixture.match_date, fixture.time_slot) > now
-  ).length;
-}
-
-async function createOpenQueueGame(slotOffset: number, suffix: string) {
-  const startsAt = futureBahrainOpenQueueStart(slotOffset);
+async function createOpenQueueGame(slotOffset: number): Promise<GameRow> {
+  const startsAt = futurePhoenixOpenQueueStart(slotOffset);
   const { data, error } = await admin.from("open_queue_games").insert({
-    venue: `[LIMIT VERIFY ${suffix}] ${crypto.randomUUID().slice(0, 8)}`,
+    format_version: "FIELDRUSH_7V7",
+    currency: "USD",
+    timezone: "America/Phoenix",
+    capacity: 14,
+    goalkeeper_capacity: 2,
+    defender_capacity: 6,
+    midfielder_capacity: 0,
+    attacker_capacity: 6,
+    venue: `[LIMIT VERIFY ${slotOffset}] ${crypto.randomUUID().slice(0, 8)}`,
     starts_at: startsAt.toISOString(),
-    ends_at: new Date(startsAt.getTime() + 60 * 60 * 1000).toISOString(),
-    price_fils: 3000,
+    ends_at: new Date(startsAt.getTime() + 3600_000).toISOString(),
+    price_fils: 13000,
   }).select("id,starts_at").single();
   if (error) throw error;
   gameIds.add(data.id);
-  return data as GameRow;
+  return data;
 }
 
-async function bookOpenQueueGame(
-  client: SupabaseClient,
-  game: GameRow,
-) {
+async function bookOpenQueueGame(client: SupabaseClient, game: GameRow) {
   const attempt = await attemptBookOpenQueueGame(client, game);
   if (attempt.error) throw attempt.error;
   assert(attempt.bookingId, "Solo booking returned no booking id.");
@@ -456,177 +264,141 @@ async function attemptBookOpenQueueGame(
   client: SupabaseClient,
   game: GameRow,
 ): Promise<BookingAttempt> {
-  const { data: authData, error: authError } = await client.auth.getUser();
-  if (authError || !authData.user) {
-    throw authError ?? new Error("Booking verification user is signed out.");
+  const { data: user, error: userError } = await client.auth.getUser();
+  if (userError || !user.user) {
+    throw userError ?? new Error("Verification user is signed out.");
   }
   const { data: quote, error: quoteError } = await client.rpc(
     "preview_open_queue_booking_cost",
-    { game_id_to_book: game.id, role_to_book: "MID" },
+    { game_id_to_book: game.id, role_to_book: "DEF" },
   );
-  if (quoteError) throw quoteError;
-
-  const { data: existingIntent, error: existingIntentError } = await admin
-    .from("tap_payment_intents")
-    .select("tap_charge_id")
-    .eq("profile_id", authData.user.id)
-    .eq("purpose", "SOLO_BOOKING")
-    .eq("status", "CAPTURED")
-    .eq("payload->>game_id", game.id)
-    .eq("payload->>role", "MID")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  if (existingIntentError) throw existingIntentError;
-
-  const intentId = crypto.randomUUID();
-  const compactId = intentId.replaceAll("-", "");
-  const chargeId = existingIntent?.tap_charge_id ??
-    `chg_limit_${compactId}`;
-  if (!existingIntent) {
-    const { error: intentError } = await admin
-      .from("tap_payment_intents")
-      .insert({
-        id: intentId,
-        profile_id: authData.user.id,
-        purpose: "SOLO_BOOKING",
-        status: "CAPTURED",
-        currency: "BHD",
-        amount_fils: Number(quote.total_fils),
-        payload: { game_id: game.id, role: "MID" },
-        quote_snapshot: quote,
-        transaction_reference: `field_limit_${compactId}`,
-        tap_charge_id: chargeId,
-        tap_payment_method: "CARD",
-        tap_status: "CAPTURED",
-        captured_at: new Date().toISOString(),
-      });
-    if (intentError) throw intentError;
-  }
-
-  const { data, error } = await client.rpc("book_open_queue_game", {
-    game_id_to_book: game.id,
-    role_to_book: "MID",
-    payment_method_to_use: "CARD",
-    payment_reference_to_use: chargeId,
+  if (quoteError) return { game, bookingId: null, error: quoteError };
+  assert(
+    quote.currency === "USD" && quote.total_fils === 13000,
+    "Solo quote must remain USD 13.",
+  );
+  const id = crypto.randomUUID();
+  const compact = id.replaceAll("-", "");
+  const { error: insertError } = await admin.from("payment_intents").insert({
+    id,
+    profile_id: user.user.id,
+    purpose: "SOLO_BOOKING",
+    status: "CAPTURED",
+    provider: "STAGING_E2E",
+    currency: quote.currency,
+    amount_fils: quote.total_fils,
+    payload: { game_id: game.id, role: "DEF" },
+    quote_snapshot: quote,
+    transaction_reference: `field_limit_${compact}`,
+    provider_intent_id: `field_e2e_intent_${compact}`,
+    provider_payment_id: `field_e2e_${compact}`,
+    payment_method: "CARD",
+    provider_status: "SUCCEEDED",
+    captured_at: new Date().toISOString(),
   });
-  return { game, bookingId: data as string | null, error };
+  if (insertError) return { game, bookingId: null, error: insertError };
+  intentIds.add(id);
+  const { data, error } = await admin.rpc("finalize_payment_intent", {
+    intent_id_to_finalize: id,
+  });
+  return {
+    game,
+    bookingId: data?.resource_id ?? null,
+    error: error ??
+      (data?.status === "FINALIZED"
+        ? null
+        : { message: data?.failure_reason ?? "Payment finalization failed." }),
+  };
 }
 
 async function activeSoloBookingCount(profileId: string) {
-  const { data: bookings, error: bookingsError } = await admin
-    .from("open_queue_bookings")
-    .select("game_id")
-    .eq("profile_id", profileId)
-    .eq("status", "CONFIRMED");
-  if (bookingsError) throw bookingsError;
-  const bookedGameIds = (bookings ?? []).map((booking) => booking.game_id);
-  if (bookedGameIds.length === 0) return 0;
-
-  const { data: games, error: gamesError } = await admin
-    .from("open_queue_games")
+  const { data: bookings, error } = await admin.from("open_queue_bookings")
+    .select("game_id").eq("profile_id", profileId).eq("status", "CONFIRMED");
+  if (error) throw error;
+  if (!bookings.length) return 0;
+  const { data: games, error: gameError } = await admin.from("open_queue_games")
     .select("id")
-    .in("id", bookedGameIds)
-    .in("status", ["OPEN", "FULL"])
-    .gt("starts_at", new Date().toISOString());
-  if (gamesError) throw gamesError;
-  return games?.length ?? 0;
+    .in("id", bookings.map((booking) => booking.game_id)).in("status", [
+      "OPEN",
+      "FULL",
+    ]).gt("starts_at", new Date().toISOString());
+  if (gameError) throw gameError;
+  return games.length;
 }
 
-function fixtureStartAt(matchDate: string, timeSlot: string) {
-  assert(
-    timeSlot === "7:00 PM - 8:00 PM",
-    "Clan fixtures must use the 7:00 PM - 8:00 PM slot.",
-  );
-  return new Date(`${matchDate}T19:00:00+03:00`).toISOString();
-}
-
-function fixtureDay(matchDate: string) {
-  const weekday = new Date(`${matchDate}T12:00:00Z`).getUTCDay();
-  assert(
-    weekday === 2 || weekday === 5,
-    "Verification fixtures must be on Tuesday or Friday.",
-  );
-  return weekday === 2 ? "TUESDAY" : "FRIDAY";
-}
-
-function futureBahrainOpenQueueStart(slotOffset: number) {
-  assert(
-    Number.isInteger(slotOffset) && slotOffset >= 0,
-    "Open Queue slot offset must be a non-negative integer.",
-  );
-  const nowInBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000);
-  let matchingSlot = 0;
-  for (let daysAhead = 3650; daysAhead < 4020; daysAhead += 1) {
-    const localDate = new Date(Date.UTC(
-      nowInBahrain.getUTCFullYear(),
-      nowInBahrain.getUTCMonth(),
-      nowInBahrain.getUTCDate() + daysAhead,
-      12,
-    ));
-    const weekday = localDate.getUTCDay();
-    if (weekday !== 2 && weekday !== 5) continue;
-    if (matchingSlot !== slotOffset) {
-      matchingSlot += 1;
-      continue;
-    }
-    return new Date(Date.UTC(
-      localDate.getUTCFullYear(),
-      localDate.getUTCMonth(),
-      localDate.getUTCDate(),
-      17,
-      30,
-    ));
+function futurePhoenixOpenQueueStart(slotOffset: number) {
+  const local = new Date(Date.now() - 7 * 3600_000);
+  let found = 0;
+  for (let day = slotSeed; day < slotSeed + 370; day++) {
+    const date = new Date(
+      Date.UTC(
+        local.getUTCFullYear(),
+        local.getUTCMonth(),
+        local.getUTCDate() + day,
+        12,
+      ),
+    );
+    if (date.getUTCDay() !== 2 && date.getUTCDay() !== 5) continue;
+    if (found++ !== slotOffset) continue;
+    return new Date(
+      Date.UTC(
+        date.getUTCFullYear(),
+        date.getUTCMonth(),
+        date.getUTCDate() + 1,
+        3,
+        30,
+      ),
+    );
   }
-  throw new Error("Could not find a future Tuesday/Friday Open Queue slot.");
+  throw new Error("No future Phoenix Tuesday/Friday 20:30 slot found.");
 }
 
 async function cleanup() {
-  if (gameIds.size > 0) {
-    const { error } = await admin.from("open_queue_games").delete().in(
-      "id",
-      [...gameIds],
-    );
-    if (error) console.error("Could not clean up games:", error.message);
+  if (gameIds.size) {
+    const { error } = await admin.from("open_queue_games").delete().in("id", [
+      ...gameIds,
+    ]);
+    if (error) {
+      console.error("Could not clean up verification games:", error.message);
+    }
   }
-  if (fixtureIds.size > 0) {
-    const { error } = await admin.from("fixtures").delete().in(
-      "id",
-      [...fixtureIds],
-    );
-    if (error) console.error("Could not clean up fixtures:", error.message);
+  if (intentIds.size) {
+    for (const table of ["payment_refunds", "payment_intents"]) {
+      const { error } = await admin.from(table).delete().in(
+        table === "payment_refunds" ? "intent_id" : "id",
+        [...intentIds],
+      );
+      if (error) {
+        console.error(
+          "Could not clean up synthetic payment fixtures:",
+          error.message,
+        );
+      }
+    }
   }
-  if (clanIds.size > 0) {
-    const { error } = await admin.from("clans").delete().in(
-      "id",
-      [...clanIds],
-    );
-    if (error) console.error("Could not clean up clans:", error.message);
-  }
-  for (const userId of userIds) {
-    const { error } = await admin.auth.admin.deleteUser(userId);
-    if (error) console.error("Could not clean up user:", error.message);
+  for (const id of userIds) {
+    const { error } = await admin.auth.admin.deleteUser(id);
+    if (error) {
+      console.error("Could not clean up verification user:", error.message);
+    }
   }
 }
 
-function assertLimitError(
+function assertError(
   error: RpcError | null,
-  expectedMessage: string,
+  expected: string,
   context: string,
 ) {
-  assert(error, `${context} must be rejected.`);
   assert(
-    error.message.includes(expectedMessage),
-    `${context} returned the wrong error: ${error.message}`,
+    error && error.message.includes(expected),
+    `${context} returned the wrong error: ${error?.message ?? "no error"}`,
   );
 }
-
 function requireEnv(name: string) {
   const value = Deno.env.get(name)?.trim();
   if (!value) throw new Error(`Missing ${name}.`);
   return value;
 }
-
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }

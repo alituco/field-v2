@@ -1,23 +1,36 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phone_numbers_parser/phone_numbers_parser.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:url_launcher/url_launcher.dart';
 
 import '../core/user_facing_error.dart';
+import '../legal/fieldrush_policy_links.dart';
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_modal.dart';
 import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'fieldrush_account.dart';
 import 'fieldrush_auth_theme.dart';
+import 'fieldrush_auth_platform.dart';
 import 'fieldrush_phone_field.dart';
 import 'fieldrush_recovery_screen.dart';
+import 'fieldrush_skill_assessment_step.dart';
 import 'fieldrush_welcome_painter.dart';
 
-enum _Step { welcome, phone, code, name, username, birthday, email, review }
+enum _Step {
+  welcome,
+  phone,
+  code,
+  name,
+  username,
+  birthday,
+  email,
+  skillAssessment,
+  review,
+}
 
 class FieldrushAuthScreen extends StatefulWidget {
   const FieldrushAuthScreen({
@@ -26,12 +39,14 @@ class FieldrushAuthScreen extends StatefulWidget {
     required this.accountRepository,
     required this.onOnboardingCompleted,
     this.account,
+    this.onPhoneAccountSwitching,
   });
 
   final AuthRepository authRepository;
   final FieldrushAccountRepository accountRepository;
   final VoidCallback onOnboardingCompleted;
   final FieldrushAccount? account;
+  final ValueChanged<bool>? onPhoneAccountSwitching;
 
   @override
   State<FieldrushAuthScreen> createState() => _FieldrushAuthScreenState();
@@ -48,8 +63,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   final _year = TextEditingController();
   final _email = TextEditingController();
   final _scroll = ScrollController();
-  final _termsLink = TapGestureRecognizer();
-  final _privacyLink = TapGestureRecognizer();
 
   FieldrushAccount? _account;
   _Step _step = _Step.welcome;
@@ -59,10 +72,12 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   String? _notice;
   bool _busy = false;
   bool _login = false;
-  bool _consent = false;
   bool _editingReview = false;
   bool _awaitingAccount = false;
+  bool _openingApp = false;
+  bool _switchConfirmationOpen = false;
   AccountDraft? _beforeEdit;
+  SkillAssessment? _skillAssessment;
   Timer? _cooldownTimer;
   DateTime? _resendAt;
   int _secondsLeft = 0;
@@ -75,8 +90,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   @override
   void initState() {
     super.initState();
-    _termsLink.onTap = () => _openPolicy('/terms');
-    _privacyLink.onTap = () => _openPolicy('/privacy');
     if (widget.account != null) _applyAccount(widget.account!);
     _username.addListener(_scheduleUsernameCheck);
   }
@@ -95,8 +108,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   void dispose() {
     _cooldownTimer?.cancel();
     _usernameDebounce?.cancel();
-    _termsLink.dispose();
-    _privacyLink.dispose();
     for (final controller in [
       _phone,
       _code,
@@ -119,6 +130,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _lastName.text = draft.lastName;
     _username.text = draft.username;
     _email.text = draft.email;
+    _skillAssessment = draft.skillAssessment;
     _month.text = draft.dateOfBirth?.month.toString().padLeft(2, '0') ?? '';
     _day.text = draft.dateOfBirth?.day.toString().padLeft(2, '0') ?? '';
     _year.text = draft.dateOfBirth?.year.toString() ?? '';
@@ -126,6 +138,12 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
 
   void _applyAccount(FieldrushAccount account) {
     _account = account;
+    _openingApp = account.completed && account.phoneVerified;
+    if (_openingApp) return;
+    // OTP proves ownership before deciding whether to resume signup. Both
+    // welcome actions use the same phone flow; only new/incomplete accounts
+    // need the signup details and review.
+    _login = false;
     _fillDraft(account.draft);
     if (account.phone.isNotEmpty) {
       try {
@@ -138,8 +156,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     }
     if (!account.phoneVerified) {
       _step = _Step.phone;
-    } else if (account.completed) {
-      _step = _Step.review;
     } else if (account.draft.firstName.isEmpty ||
         account.draft.lastName.isEmpty) {
       _step = _Step.name;
@@ -149,6 +165,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       _step = _Step.birthday;
     } else if (account.draft.email.isEmpty) {
       _step = _Step.email;
+    } else if (account.skillAssessmentRequired &&
+        account.draft.skillAssessment == null) {
+      _step = _Step.skillAssessment;
     } else {
       _step = _Step.review;
     }
@@ -174,7 +193,15 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     username: _username.text.trim().toLowerCase(),
     dateOfBirth: _birthday,
     email: _email.text.trim(),
+    skillAssessment: _skillAssessment,
   );
+
+  bool get _needsSkillAssessment => _account?.skillAssessmentRequired == true;
+
+  int get _setupStepCount => _needsSkillAssessment ? 8 : 7;
+
+  int get _setupStepNumber =>
+      _step == _Step.review ? _setupStepCount : _step.index;
 
   void _go(_Step step) {
     FocusScope.of(context).unfocus();
@@ -188,7 +215,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   }
 
   void _back() {
-    if (_busy) return;
+    if (_busy || _openingApp) return;
     if (_editingReview) {
       if (_beforeEdit != null) _fillDraft(_beforeEdit!);
       _editingReview = false;
@@ -203,7 +230,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       _Step.username => _Step.name,
       _Step.birthday => _Step.username,
       _Step.email => _Step.birthday,
-      _Step.review => _Step.email,
+      _Step.skillAssessment => _Step.email,
+      _Step.review =>
+        _needsSkillAssessment ? _Step.skillAssessment : _Step.email,
     });
   }
 
@@ -246,6 +275,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   }
 
   Future<void> _sendCode({bool resend = false}) async {
+    if (_busy || _switchConfirmationOpen) return;
     final phone = resend
         ? _pendingPhone
         : normalizeFieldrushPhone(_phone.text, country: _country);
@@ -253,9 +283,27 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       setState(() => _error = 'Enter a valid phone number and country code.');
       return;
     }
+    // OTP can succeed before its account read does. Do not let a failed read
+    // turn the next number into a phone-change request on that signed-in user.
+    if (_account == null && widget.authRepository.currentUser != null) {
+      final enteredPhone = _phone.text;
+      final enteredCountry = _country;
+      await _run(_loadSignedInAccount);
+      if (!mounted || _account == null || _openingApp) return;
+      _phone.text = enteredPhone;
+      _country = enteredCountry;
+      _go(_Step.phone);
+    }
     if (_account?.phoneVerified == true && phone == _account?.phone) {
       _go(_editingReview ? _Step.review : _Step.name);
       _editingReview = false;
+      return;
+    }
+    if (_account?.phoneVerified == true &&
+        _account?.completed == false &&
+        _account?.googleLinked == false &&
+        phone != _account?.phone) {
+      await _switchPhoneAccount(phone);
       return;
     }
     if (_secondsLeft > 0 && phone == _pendingPhone) {
@@ -263,12 +311,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       return;
     }
     await _run(() async {
-      if (_login && _account == null) {
-        // Log in must not create a new account for a mistyped number.
-        await widget.accountRepository.sendRecoveryCode(phone);
-      } else {
-        await widget.accountRepository.sendPhoneCode(phone);
-      }
+      await widget.accountRepository.sendPhoneCode(phone);
       if (!mounted) return;
       _pendingPhone = phone;
       _code.clear();
@@ -278,9 +321,89 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     });
   }
 
+  Future<void> _switchPhoneAccount(String phone) async {
+    _switchConfirmationOpen = true;
+    final bool? confirmed;
+    try {
+      confirmed = await showFieldrushModal<bool>(
+        context: context,
+        builder: (context) => FieldrushModal(
+          title: 'Use a different account?',
+          description:
+              'You’ll sign out of this unfinished signup before we send a code '
+              'to $phone. Your existing account won’t be deleted.',
+          actions: [
+            FilledButton(
+              key: const Key('fieldrush-confirm-phone-account-switch'),
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Sign out and continue'),
+            ),
+            OutlinedButton(
+              key: const Key('fieldrush-cancel-phone-account-switch'),
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Keep this account'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _switchConfirmationOpen = false;
+    }
+    if (!mounted || confirmed != true) return;
+    await _run(() async {
+      widget.onPhoneAccountSwitching?.call(true);
+      try {
+        await widget.accountRepository.switchIncompletePhoneAccount(phone);
+        if (!mounted) return;
+        if (widget.authRepository.currentUser != null ||
+            widget.authRepository.currentSession != null) {
+          throw const AuthException(
+            'Sign out could not be confirmed. Start again before entering a code.',
+          );
+        }
+        _clearPreviousSignup();
+        _pendingPhone = phone;
+        _startCooldown();
+        _go(_Step.code);
+      } catch (_) {
+        if (mounted &&
+            widget.authRepository.currentUser == null &&
+            widget.authRepository.currentSession == null) {
+          // Supabase clears local state before revoking the session. A failed
+          // sign-out/send must not leave the old account's signup draft shown.
+          _clearPreviousSignup();
+          _go(_Step.phone);
+        }
+        rethrow;
+      } finally {
+        widget.onPhoneAccountSwitching?.call(false);
+      }
+    });
+  }
+
+  void _clearPreviousSignup() {
+    _account = null;
+    _pendingPhone = null;
+    _code.clear();
+    _cooldownTimer?.cancel();
+    _resendAt = null;
+    _secondsLeft = 0;
+    _awaitingAccount = false;
+    _editingReview = false;
+    _beforeEdit = null;
+    _login = true;
+    _openingApp = false;
+    _fillDraft(const AccountDraft());
+  }
+
   Future<void> _loadSignedInAccount() async {
+    final expectedId = widget.authRepository.currentUser?.id;
     final account = await widget.accountRepository.loadAccount();
     if (!mounted) return;
+    if (expectedId != null &&
+        widget.authRepository.currentUser?.id != expectedId) {
+      throw const AuthException('The account changed. Please start again.');
+    }
     final editing = _editingReview;
     final draft = _draft;
     setState(() {
@@ -311,7 +434,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
           _code.text,
         );
         if (!mounted) return;
-        _awaitingAccount = true;
+        FocusScope.of(context).unfocus();
+        setState(() => _awaitingAccount = true);
       }
       await _loadSignedInAccount();
     });
@@ -414,6 +538,10 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         if (!isFieldrushEmail(_email.text)) {
           error = 'Enter a valid email address.';
         }
+      case _Step.skillAssessment:
+        if (_skillAssessment == null) {
+          error = 'Choose your current level, or select Not sure.';
+        }
       default:
         return;
     }
@@ -443,7 +571,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
               _Step.name => _Step.username,
               _Step.username => _Step.birthday,
               _Step.birthday => _Step.email,
-              _Step.email => _Step.review,
+              _Step.email =>
+                _needsSkillAssessment ? _Step.skillAssessment : _Step.review,
+              _Step.skillAssessment => _Step.review,
               _ => _Step.review,
             };
       _editingReview = false;
@@ -453,11 +583,8 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   }
 
   Future<void> _complete() async {
-    if (!_consent) {
-      setState(
-        () => _error =
-            'Read and accept the Terms and Privacy Policy to continue.',
-      );
+    if (_needsSkillAssessment && _skillAssessment == null) {
+      _go(_Step.skillAssessment);
       return;
     }
     await _run(() async {
@@ -466,23 +593,9 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       if (!account.completed || !account.phoneVerified) {
         throw StateError('Your account is not complete yet. Please try again.');
       }
-      setState(() => _account = account);
+      setState(() => _applyAccount(account));
       widget.onOnboardingCompleted();
     });
-  }
-
-  Future<void> _openPolicy(String path) async {
-    try {
-      final opened = await launchUrl(
-        Uri.https('field.bh', path),
-        mode: LaunchMode.externalApplication,
-      );
-      if (!opened) {
-        throw StateError('Could not open the page. Please try again.');
-      }
-    } catch (error) {
-      if (mounted) setState(() => _error = userFacingError(error));
-    }
   }
 
   @override
@@ -490,13 +603,44 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     data: FieldrushAuthTheme.theme(context),
     child: Builder(
       builder: (context) => PopScope(
-        canPop: _step == _Step.welcome,
+        canPop: _step == _Step.welcome && !_openingApp,
         onPopInvokedWithResult: (didPop, result) {
           if (!didPop) _back();
         },
         child: Scaffold(
           backgroundColor: FieldrushAuthTheme.cream,
-          body: _step == _Step.welcome ? _welcome(context) : _flow(context),
+          // Verification is complete, but the account read and the gate's
+          // access checks may still be pending. Keep the same quiet handoff
+          // until we know whether to enter the app or resume signup. The code
+          // screen's recovery message belongs only to a failed account read.
+          body: _openingApp || (_awaitingAccount && _busy)
+              ? const SafeArea(
+                  key: Key('fieldrush-signing-in'),
+                  child: FieldLoadingContent(label: 'Signing you in'),
+                )
+              : _step == _Step.welcome
+              ? _welcome(context)
+              : _step == _Step.skillAssessment
+              ? FieldrushSkillAssessmentStep(
+                  selected: _skillAssessment,
+                  onSelected: (value) => setState(() {
+                    _skillAssessment = value;
+                    _error = null;
+                  }),
+                  onBack: _back,
+                  onSkip: () {
+                    setState(() => _skillAssessment = SkillAssessment.notSure);
+                    unawaited(_saveStep());
+                  },
+                  onContinue: _saveStep,
+                  stepNumber: _setupStepNumber,
+                  stepCount: _setupStepCount,
+                  busy: _busy,
+                  error: _error,
+                  notice: _notice,
+                  controller: _scroll,
+                )
+              : _flow(context),
         ),
       ),
     ),
@@ -547,42 +691,14 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                       ),
                       const SizedBox(height: 40),
                       const Spacer(),
-                      Text.rich(
-                        TextSpan(
-                          text:
-                              'By tapping Create account or Log in, you agree '
-                              'to our ',
-                          children: [
-                            TextSpan(
-                              text: 'Terms',
-                              style: const TextStyle(
-                                decoration: TextDecoration.underline,
-                                fontWeight: FontWeight.w800,
-                              ),
-                              recognizer: _termsLink,
-                            ),
-                            const TextSpan(text: ' and '),
-                            TextSpan(
-                              text: 'Privacy Policy',
-                              style: const TextStyle(
-                                decoration: TextDecoration.underline,
-                                fontWeight: FontWeight.w800,
-                              ),
-                              recognizer: _privacyLink,
-                            ),
-                            const TextSpan(text: '.'),
-                          ],
-                        ),
-                        key: const Key('fieldrush-welcome-agreement'),
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 13,
-                          height: 1.45,
-                          fontWeight: FontWeight.w600,
+                      const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 4),
+                        child: FieldrushSignupPolicyNotice(
+                          light: true,
+                          textKey: Key('fieldrush-welcome-agreement'),
                         ),
                       ),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                       FilledButton(
                         key: const Key('fieldrush-create-account'),
                         onPressed: () {
@@ -651,44 +767,51 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
                     ScrollViewKeyboardDismissBehavior.onDrag,
                 child: ConstrainedBox(
                   constraints: BoxConstraints(minHeight: constraints.maxHeight),
-                  child: IntrinsicHeight(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
-                      child: AutofillGroup(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _progress(),
-                            const SizedBox(height: 42),
-                            Text(
-                              _title,
-                              style: const TextStyle(
-                                fontFamily: 'Outfit',
-                                fontSize: 44,
-                                height: 0.98,
-                                letterSpacing: -1.76,
-                                fontWeight: FontWeight.w800,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 22),
+                    child: AutofillGroup(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _progress(),
+                              const SizedBox(height: 42),
+                              Text(
+                                _title,
+                                style: const TextStyle(
+                                  fontFamily: 'Outfit',
+                                  fontSize: 44,
+                                  height: 0.98,
+                                  letterSpacing: -1.76,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 14),
-                            Text(
-                              _subtitle,
-                              style: const TextStyle(
-                                color: FieldrushAuthTheme.muted,
-                                fontSize: 13,
-                                height: 1.5,
-                                fontWeight: FontWeight.w600,
+                              const SizedBox(height: 14),
+                              Text(
+                                _subtitle,
+                                style: const TextStyle(
+                                  color: FieldrushAuthTheme.muted,
+                                  fontSize: 13,
+                                  height: 1.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
                               ),
-                            ),
-                            const SizedBox(height: 28),
-                            ..._fields(context),
-                            if (_error != null) _message(_error!, error: true),
-                            if (_notice != null) _message(_notice!),
-                            const SizedBox(height: 28),
-                            const Spacer(),
-                            ..._actions(context),
-                          ],
-                        ),
+                              const SizedBox(height: 28),
+                              ..._fields(context),
+                              if (_error != null)
+                                _message(_error!, error: true),
+                              if (_notice != null) _message(_notice!),
+                              const SizedBox(height: 28),
+                            ],
+                          ),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: _actions(context),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -708,6 +831,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _Step.username => 'Pick a\nusername',
     _Step.birthday => 'When’s your\nbirthday?',
     _Step.email => 'And your\nemail?',
+    _Step.skillAssessment => 'What’s your\nlevel?',
     _Step.review => 'Look\nright?',
     _Step.welcome => 'Fieldrush',
   };
@@ -723,6 +847,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
     _Step.birthday =>
       'Only you can see this. Fieldrush is for players 18 and older.',
     _Step.email => 'For receipts and game reminders. You can verify it later.',
+    _Step.skillAssessment => 'So your first games are fair.',
     _Step.review => 'Tap Edit to change anything.',
     _Step.welcome => '',
   };
@@ -745,16 +870,16 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       const SizedBox(width: 14),
       Expanded(
         child: Semantics(
-          label: 'Account setup, step ${_step.index} of 7',
+          label: 'Account setup, step $_setupStepNumber of $_setupStepCount',
           child: Row(
             children: List.generate(
-              7,
+              _setupStepCount,
               (index) => Expanded(
                 child: Container(
                   margin: const EdgeInsets.symmetric(horizontal: 2),
                   height: 4,
                   decoration: BoxDecoration(
-                    color: index < _step.index
+                    color: index < _setupStepNumber
                         ? FieldrushAuthTheme.forest
                         : FieldrushAuthTheme.border,
                     borderRadius: BorderRadius.circular(2),
@@ -956,6 +1081,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
         ),
       ),
     ],
+    _Step.skillAssessment => [], // Dedicated reference layout above.
     _Step.review => [
       const Divider(color: FieldrushAuthTheme.ink, thickness: 2.5),
       _reviewRow(
@@ -983,26 +1109,12 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
             _account?.emailVerified == true &&
             _email.text.trim() == _account?.draft.email,
       ),
-      const SizedBox(height: 16),
-      CheckboxListTile(
-        key: const Key('fieldrush-accept-policies'),
-        value: _consent,
-        onChanged: _busy
-            ? null
-            : (value) => setState(() => _consent = value ?? false),
-        contentPadding: EdgeInsets.zero,
-        controlAffinity: ListTileControlAffinity.leading,
-        title: const Text(
-          'I agree to the Terms and acknowledge the Privacy Policy.',
-          style: TextStyle(fontSize: 12, height: 1.5),
+      if (_needsSkillAssessment)
+        _reviewRow(
+          'STARTING LEVEL',
+          _skillAssessment?.label ?? 'Not set',
+          _Step.skillAssessment,
         ),
-      ),
-      Wrap(
-        children: [
-          _policyButton('Read Terms', '/terms'),
-          _policyButton('Read Privacy Policy', '/privacy'),
-        ],
-      ),
     ],
     _Step.welcome => [],
   };
@@ -1024,6 +1136,16 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
   });
 
   List<Widget> _actions(BuildContext context) => [
+    if (_step == _Step.review) ...[
+      const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8),
+        child: FieldrushSignupPolicyNotice(
+          creatingAccount: true,
+          textKey: Key('fieldrush-review-agreement'),
+        ),
+      ),
+      const SizedBox(height: 12),
+    ],
     FilledButton(
       key: const Key('fieldrush-continue'),
       onPressed: _busy
@@ -1035,17 +1157,7 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
               _ => _saveStep,
             },
       child: _busy
-          ? Semantics(
-              label: 'Please wait',
-              child: const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              ),
-            )
+          ? Semantics(liveRegion: true, child: const Text('Please wait…'))
           : Text(switch (_step) {
               _Step.code => _awaitingAccount ? 'Finish signing in' : 'Verify',
               _Step.review => 'Create account',
@@ -1053,39 +1165,41 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
             }),
     ),
     if (_step == _Step.phone && _account == null) ...[
-      const SizedBox(height: 12),
-      const Row(
-        children: [
-          Expanded(child: Divider(color: FieldrushAuthTheme.border)),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Text(
-              'or',
-              style: TextStyle(fontSize: 11, color: FieldrushAuthTheme.muted),
+      if (fieldrushGoogleAuthAvailable) ...[
+        const SizedBox(height: 12),
+        const Row(
+          children: [
+            Expanded(child: Divider(color: FieldrushAuthTheme.border)),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'or',
+                style: TextStyle(fontSize: 11, color: FieldrushAuthTheme.muted),
+              ),
+            ),
+            Expanded(child: Divider(color: FieldrushAuthTheme.border)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          key: const Key('fieldrush-google'),
+          onPressed: _busy ? null : _google,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 54),
+            backgroundColor: Colors.white,
+            foregroundColor: FieldrushAuthTheme.ink,
+            side: const BorderSide(color: FieldrushAuthTheme.border),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15),
             ),
           ),
-          Expanded(child: Divider(color: FieldrushAuthTheme.border)),
-        ],
-      ),
-      const SizedBox(height: 12),
-      OutlinedButton.icon(
-        key: const Key('fieldrush-google'),
-        onPressed: _busy ? null : _google,
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 54),
-          backgroundColor: Colors.white,
-          foregroundColor: FieldrushAuthTheme.ink,
-          side: const BorderSide(color: FieldrushAuthTheme.border),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
+          icon: const FieldrushGoogleMark(),
+          label: const Text(
+            'Continue with Google',
+            style: TextStyle(fontWeight: FontWeight.w800),
           ),
         ),
-        icon: const FieldrushGoogleMark(),
-        label: const Text(
-          'Continue with Google',
-          style: TextStyle(fontWeight: FontWeight.w800),
-        ),
-      ),
+      ],
       TextButton(
         onPressed: _busy ? null : _openRecovery,
         child: const Text('Need help signing in?'),
@@ -1283,21 +1397,6 @@ class _FieldrushAuthScreenState extends State<FieldrushAuthScreen> {
       const Divider(height: 1, color: FieldrushAuthTheme.border),
     ],
   );
-
-  Widget _policyButton(String label, String path, {bool light = false}) =>
-      TextButton(
-        onPressed: () => _openPolicy(path),
-        style: TextButton.styleFrom(
-          foregroundColor: light ? Colors.white : FieldrushAuthTheme.forest,
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(
-            fontSize: 11,
-            decoration: TextDecoration.underline,
-          ),
-        ),
-      );
 
   Widget _message(String text, {bool error = false, bool light = false}) =>
       Semantics(

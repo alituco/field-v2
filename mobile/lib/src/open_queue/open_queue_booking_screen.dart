@@ -1,11 +1,16 @@
 import 'dart:async';
+import 'fieldrush_check_in_notice.dart';
 
 import 'package:flutter/material.dart';
+
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_toast.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/field_confirmation_dialog.dart';
 import '../core/user_facing_error.dart';
 import '../home/field_bottom_nav.dart';
+import '../payments/refund_status.dart';
 import '../reliability/reliability_deadline_notice.dart';
 import 'open_queue.dart';
 import 'open_queue_kit_indicator.dart';
@@ -99,15 +104,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       setState(() => _booking = latest);
     } catch (error) {
       if (!mounted || quiet) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'Could not refresh the player count.',
-            ),
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        userFacingError(error, fallback: 'Could not refresh the player count.'),
       );
     } finally {
       if (mounted) setState(() => _refreshing = false);
@@ -159,17 +158,13 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         _refreshBooking(quiet: true, requireFresh: true),
       ]);
       if (!mounted) return true;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(successMessage)));
+      showFieldrushToast(context, successMessage);
       return true;
     } catch (error) {
       if (!mounted) return false;
       final message = userFacingError(error, fallback: fallbackError);
       setState(() => _partyError = message);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
+      showFieldrushToast(context, message);
       return false;
     } finally {
       if (mounted) setState(() => _partyAction = null);
@@ -282,6 +277,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     await showOpenQueuePartyInviteSheet(
       context: context,
       partyContext: data,
+      game: _booking.game,
       onInvite: (player) async {
         final succeeded = await _runPartyAction(
           key: 'invite-${player.profileId}',
@@ -319,12 +315,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       preview = await widget.repository.previewCancellation(_booking.id);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(error, fallback: 'Cancellation is unavailable.'),
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        userFacingError(error, fallback: 'Cancellation is unavailable.'),
       );
       return;
     }
@@ -370,14 +363,11 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
         );
       } catch (error) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              userFacingError(
-                error,
-                fallback: 'Could not verify the cancellation terms.',
-              ),
-            ),
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'Could not verify the cancellation terms.',
           ),
         );
         return;
@@ -389,17 +379,23 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     if (!mounted) return;
     setState(() => _cancelling = true);
     try {
-      await widget.repository.cancelBooking(_booking.id);
+      final cancelled = await widget.repository.cancelBooking(_booking.id);
       if (!mounted) return;
+      showFieldrushToast(
+        context,
+        cancellationRefundMessage(
+          refundAmountFils:
+              cancelled.refundAmountFils ?? preview.refundAmountFils,
+          destination: cancelled.refundDestination ?? preview.refundDestination,
+          status: cancelled.refundStatus,
+        ),
+      );
       Navigator.of(context).pop(true);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(error, fallback: 'Could not cancel booking.'),
-          ),
-        ),
+      showFieldrushToast(
+        context,
+        userFacingError(error, fallback: 'Could not cancel booking.'),
       );
     } finally {
       if (mounted) setState(() => _cancelling = false);
@@ -426,8 +422,14 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
     final String teamInfoMessage;
     if (assignedTeam != null) {
       teamLabel = '$assignedTeam TEAM';
-      teamInfoMessage =
-          'Teams assigned. The two team averages are only ${game.teamSrSpread ?? 0} SR apart.';
+      teamInfoMessage = game.teamSrSpread == null
+          ? 'Teams assigned. Check your team and kit below.'
+          : 'Teams assigned. The two team averages are only ${game.teamSrSpread} SR apart.';
+    } else if (game.hasConfigurableMinimum) {
+      teamLabel = isConfirmed ? 'Minimum reached' : 'Waiting for players';
+      teamInfoMessage = isConfirmed
+          ? 'Your spot is secured. The referee can assign teams in the match’s reveal window. ${game.minimumPlayersLabel}.'
+          : 'Your spot is secured. This game needs ${game.requiredMinimumPlayers} players total, including one on each team. Up to ${game.capacity} can book.';
     } else if (isConfirmed && isTeamAssignmentDue) {
       teamLabel = 'Assignment updating';
       teamInfoMessage =
@@ -450,7 +452,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
       backgroundColor: fieldBackground,
       body: FieldHeaderOverlay(
         header: const FieldPageHeader(title: 'Booking Details', showBack: true),
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           color: fieldEmerald600,
           edgeOffset: fieldPageHeaderExtent(context),
           onRefresh: _refreshAll,
@@ -461,6 +463,9 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               _BookingPlayerStatusCard(
                 confirmedCount: confirmedCount,
                 capacity: game.capacity,
+                minimumPlayers: game.hasConfigurableMinimum
+                    ? game.requiredMinimumPlayers
+                    : null,
                 averagePlayerRating: hasTeamAssignment
                     ? game.matchAverageSr
                     : null,
@@ -474,10 +479,16 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
               ],
               const SizedBox(height: 12),
               _BookingMatchDayCard(booking: booking),
+              if (game.isUpcoming) ...[
+                const SizedBox(height: 12),
+                FieldrushCheckInNotice(game: game),
+              ],
               if (widget.repository
                   is OpenQueueReliabilityLookupRepository) ...[
                 const SizedBox(height: 12),
                 ReliabilityDeadlineNotice(
+                  timezone: game.timezone,
+                  showDeadline: !game.isUpcoming,
                   includeNoShowCutoff: true,
                   load: () =>
                       (widget.repository
@@ -514,8 +525,8 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                   children: [
                     _bookingRow(
                       Icons.schedule_rounded,
-                      'KICKOFF',
-                      game.timeLabel,
+                      game.isUpcoming ? 'CHECK-IN' : 'KICKOFF',
+                      game.isUpcoming ? game.displayTimeLabel : game.timeLabel,
                     ),
                     const Divider(height: 1, color: fieldGray100),
                     _bookingRow(
@@ -604,11 +615,7 @@ class _OpenQueueBookingScreenState extends State<OpenQueueBookingScreen> {
                   ),
                 ),
                 child: _cancelling
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const Text('Cancelling…')
                     : const Text(
                         'Cancel booking',
                         style: TextStyle(fontWeight: FontWeight.w900),
@@ -758,7 +765,7 @@ class _BookingMatchDayCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      game.prominentDateLabel,
+                      game.displayProminentDateLabel,
                       style: TextStyle(
                         color: isClose ? fieldEmerald800 : fieldGray900,
                         fontSize: isClose ? 16 : 14,
@@ -791,10 +798,12 @@ class _BookingPlayerStatusCard extends StatelessWidget {
     required this.isConfirmed,
     required this.isRefreshing,
     required this.onRefresh,
+    this.minimumPlayers,
   });
 
   final int confirmedCount;
   final int capacity;
+  final int? minimumPlayers;
   final int? averagePlayerRating;
   final bool isConfirmed;
   final bool isRefreshing;
@@ -802,7 +811,10 @@ class _BookingPlayerStatusCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final remaining = (capacity - confirmedCount).clamp(0, capacity);
+    final remaining = ((minimumPlayers ?? capacity) - confirmedCount).clamp(
+      0,
+      capacity,
+    );
     final progress = capacity <= 0 ? 0.0 : confirmedCount / capacity;
     final accent = isConfirmed ? fieldEmerald600 : const Color(0xFFD97706);
     final softAccent = isConfirmed
@@ -853,7 +865,13 @@ class _BookingPlayerStatusCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isConfirmed ? 'MATCH CONFIRMED' : 'MATCH PENDING',
+                      isConfirmed
+                          ? minimumPlayers == null
+                                ? 'MATCH CONFIRMED'
+                                : confirmedCount >= capacity
+                                ? 'GAME FULL'
+                                : 'MINIMUM REACHED'
+                          : 'MATCH PENDING',
                       style: TextStyle(
                         color: accent,
                         fontSize: 11,
@@ -863,7 +881,13 @@ class _BookingPlayerStatusCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      isConfirmed ? 'Everyone is in' : 'Your spot is reserved',
+                      isConfirmed
+                          ? minimumPlayers == null
+                                ? 'Everyone is in'
+                                : confirmedCount >= capacity
+                                ? 'All places are booked'
+                                : 'More places are still available'
+                          : 'Your spot is reserved',
                       style: const TextStyle(
                         color: fieldGray500,
                         fontSize: 12,
@@ -882,8 +906,8 @@ class _BookingPlayerStatusCard extends StatelessWidget {
                     ? SizedBox(
                         width: 18,
                         height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
+                        child: FieldLoadingIndicator(
+                          label: 'Refreshing player count',
                           color: accent,
                         ),
                       )
@@ -984,8 +1008,12 @@ class _BookingPlayerStatusCard extends StatelessWidget {
           const SizedBox(height: 12),
           Text(
             isConfirmed
-                ? 'Full squad confirmed. This match is on.'
-                : '$remaining more player${remaining == 1 ? '' : 's'} needed to confirm this match.',
+                ? minimumPlayers == null
+                      ? 'Full squad confirmed. This match is on.'
+                      : confirmedCount >= capacity
+                      ? 'All $capacity places are booked.'
+                      : '$minimumPlayers minimum reached. Up to $capacity players can book.'
+                : '$remaining more player${remaining == 1 ? '' : 's'} needed to ${minimumPlayers == null ? 'confirm this match' : 'reach the minimum'}.',
             style: const TextStyle(
               color: fieldGray700,
               fontSize: 13,

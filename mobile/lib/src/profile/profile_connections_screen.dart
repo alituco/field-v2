@@ -1,9 +1,31 @@
 import 'package:flutter/material.dart';
 
-import '../clans/clan_widgets.dart';
+import '../auth/fieldrush_auth_theme.dart';
 import '../core/user_facing_error.dart';
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
+import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
+
+const _cream = Color(0xFFFAF7EF);
+const _wash = Color(0xFFF2EFE3);
+const _ink = FieldrushAuthTheme.ink;
+const _muted = FieldrushAuthTheme.muted;
+const _border = FieldrushAuthTheme.border;
+const _green = FieldrushAuthTheme.forest;
+
+TextStyle _jakarta(
+  double size, {
+  Color color = _ink,
+  FontWeight weight = FontWeight.w700,
+}) => TextStyle(
+  fontFamily: 'PlusJakartaSans',
+  fontSize: size,
+  fontWeight: weight,
+  height: 1.3,
+  color: color,
+);
 
 class ProfileConnectionsScreen extends StatefulWidget {
   const ProfileConnectionsScreen({
@@ -11,11 +33,15 @@ class ProfileConnectionsScreen extends StatefulWidget {
     required this.profileRepository,
     required this.initialTab,
     required this.onOpenProfile,
+    this.username,
   });
 
   final ProfileRepository profileRepository;
   final ProfileConnectionTab initialTab;
   final Future<void> Function(String profileId) onOpenProfile;
+
+  /// An already-loaded account handle; no private account query for the header.
+  final String? username;
 
   @override
   State<ProfileConnectionsScreen> createState() =>
@@ -24,9 +50,15 @@ class ProfileConnectionsScreen extends StatefulWidget {
 
 class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
   late ProfileConnectionTab _tab;
+  final _searchController = TextEditingController();
+  final _busyIds = <String>{};
   ProfileConnections? _connections;
   Object? _error;
   bool _isLoading = true;
+  bool _openingProfile = false;
+  bool _refreshWhenIdle = false;
+  int _loadRequest = 0;
+  int _mutationRevision = 0;
 
   @override
   void initState() {
@@ -35,24 +67,45 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
     _loadConnections(showLoading: true);
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadConnections({bool showLoading = false}) async {
+    // A read during a write can return the pre-write relationship. Defer it
+    // until every row has settled instead of erasing optimistic state.
+    if (_busyIds.isNotEmpty) {
+      _refreshWhenIdle = true;
+      return;
+    }
+    final request = ++_loadRequest;
+    final revision = _mutationRevision;
     if (showLoading) {
       setState(() {
         _isLoading = true;
         _error = null;
       });
     }
-
     try {
       final connections = await widget.profileRepository.getConnections();
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
+      if (revision != _mutationRevision) {
+        await _loadConnections();
+        return;
+      }
       setState(() {
         _connections = connections;
         _error = null;
         _isLoading = false;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || request != _loadRequest) return;
+      if (revision != _mutationRevision) {
+        await _loadConnections();
+        return;
+      }
       setState(() {
         _error = error;
         _isLoading = false;
@@ -60,18 +113,14 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
     }
   }
 
-  Future<void> _refresh() async {
-    await _loadConnections();
-  }
-
   Future<void> _toggleFollow(ProfileConnection connection) async {
     final previous = _connections;
-    if (previous == null) return;
-
+    if (previous == null || _busyIds.contains(connection.id)) return;
     setState(() {
+      _busyIds.add(connection.id);
+      _mutationRevision++;
       _connections = _optimisticToggle(previous, connection);
     });
-
     try {
       if (connection.isFollowedByMe) {
         await widget.profileRepository.unfollowProfile(connection.id);
@@ -81,22 +130,54 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _connections = previous;
+        // A failed row must not roll back another person's successful update.
+        _connections = _restoreConnection(
+          _connections!,
+          previous,
+          connection.id,
+        );
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not update that follow. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not update that follow. Try again.',
         ),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busyIds.remove(connection.id);
+          _mutationRevision++;
+        });
+        if (_busyIds.isEmpty && _refreshWhenIdle) {
+          _refreshWhenIdle = false;
+          await _loadConnections();
+        }
+      }
     }
   }
 
+  Future<void> _openProfile(String profileId) async {
+    if (_openingProfile) return;
+    _openingProfile = true;
+    try {
+      await widget.onOpenProfile(profileId);
+      if (mounted) await _loadConnections();
+    } finally {
+      _openingProfile = false;
+    }
+  }
+
+  void _changeTab(ProfileConnectionTab tab) {
+    setState(() {
+      _tab = tab;
+      _searchController.clear();
+    });
+  }
+
   void _close() {
+    if (_busyIds.isNotEmpty) return;
     final connections = _connections;
     Navigator.of(context).pop(
       connections == null
@@ -110,15 +191,71 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: fieldBackground,
-      body: FieldHeaderOverlay(
-        header: FieldPageHeader(
-          title: 'People',
-          showBack: true,
-          onBack: _close,
+    final username = widget.username?.trim().replaceFirst(RegExp(r'^@'), '');
+    return PopScope<ProfileConnectionCounts>(
+      canPop: _busyIds.isEmpty,
+      child: Scaffold(
+        backgroundColor: _cream,
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 36,
+                      height: 44,
+                      child: Center(
+                        child: IconButton(
+                          onPressed: _busyIds.isEmpty ? _close : null,
+                          tooltip: 'Back',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints.tightFor(
+                            width: 36,
+                            height: 36,
+                          ),
+                          style: IconButton.styleFrom(
+                            backgroundColor: Colors.white,
+                            foregroundColor: const Color(0xFF3C4A38),
+                            side: const BorderSide(color: _border),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          icon: const Icon(
+                            Icons.chevron_left_rounded,
+                            size: 22,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        username == null || username.isEmpty
+                            ? 'People'
+                            : '@$username',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'Outfit',
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -.18,
+                          color: _ink,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(child: _buildBody(context)),
+            ],
+          ),
         ),
-        child: _buildBody(context),
       ),
     );
   }
@@ -126,65 +263,152 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
   Widget _buildBody(BuildContext context) {
     final connections = _connections;
     final error = _error;
-
     if (_isLoading && connections == null) {
       return const _ConnectionsLoadingView();
     }
-
-    if (error != null && connections == null) {
-      return _ConnectionsErrorView(
-        message: userFacingError(
-          error,
-          fallback: 'We could not load these people. Try again.',
-        ),
-        onRetry: () => _loadConnections(showLoading: true),
-      );
-    }
-
     if (connections == null) {
-      return _ConnectionsErrorView(
-        message: 'Could not load people.',
-        onRetry: () => _loadConnections(showLoading: true),
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _ConnectionsErrorView(
+            message: userFacingError(
+              error ?? StateError('Connections unavailable'),
+              fallback: 'We could not load these people. Try again.',
+            ),
+            onRetry: () => _loadConnections(showLoading: true),
+          ),
+        ],
       );
     }
+    final followingTab = _tab == ProfileConnectionTab.following;
+    final allPeople = followingTab ? connections.following : connections.fans;
+    final listedIds = allPeople.map((person) => person.id).toSet();
+    final discover = connections.discover
+        .where((person) => !listedIds.contains(person.id))
+        .toList();
+    final query = _searchController.text.trim().toLowerCase().replaceFirst(
+      RegExp(r'^@'),
+      '',
+    );
+    final hasSearch = _searchController.text.trim().isNotEmpty;
+    final people = allPeople
+        .where(
+          (person) =>
+              person.displayName.toLowerCase().contains(query) ||
+              person.username.toLowerCase().contains(query),
+        )
+        .toList();
+    final searchLabel = followingTab
+        ? 'Search ${allPeople.length} following'
+        : 'Search ${allPeople.length} fans';
 
-    final list = _tab == ProfileConnectionTab.following
-        ? connections.following
-        : connections.fans;
-
-    return RefreshIndicator(
-      color: fieldEmerald600,
-      onRefresh: _refresh,
+    return FieldRefreshIndicator(
+      color: _green,
+      onRefresh: _loadConnections,
       child: ListView(
+        keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: fieldHeaderAwarePadding(context, top: 16, bottom: 36),
+        padding: EdgeInsets.fromLTRB(
+          16,
+          12,
+          16,
+          36 + MediaQuery.paddingOf(context).bottom,
+        ),
         children: [
           _ConnectionTabs(
             tab: _tab,
             followingCount: connections.following.length,
             fansCount: connections.fans.length,
-            onChanged: (tab) => setState(() => _tab = tab),
+            onChanged: _changeTab,
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _searchController,
+            cursorColor: _green,
+            onChanged: (_) => setState(() {}),
+            style: _jakarta(13.5, weight: FontWeight.w600),
+            textInputAction: TextInputAction.search,
+            decoration: InputDecoration(
+              hintText: searchLabel,
+              hintStyle: _jakarta(13.5, color: _muted, weight: FontWeight.w600),
+              filled: true,
+              fillColor: Colors.white,
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              prefixIcon: const Icon(
+                Icons.search_rounded,
+                size: 19,
+                color: _muted,
+              ),
+              prefixIconConstraints: const BoxConstraints(minWidth: 42),
+              suffixIcon: hasSearch
+                  ? IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () => setState(_searchController.clear),
+                      icon: const Icon(Icons.close_rounded, size: 17),
+                      color: _muted,
+                    )
+                  : null,
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: _border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+                borderSide: const BorderSide(color: _green),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 12),
+            child: Text(
+              hasSearch
+                  ? '${people.length} ${people.length == 1 ? 'match' : 'matches'}'
+                  : followingTab
+                  ? 'Players you follow. Tap anyone to see their profile.'
+                  : 'Players who follow you. Follow them back to stay connected.',
+              style: _jakarta(11.5, color: _muted, weight: FontWeight.w600),
+            ),
+          ),
+          if (error != null) ...[
+            _ConnectionsErrorView(
+              message: userFacingError(
+                error,
+                fallback: 'We could not refresh these people. Try again.',
+              ),
+              onRetry: _loadConnections,
+            ),
+            const SizedBox(height: 12),
+          ],
           _PeopleCard(
-            emptyTitle: _tab == ProfileConnectionTab.following
-                ? "You're not following anyone yet"
-                : 'No fans yet',
-            emptySubtitle: _tab == ProfileConnectionTab.following
-                ? 'Discover players below to build your network.'
-                : 'Keep playing to grow your fanbase.',
-            people: list,
+            people: people,
+            busyIds: _busyIds,
             onToggleFollow: _toggleFollow,
-            onOpenProfile: widget.onOpenProfile,
+            onOpenProfile: _openProfile,
+            incoming: !followingTab,
+            emptyMessage: hasSearch
+                ? 'No ${followingTab ? 'players' : 'fans'} match “${_searchController.text.trim()}”'
+                : followingTab
+                ? discover.isEmpty
+                      ? "You're not following anyone yet."
+                      : "You're not following anyone yet. Discover players below."
+                : 'No fans yet. Keep playing to grow your fanbase.',
           ),
-          if (connections.discover.isNotEmpty) ...[
+          if (!hasSearch && discover.isNotEmpty) ...[
             const SizedBox(height: 22),
-            const _DiscoverHeader(),
-            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Text(
+                'Discover players',
+                style: _jakarta(13, weight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 10),
             _PeopleCard(
-              people: connections.discover,
+              people: discover,
+              busyIds: _busyIds,
               onToggleFollow: _toggleFollow,
-              onOpenProfile: widget.onOpenProfile,
+              onOpenProfile: _openProfile,
             ),
           ],
         ],
@@ -198,45 +422,54 @@ ProfileConnections _optimisticToggle(
   ProfileConnection connection,
 ) {
   final isNowFollowed = !connection.isFollowedByMe;
-  final updatedConnection = connection.copyWith(isFollowedByMe: isNowFollowed);
-
-  List<ProfileConnection> updateFollowState(List<ProfileConnection> people) {
-    return [
-      for (final person in people)
-        person.id == connection.id
-            ? person.copyWith(isFollowedByMe: isNowFollowed)
-            : person,
-    ];
-  }
-
-  var following = updateFollowState(current.following);
-  final fans = updateFollowState(current.fans);
-  var discover = updateFollowState(current.discover);
-
+  final updated = connection.copyWith(isFollowedByMe: isNowFollowed);
+  List<ProfileConnection> update(List<ProfileConnection> people) => [
+    for (final person in people)
+      person.id == connection.id
+          ? person.copyWith(isFollowedByMe: isNowFollowed)
+          : person,
+  ];
+  var following = update(current.following);
+  var discover = update(current.discover);
   if (isNowFollowed) {
-    discover = [
-      for (final person in discover)
-        if (person.id != connection.id) person,
-    ];
-
+    discover = discover.where((person) => person.id != connection.id).toList();
     if (!following.any((person) => person.id == connection.id)) {
-      following = [updatedConnection, ...following];
+      following = [updated, ...following];
     }
   } else {
-    following = [
-      for (final person in following)
-        if (person.id != connection.id) person,
-    ];
-
+    following = following
+        .where((person) => person.id != connection.id)
+        .toList();
     if (!discover.any((person) => person.id == connection.id)) {
-      discover = [updatedConnection, ...discover];
+      discover = [updated, ...discover];
     }
+  }
+  return ProfileConnections(
+    following: following,
+    fans: update(current.fans),
+    discover: discover,
+  );
+}
+
+ProfileConnections _restoreConnection(
+  ProfileConnections current,
+  ProfileConnections previous,
+  String profileId,
+) {
+  List<ProfileConnection> restore(
+    List<ProfileConnection> people,
+    List<ProfileConnection> before,
+  ) {
+    final result = people.where((person) => person.id != profileId).toList();
+    final index = before.indexWhere((person) => person.id == profileId);
+    if (index >= 0) result.insert(index.clamp(0, result.length), before[index]);
+    return result;
   }
 
   return ProfileConnections(
-    following: following,
-    fans: fans,
-    discover: discover,
+    following: restore(current.following, previous.following),
+    fans: restore(current.fans, previous.fans),
+    discover: restore(current.discover, previous.discover),
   );
 }
 
@@ -247,395 +480,304 @@ class _ConnectionTabs extends StatelessWidget {
     required this.fansCount,
     required this.onChanged,
   });
-
   final ProfileConnectionTab tab;
   final int followingCount;
   final int fansCount;
   final ValueChanged<ProfileConnectionTab> onChanged;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      height: 48,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: fieldGray100,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _TabButton(
-              active: tab == ProfileConnectionTab.following,
-              icon: Icons.people_alt_outlined,
-              label: 'Following $followingCount',
-              onTap: () => onChanged(ProfileConnectionTab.following),
-            ),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(5),
+    decoration: BoxDecoration(
+      color: _wash,
+      borderRadius: BorderRadius.circular(16),
+    ),
+    child: Row(
+      children: [
+        Expanded(
+          child: _TabButton(
+            active: tab == ProfileConnectionTab.following,
+            label: 'Following · $followingCount',
+            onTap: () => onChanged(ProfileConnectionTab.following),
           ),
-          Expanded(
-            child: _TabButton(
-              active: tab == ProfileConnectionTab.fans,
-              icon: Icons.favorite_border_rounded,
-              label: 'Fans $fansCount',
-              onTap: () => onChanged(ProfileConnectionTab.fans),
-            ),
+        ),
+        const SizedBox(width: 5),
+        Expanded(
+          child: _TabButton(
+            active: tab == ProfileConnectionTab.fans,
+            label: 'Fans · $fansCount',
+            onTap: () => onChanged(ProfileConnectionTab.fans),
           ),
-        ],
-      ),
-    );
-  }
+        ),
+      ],
+    ),
+  );
 }
 
 class _TabButton extends StatelessWidget {
   const _TabButton({
     required this.active,
-    required this.icon,
     required this.label,
     required this.onTap,
   });
-
   final bool active;
-  final IconData icon;
   final String label;
   final VoidCallback onTap;
 
   @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        curve: Curves.easeOutCubic,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          gradient: active
-              ? const LinearGradient(colors: [fieldEmerald500, fieldBlue600])
-              : null,
-          boxShadow: active
-              ? [
-                  BoxShadow(
-                    color: fieldEmerald500.withValues(alpha: 0.28),
-                    blurRadius: 16,
-                    offset: const Offset(0, 8),
-                  ),
-                ]
-              : null,
-        ),
-        child: Center(
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: active ? Colors.white : fieldGray500),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label.toUpperCase(),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: active ? Colors.white : fieldGray500,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.5,
-                  ),
-                ),
+  Widget build(BuildContext context) => Semantics(
+    selected: active,
+    button: true,
+    child: Material(
+      color: active ? Colors.white : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      elevation: active ? 1 : 0,
+      shadowColor: _ink.withValues(alpha: .12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 38),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+            child: Text(
+              label,
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: _jakarta(
+                12,
+                color: active ? _ink : _muted,
+                weight: FontWeight.w800,
               ),
-            ],
+            ),
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
 }
 
 class _PeopleCard extends StatelessWidget {
   const _PeopleCard({
     required this.people,
+    required this.busyIds,
     required this.onToggleFollow,
     required this.onOpenProfile,
-    this.emptyTitle,
-    this.emptySubtitle,
+    this.incoming = false,
+    this.emptyMessage = 'No players yet',
   });
-
   final List<ProfileConnection> people;
+  final Set<String> busyIds;
   final ValueChanged<ProfileConnection> onToggleFollow;
   final Future<void> Function(String profileId) onOpenProfile;
-  final String? emptyTitle;
-  final String? emptySubtitle;
+  final bool incoming;
+  final String emptyMessage;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: fieldGray100),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: fieldGray900.withValues(alpha: 0.035),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: people.isEmpty
-          ? Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 34),
-              child: Column(
-                children: [
-                  Text(
-                    emptyTitle ?? 'No players yet',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: fieldGray500,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  if (emptySubtitle != null) ...[
-                    const SizedBox(height: 6),
-                    Text(
-                      emptySubtitle!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: fieldGray400,
-                        fontSize: 12,
-                        height: 1.35,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            )
-          : Column(
-              children: [
-                for (var index = 0; index < people.length; index++) ...[
-                  if (index > 0)
-                    const Divider(height: 1, indent: 72, color: fieldGray100),
-                  _PlayerRow(
-                    connection: people[index],
-                    onToggleFollow: () => onToggleFollow(people[index]),
-                    onOpenProfile: () => onOpenProfile(people[index].id),
-                  ),
-                ],
-              ],
+  Widget build(BuildContext context) => people.isEmpty
+      ? CustomPaint(
+          painter: const _EmptyConnectionsBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Text(
+              emptyMessage,
+              textAlign: TextAlign.center,
+              style: _jakarta(12, color: _muted, weight: FontWeight.w600),
             ),
-    );
+          ),
+        )
+      : Material(
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            side: const BorderSide(color: _border),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            children: [
+              for (var index = 0; index < people.length; index++) ...[
+                if (index > 0)
+                  const Divider(height: 1, color: Color(0xFFF0ECE0)),
+                _PlayerRow(
+                  connection: people[index],
+                  busy: busyIds.contains(people[index].id),
+                  incoming: incoming,
+                  onToggleFollow: () => onToggleFollow(people[index]),
+                  onOpenProfile: () => onOpenProfile(people[index].id),
+                ),
+              ],
+            ],
+          ),
+        );
+}
+
+class _EmptyConnectionsBorder extends CustomPainter {
+  const _EmptyConnectionsBorder();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final border = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(
+          (Offset.zero & size).deflate(.75),
+          const Radius.circular(16),
+        ),
+      );
+    final paint = Paint()
+      ..color = const Color(0xFFDED8C6)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    for (final metric in border.computeMetrics()) {
+      for (double start = 0; start < metric.length; start += 8) {
+        canvas.drawPath(metric.extractPath(start, start + 4), paint);
+      }
+    }
   }
+
+  @override
+  bool shouldRepaint(covariant _EmptyConnectionsBorder oldDelegate) => false;
 }
 
 class _PlayerRow extends StatelessWidget {
   const _PlayerRow({
     required this.connection,
+    required this.busy,
+    required this.incoming,
     required this.onToggleFollow,
     required this.onOpenProfile,
   });
-
   final ProfileConnection connection;
+  final bool busy;
+  final bool incoming;
   final VoidCallback onToggleFollow;
   final VoidCallback onOpenProfile;
 
   @override
   Widget build(BuildContext context) {
     final clan = connection.clan;
-
-    return InkWell(
-      onTap: onOpenProfile,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          children: [
-            _ConnectionAvatar(connection: connection, size: 44),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    connection.displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: fieldGray900,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w800,
+    final label = connection.isFollowedByMe
+        ? incoming
+              ? 'Following'
+              : 'Unfollow'
+        : incoming
+        ? 'Follow back'
+        : 'Follow';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 7, 14, 7),
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: onOpenProfile,
+              borderRadius: BorderRadius.circular(12),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: 44),
+                child: Row(
+                  children: [
+                    _ConnectionAvatar(connection: connection),
+                    const SizedBox(width: 11),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            connection.displayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: _jakarta(13),
+                          ),
+                          const SizedBox(height: 5),
+                          Text(
+                            [
+                              '@${connection.username}',
+                              if (clan != null) clan.name,
+                            ].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: _jakarta(
+                              10.5,
+                              color: _muted,
+                              weight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 3),
-                  Text(
-                    [
-                      '@${connection.username}',
-                      if (clan != null) clan.name,
-                    ].join(' - '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: fieldGray500,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-            const SizedBox(width: 10),
-            _FollowButton(
-              following: connection.isFollowedByMe,
-              onTap: onToggleFollow,
-            ),
-            const SizedBox(width: 4),
-            const Icon(
-              Icons.chevron_right_rounded,
-              color: fieldGray300,
-              size: 20,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FollowButton extends StatelessWidget {
-  const _FollowButton({required this.following, required this.onTap});
-
-  final bool following;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        height: 36,
-        padding: const EdgeInsets.symmetric(horizontal: 13),
-        decoration: BoxDecoration(
-          color: following ? fieldGray100 : null,
-          gradient: following
-              ? null
-              : const LinearGradient(colors: [fieldEmerald500, fieldBlue600]),
-          border: Border.all(color: following ? fieldGray200 : Colors.white),
-          borderRadius: BorderRadius.circular(999),
-          boxShadow: following
-              ? null
-              : [
-                  BoxShadow(
-                    color: fieldEmerald500.withValues(alpha: 0.25),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              following ? Icons.check_rounded : Icons.person_add_alt_1_rounded,
-              size: 15,
-              color: following ? fieldGray600 : Colors.white,
-            ),
-            const SizedBox(width: 5),
-            Text(
-              following ? 'FOLLOWING' : 'FOLLOW',
-              style: TextStyle(
-                color: following ? fieldGray600 : Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.5,
+          ),
+          const SizedBox(width: 10),
+          Semantics(
+            button: true,
+            enabled: !busy,
+            onTap: busy ? null : onToggleFollow,
+            label: busy
+                ? 'Updating follow for ${connection.displayName}'
+                : '${connection.isFollowedByMe ? 'Unfollow' : label} ${connection.displayName}',
+            child: ExcludeSemantics(
+              child: OutlinedButton(
+                key: ValueKey('follow-${connection.id}'),
+                onPressed: busy ? null : onToggleFollow,
+                style: OutlinedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: _ink,
+                  disabledForegroundColor: _muted,
+                  side: const BorderSide(color: _border),
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 13),
+                  shape: const StadiumBorder(),
+                  textStyle: _jakarta(11, weight: FontWeight.w800),
+                ),
+                child: busy
+                    ? const SizedBox(
+                        width: 44,
+                        child: FieldSkeleton(height: 9, radius: 4),
+                      )
+                    : Text(label),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
 class _ConnectionAvatar extends StatelessWidget {
-  const _ConnectionAvatar({required this.connection, required this.size});
-
+  const _ConnectionAvatar({required this.connection});
   final ProfileConnection connection;
-  final double size;
 
   @override
   Widget build(BuildContext context) {
     final avatarUrl = connection.avatarUrl;
-
-    return Container(
-      width: size,
-      height: size,
-      decoration: const BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: LinearGradient(colors: [fieldEmerald500, fieldBlue600]),
-      ),
-      child: ClipOval(
-        child: avatarUrl == null || avatarUrl.isEmpty
-            ? Center(
-                child: Text(
-                  connection.initials,
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: size * 0.34,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              )
-            : Image.network(
-                avatarUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => Center(
-                  child: Text(
-                    connection.initials,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: size * 0.34,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ),
+    Widget initials() => Center(
+      child: Text(
+        connection.initials,
+        style: const TextStyle(
+          fontFamily: 'Outfit',
+          color: Color(0xFF3C4A38),
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
-  }
-}
-
-class _DiscoverHeader extends StatelessWidget {
-  const _DiscoverHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        SizedBox(
-          width: 4,
-          height: 20,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [fieldEmerald500, fieldBlue600],
-              ),
-              borderRadius: BorderRadius.all(Radius.circular(99)),
-            ),
-          ),
-        ),
-        SizedBox(width: 8),
-        Icon(Icons.search_rounded, color: fieldEmerald600, size: 16),
-        SizedBox(width: 6),
-        Text(
-          'DISCOVER PLAYERS',
-          style: TextStyle(
-            color: fieldGray700,
-            fontSize: 12,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1.2,
-          ),
-        ),
-      ],
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: _wash,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: FieldrushAvatarImage(
+        size: 38,
+        url: avatarUrl,
+        fallback: initials(),
+      ),
     );
   }
 }
@@ -644,115 +786,67 @@ class _ConnectionsLoadingView extends StatelessWidget {
   const _ConnectionsLoadingView();
 
   @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: fieldHeaderAwarePadding(context, top: 16, bottom: 36),
-      children: const [
-        FieldSkeletonBox(height: 48, borderRadius: 999),
-        SizedBox(height: 18),
-        FieldSkeletonCard(
-          height: 224,
-          borderRadius: 20,
-          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+  Widget build(BuildContext context) => ListView(
+    padding: const EdgeInsets.all(16),
+    children: [
+      Semantics(
+        label: 'Loading people',
+        liveRegion: true,
+        child: const Column(
           children: [
-            _ConnectionSkeletonRow(),
-            Divider(height: 21, indent: 58, color: fieldGray100),
-            _ConnectionSkeletonRow(),
-            Divider(height: 21, indent: 58, color: fieldGray100),
-            _ConnectionSkeletonRow(),
+            FieldSkeleton(height: 48, radius: 16),
+            SizedBox(height: 12),
+            FieldSkeleton(height: 46, radius: 14),
+            SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FieldSkeleton(width: 220, height: 12),
+            ),
+            SizedBox(height: 12),
           ],
         ),
-        SizedBox(height: 22),
-        Row(
-          children: [
-            FieldSkeletonBox(width: 4, height: 20, borderRadius: 99),
-            SizedBox(width: 10),
-            FieldSkeletonBox(width: 160, height: 16, borderRadius: 6),
-          ],
+      ),
+      DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: _border),
+          borderRadius: BorderRadius.circular(20),
         ),
-        SizedBox(height: 8),
-        FieldSkeletonCard(
-          height: 150,
-          borderRadius: 20,
-          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          children: [
-            _ConnectionSkeletonRow(),
-            Divider(height: 21, indent: 58, color: fieldGray100),
-            _ConnectionSkeletonRow(),
-          ],
+        child: const FieldLoadingContent(
+          label: 'Loading player connections',
+          rows: 5,
+          compact: true,
         ),
-      ],
-    );
-  }
-}
-
-class _ConnectionSkeletonRow extends StatelessWidget {
-  const _ConnectionSkeletonRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Row(
-      children: [
-        FieldSkeletonBox(width: 44, height: 44, borderRadius: 999),
-        SizedBox(width: 12),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              FieldSkeletonBox(height: 14, borderRadius: 6),
-              SizedBox(height: 8),
-              FieldSkeletonBox(width: 130, height: 12, borderRadius: 6),
-            ],
-          ),
-        ),
-        SizedBox(width: 10),
-        FieldSkeletonBox(width: 86, height: 36, borderRadius: 999),
-      ],
-    );
-  }
+      ),
+    ],
+  );
 }
 
 class _ConnectionsErrorView extends StatelessWidget {
   const _ConnectionsErrorView({required this.message, required this.onRetry});
-
   final String message;
   final VoidCallback onRetry;
 
   @override
-  Widget build(BuildContext context) {
-    return ListView(
-      padding: fieldHeaderAwarePadding(context, top: 16, bottom: 36),
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: _border),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: fieldGray100),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Could not load people',
-                style: TextStyle(
-                  color: fieldGray900,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(message, style: const TextStyle(color: fieldGray500)),
-              const SizedBox(height: 14),
-              FilledButton.icon(
-                onPressed: onRetry,
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Retry'),
-              ),
-            ],
-          ),
+        Text(message, style: _jakarta(12, color: _muted)),
+        const SizedBox(height: 10),
+        TextButton.icon(
+          onPressed: onRetry,
+          style: TextButton.styleFrom(foregroundColor: _green),
+          icon: const Icon(Icons.refresh_rounded, size: 17),
+          label: Text('Retry', style: _jakarta(12, color: _green)),
         ),
       ],
-    );
-  }
+    ),
+  );
 }
