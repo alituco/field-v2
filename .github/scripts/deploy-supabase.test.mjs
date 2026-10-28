@@ -5,9 +5,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdir
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyProductionBackendRelease } from './verify-production-backend-release.mjs';
 
 const script = fileURLToPath(new URL('./deploy-supabase.sh', import.meta.url));
 const projectRef = 'nfdkdhdevpstfspazbfn';
+const productionProjectRef = 'zjsjuuhborxrlmdcpvlj';
 const retiredSecrets = ['TAP_SECRET_KEY', 'TAP_PUBLIC_KEY', 'TAP_MERCHANT_ID', 'TAP_APPLE_PAY_ENABLED', 'TAP_WEBHOOK_URL'];
 const unrelatedSecrets = ['STRIPE_SECRET_KEY', 'CUSTOM_KEY', 'TAP_SECRET_KEY_BACKUP'];
 const fixtureEnv = {
@@ -18,6 +20,13 @@ const fixtureEnv = {
   STRIPE_WEBHOOK_SECRET: 'whsec_deployment-fixture-only',
   STRIPE_RECONCILE_SECRET: 'worker_deployment_fixture_only_32_characters',
   STRIPE_WEBHOOK_ENDPOINT_ID: 'we_fixture',
+};
+const productionFixtureEnv = {
+  STRIPE_SECRET_KEY: 'sk_live_deployment_fixture_only',
+  STRIPE_PUBLISHABLE_KEY: 'pk_live_deployment_fixture_only',
+  STRIPE_WEBHOOK_SECRET: 'whsec_production_deployment_fixture_only',
+  STRIPE_ACCOUNT_ID: 'acct_deploymentfixture',
+  PRODUCTION_STRIPE_LIVE_ROLLOUT: 'LIVE_STRIPE_READY',
 };
 
 // The full deployment runs in a disposable workspace with an explicit env.
@@ -50,7 +59,8 @@ const { basename } = require('node:path');
 const command = basename(process.argv[1]);
 const args = process.argv.slice(2);
 const state = JSON.parse(readFileSync(process.env.MOCK_STATE, 'utf8'));
-const ref = '${projectRef}';
+const ref = process.env.MOCK_PROJECT_REF;
+const target = process.env.MOCK_TARGET;
 const retired = ${JSON.stringify(retiredSecrets)};
 appendFileSync(process.env.MOCK_LOG, JSON.stringify({ command, args }) + '\\n');
 function save() { writeFileSync(process.env.MOCK_STATE, JSON.stringify(state)); }
@@ -67,9 +77,14 @@ function fail(label) {
   }
 }
 if (command === 'node') {
-  expect(['.github/scripts/configure-stripe-staging.mjs']);
+  if (target === 'production' && args.includes('--preflight')) {
+    expect(['.github/scripts/configure-stripe-production.mjs', '--preflight']);
+    fail('production-preflight');
+  } else {
+    expect(['.github/scripts/configure-stripe-' + target + '.mjs']);
+    fail('configure');
+  }
   if (process.env.SUPABASE_PROJECT_REF !== ref) reject('Wrong configuration project');
-  fail('configure');
 } else if (command !== 'supabase') {
   reject('Unexpected executable');
 } else if (args[0] === 'link') {
@@ -86,7 +101,7 @@ if (command === 'node') {
   if (!args[5] || (statSync(args[5]).mode & 0o777) !== 0o600) reject('Secrets file is not private');
   const expected = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_RECONCILE_SECRET'];
   const contents = readFileSync(args[5], 'utf8');
-  if (contents !== expected.map(name => name + '=' + process.env[name] + '\\n').join('') + 'FIELD_ENVIRONMENT=staging\\n') {
+  if (contents !== expected.map(name => name + '=' + process.env[name] + '\\n').join('') + 'FIELD_ENVIRONMENT=' + target + '\\n') {
     reject('Unexpected secret file contents');
   }
   fail('secrets-set');
@@ -107,7 +122,8 @@ if (command === 'node') {
   console.log(JSON.stringify(state.functions.map(name => ({ name, slug: name }))));
 } else if (args[0] === 'functions' && args[1] === 'delete') {
   expect(['functions', 'delete', args[2], '--project-ref', ref, '--yes']);
-  if (!['tap-payment', 'tap-payment-webhook'].includes(args[2]) || !state.functions.includes(args[2])) {
+  const allowed = ['tap-payment', 'tap-payment-webhook', ...(target === 'production' ? ['dev-phone-login', 'dev-switch-user', 'staging-admin-session'] : [])];
+  if (!allowed.includes(args[2]) || !state.functions.includes(args[2])) {
     reject('Function deletion is not restricted to existing retired functions');
   }
   fail('functions-delete');
@@ -150,7 +166,7 @@ if (command === 'node') {
       const previousCalls = commands().length;
       const env = {
         ...fixtureEnv, PATH: bin, HOME: root, TMPDIR: temp,
-        MOCK_STATE: statePath, MOCK_LOG: logPath, ...overrides,
+        MOCK_STATE: statePath, MOCK_LOG: logPath, MOCK_TARGET: target, MOCK_PROJECT_REF: ref, ...overrides,
       };
       for (const name of Object.keys(env)) if (env[name] === undefined) delete env[name];
       const result = spawnSync('/bin/bash', [script, target, ref], {
@@ -159,7 +175,9 @@ if (command === 'node') {
       assert.ifError(result.error);
       const calls = commands().slice(previousCalls);
       const output = result.stdout + result.stderr;
-      for (const value of [...Object.values(fixtureEnv), 'mock-digest-must-not-be-logged']) {
+      const privateNames = ['SUPABASE_ACCESS_TOKEN', 'SUPABASE_DB_PASSWORD', 'STRIPE_SECRET_KEY',
+        'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET', 'STRIPE_RECONCILE_SECRET'];
+      for (const value of [...privateNames.map(name => env[name]).filter(Boolean), 'mock-digest-must-not-be-logged']) {
         assert.equal(output.includes(value), false, 'A fixture credential or digest leaked to output');
         assert.equal(JSON.stringify(calls).includes(value), false, 'A fixture credential leaked to command arguments');
       }
@@ -179,12 +197,142 @@ function assertNoPostCleanupDeploy(result) {
   assert.doesNotMatch(result.output, /deployment completed/);
 }
 
+const releaseSha = 'a'.repeat(40);
+const stagingReleaseSha = 'b'.repeat(40);
+const releaseTree = 'c'.repeat(40);
+const releaseEnv = {
+  GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REF: 'refs/heads/prod',
+  GITHUB_REPOSITORY: 'alituco/field-v2', GITHUB_SHA: releaseSha,
+  DEPLOY_CONFIRMATION: 'DEPLOY_PRODUCTION', BACKUP_CONFIRMATION: 'BACKUP_VERIFIED',
+  PRODUCTION_STRIPE_LIVE_ROLLOUT: 'LIVE_STRIPE_READY',
+};
+
+function releaseEvidence({ earlyDeployment = false, failedStaging = false } = {}) {
+  const base = 'repos/alituco/field-v2';
+  const resources = new Map([
+    [`${base}/actions/workflows/ci.yml/runs?branch=prod&head_sha=${releaseSha}&status=completed&per_page=100`,
+      { workflow_runs: [{ head_sha: releaseSha, head_branch: 'prod', status: 'completed', conclusion: 'success' }] }],
+    [`${base}/git/commits/${releaseSha}`, { tree: { sha: releaseTree } }],
+    [`${base}/git/commits/${stagingReleaseSha}`, { tree: { sha: releaseTree } }],
+    [`${base}/deployments?environment=staging&per_page=100`, [{ id: 123, sha: stagingReleaseSha,
+      environment: 'staging', description: earlyDeployment ? 'Deploy staging backend' : 'Field staging Supabase deployment' }]],
+    [`${base}/deployments/123/statuses?per_page=1`, [{ state: 'success',
+      description: 'Migrations, smoke, Android, referee, and admin E2E passed' }]],
+    [`${base}/actions/workflows/ci.yml/runs?branch=staging&head_sha=${stagingReleaseSha}&event=push&status=completed&per_page=100`,
+      { workflow_runs: [{ head_sha: stagingReleaseSha, head_branch: 'staging', event: 'push', status: 'completed', conclusion: failedStaging ? 'failure' : 'success' }] }],
+  ]);
+  return resource => {
+    assert.ok(resources.has(resource), `Unexpected release-evidence request: ${resource}`);
+    return structuredClone(resources.get(resource));
+  };
+}
+
+test('backend promotion requires all three confirmations before release-evidence reads', () => {
+  for (const name of ['DEPLOY_CONFIRMATION', 'BACKUP_CONFIRMATION', 'PRODUCTION_STRIPE_LIVE_ROLLOUT']) {
+    assert.throws(() => verifyProductionBackendRelease({ env: { ...releaseEnv, [name]: '' },
+      readGithub: () => assert.fail('No release reads before explicit confirmations') }));
+  }
+});
+
+test('backend promotion refuses successful early staging deployments and failed full staging runs', () => {
+  for (const scenario of [{ earlyDeployment: true }, { failedStaging: true }]) {
+    assert.throws(() => verifyProductionBackendRelease({ env: releaseEnv, readGithub: releaseEvidence(scenario) }),
+      /explicit verified staging release/);
+  }
+  assert.deepEqual(verifyProductionBackendRelease({ env: releaseEnv, readGithub: releaseEvidence() }),
+    { sha: releaseSha, stagingSha: stagingReleaseSha });
+});
+
+test('backend workflow invokes the shared full-release gate and keeps protected explicit deployment checks', () => {
+  const workflow = readFileSync(new URL('../workflows/deploy-supabase-production.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /node \.github\/scripts\/verify-production-backend-release\.mjs/);
+  assert.match(workflow, /environment:\n      name: production/);
+  assert.match(workflow, /\$GITHUB_REF" != "refs\/heads\/prod/);
+  assert.match(workflow, /LIVE_STRIPE_READY/);
+  assert.doesNotMatch(workflow, /matching_staging_sha|while read -r deployment_id/);
+});
+
 test('refuses production payment cutover before invoking deployment tools', (t) => {
   const result = deployment(t).run({ target: 'production', ref: 'zjsjuuhborxrlmdcpvlj' });
   assert.equal(result.status, 64);
-  assert.match(result.stderr, /Production payment cutover is not configured/);
+  assert.match(result.stderr, /Production live Stripe cutover requires/);
   assert.equal(result.stdout, '');
   assert.deepEqual(result.calls, []);
+});
+
+function runProduction(harness, overrides = {}) {
+  return harness.run({ target: 'production', ref: productionProjectRef,
+    overrides: { ...productionFixtureEnv, ...overrides } });
+}
+
+test('production requires explicit live configuration before invoking any deployment tools', (t) => {
+  for (const changes of [
+    { PRODUCTION_STRIPE_LIVE_ROLLOUT: undefined },
+    { PRODUCTION_STRIPE_LIVE_ROLLOUT: 'true' },
+    { STRIPE_SECRET_KEY: fixtureEnv.STRIPE_SECRET_KEY },
+    { STRIPE_PUBLISHABLE_KEY: fixtureEnv.STRIPE_PUBLISHABLE_KEY },
+    { STRIPE_WEBHOOK_SECRET: undefined },
+    { STRIPE_WEBHOOK_ENDPOINT_ID: undefined },
+    { STRIPE_ACCOUNT_ID: undefined },
+    { STRIPE_ACCOUNT_ID: '../other' },
+    { STRIPE_RECONCILE_SECRET: 'short' },
+    { STRIPE_RECONCILE_SECRET: 'x'.repeat(513) },
+    { STRIPE_RECONCILE_SECRET: 'x'.repeat(32) + '\n' },
+    ...['"', "'", '$', '#', '\\'].map(character => ({ STRIPE_RECONCILE_SECRET: character + 'x'.repeat(32) })),
+    { SUPABASE_ACCESS_TOKEN: undefined },
+    { SUPABASE_DB_PASSWORD: undefined },
+  ]) {
+    const result = runProduction(deployment(t), changes);
+    assert.equal(result.status, 64, result.output);
+    assert.deepEqual(result.calls, []);
+  }
+});
+
+test('failed production provider preflight never invokes Supabase or changes data', (t) => {
+  const result = runProduction(deployment(t, { failure: 'production-preflight' }));
+  assert.equal(result.status, 42, result.output);
+  assert.deepEqual(result.calls.map(call => call.command), ['node']);
+  assert.deepEqual(result.calls[0].args, ['.github/scripts/configure-stripe-production.mjs', '--preflight']);
+  assert.doesNotMatch(result.output, /Linking|deployment completed/);
+});
+
+test('confirmed production deploys payment/deletion/inert push without developer authentication or automatic activation', (t) => {
+  const forbidden = ['dev-phone-login', 'dev-switch-user', 'staging-admin-session'];
+  const harness = deployment(t, { functions: [...forbidden, 'tap-payment', 'keep-function'], secrets: [...retiredSecrets, ...unrelatedSecrets] });
+  for (let run = 0; run < 2; run++) {
+    const result = runProduction(harness);
+    assert.equal(result.status, 0, result.output);
+    assert.match(result.output, /Supabase production deployment completed/);
+    assert.equal(result.calls[0].command, 'node');
+    assert.deepEqual(result.calls[0].args, ['.github/scripts/configure-stripe-production.mjs', '--preflight']);
+    const deployments = result.calls.filter(({ args }) => args[0] === 'functions' && args[1] === 'deploy');
+    assert.deepEqual(deployments.map(({ args }) => args[2]), ['stripe-payment', 'stripe-payment-webhook',
+      'stripe-payment-reconcile', 'fieldrush-delete-account', 'fieldrush-push-dispatch']);
+    const state = harness.state();
+    assert.ok(forbidden.every(name => !state.functions.includes(name)));
+    assert.ok(state.functions.includes('keep-function'));
+    assert.ok(!state.functions.includes('tap-payment'));
+    assert.ok(retiredSecrets.every(name => !state.secrets.includes(name)));
+    for (const flag of ['PUSH_DELIVERY_ENABLED', 'FIREBASE_SERVICE_ACCOUNT_JSON', 'PUSH_WORKER_SECRET', 'FIELDRUSH_ACCOUNT_DELETION_ENABLED']) {
+      assert.ok(!state.secrets.includes(flag), `${flag} must not be activated by deployment`);
+    }
+    const firstMigration = result.calls.findIndex(({ args }) => args[0] === 'db' && args[1] === 'push');
+    const forbiddenDeletes = result.calls.filter(({ args }) => args[0] === 'functions' && args[1] === 'delete' && forbidden.includes(args[2]));
+    assert.equal(forbiddenDeletes.length, run === 0 ? forbidden.length : 0);
+    for (const call of forbiddenDeletes) assert.ok(result.calls.indexOf(call) < firstMigration);
+    const reconcileDeploy = result.calls.findIndex(({ args }) => args[0] === 'functions' && args[1] === 'deploy' && args[2] === 'stripe-payment-reconcile');
+    const configuration = result.calls.findIndex(({ command, args }) => command === 'node' && args.length === 1);
+    const retiredDelete = result.calls.findIndex(({ args }) => args[0] === 'functions' && args[1] === 'delete' && args[2] === 'tap-payment');
+    assert.ok(configuration > reconcileDeploy);
+    if (retiredDelete >= 0) assert.ok(retiredDelete > configuration);
+  }
+});
+
+test('production recording remains a separate explicit deployment opt-in', (t) => {
+  const result = runProduction(deployment(t), { DEPLOY_RECORDING_FUNCTIONS: 'true' });
+  assert.equal(result.status, 0, result.output);
+  assert.ok(result.calls.some(({ args }) => args[0] === 'functions' && args[1] === 'deploy' && args[2] === 'cloudflare-stream-webhook'));
+  assert.ok(result.calls.some(({ args }) => args[0] === 'functions' && args[1] === 'deploy' && args[2] === 'profile-goal-clip'));
 });
 
 test('rejects the wrong project before performing any deployment', (t) => {

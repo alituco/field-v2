@@ -8,7 +8,7 @@ function runSmoke({
   serviceRole = false,
   profileStatus = 403,
   environment = "production",
-  gameStatus = serviceRole || environment === "production" ? 200 : 401,
+  gameStatus = serviceRole ? 200 : 401,
   clanStatus = 200,
   healthStatus = 200,
   url,
@@ -134,14 +134,23 @@ test("privileged staging games must remain readable", () => {
   assert.match(result.stderr, /open_queue_games\?select=id&limit=1 failed with HTTP 403/);
 });
 
-test("production keeps its positive anonymous game-read contract", () => {
-  const result = runSmoke();
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /open_queue_games: 1 row/);
-  const denied = runSmoke({ gameStatus: 401 });
-  assert.notEqual(denied.status, 0);
-  assert.match(denied.stderr, /open_queue_games\?select=id&limit=1 failed with HTTP 401/);
-});
+for (const gameStatus of [401, 403]) {
+  test(`promoted production schema requires game privacy and accepts HTTP ${gameStatus}`, () => {
+    const result = runSmoke({ gameStatus });
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /open_queue_games: \d/);
+  });
+}
+
+for (const gameStatus of [200, 404, 500]) {
+  test(`production rejects a game privacy regression or broken schema (HTTP ${gameStatus})`, () => {
+    const result = runSmoke({ gameStatus });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, gameStatus === 200
+      ? /open_queue_games unexpectedly allowed anonymous reads/
+      : new RegExp(`open_queue_games returned unexpected HTTP ${gameStatus}`));
+  });
+}
 
 test("production smoke refuses a staging URL", () => {
   const result = runSmoke({ url: "https://nfdkdhdevpstfspazbfn.supabase.co" });

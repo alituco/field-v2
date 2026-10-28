@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:field/src/notifications/fieldrush_push.dart';
+import 'package:field/src/notifications/firebase_staging_options.dart';
 import 'package:field/src/home/activity_revision.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
@@ -27,7 +28,7 @@ void main() {
     androidAppId: '1:123456789:android:abcdef',
   );
   test(
-    'phone push defaults off and cannot activate production, desktop or invalid config',
+    'phone push defaults off and rejects unsupported platforms and implicit production identity',
     () {
       expect(FieldrushPushConfiguration.fromEnvironment().enabled, isFalse);
       expect(config.isValidFor(TargetPlatform.android), isTrue);
@@ -43,6 +44,135 @@ void main() {
         androidAppId: '1:123456789:android:abcdef',
       );
       expect(production.isValidFor(TargetPlatform.android), isFalse);
+      expect(production.isValidFor(TargetPlatform.iOS), isFalse);
+    },
+  );
+
+  FieldrushPushConfiguration productionConfig({
+    bool enabled = true,
+    String environment = 'production',
+    String apiKey = 'AIza-public-client-fixture',
+    String senderId = '123456789',
+    String iosAppId = '1:123456789:ios:abcdef',
+    String androidAppId = '1:123456789:android:fedcba',
+    String iosBundleId = 'com.alialtaraif.field',
+    String androidPackageId = 'com.field.field',
+  }) => FieldrushPushConfiguration(
+    enabled: enabled,
+    environment: environment,
+    apiKey: apiKey,
+    projectId: 'fieldrush-fixture',
+    senderId: senderId,
+    iosAppId: iosAppId,
+    androidAppId: androidAppId,
+    iosBundleId: iosBundleId,
+    androidPackageId: androidPackageId,
+  );
+
+  test(
+    'production push requires explicit matching Firebase platform identity',
+    () {
+      final production = productionConfig();
+      expect(production.isValidFor(TargetPlatform.iOS), isTrue);
+      expect(production.isValidFor(TargetPlatform.android), isTrue);
+      final options = production.options(TargetPlatform.iOS);
+      expect(options.iosBundleId, 'com.alialtaraif.field');
+      expect(options.appId, '1:123456789:ios:abcdef');
+      expect(
+        productionConfig(androidAppId: '').isValidFor(TargetPlatform.iOS),
+        isTrue,
+      );
+      expect(
+        productionConfig(iosAppId: '').isValidFor(TargetPlatform.android),
+        isTrue,
+      );
+      for (final invalid in [
+        productionConfig(enabled: false),
+        productionConfig(environment: 'unknown'),
+        productionConfig(environment: 'staging'),
+        productionConfig(iosBundleId: ''),
+        productionConfig(iosBundleId: 'com.alialtaraif.field.staging'),
+        productionConfig(iosBundleId: 'com.alialtaraif.field.evil'),
+        productionConfig(iosAppId: '1:987654321:ios:abcdef'),
+        productionConfig(iosAppId: '1:123456789:android:abcdef'),
+        productionConfig(apiKey: 'not-a-firebase-api-key'),
+      ]) {
+        expect(invalid.isValidFor(TargetPlatform.iOS), isFalse);
+      }
+      for (final invalid in [
+        productionConfig(androidPackageId: ''),
+        productionConfig(androidPackageId: 'com.field.field.staging'),
+        productionConfig(androidAppId: '1:987654321:android:abcdef'),
+        productionConfig(androidAppId: '1:123456789:ios:abcdef'),
+      ]) {
+        expect(invalid.isValidFor(TargetPlatform.android), isFalse);
+      }
+    },
+  );
+
+  test('production builds cannot reuse either known staging Firebase app', () {
+    expect(
+      productionConfig(
+        senderId: fieldrushStagingFirebaseSenderId,
+        iosAppId: fieldrushStagingFirebaseIosAppId,
+      ).isValidFor(TargetPlatform.iOS),
+      isFalse,
+    );
+    expect(
+      productionConfig(
+        senderId: fieldrushStagingFirebaseSenderId,
+        androidAppId: fieldrushStagingFirebaseAndroidAppId,
+      ).isValidFor(TargetPlatform.android),
+      isFalse,
+    );
+  });
+
+  test(
+    'an initialized Firebase app must match this platform, not only its project',
+    () {
+      final production = productionConfig();
+      expect(
+        production.matchesInitializedOptions(
+          production.options(TargetPlatform.iOS),
+          TargetPlatform.iOS,
+        ),
+        isTrue,
+      );
+      for (final wrong in [
+        const FirebaseOptions(
+          apiKey: 'AIza-public-client-fixture',
+          appId: '1:123456789:ios:123abc',
+          messagingSenderId: '123456789',
+          projectId: 'fieldrush-fixture',
+          iosBundleId: 'com.alialtaraif.field',
+        ),
+        const FirebaseOptions(
+          apiKey: 'AIza-public-client-fixture',
+          appId: '1:123456789:ios:abcdef',
+          messagingSenderId: '123456789',
+          projectId: 'another-fixture',
+          iosBundleId: 'com.alialtaraif.field',
+        ),
+        const FirebaseOptions(
+          apiKey: 'AIza-public-client-fixture',
+          appId: '1:123456789:ios:abcdef',
+          messagingSenderId: '987654321',
+          projectId: 'fieldrush-fixture',
+          iosBundleId: 'com.alialtaraif.field',
+        ),
+        const FirebaseOptions(
+          apiKey: 'AIza-public-client-fixture',
+          appId: '1:123456789:ios:abcdef',
+          messagingSenderId: '123456789',
+          projectId: 'fieldrush-fixture',
+          iosBundleId: 'com.alialtaraif.field.staging',
+        ),
+      ]) {
+        expect(
+          production.matchesInitializedOptions(wrong, TargetPlatform.iOS),
+          isFalse,
+        );
+      }
     },
   );
 

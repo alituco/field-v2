@@ -236,5 +236,12 @@ admin app and matching mobile build together. The deployment removes retired
 payment functions and server secrets only after their replacements are deployed.
 Do not discard historical financial rows or edit applied migrations to erase the
 old provider's history. Production activation and live keys are a separate rollout.
-The deployment script blocks production before any mutation until a coordinated
-live Stripe rollout is implemented.
+The production deployment requires the explicit `LIVE_STRIPE_READY` cutover,
+complete live keys, the expected live Stripe account and exact production
+webhook/API version. It checks provider readiness before any Supabase mutation,
+then deploys the matching handlers and recovery schedule. Use a production
+reconciliation secret of 32–512 base64url/hex-safe characters (`A–Z`, `a–z`,
+`0–9`, `_`, `-`), such as `openssl rand -hex 32`; quoted or shell-special values
+are rejected before deployment. See [delivery setup](../.github/DEPLOYMENT.md)
+and [production iOS](production-ios.md). Live payment/refund and real-device
+wallet qualification remain required; local tests do not perform real charges.

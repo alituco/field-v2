@@ -1,8 +1,5 @@
 import { createClient } from "npm:@supabase/supabase-js@2.86.0";
-import {
-  isExactFieldStagingSupabaseUrl,
-  isLocalSupabaseUrl,
-} from "../_shared/staging_guard.ts";
+import { isAccountDeletionEnabled } from "./environment.ts";
 import {
   isStaffDeletionIdentity,
   readDeletionConfirmation,
@@ -30,10 +27,7 @@ Deno.serve(async (request) => {
     return json({ error: "Method not allowed." }, 405);
   }
   const url = Deno.env.get("SUPABASE_URL");
-  if (
-    (!isExactFieldStagingSupabaseUrl(url) && !isLocalSupabaseUrl(url)) ||
-    Deno.env.get("FIELDRUSH_ACCOUNT_DELETION_ENABLED") !== "true"
-  ) {
+  if (!isAccountDeletionEnabled((name) => Deno.env.get(name))) {
     return json(
       { error: "Account deletion is not enabled. Contact support." },
       503,

@@ -65,6 +65,7 @@ function fixture(options: {
 } = {}) {
   const calls: { name: string; args: Record<string, unknown> }[] = [];
   const sends: { url: string; init: RequestInit }[] = [];
+  const providerRequests: string[] = [];
   const env: Record<string, string | undefined> = {
     SUPABASE_URL: "https://nfdkdhdevpstfspazbfn.supabase.co",
     FIELD_ENVIRONMENT: "staging",
@@ -125,6 +126,7 @@ function fixture(options: {
       return db;
     },
     fetcher: (url, init) => {
+      providerRequests.push(String(url));
       if (url === "https://oauth2.googleapis.com/token") {
         if (options.oauthFailure) {
           return Promise.resolve(
@@ -160,6 +162,7 @@ function fixture(options: {
     handler,
     calls,
     sends,
+    providerRequests,
     dbCreated: () => dbCreated,
     run: (authorization = `Bearer ${secret}`, body = "{}", method = "POST") =>
       handler(
@@ -202,21 +205,81 @@ Deno.test("service-account assertions use a verifiable RS256 signature and the e
   );
 });
 
-Deno.test("disabled, production and lookalike environments never contact a provider or claim work", async () => {
+Deno.test("disabled, mismatched and lookalike environments never contact a provider or claim work", async () => {
   for (
     const env of [{ PUSH_DELIVERY_ENABLED: "false" }, {
       FIELD_ENVIRONMENT: "production",
       SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co",
+      PUSH_DELIVERY_ENABLED: "false",
+    }, {
+      FIELD_ENVIRONMENT: "production",
+    }, {
+      FIELD_ENVIRONMENT: "staging",
+      SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co",
     }, {
       SUPABASE_URL: "https://nfdkdhdevpstfspazbfn.supabase.co.evil.example",
+    }, {
+      FIELD_ENVIRONMENT: "production",
+      SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co.evil.example",
+    }, {
+      FIELD_ENVIRONMENT: "production",
+      SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co/extra",
+    }, {
+      FIELD_ENVIRONMENT: "production",
+      SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co?project=staging",
+    }, {
+      FIELD_ENVIRONMENT: "production",
+      SUPABASE_URL: "https://user@zjsjuuhborxrlmdcpvlj.supabase.co",
+    }, {
+      FIELD_ENVIRONMENT: "production",
+      SUPABASE_URL: "http://zjsjuuhborxrlmdcpvlj.supabase.co",
     }, { FIELD_ENVIRONMENT: "local" }]
   ) {
     const test = fixture({ env });
     equal((await test.run()).status, 503);
     equal(test.calls.length, 0);
     equal(test.sends.length, 0);
+    equal(test.providerRequests.length, 0);
     equal(test.dbCreated(), 0);
   }
+});
+
+Deno.test("production requires an explicit matching Firebase project before contacting Google or claiming work", async () => {
+  for (const expectedProject of [undefined, "", "wrong-project"]) {
+    const test = fixture({
+      env: {
+        FIELD_ENVIRONMENT: "production",
+        SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co",
+        PUSH_FIREBASE_PROJECT_ID: expectedProject,
+      },
+    });
+    equal((await test.run()).status, 503);
+    equal(test.providerRequests.length, 0);
+    equal(test.calls.length, 0);
+  }
+});
+
+Deno.test("only explicitly enabled exact production dispatch reaches FCM using canonical database eligibility", async () => {
+  const test = fixture({
+    env: {
+      FIELD_ENVIRONMENT: "production",
+      SUPABASE_URL: "https://zjsjuuhborxrlmdcpvlj.supabase.co",
+      PUSH_FIREBASE_PROJECT_ID: project,
+    },
+  });
+  equal((await test.run()).status, 200);
+  equal(test.calls.map((call) => call.name), [
+    "claim_push_deliveries",
+    "get_push_delivery_payload",
+    "complete_push_delivery",
+  ]);
+  equal(test.sends.length, 1);
+  const message = JSON.parse(test.sends[0].init.body as string).message;
+  equal(message.data, { notification_id: notificationId });
+  equal(message.notification, {
+    title: "Fieldrush",
+    body: "You have a new update. Open Fieldrush to view it.",
+  });
 });
 
 Deno.test("worker authorization requires a matching secret without accepting a Supabase bearer instead", async () => {

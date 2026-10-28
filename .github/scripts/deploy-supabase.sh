@@ -32,13 +32,24 @@ if [[ -z "${SUPABASE_ACCESS_TOKEN:-}" || -z "${SUPABASE_DB_PASSWORD:-}" ]]; then
   exit 64
 fi
 
-# This branch changes the payment schema, but only staging has the matching
-# Stripe deployment configured. Never migrate production and leave it running
-# the retired payment handlers. A coordinated live rollout must replace this
-# gate with live-key/webhook/worker validation and deployment first.
+# Production is a coordinated live payment cutover, never a schema-only deploy.
+# Validate every credential and the live provider account/webhook BEFORE even
+# removing a forbidden function or touching the database. The protected workflow
+# additionally requires the tested staging tree and a verified backup.
 if [[ "$target" == production ]]; then
-  echo "Production payment cutover is not configured. No production changes were made; deploy staging only." >&2
-  exit 64
+  stripe_reconcile_secret="${STRIPE_RECONCILE_SECRET:-}"
+  if [[ "${PRODUCTION_STRIPE_LIVE_ROLLOUT:-}" != LIVE_STRIPE_READY ||
+    ! "${STRIPE_SECRET_KEY:-}" =~ ^sk_live_[A-Za-z0-9_]+$ ||
+    ! "${STRIPE_PUBLISHABLE_KEY:-}" =~ ^pk_live_[A-Za-z0-9_]+$ ||
+    ! "${STRIPE_WEBHOOK_SECRET:-}" =~ ^whsec_[A-Za-z0-9_]+$ ||
+    ! "${STRIPE_WEBHOOK_ENDPOINT_ID:-}" =~ ^we_[A-Za-z0-9]+$ ||
+    ! "${STRIPE_ACCOUNT_ID:-}" =~ ^acct_[A-Za-z0-9]+$ ||
+    ! "$stripe_reconcile_secret" =~ ^[A-Za-z0-9_-]+$ ||
+    ${#stripe_reconcile_secret} -lt 32 || ${#stripe_reconcile_secret} -gt 512 ]]; then
+    echo "Production live Stripe cutover requires LIVE_STRIPE_READY, live keys, the expected account/webhook and a strong worker secret. No production changes were made." >&2
+    exit 64
+  fi
+  SUPABASE_PROJECT_REF="$project_ref" node .github/scripts/configure-stripe-production.mjs --preflight
 fi
 
 # Fail before migrations rather than leaving a partially upgraded checkout.
@@ -134,13 +145,15 @@ deploy_function() {
     --yes
 }
 
-if [[ "$target" == "staging" ]]; then
+# Both hosted environments require the matching Stripe handlers and recovery
+# worker. Only staging may deploy the separate developer authentication routes.
+if [[ "$target" == "staging" || "$target" == "production" ]]; then
   # Do not put server keys in CLI arguments or print the temporary secret file.
   stripe_secrets_file="$(mktemp)"
   chmod 600 "$stripe_secrets_file"
   trap 'rm -f "$stripe_secrets_file"' EXIT
-  printf 'STRIPE_SECRET_KEY=%s\nSTRIPE_WEBHOOK_SECRET=%s\nSTRIPE_RECONCILE_SECRET=%s\nFIELD_ENVIRONMENT=staging\n' \
-    "$STRIPE_SECRET_KEY" "$STRIPE_WEBHOOK_SECRET" "$STRIPE_RECONCILE_SECRET" \
+  printf 'STRIPE_SECRET_KEY=%s\nSTRIPE_WEBHOOK_SECRET=%s\nSTRIPE_RECONCILE_SECRET=%s\nFIELD_ENVIRONMENT=%s\n' \
+    "$STRIPE_SECRET_KEY" "$STRIPE_WEBHOOK_SECRET" "$STRIPE_RECONCILE_SECRET" "$target" \
     >"$stripe_secrets_file"
   supabase secrets set \
     --project-ref "$project_ref" \
@@ -151,7 +164,11 @@ if [[ "$target" == "staging" ]]; then
   deploy_function stripe-payment --no-verify-jwt
   deploy_function stripe-payment-webhook --no-verify-jwt
   deploy_function stripe-payment-reconcile --no-verify-jwt
-  SUPABASE_PROJECT_REF="$project_ref" node .github/scripts/configure-stripe-staging.mjs
+  if [[ "$target" == "staging" ]]; then
+    SUPABASE_PROJECT_REF="$project_ref" node .github/scripts/configure-stripe-staging.mjs
+  else
+    SUPABASE_PROJECT_REF="$project_ref" node .github/scripts/configure-stripe-production.mjs
+  fi
 
   # Remove retired endpoints only after their replacements are deployed.
   function_list="$(production_function_list)"
@@ -193,6 +210,9 @@ if [[ "$target" == "staging" ]]; then
   # service-account key into logs/CLI arguments.
   deploy_function fieldrush-push-dispatch --no-verify-jwt
 
+fi
+
+if [[ "$target" == "staging" ]]; then
   # Cloudflare authenticates its webhook with Webhook-Signature, so this
   # endpoint cannot require a Supabase user JWT.
   deploy_function cloudflare-stream-webhook --no-verify-jwt

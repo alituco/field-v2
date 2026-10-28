@@ -381,6 +381,7 @@ jobs:
             supabase/functions/_shared/staging_guard_test.ts \
             supabase/functions/_shared/dev_auth_test.ts \
             supabase/functions/fieldrush-delete-account/request_test.ts \
+            supabase/functions/fieldrush-delete-account/environment_test.ts \
             supabase/functions/dev-switch-user/fixture_test.ts \
             supabase/functions/_shared/staging_admin_session_test.ts \
             supabase/functions/fieldrush-push-dispatch/handler_test.ts \

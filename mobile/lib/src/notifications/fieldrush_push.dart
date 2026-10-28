@@ -21,6 +21,8 @@ class FieldrushPushConfiguration {
     required this.senderId,
     required this.iosAppId,
     required this.androidAppId,
+    this.iosBundleId = 'com.alialtaraif.field.staging',
+    this.androidPackageId = 'com.field.field.staging',
   });
 
   factory FieldrushPushConfiguration.fromEnvironment() {
@@ -62,6 +64,20 @@ class FieldrushPushConfiguration {
           : environment == 'staging'
           ? fieldrushStagingFirebaseAndroidAppId
           : '',
+      iosBundleId:
+          const String.fromEnvironment('PUSH_FIREBASE_IOS_BUNDLE_ID').isNotEmpty
+          ? const String.fromEnvironment('PUSH_FIREBASE_IOS_BUNDLE_ID')
+          : environment == 'staging' || environment == 'local'
+          ? 'com.alialtaraif.field.staging'
+          : '',
+      androidPackageId:
+          const String.fromEnvironment(
+            'PUSH_FIREBASE_ANDROID_PACKAGE_ID',
+          ).isNotEmpty
+          ? const String.fromEnvironment('PUSH_FIREBASE_ANDROID_PACKAGE_ID')
+          : environment == 'staging' || environment == 'local'
+          ? 'com.field.field.staging'
+          : '',
     );
   }
 
@@ -72,30 +88,66 @@ class FieldrushPushConfiguration {
   final String senderId;
   final String iosAppId;
   final String androidAppId;
+  final String iosBundleId;
+  final String androidPackageId;
 
-  bool isValidFor(TargetPlatform platform) =>
-      enabled &&
-      !kIsWeb &&
-      (environment == 'staging' || environment == 'local') &&
-      (platform == TargetPlatform.iOS || platform == TargetPlatform.android) &&
-      apiKey.startsWith('AIza') &&
-      RegExp(r'^[a-z][a-z0-9-]{4,62}$').hasMatch(projectId) &&
-      RegExp(r'^\d+$').hasMatch(senderId) &&
-      RegExp(
-        platform == TargetPlatform.iOS
-            ? r'^1:\d+:ios:[a-f0-9]+$'
-            : r'^1:\d+:android:[a-f0-9]+$',
-      ).hasMatch(platform == TargetPlatform.iOS ? iosAppId : androidAppId);
+  bool isValidFor(TargetPlatform platform) {
+    if (!enabled ||
+        kIsWeb ||
+        !const ['staging', 'local', 'production'].contains(environment) ||
+        !const [
+          TargetPlatform.iOS,
+          TargetPlatform.android,
+        ].contains(platform) ||
+        !apiKey.startsWith('AIza') ||
+        !RegExp(r'^[a-z][a-z0-9-]{4,62}$').hasMatch(projectId) ||
+        !RegExp(r'^\d+$').hasMatch(senderId)) {
+      return false;
+    }
+    final isIos = platform == TargetPlatform.iOS;
+    final appId = isIos ? iosAppId : androidAppId;
+    final provider = isIos ? 'ios' : 'android';
+    // App IDs carry the sender/project number. Mixing two downloaded Firebase
+    // configurations must fail before Firebase or the OS is initialized.
+    if (!RegExp('^1:$senderId:$provider:[a-f0-9]+\$').hasMatch(appId)) {
+      return false;
+    }
+    final isProduction = environment == 'production';
+    final expectedIdentity = isIos
+        ? 'com.alialtaraif.field${isProduction ? '' : '.staging'}'
+        : 'com.field.field${isProduction ? '' : '.staging'}';
+    if ((isIos ? iosBundleId : androidPackageId) != expectedIdentity) {
+      return false;
+    }
+    // A public production app ID is supplied explicitly at build time. Never
+    // silently initialize the production binary with a known staging app.
+    if (isProduction &&
+        (appId == fieldrushStagingFirebaseIosAppId ||
+            appId == fieldrushStagingFirebaseAndroidAppId)) {
+      return false;
+    }
+    return true;
+  }
 
   FirebaseOptions options(TargetPlatform platform) => FirebaseOptions(
     apiKey: apiKey,
     appId: platform == TargetPlatform.iOS ? iosAppId : androidAppId,
     messagingSenderId: senderId,
     projectId: projectId,
-    iosBundleId: platform == TargetPlatform.iOS
-        ? 'com.alialtaraif.field.staging'
-        : null,
+    iosBundleId: platform == TargetPlatform.iOS ? iosBundleId : null,
   );
+
+  bool matchesInitializedOptions(
+    FirebaseOptions actual,
+    TargetPlatform platform,
+  ) {
+    final expected = options(platform);
+    return actual.projectId == expected.projectId &&
+        actual.appId == expected.appId &&
+        actual.messagingSenderId == expected.messagingSenderId &&
+        (platform != TargetPlatform.iOS ||
+            actual.iosBundleId == expected.iosBundleId);
+  }
 }
 
 /// Server binding versions complement the client generation guard: an old
@@ -250,8 +302,12 @@ class FieldrushPush extends ChangeNotifier with WidgetsBindingObserver {
         await Firebase.initializeApp(
           options: _configuration!.options(defaultTargetPlatform),
         );
-      } else if (Firebase.app().options.projectId != _projectId) {
-        throw StateError('The Firebase project does not match this build.');
+      }
+      if (!_configuration!.matchesInitializedOptions(
+        Firebase.app().options,
+        defaultTargetPlatform,
+      )) {
+        throw StateError('The Firebase application does not match this build.');
       }
       _messaging = FirebaseMessaging.instance;
       _storage = await SharedPreferences.getInstance();

@@ -29,7 +29,7 @@ test('push entitlements and plist are an explicit staging opt-in, not a default 
     assert.doesNotMatch(read(`mobile/ios/Flutter/${mode}-${flavor}.xcconfig`),/Info-staging-push|Runner-staging-push|Push-staging\.xcconfig/);
   }
 });
-test('only the staging TestFlight archive opts into push, without overriding Pods signing settings',()=>{
+test('the staging TestFlight archive keeps its explicit push override without changing Pods signing settings',()=>{
   const upload=read('.github/scripts/upload-staging-testflight.sh');
   assert.match(upload,/readonly expected_ref="refs\/heads\/staging"/);
   assert.match(upload,/--dart-define=APP_ENV=staging/);
@@ -46,9 +46,13 @@ test('only the staging TestFlight archive opts into push, without overriding Pod
   const project=read('mobile/ios/Runner.xcodeproj/project.pbxproj');
   const configurations=[...project.matchAll(/\t\t[0-9A-F]+ \/\* ([^*]+) \*\/ = \{\n\t\t\tisa = XCBuildConfiguration;[\s\S]*?\n\t\t\};/g)];
   const optedIn=configurations.filter(([source])=>source.includes('$(FIELDRUSH_IOS_INFOPLIST_FILE)'));
-  assert.equal(optedIn.length,1);
-  assert.match(optedIn[0][0],/baseConfigurationReference = .*\/\* Release-staging.xcconfig \*\//);
-  assert.equal(optedIn[0][1],'Release-staging');
+  assert.equal(optedIn.length,2);
+  const staging=optedIn.find(([,name])=>name==='Release-staging');
+  const production=optedIn.find(([,name])=>name==='Release-production');
+  assert.ok(staging);
+  assert.ok(production);
+  assert.match(staging[0],/baseConfigurationReference = .*\/\* Release-staging.xcconfig \*\//);
+  assert.match(production[0],/baseConfigurationReference = .*\/\* Release-production.xcconfig \*\//);
   assert.ok(upload.indexOf('verify_push_app "$archive_path/')<upload.indexOf('-exportArchive'));
   assert.ok(upload.indexOf('verify_push_app "$signing_root/exported-ipa/')<upload.indexOf('--upload-app'));
 });

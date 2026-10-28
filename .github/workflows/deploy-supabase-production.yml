@@ -11,6 +11,10 @@ on:
         description: Type BACKUP_VERIFIED after checking production backup/PITR
         required: true
         type: string
+      payment_confirmation:
+        description: Type LIVE_STRIPE_READY after configuring live Stripe and the coordinated mobile/admin release
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -37,60 +41,19 @@ jobs:
       DEPLOY_RECORDING_FUNCTIONS: ${{ vars.DEPLOY_RECORDING_FUNCTIONS }}
       DEPLOY_CONFIRMATION: ${{ inputs.confirmation }}
       BACKUP_CONFIRMATION: ${{ inputs.backup_confirmation }}
+      PRODUCTION_STRIPE_LIVE_ROLLOUT: ${{ inputs.payment_confirmation }}
+      STRIPE_ACCOUNT_ID: ${{ vars.STRIPE_ACCOUNT_ID }}
+      STRIPE_WEBHOOK_ENDPOINT_ID: ${{ vars.STRIPE_WEBHOOK_ENDPOINT_ID }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
 
     steps:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Require successful CI and the same code from staging
-        shell: bash
+      - name: Require successful CI and the full verified staging release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          successful_ci_runs="$(
-            gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=prod&head_sha=${GITHUB_SHA}&status=completed&per_page=20" \
-              --jq '[.workflow_runs[] | select(.conclusion == "success")] | length'
-          )"
-          if [[ "$successful_ci_runs" -lt 1 ]]; then
-            echo "::error::This exact prod commit has not passed CI."
-            exit 1
-          fi
-
-          current_tree="$(
-            gh api "repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}" \
-              --jq '.tree.sha'
-          )"
-          deployments="$(
-            gh api \
-              "repos/${GITHUB_REPOSITORY}/deployments?environment=staging&per_page=20"
-          )"
-          matching_staging_sha=""
-          while read -r deployment_id staging_sha; do
-            [[ -n "$deployment_id" && -n "$staging_sha" ]] || continue
-            staging_state="$(
-              gh api \
-                "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses?per_page=1" \
-                --jq '.[0].state // empty'
-            )"
-            [[ "$staging_state" == "success" ]] || continue
-            staging_tree="$(
-              gh api \
-                "repos/${GITHUB_REPOSITORY}/git/commits/${staging_sha}" \
-                --jq '.tree.sha'
-            )"
-            if [[ "$staging_tree" == "$current_tree" ]]; then
-              matching_staging_sha="$staging_sha"
-              break
-            fi
-          done < <(
-            jq -r '.[] | [.id, .sha] | @tsv' <<<"$deployments"
-          )
-          if [[ -z "$matching_staging_sha" ]]; then
-            echo "::error::This prod code tree has not passed the staging deployment and smoke test."
-            exit 1
-          fi
+        run: node .github/scripts/verify-production-backend-release.mjs
 
       - name: Verify production target and confirmation
         shell: bash
@@ -109,6 +72,10 @@ jobs:
           fi
           if [[ "$BACKUP_CONFIRMATION" != "BACKUP_VERIFIED" ]]; then
             echo "::error::Confirm the production backup/PITR check with BACKUP_VERIFIED."
+            exit 1
+          fi
+          if [[ "$PRODUCTION_STRIPE_LIVE_ROLLOUT" != "LIVE_STRIPE_READY" ]]; then
+            echo "::error::Confirm the coordinated live Stripe rollout with LIVE_STRIPE_READY."
             exit 1
           fi
           if [[ -z "$SUPABASE_PROJECT_REF" || -z "$OTHER_SUPABASE_PROJECT_REF" ]]; then
@@ -138,6 +105,9 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET: ${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          STRIPE_RECONCILE_SECRET: ${{ secrets.STRIPE_RECONCILE_SECRET }}
         run: .github/scripts/deploy-supabase.sh production "$SUPABASE_PROJECT_REF"
 
       - name: Smoke-test hosted production

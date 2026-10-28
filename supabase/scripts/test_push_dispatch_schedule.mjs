@@ -14,8 +14,8 @@ try {
     create role anon; create role authenticated; create role service_role;
     create schema auth; create schema fieldrush_private; create schema vault; create schema net; create schema cron;
     create function auth.role() returns text language sql stable as $$ select nullif(current_setting('request.jwt.claim.role',true),'') $$;
-    create table fieldrush_private.push_configuration(singleton boolean primary key default true,enabled boolean not null default false);
-    insert into fieldrush_private.push_configuration values(true,false);
+    create table fieldrush_private.push_configuration(singleton boolean primary key default true,enabled boolean not null default false,firebase_project_id text);
+    insert into fieldrush_private.push_configuration(singleton,enabled) values(true,false);
     create table vault.secrets(id uuid primary key default gen_random_uuid(),name text unique,secret text,description text);
     create view vault.decrypted_secrets as select id,name,secret as decrypted_secret from vault.secrets;
     create function vault.create_secret(secret_to_use text,name_to_use text,description_to_use text) returns uuid language plpgsql as $$
@@ -80,5 +80,58 @@ try {
   await db.exec('delete from vault.secrets');
   equal(await scalar('select fieldrush_private.dispatch_pending_push()'),null);
   equal(await scalar('select count(*)::integer from net.requests'),1);
+  // Replay the additive production rollout over an active staging setup. It
+  // preserves all existing switches and the one existing inert cron schedule.
+  await db.exec(await readFile(new URL('../migrations/20261027000800_production_push_dispatch.sql',import.meta.url),'utf8'));
+  equal(await scalar('select environment from fieldrush_private.push_dispatch_configuration'),'staging');
+  equal(await scalar('select enabled from fieldrush_private.push_dispatch_configuration'),true);
+  equal(await scalar('select endpoint_url from fieldrush_private.push_dispatch_configuration'),endpoint);
+  equal(await scalar('select count(*)::integer from cron.job'),1);
+  equal(await scalar('select count(*)::integer from net.requests'),1);
+  for(const role of ['anon','authenticated']) {
+    equal(await scalar("select has_function_privilege($1,'public.configure_push_dispatch_environment(text)','EXECUTE')",[role]),false);
+    equal(await scalar("select has_function_privilege($1,'public.configure_push_delivery(text,boolean)','EXECUTE')",[role]),false);
+  }
+  equal(await scalar("select has_function_privilege('service_role','public.configure_push_dispatch_environment(text)','EXECUTE')"),true);
+  await db.query("select set_config('request.jwt.claim.role','authenticated',false)");
+  await rejects("select public.configure_push_dispatch_environment('production')",[],'42501');
+  await rejects("select public.configure_push_delivery('production-fixture',false)",[],'42501');
+  await db.query("select set_config('request.jwt.claim.role','service_role',false)");
+  await db.query("select public.configure_push_dispatch_environment('staging')");
+  await rejects("select public.configure_push_dispatch_environment('production')",[],'55000');
+  await db.query('select public.configure_push_dispatch(null,null,false)');
+  await rejects("select public.configure_push_dispatch_environment('production')",[],'55000');
+  await db.query("select public.configure_push_delivery('staging-fixture',false)");
+  for(const invalid of [null,'local','prod','PRODUCTION','production ']) {
+    await rejects('select public.configure_push_dispatch_environment($1)',[invalid],'22023');
+  }
+  await db.query("select public.configure_push_dispatch_environment('production')");
+  equal(await scalar('select environment from fieldrush_private.push_dispatch_configuration'),'production');
+  equal(await scalar('select enabled from fieldrush_private.push_dispatch_configuration'),false);
+  equal(await scalar('select endpoint_url from fieldrush_private.push_dispatch_configuration'),null);
+  equal(await scalar('select firebase_project_id from fieldrush_private.push_configuration'),null);
+  equal(await scalar('select fieldrush_private.dispatch_pending_push()'),null);
+  equal(await scalar('select count(*)::integer from vault.secrets'),0);
+  const productionEndpoint='https://zjsjuuhborxrlmdcpvlj.supabase.co/functions/v1/fieldrush-push-dispatch';
+  await rejects('select public.configure_push_dispatch($1,$2,true)',[productionEndpoint,secret],'22023');
+  await rejects("select public.configure_push_delivery('production-fixture',null)",[],'22023');
+  await rejects("select public.configure_push_delivery('',true)",[],'22023');
+  await db.query("select public.configure_push_delivery('production-fixture',true)");
+  for(const wrong of [endpoint,productionEndpoint+'/',productionEndpoint+'?test=true','https://example.com/worker']) {
+    await rejects('select public.configure_push_dispatch($1,$2,true)',[wrong,secret],'22023');
+    await rejects('update fieldrush_private.push_dispatch_configuration set endpoint_url=$1',[wrong],'23514');
+  }
+  await db.query('select public.configure_push_dispatch($1,$2,true)',[productionEndpoint,secret]);
+  equal(await scalar('select enabled from fieldrush_private.push_dispatch_configuration'),true);
+  await db.query('select fieldrush_private.dispatch_pending_push()');
+  equal((await db.query('select url,body,headers from net.requests order by id desc limit 1')).rows[0],{
+    url:productionEndpoint,body:{},headers:{'Content-Type':'application/json',Authorization:`Bearer ${secret}`}
+  });
+  await rejects("select public.configure_push_dispatch_environment('staging')",[],'55000');
+  // A rollback of delivery is possible without retaining provider credentials.
+  await db.exec('delete from vault.secrets');
+  await db.query('select public.configure_push_dispatch(null,null,false)');
+  equal(await scalar('select fieldrush_private.dispatch_pending_push()'),null);
+  equal(await scalar('select count(*)::integer from net.requests'),2);
   console.log(`PASS ${checks} protected dispatcher checks; Vault/cron/net are local contracts, no network requests made.`);
 } finally {await db.close();}
