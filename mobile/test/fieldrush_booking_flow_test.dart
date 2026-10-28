@@ -443,6 +443,33 @@ void main() {
   });
 
   testWidgets(
+    'booking review shows the prior arrival date for midnight kickoff',
+    (tester) async {
+      // Friday 00:10 in Phoenix requires arriving Thursday at 23:40.
+      final repository = _Repository([
+        _game('midnight', start: DateTime.utc(2099, 6, 5, 7, 10)),
+      ]);
+      await _pump(
+        tester,
+        FieldrushBookingFlow(
+          repository: repository,
+          now: _now,
+          startAtGames: true,
+          initialRoles: const {OpenQueueRole.defender},
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('booking-game-midnight')));
+      await tester.pumpAndSettle();
+      expect(find.text('STEP 3 OF 3'), findsOneWidget);
+      expect(find.text('THU, 4 JUN'), findsOneWidget);
+      expect(find.text('FRI, 5 JUN'), findsNothing);
+      expect(find.text('CHECK-IN · 11:40 PM'), findsOneWidget);
+      expect(repository.bookCalls, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'no preference matches offers explicit sooner out-of-position game',
     (tester) async {
       final repository = _Repository([_game('one', keeper: 0)]);
