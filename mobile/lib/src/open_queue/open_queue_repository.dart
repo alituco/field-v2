@@ -1,8 +1,9 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'open_queue.dart';
+import 'featured_field.dart';
 import 'open_queue_party_repository.dart';
-import '../payments/tap_payment_service.dart';
+import '../payments/payment_service.dart';
 import '../reliability/reliability.dart';
 
 abstract class OpenQueueRepository {
@@ -31,6 +32,49 @@ abstract interface class OpenQueueBookingLookupRepository {
   Future<OpenQueueBooking?> getMyUpcomingBookingForGame(String gameId);
 }
 
+abstract interface class OpenQueueEmbeddedCheckoutRepository {
+  Future<OpenQueueBooking> bookGameWithCollector({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    required PaymentCollector collectPayment,
+    String? resumeIntentId,
+    bool resumeOnly = false,
+  });
+}
+
+abstract interface class OpenQueuePaymentStatusRepository {
+  Future<PaymentRefundState> checkRefundStatus(String intentId);
+}
+
+abstract interface class OpenQueueCheckoutCancellationRepository {
+  Future<OpenQueueBooking?> cancelCheckout({
+    required String intentId,
+    required String gameId,
+  });
+}
+
+abstract interface class OpenQueueCheckoutNotificationRepository {
+  Future<void> acknowledgeCheckoutNotification({
+    required String paymentId,
+    required String outcome,
+  });
+}
+
+/// Market discovery applies the market predicate before the server feed limit.
+/// The historical, all-market [OpenQueueRepository.listGames] stays available.
+abstract interface class OpenQueueMarketRepository {
+  Future<List<OpenQueueGame>> listMarketGames(String timezone);
+}
+
+/// Canonical competition-city discovery; cities can share a timezone.
+abstract interface class OpenQueueCityRepository {
+  Future<List<OpenQueueGame>> listCityGames(String cityId);
+}
+
+abstract interface class OpenQueueFeaturedFieldRepository {
+  Future<FeaturedField?> getFeaturedField(String cityId);
+}
+
 abstract interface class OpenQueueReliabilityLookupRepository {
   Future<MatchReliabilityContext?> getMatchReliabilityContext(String gameId);
 }
@@ -46,15 +90,58 @@ class SupabaseOpenQueueRepository
     with SupabaseOpenQueuePartyRepository
     implements
         OpenQueueRepository,
+        OpenQueueMarketRepository,
+        OpenQueueCityRepository,
+        OpenQueueFeaturedFieldRepository,
         OpenQueueBookingLookupRepository,
+        OpenQueueEmbeddedCheckoutRepository,
+        OpenQueuePaymentStatusRepository,
+        OpenQueueCheckoutCancellationRepository,
+        OpenQueueCheckoutNotificationRepository,
         OpenQueueReliabilityLookupRepository,
         OpenQueueBookingCostPreviewRepository {
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseOpenQueueRepository({SupabaseClient? client}) : _supabase = client;
+
+  final SupabaseClient? _supabase;
+  SupabaseClient get _client => _supabase ?? Supabase.instance.client;
+
+  @override
+  Future<FeaturedField?> getFeaturedField(String cityId) async {
+    final value = await _client.rpc(
+      'get_featured_field',
+      params: {'city_id_to_use': cityId},
+    );
+    return value == null
+        ? null
+        : FeaturedField.fromJson(Map<String, dynamic>.from(value as Map));
+  }
 
   @override
   SupabaseClient get partyClient => _client;
 
-  static const _bookingSelect = '''
+  static const _gameMetadataSelect = '''
+    currency,
+    highest_division,
+    lowest_division,
+    minimum_players,
+    participation_rules_version,
+    actual_started_at,
+    goalkeeper_capacity,
+    defender_capacity,
+    midfielder_capacity,
+    attacker_capacity,
+    field_id,
+    market_city_id,
+    location_address,
+    location_city,
+    location_state,
+    location_country_code,
+    location_latitude,
+    location_longitude
+  ''';
+
+  static const _bookingSelect =
+      '''
     id,
     game_id,
     profile_id,
@@ -66,6 +153,8 @@ class SupabaseOpenQueueRepository
     cancelled_at,
     refund_percent,
     refund_amount_fils,
+    refund_destination,
+    refund_status,
     game:open_queue_games!open_queue_bookings_game_id_fkey(
       id,
       status,
@@ -77,14 +166,11 @@ class SupabaseOpenQueueRepository
       ends_at,
       timezone,
       price_fils,
+      $_gameMetadataSelect,
       age_label,
       capacity,
       white_score,
       black_score,
-      white_average_sr,
-      black_average_sr,
-      match_average_sr,
-      team_sr_spread,
       teams_assigned_at
     )
   ''';
@@ -92,19 +178,65 @@ class SupabaseOpenQueueRepository
   @override
   Future<List<OpenQueueGame>> listGames() async {
     final response = await _client.rpc('list_open_queue_games');
-    return [
-      for (final row in response as List<dynamic>)
-        OpenQueueGame.fromJson(Map<String, dynamic>.from(row as Map)),
-    ];
+    final rows = await _withGameMetadata(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
+  }
+
+  @override
+  Future<List<OpenQueueGame>> listMarketGames(String timezone) async {
+    final response = await _client.rpc(
+      'list_open_queue_games_for_market',
+      params: {'timezone_to_use': timezone},
+    );
+    final rows = await _withGameMetadata(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
+  }
+
+  @override
+  Future<List<OpenQueueGame>> listCityGames(String cityId) async {
+    final response = await _client.rpc(
+      'list_open_queue_games_for_city',
+      params: {'city_id_to_use': cityId},
+    );
+    final rows = await _withGameMetadata(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
   }
 
   @override
   Future<List<OpenQueueGame>> listFixtureGames() async {
     final response = await _client.rpc('list_open_queue_fixture_games');
-    return [
-      for (final row in response as List<dynamic>)
-        OpenQueueGame.fromJson(Map<String, dynamic>.from(row as Map)),
+    final rows = await _withGameMetadata(response as List<dynamic>);
+    return [for (final row in rows) OpenQueueGame.fromJson(row)];
+  }
+
+  Future<List<Map<String, dynamic>>> _withGameMetadata(
+    List<dynamic> values,
+  ) async {
+    final rows = [
+      for (final value in values) Map<String, dynamic>.from(value as Map),
     ];
+    if (rows.isEmpty) return rows;
+    // Existing table-returning RPC signatures remain compatible for history.
+    // Enrich with currency, formation and the game's saved location snapshot,
+    // without exposing the admin-only fields catalog to player clients.
+    final metadata = await _client
+        .from('open_queue_games')
+        .select('id, $_gameMetadataSelect')
+        .inFilter('id', [for (final row in rows) row['id'] as String]);
+    final byId = {for (final row in metadata) row['id']: row};
+    return [
+      for (final row in rows)
+        {
+          ...row,
+          ...?byId[row['id']],
+          'currency': _requiredCurrency(byId[row['id']]?['currency']),
+        },
+    ];
+  }
+
+  String _requiredCurrency(Object? value) {
+    if (value == 'USD' || value == 'BHD') return value as String;
+    throw StateError('The game currency is unavailable. Please try again.');
   }
 
   @override
@@ -120,6 +252,25 @@ class SupabaseOpenQueueRepository
       ),
       _ => throw StateError('Solo match not found.'),
     };
+    final metadata = await _client
+        .from('open_queue_games')
+        .select(_gameMetadataSelect)
+        .eq('id', gameId)
+        .single();
+    metadata['currency'] = _requiredCurrency(metadata['currency']);
+    final gameKey = row['game'] is Map
+        ? 'game'
+        : row['open_queue_game'] is Map
+        ? 'open_queue_game'
+        : null;
+    if (gameKey == null) {
+      row.addAll(metadata);
+    } else {
+      row[gameKey] = {
+        ...Map<String, dynamic>.from(row[gameKey] as Map),
+        ...metadata,
+      };
+    }
     return OpenQueueMatchDetail.fromJson(row);
   }
 
@@ -146,10 +297,43 @@ class SupabaseOpenQueueRepository
     required String gameId,
     required OpenQueueRole role,
   }) async {
-    final response = await _client.rpc(
+    Future<dynamic> quote() => _client.rpc(
       'preview_open_queue_booking_cost',
       params: {'game_id_to_book': gameId, 'role_to_book': role.code},
     );
+    dynamic response;
+    try {
+      response = await quote();
+    } on PostgrestException catch (error) {
+      if (error.code != 'P0001' ||
+          error.message !=
+              'Finish or cancel your earlier game checkout before booking another game.') {
+        rethrow;
+      }
+      // SQL cannot contact Stripe. Ask the authenticated server to recover the
+      // caller's earlier lease, never to prepare or collect another payment.
+      final FunctionResponse recovery;
+      try {
+        recovery = await _client.functions
+            .invoke('stripe-payment', body: {'action': 'recover'})
+            .timeout(const Duration(seconds: 30));
+      } catch (_) {
+        throw error; // An unavailable provider never establishes non-payment.
+      }
+      final result = recovery.data;
+      if (result is Map && result['recovered'] == true) {
+        response = await quote(); // Exactly one retry, with every guard intact.
+      } else {
+        final reference = result is Map ? result['review_reference'] : null;
+        if (reference is String &&
+            RegExp(r'^[a-fA-F0-9-]{36}$').hasMatch(reference)) {
+          throw StateError(
+            'Your earlier checkout needs payment review. No new payment was started. Support reference: $reference.',
+          );
+        }
+        rethrow;
+      }
+    }
     final row = switch (response) {
       final Map value => Map<String, dynamic>.from(value),
       final List value when value.isNotEmpty => Map<String, dynamic>.from(
@@ -174,12 +358,18 @@ class SupabaseOpenQueueRepository
     final rows = response as List<dynamic>;
     final bookings = [
       for (final row in rows)
-        OpenQueueBooking.fromJson(Map<String, dynamic>.from(row as Map)),
+        _bookingFromJoinedGame(Map<String, dynamic>.from(row as Map)),
     ];
-
-    return hydrateUpcomingOpenQueueBookings(
+    // Discovery is paginated across markets. Its absence cannot establish that
+    // an authenticated player's own confirmed reservation no longer exists.
+    final upcoming = hydrateUpcomingOpenQueueBookings(
       bookings: bookings,
-      games: await listGames(),
+      games: const [],
+    );
+    final enriched = await Future.wait(upcoming.map(_hydrateBookingGame));
+    return hydrateUpcomingOpenQueueBookings(
+      bookings: enriched,
+      games: const [],
     );
   }
 
@@ -203,11 +393,10 @@ class SupabaseOpenQueueRepository
         .maybeSingle();
     if (response == null) return null;
 
-    final booking = OpenQueueBooking.fromJson(
-      Map<String, dynamic>.from(response),
-    );
-    if (!booking.game.isUpcomingReservation) return null;
-    return _hydrateBookingGame(booking);
+    final booking = _bookingFromJoinedGame(Map<String, dynamic>.from(response));
+    if (!booking.game.isActiveReservation) return null;
+    final hydrated = await _hydrateBookingGame(booking);
+    return hydrated.game.isActiveReservation ? hydrated : null;
   }
 
   @override
@@ -215,19 +404,94 @@ class SupabaseOpenQueueRepository
     required OpenQueueGame game,
     required OpenQueueRole role,
     required String paymentMethod,
+  }) => _bookGame(game: game, role: role);
+
+  @override
+  Future<OpenQueueBooking> bookGameWithCollector({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    required PaymentCollector collectPayment,
+    String? resumeIntentId,
+    bool resumeOnly = false,
+  }) => _bookGame(
+    game: game,
+    role: role,
+    collectPayment: collectPayment,
+    resumeIntentId: resumeIntentId,
+    resumeOnly: resumeOnly,
+  );
+
+  @override
+  Future<PaymentRefundState> checkRefundStatus(String intentId) =>
+      PaymentService(client: _client).checkRefundStatus(intentId);
+
+  @override
+  Future<void> acknowledgeCheckoutNotification({
+    required String paymentId,
+    required String outcome,
   }) async {
-    final payment = await TapPaymentService(client: _client).pay(
-      purpose: TapPaymentPurpose.soloBooking,
-      payload: {'game_id': game.id, 'role': role.code},
+    await _client.rpc(
+      'acknowledge_my_checkout_notification',
+      params: {'payment_id_to_use': paymentId, 'outcome_to_use': outcome},
     );
+  }
+
+  @override
+  Future<OpenQueueBooking?> cancelCheckout({
+    required String intentId,
+    required String gameId,
+  }) async {
+    final result = await PaymentService(
+      client: _client,
+    ).cancelCheckout(intentId);
+    if (result == null) return null;
+    if (result.resourceType != 'OPEN_QUEUE_BOOKING') {
+      throw const PaymentPendingException();
+    }
+    final response = await _client
+        .from('open_queue_bookings')
+        .select(_bookingSelect)
+        .eq('id', result.resourceId)
+        .single();
+    final booking = _bookingFromJoinedGame(Map<String, dynamic>.from(response));
+    if (booking.gameId != gameId || booking.status != 'CONFIRMED') {
+      throw const PaymentPendingException();
+    }
+    return _hydrateBookingGame(booking);
+  }
+
+  Future<OpenQueueBooking> _bookGame({
+    required OpenQueueGame game,
+    required OpenQueueRole role,
+    PaymentCollector? collectPayment,
+    String? resumeIntentId,
+    bool resumeOnly = false,
+  }) async {
+    final payment =
+        await PaymentService(
+          client: _client,
+          paymentCollector: collectPayment,
+        ).pay(
+          purpose: PaymentPurpose.soloBooking,
+          payload: {'game_id': game.id, 'role': role.code},
+          resumeIntentId: resumeIntentId,
+          resumeOnly: resumeOnly,
+        );
+    if (payment.resourceType != 'OPEN_QUEUE_BOOKING') {
+      throw const PaymentPendingException();
+    }
     final response = await _client
         .from('open_queue_bookings')
         .select(_bookingSelect)
         .eq('id', payment.resourceId)
         .single();
-    return _hydrateBookingGame(
-      OpenQueueBooking.fromJson(Map<String, dynamic>.from(response)),
+    final booking = OpenQueueBooking.fromJson(
+      Map<String, dynamic>.from(response),
     );
+    if (booking.gameId != game.id || booking.status != 'CONFIRMED') {
+      throw const PaymentPendingException();
+    }
+    return _hydrateBookingGame(booking);
   }
 
   @override
@@ -245,12 +509,24 @@ class SupabaseOpenQueueRepository
       ),
       _ => throw StateError('Cancellation preview is unavailable.'),
     };
-    return OpenQueueCancellationPreview.fromJson(row);
+    final booking = await _client
+        .from('open_queue_bookings')
+        .select(
+          'game:open_queue_games!open_queue_bookings_game_id_fkey(currency)',
+        )
+        .eq('id', bookingId)
+        .single();
+    final game = booking['game'];
+    final currency = game is Map ? game['currency'] : null;
+    return OpenQueueCancellationPreview.fromJson({
+      ...row,
+      'currency': _requiredCurrency(currency),
+    });
   }
 
   @override
   Future<OpenQueueBooking> cancelBooking(String bookingId) async {
-    await _client.rpc(
+    final cancellation = await _client.rpc(
       'cancel_open_queue_booking',
       params: {'booking_id_to_cancel': bookingId},
     );
@@ -260,16 +536,52 @@ class SupabaseOpenQueueRepository
         .eq('id', bookingId)
         .single();
     return _hydrateBookingGame(
-      OpenQueueBooking.fromJson(Map<String, dynamic>.from(response)),
+      OpenQueueBooking.fromJson({
+        ...Map<String, dynamic>.from(response),
+        if (cancellation is Map) ...{
+          'refund_destination': cancellation['refund_destination'],
+          'refund_status': cancellation['refund_status'],
+        },
+      }),
     );
   }
 
   Future<OpenQueueBooking> _hydrateBookingGame(OpenQueueBooking booking) async {
-    final games = await listGames();
-    for (final game in games) {
-      if (game.id == booking.gameId) return booking.copyWith(game: game);
+    try {
+      // This endpoint applies rating privacy and is not discovery-limited.
+      final detail = await getMatchDetail(
+        booking.gameId,
+      ).timeout(const Duration(seconds: 4));
+      if (detail.game.id == booking.gameId) {
+        return booking.copyWith(game: detail.game);
+      }
+    } catch (_) {
+      // The joined row still proves the reservation and its saved price,
+      // currency and location. Missing optional detail must not erase it or
+      // invent roster totals, assignment readiness or private rating values.
     }
     return booking;
+  }
+
+  OpenQueueBooking _bookingFromJoinedGame(Map<String, dynamic> row) {
+    final rawGame = row['game'] ?? row['open_queue_games'];
+    final joined = rawGame is List && rawGame.length == 1
+        ? rawGame.single
+        : rawGame;
+    if (joined is! Map ||
+        row['game_id'] is! String ||
+        joined['id'] != row['game_id']) {
+      throw StateError('Your booked game is unavailable. Please try again.');
+    }
+    final game = Map<String, dynamic>.from(joined);
+    game['currency'] = _requiredCurrency(game['currency']);
+    final price = game['price_fils'];
+    if (price is! int || price < 0) {
+      throw StateError(
+        'The booked game price is unavailable. Please try again.',
+      );
+    }
+    return OpenQueueBooking.fromJson({...row, 'game': game});
   }
 }
 
@@ -278,11 +590,7 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
   required Iterable<OpenQueueGame> games,
   DateTime? now,
 }) {
-  final cutoff = now ?? DateTime.now();
-  final activeGames = <String, OpenQueueGame>{
-    for (final game in games)
-      if (game.isUpcomingReservationAt(cutoff)) game.id: game,
-  };
+  final gamesById = {for (final game in games) game.id: game};
   final seenBookingIds = <String>{};
   final hydrated = <OpenQueueBooking>[];
   for (final booking in bookings) {
@@ -290,11 +598,17 @@ List<OpenQueueBooking> hydrateUpcomingOpenQueueBookings({
         !seenBookingIds.add(booking.id)) {
       continue;
     }
-    final game = activeGames[booking.gameId];
-    if (game == null) continue;
+    final game = gamesById[booking.gameId] ?? booking.game;
+    if (game.id != booking.gameId || !game.isActiveReservation) {
+      continue;
+    }
     hydrated.add(booking.copyWith(game: game));
   }
   hydrated.sort((left, right) {
+    final at = now ?? DateTime.now();
+    final leftBlocks = left.game.blocksNewBookingAt(at);
+    final rightBlocks = right.game.blocksNewBookingAt(at);
+    if (leftBlocks != rightBlocks) return leftBlocks ? -1 : 1;
     final kickoff = left.game.startsAt.compareTo(right.game.startsAt);
     return kickoff != 0 ? kickoff : left.id.compareTo(right.id);
   });

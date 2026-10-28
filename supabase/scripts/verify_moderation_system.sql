@@ -5,6 +5,19 @@
 
 begin;
 
+-- Player report/status checks stay authenticated. Only staff API actions below
+-- switch to the service context; player JWTs never confer administrator access.
+select set_config('request.jwt.claim.role', 'authenticated', true);
+
+create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
+returns boolean language plpgsql as $availability$
+begin
+  perform public.assert_player_has_one_game(player_id,'SOLO','00000000-0000-0000-0000-000000000000',true);
+  return true;
+exception when raise_exception then return false;
+end;
+$availability$;
+
 do $$
 declare
   reporter_id uuid;
@@ -31,21 +44,14 @@ begin
   select profile.id into target_id
   from public.profiles profile
   where profile.id <> reporter_id
-    and not exists (
-      select 1
-      from public.open_queue_bookings booking
-      join public.open_queue_games game on game.id = booking.game_id
-      where booking.profile_id = profile.id
-        and booking.status = 'CONFIRMED'
-        and game.status in ('OPEN', 'FULL')
-        and game.starts_at > now()
-    )
+    and pg_temp.verification_player_has_free_game_slot(profile.id)
   order by profile.created_at, profile.id
   limit 1;
 
   select referee.profile_id into admin_id
   from public.referee_profiles referee
   where referee.role = 'admin' and referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by referee.created_at, referee.profile_id
   limit 1;
 
@@ -93,6 +99,7 @@ begin
     raise exception 'Duplicate report protection did not reject the report.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   perform public.admin_update_moderation_report(
     admin_id, report_id, 'TRIAGE', null
   );
@@ -117,11 +124,14 @@ begin
   limit 1;
 
   insert into public.open_queue_games (
+    format_version, currency, timezone, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     venue,
     starts_at,
     ends_at,
     created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 'Asia/Bahrain', 12, 2, 4, 4, 2,
     'Moderation verification pitch',
     restriction_game_starts_at,
     restriction_game_starts_at + interval '1 hour',
@@ -180,6 +190,7 @@ begin
     raise exception 'Restricted player future booking was not released and refunded.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   perform set_config('request.jwt.claim.sub', target_id::text, true);
   status_payload := public.get_my_moderation_status();
   if status_payload ->> 'state' <> 'SUSPENDED'
@@ -187,6 +198,7 @@ begin
     raise exception 'Moderation status did not expose the account suspension.';
   end if;
 
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   perform public.admin_revoke_moderation_action(
     admin_id,
     action_id,
@@ -208,12 +220,14 @@ begin
     null,
     'NONE'
   );
+  perform set_config('request.jwt.claim.role', 'authenticated', true);
   status_payload := public.get_my_moderation_status();
   if status_payload ->> 'state' <> 'WARNING'
     or status_payload ->> 'message'
       <> 'Verification warning visible to the affected player.' then
     raise exception 'Latest warning was not exposed to the affected player.';
   end if;
+  perform set_config('request.jwt.claim.role', 'service_role', true);
   perform public.admin_revoke_moderation_action(
     admin_id,
     action_id,
@@ -325,7 +339,8 @@ begin
       select 1 from public.fixtures fixture
       where fixture.id = future_fixture_id
         and fixture.status = 'CANCELLED'
-        and fixture.cancelled_by = admin_id
+        and fixture.cancelled_by is null
+        and fixture.cancelled_by_staff_id = admin_id
     ) then
       raise exception 'Clan match cancellation was not recorded.';
     end if;
@@ -378,7 +393,8 @@ begin
       select 1 from public.open_queue_games game
       where game.id = future_solo_id
         and game.status = 'CANCELLED'
-        and game.cancelled_by = admin_id
+        and game.cancelled_by is null
+        and game.cancelled_by_staff_id = admin_id
     ) then
       raise exception 'Solo match cancellation was not recorded.';
     end if;

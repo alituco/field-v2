@@ -92,11 +92,7 @@ export function PwaInstallPrompt() {
       <img
         alt=""
         height="48"
-        src={
-          isStaging
-            ? "/field-ops-staging-icon-192.png"
-            : "/field-ops-icon-192.png"
-        }
+        src="/icon-192.png"
         width="48"
       />
       <div>

@@ -66,7 +66,7 @@ void main() {
     );
   });
 
-  testWidgets('visitors see the active count but not private strike history', (
+  testWidgets('clan reliability is hidden from visitors for now', (
     tester,
   ) async {
     await _pumpClan(
@@ -74,12 +74,12 @@ void main() {
       repository: _FakeClanRepository(summary: _summary(isMember: false)),
     );
 
-    expect(find.byKey(const ValueKey('clan-reliability-card')), findsOneWidget);
-    expect(find.byKey(const ValueKey('clan-active-strikes')), findsOneWidget);
-    expect(find.text('2 ACTIVE'), findsOneWidget);
+    expect(find.byKey(const ValueKey('clan-reliability-card')), findsNothing);
+    expect(find.byKey(const ValueKey('clan-active-strikes')), findsNothing);
+    expect(find.text('2 ACTIVE'), findsNothing);
     expect(
       find.byKey(const ValueKey('clan-reliability-private-note')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const ValueKey('clan-reliability-private-history')),
@@ -90,7 +90,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('members see consequences and the private incident history', (
+  testWidgets('clan reliability is hidden from members for now', (
     tester,
   ) async {
     const membership = ClanMembership(clanId: 'clan-id', role: 'member');
@@ -103,23 +103,24 @@ void main() {
       membership: membership,
     );
 
+    expect(find.byKey(const ValueKey('clan-reliability-card')), findsNothing);
     expect(
       find.byKey(const ValueKey('clan-reliability-private-history')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const ValueKey('clan-reliability-incident-incident-1')),
-      findsOneWidget,
+      findsNothing,
     );
-    expect(find.text('No-show'), findsOneWidget);
-    expect(find.text('Nobody checked in.'), findsOneWidget);
-    expect(find.text('Deposit required'), findsOneWidget);
-    expect(find.text('1 active sanction'), findsOneWidget);
-    expect(find.textContaining('Issued by Field Operations'), findsOneWidget);
+    expect(find.text('No-show'), findsNothing);
+    expect(find.text('Nobody checked in.'), findsNothing);
+    expect(find.text('Deposit required'), findsNothing);
+    expect(find.text('1 active sanction'), findsNothing);
+    expect(find.textContaining('Issued by Field Operations'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('a reliability failure does not replace the clan page', (
+  testWidgets('hidden reliability cannot show an error on the clan page', (
     tester,
   ) async {
     await _pumpClan(
@@ -130,16 +131,10 @@ void main() {
     );
 
     expect(find.text(_clan.name), findsWidgets);
-    expect(
-      find.byKey(const ValueKey('clan-reliability-error')),
-      findsOneWidget,
-    );
-    expect(find.text('Reliability unavailable'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('retry-clan-reliability')),
-      findsOneWidget,
-    );
-    expect(find.text('Skill Rating'), findsOneWidget);
+    expect(find.byKey(const ValueKey('clan-reliability-error')), findsNothing);
+    expect(find.text('Reliability unavailable'), findsNothing);
+    expect(find.byKey(const ValueKey('retry-clan-reliability')), findsNothing);
+    expect(find.text('Clan games'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }

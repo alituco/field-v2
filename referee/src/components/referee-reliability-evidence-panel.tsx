@@ -27,10 +27,12 @@ export function RefereeReliabilityEvidencePanel({
   fixture,
   submitting,
   onAction,
+  financialOnly = false,
 }: {
   fixture: RefereeFixture;
   submitting: string | null;
   onAction: (body: EvidenceActionBody) => Promise<boolean>;
+  financialOnly?: boolean;
 }) {
   const context = fixture.reliabilityContext;
   const injuries = context?.verifiedInjuries ?? [];
@@ -146,7 +148,7 @@ export function RefereeReliabilityEvidencePanel({
       action: "record_verified_injury",
       profileId,
       unableToContinue,
-      replacementAvailable,
+      replacementAvailable: financialOnly ? false : replacementAvailable,
       matchContinued,
       note: note.trim() || null,
     });
@@ -201,9 +203,11 @@ export function RefereeReliabilityEvidencePanel({
         >
           <span className="reliability-evidence-icon" aria-hidden="true">✚</span>
           <span>
-            <strong>Match operations</strong>
+            <strong>{financialOnly ? "Injury refund evidence" : "Match operations"}</strong>
             <small>
-              {activePeriods.length > 0
+              {financialOnly
+                ? "Verified injury facts for the existing refund policy only"
+                : activePeriods.length > 0
                 ? `${activePeriods.length} team ${activePeriods.length === 1 ? "is" : "are"} playing short`
                 : injuries.length > 0
                   ? `${injuries.length} verified ${injuries.length === 1 ? "injury" : "injuries"}`
@@ -212,7 +216,7 @@ export function RefereeReliabilityEvidencePanel({
                     : "Injury and shorthanded evidence"}
             </small>
           </span>
-          {activePeriods.length > 0 ? (
+          {!financialOnly && activePeriods.length > 0 ? (
             <span className="reliability-evidence-live">Live</span>
           ) : null}
           <span className="reliability-evidence-chevron" aria-hidden="true">⌄</span>
@@ -220,7 +224,7 @@ export function RefereeReliabilityEvidencePanel({
 
         {expanded ? (
           <div className="reliability-evidence-body">
-            {fixture.matchKind === "SOLO" && context.replacementOrder.length > 0 ? (
+            {!financialOnly && fixture.matchKind === "SOLO" && context.replacementOrder.length > 0 ? (
               <div className="reliability-reserve-plan">
                 <header>
                   <span><strong>Host reserve plan</strong><small>Frozen match policy · {context.policyVersionId?.slice(0, 8) ?? "snapshot"}</small></span>
@@ -240,7 +244,7 @@ export function RefereeReliabilityEvidencePanel({
                 <p>Follow and record this plan. Field does not automatically assign or activate a reserve.</p>
               </div>
             ) : null}
-            {activePeriods.length > 0 ? (
+            {!financialOnly && activePeriods.length > 0 ? (
               <div className="shorthanded-active-list">
                 {activePeriods.map((period) => (
                   <div className="shorthanded-active-row" key={period.id}>
@@ -273,19 +277,20 @@ export function RefereeReliabilityEvidencePanel({
                 <span aria-hidden="true">✚</span>
                 <span><strong>Verify injury</strong><small>Checked-in player</small></span>
               </button>
-              <button
+              {!financialOnly ? <button
                 disabled={!canRecord || availableSides.length === 0 || submitting !== null}
                 onClick={openStartShort}
                 type="button"
               >
                 <span aria-hidden="true">−1</span>
                 <span><strong>Team playing short</strong><small>Start server timer</small></span>
-              </button>
+              </button> : null}
             </div>
 
             <p className="reliability-evidence-note">
-              Record only facts you witnessed. The server records match time;
-              host facts drive the policy&apos;s SR and refund rules.
+              {financialOnly
+                ? "Record only facts you witnessed. This is refund evidence only: it does not change SR, attendance or playing time. Record the player’s actual departure separately in Playing time. No external replacements are allowed."
+                : "Record only facts you witnessed. The server records match time; host facts drive the policy’s SR and refund rules."}
             </p>
           </div>
         ) : null}
@@ -349,11 +354,11 @@ export function RefereeReliabilityEvidencePanel({
                     label="Unable to continue"
                     onChange={setUnableToContinue}
                   />
-                  <BooleanFact
+                  {!financialOnly ? <BooleanFact
                     checked={replacementAvailable}
                     label="Replacement available"
                     onChange={setReplacementAvailable}
-                  />
+                  /> : null}
                   <BooleanFact
                     checked={matchContinued}
                     label="Match continued"
@@ -362,7 +367,7 @@ export function RefereeReliabilityEvidencePanel({
                 </div>
 
                 <EvidenceNote value={note} onChange={setNote} />
-                <EvidencePolicyNotice />
+                <EvidencePolicyNotice financialOnly={financialOnly} />
                 {localError ? <div className="safety-modal-error">{localError}</div> : null}
                 <ModalActions
                   busy={submitting !== null}
@@ -522,13 +527,14 @@ function EvidenceNote({
   );
 }
 
-function EvidencePolicyNotice() {
+function EvidencePolicyNotice({ financialOnly = false }: { financialOnly?: boolean }) {
   return (
     <div className="reliability-policy-notice">
-      <strong>Host facts are authoritative</strong>
+      <strong>{financialOnly ? "Refund evidence only" : "Host facts are authoritative"}</strong>
       <span>
-        This evidence may change Player SR or refund treatment under the policy
-        snapshotted for this match. It does not add a strike for a verified injury.
+        {financialOnly
+          ? "The existing injury refund policy decides eligibility; recording this fact does not promise a refund. It has no SR, attendance or participation effect. Use Playing time separately for an actual departure. External replacements remain unavailable."
+          : "This evidence may change Player SR or refund treatment under the policy snapshotted for this match. It does not add a strike for a verified injury."}
       </span>
     </div>
   );

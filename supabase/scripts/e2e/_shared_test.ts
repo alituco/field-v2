@@ -1,9 +1,11 @@
 import {
   E2E_SCHEMA_VERSION,
+  E2E_STAFF_EMAIL,
   type E2EAccount,
   type E2EManifest,
   normalizeRunId,
   parseManifest,
+  requireIndependentE2EStaff,
   selectRotatingIndex,
 } from "./_shared.ts";
 
@@ -12,10 +14,51 @@ Deno.test("parses the versioned, tagged E2E manifest contract", () => {
   const parsed = parseManifest(manifest);
 
   assertEquals(parsed.runId, "test-run-42");
-  assertEquals(parsed.accounts.players.length, 12);
+  assertEquals(parsed.accounts.players.length, 14);
   assertEquals(
     parsed.accounts.main.profileId,
     manifest.accounts.main.profileId,
+  );
+});
+
+Deno.test("staff Auth and actor keys are separate and alias fields are exact", () => {
+  const valid = validManifest();
+  assertEquals(requireIndependentE2EStaff(valid).email, E2E_STAFF_EMAIL);
+  for (
+    const mutate of [
+      (m: E2EManifest) => {
+        m.login.adminAuthUserId = m.login.adminProfileId;
+      },
+      (m: E2EManifest) => {
+        m.login.adminEmail = "real@example.test";
+      },
+      (m: E2EManifest) => {
+        m.accounts.admin.authUserId = m.accounts.main.profileId;
+      },
+      (m: E2EManifest) => {
+        m.accounts.admin.email = "other@example.test";
+      },
+    ]
+  ) {
+    const manifest = validManifest();
+    mutate(manifest);
+    assertThrows(
+      () => parseManifest(manifest),
+      "independent reserved staff identity",
+    );
+  }
+});
+
+Deno.test("older schema-2 mobile manifests parse but cannot authorize new staff setup or cleanup", () => {
+  const manifest = validManifest();
+  delete manifest.login.adminAuthUserId;
+  delete manifest.login.adminEmail;
+  delete manifest.accounts.admin.authUserId;
+  delete manifest.accounts.admin.email;
+  assertEquals(parseManifest(manifest).schemaVersion, 2);
+  assertThrows(
+    () => requireIndependentE2EStaff(manifest),
+    "independent E2E staff Auth id",
   );
 });
 
@@ -62,15 +105,15 @@ Deno.test("rejects an incomplete player rating baseline", () => {
 Deno.test("normalizes CI run identifiers and rotates deterministically", () => {
   assertEquals(normalizeRunId("  action / attempt #2  "), "action-attempt-2");
   assertEquals(
-    selectRotatingIndex("same-run", 12),
-    selectRotatingIndex("same-run", 12),
+    selectRotatingIndex("same-run", 14),
+    selectRotatingIndex("same-run", 14),
   );
 });
 
 function validManifest(): E2EManifest {
   const runId = "test-run-42";
   const players = Array.from(
-    { length: 12 },
+    { length: 14 },
     (_, index) =>
       account(
         index + 1,
@@ -79,11 +122,13 @@ function validManifest(): E2EManifest {
       ),
   );
   const onboarding = account(
-    13,
+    15,
     "+97339009100",
     "field_e2e_onboarding",
   );
-  const admin = account(14, "+97339009099", "field_e2e_admin");
+  const admin = account(16, "+97339009099", "field_e2e_admin");
+  admin.authUserId = uuid(17);
+  admin.email = E2E_STAFF_EMAIL;
 
   return {
     schemaVersion: E2E_SCHEMA_VERSION,
@@ -99,6 +144,8 @@ function validManifest(): E2EManifest {
       otpCode: "000000",
       adminProfileId: admin.profileId,
       adminPhone: admin.phone,
+      adminAuthUserId: admin.authUserId,
+      adminEmail: admin.email,
     },
     accounts: {
       main: players[0],
@@ -111,19 +158,19 @@ function validManifest(): E2EManifest {
       match: {
         id: uuid(20),
         venue: "[FIELD E2E test-run-42] Match",
-        startsAt: "2026-07-28T17:30:00.000Z",
-        endsAt: "2026-07-28T18:30:00.000Z",
+        startsAt: "2026-07-29T03:30:00.000Z",
+        endsAt: "2026-07-29T04:30:00.000Z",
         mainRole: "DEF",
-        capacity: 12,
-        seededConfirmedCount: 11,
+        capacity: 14,
+        seededConfirmedCount: 13,
       },
       cancellation: {
         id: uuid(21),
         venue: "[FIELD E2E test-run-42] Cancel",
-        startsAt: "2026-07-31T17:30:00.000Z",
-        endsAt: "2026-07-31T18:30:00.000Z",
+        startsAt: "2026-08-01T03:30:00.000Z",
+        endsAt: "2026-08-01T04:30:00.000Z",
         mainRole: "ATT",
-        capacity: 12,
+        capacity: 14,
         seededConfirmedCount: 0,
       },
     },

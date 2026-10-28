@@ -1,17 +1,30 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LoadingSkeleton } from "@/components/loading-skeleton";
+import { BroadcasterLaptopPanel } from "@/components/broadcaster-laptop-panel";
 
 import { RefereeSafetyPanel } from "@/components/referee-safety-panel";
 import { RefereeReliabilityEvidencePanel } from "@/components/referee-reliability-evidence-panel";
-import { normalizePhoneNumber } from "@/lib/phone";
-import { formatPlayerSr } from "@/lib/open-queue-ratings";
+import { SoloMatchRecordPanel } from "@/components/solo-match-record-panel";
+import { SeasonZeroParticipationPanel } from "@/components/season-zero-participation-panel";
+import { SeasonZeroRebalancePanel } from "@/components/season-zero-rebalance-panel";
+import { SeasonZeroLifecycleControls } from "@/components/season-zero-lifecycle-controls";
+import { SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
+import { isStaffBrowserSession, STAFF_SIGN_IN_REQUIRED } from "@/lib/staff-browser-session";
+import { soloMinimumHint, soloStarterLineupReady } from "@/lib/solo-game-readiness";
+import { formatPlayerSr, ratingTrackLabel } from "@/lib/open-queue-ratings";
+import { plannedMatchDurationSeconds } from "@/lib/match-duration";
+import { refereeMatchKey } from "@/lib/referee-assigned-matches";
+import { acknowledgeSoloGoalRequest, pendingSoloGoalRequest, prepareSoloGoalRequest, rejectSoloGoalRequest } from "@/lib/solo-goal-actions";
+import { acknowledgeClanGoalRequest, pendingClanGoalRequest, prepareClanGoalRequest, rejectClanGoalRequest } from "@/lib/clan-goal-actions";
 import { createSupabaseBrowserClient } from "@/lib/supabase-browser";
 import type {
   BlueCard,
   BroadcastControlResponse,
   FixtureClock,
   FixtureEvent,
+  Goal,
   ModerationRiskSignal,
   Player,
   ReliabilityAttendancePlayer,
@@ -32,24 +45,26 @@ const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export default function RefereePage() {
   const [accessToken, setAccessToken] = useState<string | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
-  const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [fixtures, setFixtures] = useState<RefereeFixture[]>([]);
-  const [activeFixtureId, setActiveFixtureId] = useState<string | null>(null);
+  const [activeFixtureKey, setActiveFixtureKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [goalClanId, setGoalClanId] = useState("");
   const [goalPlayerId, setGoalPlayerId] = useState("");
   const [assistPlayerId, setAssistPlayerId] = useState("");
   const [cardClanId, setCardClanId] = useState("");
   const [cardPlayerId, setCardPlayerId] = useState("");
+  const [pendingGoal, setPendingGoal] = useState<FixtureActionBody | null>(null);
   const loadedSession = useRef(false);
 
   const activeFixture =
-    fixtures.find((fixture) => fixture.id === activeFixtureId) ??
+    fixtures.find((fixture) => refereeMatchKey(fixture) === activeFixtureKey) ??
     fixtures[0] ??
     null;
 
@@ -80,11 +95,11 @@ export default function RefereePage() {
 
       setMe(payload.me);
       setFixtures(payload.fixtures);
-      setActiveFixtureId((current) => {
-        if (current && payload.fixtures.some((fixture) => fixture.id === current)) {
+      setActiveFixtureKey((current) => {
+        if (current && payload.fixtures.some((fixture) => refereeMatchKey(fixture) === current)) {
           return current;
         }
-        return payload.fixtures[0]?.id ?? null;
+        return payload.fixtures[0] ? refereeMatchKey(payload.fixtures[0]) : null;
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Load failed.");
@@ -98,13 +113,27 @@ export default function RefereePage() {
     loadedSession.current = true;
 
     supabase.auth.getSession().then(({ data }) => {
-      const token = data.session?.access_token ?? null;
+      const token = isStaffBrowserSession(data.session) ? data.session.access_token : null;
+      if (data.session && !token) {
+        setError(STAFF_SIGN_IN_REQUIRED);
+        void supabase.auth.signOut({ scope: "local" });
+      }
       setAccessToken(token);
+      setSessionChecked(true);
+    }).catch(() => {
+      setError("Could not check your session. Please sign in again.");
+      setSessionChecked(true);
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange(
       (_event, session) => {
-        setAccessToken(session?.access_token ?? null);
+        const valid = isStaffBrowserSession(session);
+        setAccessToken(valid ? session.access_token : null);
+        if (session && !valid) {
+          setError(STAFF_SIGN_IN_REQUIRED);
+          queueMicrotask(() => void supabase.auth.signOut({ scope: "local" }));
+        }
+        setSessionChecked(true);
       },
     );
 
@@ -114,6 +143,18 @@ export default function RefereePage() {
   useEffect(() => {
     if (accessToken) void loadGames();
   }, [accessToken, loadGames]);
+
+  const refreshPendingGoal = useCallback(() => {
+    if (!me || !activeFixture) { setPendingGoal(null); return; }
+    const readPending = activeFixture.matchKind === "SOLO" ? pendingSoloGoalRequest : pendingClanGoalRequest;
+    try { setPendingGoal(readPending(me.profileId, activeFixture.id, window.sessionStorage) as FixtureActionBody | null); }
+    catch { setError("The saved goal request could not be read. Ask an organizer to verify this match before recording another goal."); }
+  }, [me, activeFixture]);
+  const refreshPendingGoalRef = useRef(refreshPendingGoal);
+  useEffect(() => {
+    refreshPendingGoalRef.current = refreshPendingGoal;
+    refreshPendingGoal();
+  }, [refreshPendingGoal]);
 
   useEffect(() => {
     if (!activeFixture) return;
@@ -133,15 +174,18 @@ export default function RefereePage() {
     setSubmitting("otp");
 
     try {
-      const normalizedPhone = normalizePhoneNumber(phone);
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: normalizedPhone,
+      const normalizedEmail = email.trim().toLowerCase();
+      const response = await fetch("/api/staff-auth/code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: normalizedEmail }),
       });
-      if (otpError) throw otpError;
-      setPhone(normalizedPhone);
+      if (!response.ok) throw new Error("Could not request a staff code. Try again shortly.");
+      setEmail(normalizedEmail);
+      setOtp("");
       setOtpSent(true);
     } catch (otpError) {
-      setError(otpError instanceof Error ? otpError.message : "Could not send OTP.");
+      setError(otpError instanceof Error ? otpError.message : "Could not request a staff code.");
     } finally {
       setSubmitting(null);
     }
@@ -154,11 +198,15 @@ export default function RefereePage() {
 
     try {
       const { data, error: verifyError } = await supabase.auth.verifyOtp({
-        phone: normalizePhoneNumber(phone),
+        email: email.trim().toLowerCase(),
         token: otp.trim(),
-        type: "sms",
+        type: "email",
       });
       if (verifyError) throw verifyError;
+      if (!isStaffBrowserSession(data.session)) {
+        await supabase.auth.signOut({ scope: "local" });
+        throw new Error(STAFF_SIGN_IN_REQUIRED);
+      }
       setAccessToken(data.session?.access_token ?? null);
     } catch (verifyError) {
       setError(
@@ -174,6 +222,7 @@ export default function RefereePage() {
     setAccessToken(null);
     setMe(null);
     setFixtures([]);
+    setActiveFixtureKey(null);
     setOtp("");
     setOtpSent(false);
   }
@@ -208,6 +257,14 @@ export default function RefereePage() {
     setError(null);
 
     try {
+      const soloGoal = matchKind === "SOLO" && (body.action === "goal" || body.action === "remove_goal");
+      const clanGoal = matchKind === "CLAN" && body.action === "goal";
+      const goalOperation = soloGoal || clanGoal;
+      if (goalOperation && !me?.profileId) throw new Error("Refresh your referee session before recording a goal.");
+      const prepareGoal = soloGoal ? prepareSoloGoalRequest : prepareClanGoalRequest;
+      const acknowledgeGoal = soloGoal ? acknowledgeSoloGoalRequest : acknowledgeClanGoalRequest;
+      const rejectGoal = soloGoal ? rejectSoloGoalRequest : rejectClanGoalRequest;
+      const requestBody = goalOperation ? prepareGoal(me!.profileId, fixtureId, body, window.sessionStorage) : body;
       const actionUrl = matchKind === "SOLO"
         ? `/api/referee/open-queue-games/${fixtureId}/action`
         : `/api/referee/fixtures/${fixtureId}/action`;
@@ -217,10 +274,12 @@ export default function RefereePage() {
           "Content-Type": "application/json",
           ...authHeaders(),
         },
-        body: JSON.stringify(body),
+        body: JSON.stringify(requestBody),
       });
-      const payload = (await response.json()) as { error?: string };
+      const payload = (await response.json()) as { error?: string; goalOperationRejected?: boolean };
+      if (goalOperation && payload.goalOperationRejected === true) rejectGoal(me!.profileId, fixtureId, window.sessionStorage);
       if (!response.ok) throw new Error(payload.error ?? "Action failed.");
+      if (goalOperation) acknowledgeGoal(me!.profileId, fixtureId, requestBody, payload, window.sessionStorage);
       await loadGames();
       return true;
     } catch (actionError) {
@@ -230,6 +289,9 @@ export default function RefereePage() {
       return false;
     } finally {
       setSubmitting(null);
+      // A retry can finish after the referee has selected a different match.
+      // Restore only that current match's receipt, never the old request's body.
+      refreshPendingGoalRef.current();
     }
   }
 
@@ -240,23 +302,28 @@ export default function RefereePage() {
     ? playersForClan(activeFixture, cardClanId || activeFixture.homeClan.id)
     : [];
 
+  if (!sessionChecked) return <main className="app-shell"><div className="content"><LoadingSkeleton label="Checking your referee session" layout="match" /></div></main>;
+
   if (!accessToken) {
     return (
       <main className="app-shell">
         <div className="content">
           <section className="code-card">
-            <Header title="REFEREE" subtitle="PHONE LOGIN" />
+            <Header title="STAFF" subtitle="EMAIL SIGN IN" />
+            <p>Use the dedicated staff email registered by your administrator.</p>
             <div style={{ height: 20 }} />
             {!otpSent ? (
               <form className="form-grid" onSubmit={sendOtp}>
                 <label>
-                  <span className="field-label">Phone</span>
+                  <span className="field-label">Staff email</span>
                   <input
                     className="input"
-                    inputMode="tel"
-                    value={phone}
-                    onChange={(event) => setPhone(event.target.value)}
-                    placeholder="+1 480 746 9696"
+                    type="email"
+                    autoComplete="email"
+                    required
+                    value={email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    placeholder="referee@example.com"
                   />
                 </label>
                 <button
@@ -264,34 +331,39 @@ export default function RefereePage() {
                   disabled={submitting === "otp"}
                   type="submit"
                 >
-                  Send OTP
+                  {submitting === "otp" ? "Sending code…" : "Send code"}
                 </button>
               </form>
             ) : (
               <form className="form-grid" onSubmit={verifyOtp}>
+                <p role="status">If {email} has active staff access, a six-digit code will arrive in its inbox.</p>
                 <label>
-                  <span className="field-label">OTP</span>
+                  <span className="field-label">6-digit code</span>
                   <input
                     className="input"
                     inputMode="numeric"
+                    autoComplete="one-time-code"
+                    pattern="[0-9]{6}"
+                    maxLength={6}
+                    required
                     value={otp}
-                    onChange={(event) => setOtp(event.target.value)}
+                    onChange={(event) => setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
                     placeholder="000000"
                   />
                 </label>
                 <button
                   className="primary-button"
-                  disabled={submitting === "verify"}
+                  disabled={submitting === "verify" || !/^\d{6}$/.test(otp)}
                   type="submit"
                 >
-                  Verify
+                  {submitting === "verify" ? "Verifying…" : "Verify"}
                 </button>
                 <button
                   className="ghost-button"
                   onClick={() => setOtpSent(false)}
                   type="button"
                 >
-                  Change Phone
+                  Change email
                 </button>
               </form>
             )}
@@ -321,12 +393,16 @@ export default function RefereePage() {
               <span>{me?.displayName ?? "Referee"}</span>
               <small>{me?.role === "admin" ? "Admin and referee" : "Referee"}</small>
               {me?.role === "admin" ? <a href="/admin">Open admin panel</a> : null}
+              <a href="/broadcast/setup">Camera setup guide</a>
               <button onClick={() => void signOut()} type="button">Sign out</button>
             </div>
           </details>
         </header>
 
         {error ? <div className="error">{error}</div> : null}
+        {pendingGoal ? <div className="notice" role="status">A previous goal action is not yet confirmed. Retry it safely before making another goal change.
+          <button className="ghost-button compact-button" disabled={submitting !== null} type="button" onClick={() => void runSafetyAction(pendingGoal)}>Retry saved goal action</button>
+        </div> : null}
 
         <GamesView
           accessToken={accessToken}
@@ -342,7 +418,7 @@ export default function RefereePage() {
           goalPlayers={goalPlayers}
           cardPlayers={cardPlayers}
           canAdminister={me?.role === "admin"}
-          onSelectFixture={setActiveFixtureId}
+          onSelectFixture={setActiveFixtureKey}
           onGoalClan={setGoalClanId}
           onGoalPlayer={setGoalPlayerId}
           onAssistPlayer={setAssistPlayerId}
@@ -422,11 +498,16 @@ function GamesView({
     null,
   );
   const [view, setView] = useState<RefereeMatchView>("match");
+  const [goalToRemove, setGoalToRemove] = useState<Goal | null>(null);
+  const [goalRemovalReason, setGoalRemovalReason] = useState("");
 
   useEffect(() => {
     setEventDialog(null);
+    setGoalToRemove(null);
     setView("match");
-  }, [activeFixture?.id, activeFixture?.operationalState]);
+  }, [activeFixture?.id, activeFixture?.matchKind, activeFixture?.operationalState]);
+
+  if (isLoading && fixtures.length === 0) return <LoadingSkeleton label="Loading assigned games" layout="match" />;
 
   if (fixtures.length === 0) {
     return (
@@ -481,11 +562,11 @@ function GamesView({
           <label className="referee-match-select">
             <span className="sr-only">Choose assigned match</span>
             <select
-              value={activeFixture.id}
+              value={refereeMatchKey(activeFixture)}
               onChange={(event) => onSelectFixture(event.target.value)}
             >
               {fixtures.map((fixture) => (
-                <option key={`${fixture.matchKind}-${fixture.id}`} value={fixture.id}>
+                <option key={refereeMatchKey(fixture)} value={refereeMatchKey(fixture)}>
                   {fixture.homeClan.tag} vs {fixture.awayClan.tag} · {formatMatchDate(fixture.matchDate)} · {fixture.timeSlot}
                 </option>
               ))}
@@ -507,6 +588,9 @@ function GamesView({
         fixture={activeFixture}
         submitting={submitting}
         onRunAction={onRunAction}
+        accessToken={accessToken}
+        onLifecycleAction={onSafetyAction}
+        onRefresh={onRefresh}
       />
 
       {resolutionLocked ? (
@@ -619,7 +703,7 @@ function GamesView({
               <small>Scorer and assist</small>
             </span>
           </button>
-          <button
+          {activeFixture.ratingPolicyId !== "field-sr-season0-v2" ? <button
             className="match-event-action blue-card"
             disabled={!canRecordEvent || submitting !== null}
             onClick={() => setEventDialog("blue-card")}
@@ -630,7 +714,7 @@ function GamesView({
               <strong>Blue card</strong>
               <small>Start two minutes</small>
             </span>
-          </button>
+          </button> : null}
         </div>
 
         {resolutionLocked ? null : (
@@ -643,7 +727,7 @@ function GamesView({
         )}
       </section>
 
-      {!resolutionLocked && activeBlueCards.length > 0 ? (
+      {canRecordEvent && activeBlueCards.length > 0 ? (
         <section className="panel active-card-panel">
           <div className="panel-heading">
             <div>
@@ -666,6 +750,12 @@ function GamesView({
         </section>
       ) : null}
 
+      {activeFixture.ratingPolicyId === "field-sr-season0-v2" ? <SeasonZeroRebalancePanel
+        key={activeFixture.id} fixture={activeFixture} accessToken={accessToken} submitting={submitting} onSaved={onRefresh} /> : null}
+
+      {activeFixture.ratingPolicyId === "field-sr-season0-v2" ? <SeasonZeroParticipationPanel
+        fixture={activeFixture} accessToken={accessToken} submitting={submitting} onAction={onSafetyAction} /> : null}
+
       <details className="panel referee-disclosure">
         <summary>
           <span className="disclosure-icon timeline" aria-hidden="true">≡</span>
@@ -687,13 +777,24 @@ function GamesView({
             </button>
           </div>
           <EventList fixture={activeFixture} />
+          {activeFixture.matchKind === "SOLO" && activeFixture.status === "LIVE" && !resolutionLocked && activeFixture.clock?.status === "RUNNING" && activeFixture.goals.length > 0 ? (
+            <div className="event-list" aria-label="Recorded goals">
+              <strong>Official goals · undo a recording mistake</strong>
+              {activeFixture.goals.map(goal => <div className="event-card" key={goal.id}>
+                <div><div className="event-title">{playerName(activeFixture, goal.profileId)}</div><div className="event-subtitle">{teamName(activeFixture, goal.clanId)} · {goal.minute} min</div></div>
+                <button className="ghost-button compact-button" disabled={submitting !== null} type="button" onClick={() => { setGoalToRemove(goal); setGoalRemovalReason(""); }}>Undo goal</button>
+              </div>)}
+            </div>
+          ) : null}
         </div>
       </details>
 
       {activeFixture.status === "FINAL" && !resolutionLocked ? (
         <div className="result-locked-note">
           <span aria-hidden="true">✓</span>
-          Final result saved. Admin corrections remain fully audited.
+          {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY
+            ? "Final result saved. Correct a mistake from More → Correct match record. Use Reopen match if play needs to continue."
+            : "Final result saved. Admin corrections remain fully audited."}
         </div>
       ) : null}
         </div>
@@ -701,17 +802,21 @@ function GamesView({
 
       {view === "players" ? (
         <div className="referee-view-panel referee-view-players">
-          <AttendancePanel
+          {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY && ["LIVE", "FINAL"].includes(activeFixture.status) ? <SoloMatchRecordPanel
+            key={`arrivals-${activeFixture.id}`} fixture={activeFixture} accessToken={accessToken} onSaved={onRefresh} /> : <AttendancePanel
+            key={`attendance-${refereeMatchKey(activeFixture)}`}
             fixture={activeFixture}
-            readOnly={resolutionLocked}
+            readOnly={resolutionLocked || activeFixture.status === "CANCELLED"}
             submitting={submitting}
             onRunAction={onRunAction}
-          />
+          />}
         </div>
       ) : null}
 
       {view === "more" ? (
         <div className="referee-view-panel referee-view-more">
+          {activeFixture.ratingPolicyId === SEASON_ZERO_POLICY && ["LIVE", "FINAL"].includes(activeFixture.status) ? <SoloMatchRecordPanel
+            key={`record-${activeFixture.id}`} fixture={activeFixture} accessToken={accessToken} onSaved={onRefresh} mode="correction" /> : null}
           <MatchContextDisclosure
             key={`match-context-${activeFixture.matchKind}-${activeFixture.id}`}
             fixture={activeFixture}
@@ -723,6 +828,7 @@ function GamesView({
                 fixture={activeFixture}
                 submitting={submitting}
                 onAction={onSafetyAction}
+                financialOnly={activeFixture.ratingPolicyId === SEASON_ZERO_POLICY}
               />
             </section>
           ) : null}
@@ -737,7 +843,7 @@ function GamesView({
               <DisclosureChevron />
             </summary>
             <div className="referee-disclosure-body">
-              <BroadcastControl fixture={activeFixture} accessToken={accessToken} />
+              <BroadcastControl key={`broadcast-${refereeMatchKey(activeFixture)}`} fixture={activeFixture} accessToken={accessToken} canAdminister={canAdminister} />
             </div>
           </details>
         </div>
@@ -768,10 +874,18 @@ function GamesView({
         }}
         onCardPlayer={onCardPlayer}
         onSubmit={async (body) => {
-          await onRunAction(body);
-          setEventDialog(null);
+          if (await onSafetyAction(body)) setEventDialog(null);
         }}
       />
+      {goalToRemove ? <div className="safety-modal-backdrop"><section className="safety-modal" role="dialog" aria-modal="true" aria-labelledby="remove-goal-title">
+        <span className="safety-modal-eyebrow">Correct the live score</span><h2 id="remove-goal-title">Remove this goal?</h2>
+        <p className="safety-modal-intro">{playerName(activeFixture, goalToRemove.profileId)} · {teamName(activeFixture, goalToRemove.clanId)}. The official score and scorer totals will update together. The original event and this correction remain in the audit history.</p>
+        <label>Reason<input className="input" maxLength={500} disabled={submitting !== null} value={goalRemovalReason} onChange={event => setGoalRemovalReason(event.target.value)} placeholder="For example, recorded twice by mistake" /></label>
+        <div className="safety-modal-actions"><button className="ghost-button" disabled={submitting !== null} type="button" onClick={() => setGoalToRemove(null)}>Keep goal</button>
+          <button className="danger-button" disabled={submitting !== null || goalRemovalReason.trim().length < 5} type="button" onClick={async () => {
+            if (await onSafetyAction({ action: "remove_goal", goalId: goalToRemove.id, note: goalRemovalReason })) setGoalToRemove(null);
+          }}>{submitting === "remove_goal" ? "Removing…" : "Remove goal"}</button></div>
+      </section></div> : null}
     </div>
   );
 }
@@ -811,10 +925,14 @@ function AttendancePanel({
   }
 
   const busy = submitting !== null;
-  const deadline = formatAttendanceTime(context.checkInDeadlineAt);
-  const kickoff = formatAttendanceTime(context.kickoffAt);
-  const cutoff = formatAttendanceTime(context.noShowCutoffAt);
-  const statusLabel = readOnly
+  const timezone = fixture.timezone ?? (fixture.matchKind === "SOLO" ? "America/Phoenix" : "Asia/Bahrain");
+  const deadline = formatAttendanceTime(context.checkInDeadlineAt, timezone);
+  const kickoff = formatAttendanceTime(context.kickoffAt, timezone);
+  const cutoff = formatAttendanceTime(context.noShowCutoffAt, timezone);
+  const flexibleArrivals = fixture.matchKind === "SOLO" && fixture.ratingPolicyId === SEASON_ZERO_POLICY;
+  const statusLabel = fixture.status === "CANCELLED"
+    ? "Cancelled"
+    : readOnly
     ? "Admin review"
     : context.attendanceFinalized
     ? "Attendance final"
@@ -842,14 +960,15 @@ function AttendancePanel({
       </div>
 
       <p className="attendance-deadline">
-        <strong>Referee check-in closes {cutoff}</strong>
-        <span>On-time arrival is by {deadline} · kickoff is {kickoff}</span>
+        <strong>{flexibleArrivals ? "Arrivals stay open until full time" : <>Referee check-in closes {cutoff}</>}</strong>
+        <span>On-time arrival is {context.lateCutoffInclusive ? 'before' : 'by'} {deadline} · kickoff is {kickoff}</span>
       </p>
 
       {readOnly ? (
         <p className="attendance-cutoff-note">
-          Attendance is visible for reference, but check-in changes are locked
-          until an admin resolves this match.
+          {fixture.status === "CANCELLED"
+            ? "This match was cancelled. Attendance is visible for reference and cannot be changed here."
+            : "Attendance is visible for reference, but check-in changes are locked until an admin resolves this match."}
         </p>
       ) : null}
 
@@ -900,8 +1019,8 @@ function AttendancePanel({
         </div>
       ) : !context.attendanceFinalized ? (
         <p className="attendance-cutoff-note">
-          Missing players can be finalized after the {cutoff} no-show cutoff.
-          Kickoff is not delayed.
+          {flexibleArrivals ? "An arrived player joins play at kickoff. Late arrivals can join during the game; no-shows are finalized when it ends."
+            : <>Missing players can be finalized after the {cutoff} no-show cutoff. Kickoff is not delayed.</>}
         </p>
       ) : (
         <p className="attendance-cutoff-note final">
@@ -911,6 +1030,8 @@ function AttendancePanel({
     </section>
     <CheckInTimingDialog
       player={readOnly ? null : playerToCheckIn}
+      lateCutoffInclusive={context.lateCutoffInclusive ?? false}
+      allowAfterKickoff={!flexibleArrivals}
       submitting={submitting}
       onClose={() => setPlayerToCheckIn(null)}
       onConfirm={async (timing) => {
@@ -1039,11 +1160,15 @@ const CHECK_IN_TIMING_OPTIONS: Array<{
 
 function CheckInTimingDialog({
   player,
+  lateCutoffInclusive,
+  allowAfterKickoff = true,
   submitting,
   onClose,
   onConfirm,
 }: {
   player: ReliabilityAttendancePlayer | null;
+  lateCutoffInclusive: boolean;
+  allowAfterKickoff?: boolean;
   submitting: string | null;
   onClose: () => void;
   onConfirm: (timing: CheckInTiming) => Promise<void>;
@@ -1095,7 +1220,7 @@ function CheckInTimingDialog({
           the audit trail.
         </p>
         <div className="attendance-timing-options">
-          {CHECK_IN_TIMING_OPTIONS.map((option) => (
+          {CHECK_IN_TIMING_OPTIONS.filter(option => allowAfterKickoff || option.value !== "AFTER_KICKOFF").map((option) => (
             <button
               className={`attendance-timing-option ${option.value.toLowerCase()}`}
               disabled={busy}
@@ -1104,7 +1229,11 @@ function CheckInTimingDialog({
               type="button"
             >
               <span>{option.title}</span>
-              <small>{option.detail}</small>
+              <small>{lateCutoffInclusive && option.value === 'EARLY'
+                ? 'The player arrived before the on-time deadline.'
+                : lateCutoffInclusive && option.value === 'LATE'
+                ? 'The player arrived at or after the deadline, but before kickoff.'
+                : option.detail}</small>
             </button>
           ))}
         </div>
@@ -1275,14 +1404,14 @@ function checkInTimingLabel(
   }
 }
 
-function formatAttendanceTime(value: string | null) {
+function formatAttendanceTime(value: string | null, timezone: string) {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en", {
     hour: "numeric",
     minute: "2-digit",
-    timeZone: "Asia/Bahrain",
+    timeZone: timezone,
   }).format(date);
 }
 
@@ -1394,9 +1523,11 @@ function MatchContextSignal({
 function BroadcastControl({
   fixture,
   accessToken,
+  canAdminister,
 }: {
   fixture: RefereeFixture;
   accessToken: string;
+  canAdminister: boolean;
 }) {
   const [state, setState] = useState<BroadcastControlResponse>({
     broadcast: null,
@@ -1433,6 +1564,8 @@ function BroadcastControl({
       if (!quiet) setIsLoading(false);
     }
   }, [accessToken, fixture.id, fixture.matchKind]);
+
+  const refreshDevice = useCallback(() => void load(true), [load]);
 
   useEffect(() => {
     void load();
@@ -1481,14 +1614,19 @@ function BroadcastControl({
     !deviceStreamingThisMatch;
   const deviceReady = state.device?.obsConnected === true &&
     state.device.status !== "OFFLINE" &&
+    state.device.status !== "ERROR" &&
+    !state.device.revokedAt &&
+    !state.device.testCleanupPending &&
     !deviceBusy;
   const streamActive = ["STARTING", "LIVE", "STOPPING"].includes(status);
   const canStart = deviceReady &&
     (fixture.matchKind === "SOLO"
-      ? ["FULL", "LIVE"].includes(fixture.status)
+      ? state.streamReady ?? ["FULL", "LIVE"].includes(fixture.status)
       : ["SCHEDULED", "LIVE"].includes(fixture.status)) &&
     !streamActive &&
     status !== "PROCESSING";
+
+  if (isLoading) return <section className="panel broadcast-control"><LoadingSkeleton label="Loading broadcast status" layout="form" /></section>;
 
   return (
     <section className="panel broadcast-control">
@@ -1500,24 +1638,7 @@ function BroadcastControl({
         <span className={`broadcast-status-dot ${status.toLowerCase()}`} />
       </div>
 
-      <div className="camera-readiness">
-        <span className={`camera-dot ${deviceReady ? "ready" : ""}`} />
-        <div>
-          <strong>
-            {deviceBusy
-              ? "Camera in use"
-              : deviceReady
-              ? "Camera ready"
-              : "Camera offline"}
-          </strong>
-          <span>
-            {deviceBusy
-              ? "Another match is currently streaming"
-              : state.device?.displayName ??
-                "Open the Field broadcaster on the camera laptop"}
-          </span>
-        </div>
-      </div>
+      <BroadcasterLaptopPanel fixture={fixture} accessToken={accessToken} streamActive={streamActive} canAdminister={canAdminister} onDeviceChanged={refreshDevice} />
 
       {error || state.broadcast?.errorMessage ? (
         <div className="broadcast-error">{error ?? state.broadcast?.errorMessage}</div>
@@ -1545,7 +1666,7 @@ function BroadcastControl({
         )}
       </div>
       <p className="broadcast-hint">
-        Starting the stream keeps the match clock at 00:00. Use Start below at kickoff.
+        Starting the stream does not start the match clock. Return to Match and use Start game at kickoff.
       </p>
     </section>
   );
@@ -1578,6 +1699,9 @@ function TimerPanel({
   onRunAction,
   compact = false,
   canAdminister = false,
+  accessToken,
+  onLifecycleAction,
+  onRefresh,
 }: {
   fixture: RefereeFixture;
   submitting: string | null;
@@ -1586,24 +1710,29 @@ function TimerPanel({
   ) => Promise<void>;
   compact?: boolean;
   canAdminister?: boolean;
+  accessToken: string;
+  onLifecycleAction: (body: FixtureActionBody) => Promise<boolean>;
+  onRefresh: () => void;
 }) {
   const status = fixture.clock?.status ?? "NOT_STARTED";
-  const now = useNowMs(status === "RUNNING");
+  const seasonZero = fixture.ratingPolicyId === SEASON_ZERO_POLICY;
+  const now = useNowMs(fixture.status === "LIVE" && status === "RUNNING");
   const rawElapsedSeconds = elapsedFromClock(fixture.clock, now);
   const elapsedSeconds = Math.min(rawElapsedSeconds, MAX_MATCH_SECONDS);
-  const duration = fixture.clock?.durationSeconds ?? 3600;
+  const duration = fixture.clock?.durationSeconds ?? plannedMatchDurationSeconds(fixture);
   const progress = Math.min(1, elapsedSeconds / duration);
   const resolutionLocked = ["NO_DATA", "UNDER_REVIEW"].includes(
     fixture.operationalState?.toUpperCase() ?? "",
   );
   const isClosed =
-    fixture.status === "FINAL" || status === "ENDED" || resolutionLocked;
+    fixture.status === "FINAL" || fixture.status === "CANCELLED" ||
+    status === "ENDED" || resolutionLocked;
   const isBeforeStart = !resolutionLocked && status === "NOT_STARTED" &&
     (fixture.matchKind === "SOLO"
-      ? fixture.status === "FULL"
+      ? fixture.status === "FULL" || (seasonZero && fixture.status === "OPEN")
       : fixture.status === "SCHEDULED");
   const soloTeamsPending = fixture.matchKind === "SOLO" &&
-    fixture.status === "FULL" &&
+    (fixture.status === "FULL" || (seasonZero && fixture.status === "OPEN")) &&
     fixture.teamsAssignedAt === null;
   const attendanceEligibleIds = fixture.reliabilityContext &&
       fixture.reliabilityContext.expectedCount > 0
@@ -1622,6 +1751,7 @@ function TimerPanel({
     String(elapsedSeconds % 60).padStart(2, "0"),
   );
   const autoStopFixtureId = useRef<string | null>(null);
+  const autoStopArmed = useRef(false);
 
   useEffect(() => {
     if (!isBeforeStart || attendanceEligibleIds === null) return;
@@ -1640,16 +1770,24 @@ function TimerPanel({
   useEffect(() => {
     if (
       resolutionLocked ||
+      fixture.status !== "LIVE" ||
       status !== "RUNNING" ||
-      rawElapsedSeconds < MAX_MATCH_SECONDS ||
       autoStopFixtureId.current === fixture.id
     ) {
       return;
     }
 
+    // Opening an old assignment is a read, not consent to finish its match.
+    // Only stop a clock that this console observed crossing the safety cap.
+    if (rawElapsedSeconds < MAX_MATCH_SECONDS) {
+      autoStopArmed.current = true;
+      return;
+    }
+    if (!autoStopArmed.current) return;
+
     autoStopFixtureId.current = fixture.id;
     void onRunAction({ action: "finish" });
-  }, [fixture.id, onRunAction, rawElapsedSeconds, resolutionLocked, status]);
+  }, [fixture.id, fixture.status, onRunAction, rawElapsedSeconds, resolutionLocked, status]);
 
   const correctedMinuteValue = Number(correctedMinutes);
   const correctedSecondValue = Number(correctedSeconds);
@@ -1675,20 +1813,22 @@ function TimerPanel({
     )
   ).length;
   const hasValidLineup = soloTeamsPending
-    ? canAdminister &&
+    ? !seasonZero && canAdminister &&
       fixture.players.length > 0 &&
       selectedParticipantIds.length === fixture.players.length
-    : selectedHomeCount > 0 && selectedAwayCount > 0;
+    : fixture.matchKind === "SOLO"
+      ? soloStarterLineupReady(fixture, selectedHomeCount, selectedAwayCount)
+      : selectedHomeCount >= 1 && selectedAwayCount >= 1;
   const startBlockedReason = !isBeforeStart
     ? fixture.matchKind === "SOLO"
-      ? "This solo game must be full before it can start."
+      ? seasonZero ? "This game must be open with assigned teams before it can start." : "This solo game must be full before it can start."
       : "This fixture is not ready to start."
-    : soloTeamsPending && !canAdminister
-      ? "White and Black teams unlock three hours before kickoff."
+    : soloTeamsPending && (seasonZero || !canAdminister)
+      ? "Wait for White and Black teams to be assigned before starting."
       : !hasValidLineup
         ? soloTeamsPending && canAdminister
           ? `Check in all ${fixture.players.length} booked players before an early test start.`
-          : "Check in at least one player from each team before starting."
+          : seasonZero ? soloMinimumHint(fixture) : "Check in at least one player from each team before starting."
         : null;
 
   function setPlayerSelected(profileId: string, selected: boolean) {
@@ -1747,7 +1887,7 @@ function TimerPanel({
         <details className="timer-lineup-disclosure">
           <summary>
             <span>
-              <strong>{isBeforeStart ? "Confirm who is playing" : "Match lineup"}</strong>
+              <strong>{isBeforeStart ? seasonZero ? "Arrived players" : "Confirm who is playing" : "Match lineup"}</strong>
               <small>
                 {isBeforeStart
                   ? soloTeamsPending
@@ -1763,7 +1903,7 @@ function TimerPanel({
             participantIds={
               isBeforeStart ? selectedParticipantIds : fixture.participantIds
             }
-            editable={isBeforeStart}
+            editable={isBeforeStart && !seasonZero}
             eligibleParticipantIds={attendanceEligibleIds ?? undefined}
             teamsPending={soloTeamsPending}
             onPlayerSelected={setPlayerSelected}
@@ -1776,7 +1916,7 @@ function TimerPanel({
           participantIds={
             isBeforeStart ? selectedParticipantIds : fixture.participantIds
           }
-          editable={isBeforeStart}
+          editable={isBeforeStart && !seasonZero}
           eligibleParticipantIds={attendanceEligibleIds ?? undefined}
           teamsPending={soloTeamsPending}
           onPlayerSelected={setPlayerSelected}
@@ -1786,9 +1926,9 @@ function TimerPanel({
       <div className="control-grid single">
         {isClosed ? (
           <button className="ghost-button" disabled type="button">
-            {resolutionLocked ? "Admin review" : "Final"}
+            {resolutionLocked ? "Admin review" : fixture.status === "CANCELLED" ? "Cancelled" : "Final"}
           </button>
-        ) : status === "RUNNING" ? (
+        ) : fixture.status === "LIVE" && status === "RUNNING" ? (
           <button
             className="ghost-button"
             disabled={submitting !== null}
@@ -1797,7 +1937,7 @@ function TimerPanel({
           >
             Pause
           </button>
-        ) : status === "PAUSED" ? (
+        ) : fixture.status === "LIVE" && status === "PAUSED" ? (
           <button
             className="primary-button"
             disabled={submitting !== null}
@@ -1813,7 +1953,9 @@ function TimerPanel({
             onClick={() =>
               void onRunAction({
                 action: "start",
-                durationSeconds: 3600,
+                // The solo endpoint reads the saved slot from the database.
+                // Do not turn a stale browser default into an explicit override.
+                ...(fixture.matchKind === "SOLO" ? {} : { durationSeconds: 3600 }),
                 participantIds: selectedParticipantIds,
               })
             }
@@ -1829,12 +1971,16 @@ function TimerPanel({
         </p>
       ) : !isClosed && status === "NOT_STARTED" && startBlockedReason ? (
         <p className="timer-start-note">{startBlockedReason}</p>
-      ) : soloTeamsPending && canAdminister ? (
+      ) : soloTeamsPending && canAdminister && !seasonZero ? (
         <p className="timer-start-note admin-override">
           Admin test start: all booked players must be checked in. The early team reveal and completion are audited.
         </p>
       ) : null}
-      {!resolutionLocked && (status === "RUNNING" || status === "PAUSED") ? (
+      {seasonZero && !resolutionLocked && ["LIVE", "FINAL"].includes(fixture.status) ? (
+        <SeasonZeroLifecycleControls key={`${fixture.id}-${fixture.status}`} fixture={fixture}
+          accessToken={accessToken} submitting={submitting} onAction={onLifecycleAction} onRefresh={onRefresh} />
+      ) : null}
+      {!seasonZero && fixture.status === "LIVE" && !resolutionLocked && (status === "RUNNING" || status === "PAUSED") ? (
         <details className="timer-end-disclosure">
           <summary>End match</summary>
           <div>
@@ -1850,7 +1996,7 @@ function TimerPanel({
           </div>
         </details>
       ) : null}
-      {isClosed && !resolutionLocked && compact ? (
+      {fixture.status === "FINAL" && !resolutionLocked && !seasonZero && compact ? (
         <details className="clock-editor clock-editor-disclosure">
           <summary>
             <span>
@@ -1874,7 +2020,7 @@ function TimerPanel({
             }
           />
         </details>
-      ) : isClosed && !resolutionLocked ? (
+      ) : fixture.status === "FINAL" && !resolutionLocked && !seasonZero ? (
         <div className="clock-editor">
           <div className="clock-editor-title">Correct match time</div>
           <ClockEditor
@@ -2045,10 +2191,10 @@ function LineupPanel({
           <div className="lineup-hint">
             {editable
               ? fixture.matchKind === "SOLO"
-                ? "Selected solo players receive Player SR from this match."
+                ? "Selected players earn SR only for their booked position: Keeper or Outfield."
                 : "Only selected clan players receive Player SR from this match."
               : fixture.matchKind === "SOLO"
-                ? `${participantIds.length} solo players confirmed for Player SR`
+                ? `${participantIds.length} solo players confirmed for their booked-position SR`
                 : `${participantIds.length} clan players confirmed for Player SR`}
           </div>
         </div>
@@ -2131,7 +2277,7 @@ function LineupPanel({
                           <small>
                             {player.role}
                             {fixture.matchKind === "SOLO"
-                              ? ` · ${formatPlayerSr(player.ratingAtTeamAssignment)} SR at assignment`
+                              ? ` · ${formatPlayerSr(player.ratingAtTeamAssignment)} ${ratingTrackLabel(player.role)} SR at assignment`
                               : ""}
                             {!isEligible ? " · Not checked in" : ""}
                           </small>

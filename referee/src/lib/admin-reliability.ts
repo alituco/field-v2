@@ -226,6 +226,7 @@ export function normalizeAdminReliabilityPolicyVersion(
   const config = state === "DRAFT"
     ? normalizeReliabilityPolicyDraftConfig(row.config)
     : parseReliabilityPolicyConfig(row.config, {
+      allowLegacySoloSixSide: true,
       allowLegacyClanSevenSide: true,
     });
   const effectiveFrom = requiredDate(row.effective_from, "effective date");

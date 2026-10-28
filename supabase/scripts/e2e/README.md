@@ -15,7 +15,8 @@ The production project is explicitly denied by
 
 1. `setup_staging.ts` creates or refreshes the tagged test accounts, cancels
    transient state from interrupted runs, creates two tagged future solo games,
-   seeds 11 of 12 places in the match journey, and writes a non-secret manifest.
+   seeds 13 of 14 places in a Phoenix USD match, and writes a non-secret
+   manifest.
 2. `verify_staging.ts --phase=prepared` proves the fixture is ready before UI
    automation starts.
 3. The mobile/referee/admin E2E journeys use IDs and exact text markers from the
@@ -27,6 +28,20 @@ The production project is explicitly denied by
 5. `cleanup_staging.ts` closes remaining transient games and queues, removes the
    temporary referee assignment, and resets the reusable accounts to a safe
    baseline.
+
+The played fixture starts 12–23 hours after setup so real Season 0 check-in,
+team assignment and kickoff are inside the ±24-hour window. The separate
+cancellation fixture stays 72–96 hours ahead to retain advance-refund coverage.
+Both use whole-minute, 30-minute Phoenix slots; existing games are never moved.
+Prepared verification rejects an out-of-window played fixture.
+
+The browser journey checks everyone in, exercises a check-in correction, assigns
+teams, starts the match and records a goal. It then waits for **30 real minutes of
+server playing time** before normal finalization. There is no clock backdating,
+rating bypass or shortened production rule. Its test budget is 35 minutes and
+the browser job budget is 55 minutes (including build/cleanup); ordinary UI
+actions remain limited to 15 seconds. This replaces the obsolete instant-finish
+assumption from the pre-Season-0 journey.
 
 Final matches and their Player SR, attendance, wallet, and audit records are
 intentionally immutable. Cleanup retains this tagged history instead of
@@ -47,7 +62,7 @@ export E2E_MANIFEST_PATH='/tmp/field-e2e-manifest.json'
 
 GitHub Actions should generate and mask `E2E_TEST_PASSWORD`; it must never be
 written to the manifest or uploaded as an artifact. The onboarding phone must be
-reserved for automation and must not be one of the fixed 12-player or admin test
+reserved for automation and must not be one of the fixed 14-player or admin test
 accounts.
 
 The optional `E2E_BOOTSTRAP_PHONE` and `E2E_DEV_OTP_CODE` values describe the
@@ -75,6 +90,36 @@ deno run --allow-env --allow-net --allow-read \
 Run cleanup from an `always()`/`finally` step so an interrupted UI test does not
 leave active games or unresolved E2E queues.
 
+### Captured synthetic checkout recovery (operator only)
+
+Cleanup deliberately refuses to expire captured payments. If an interrupted run
+left an unlinked `STAGING_E2E/CAPTURED` checkout for its now-cancelled **Match**
+fixture, an authorized database operator can use the separate local command
+below. This is never run by CI, cleanup or deployment. It rejects Stripe/legacy
+payments, real/unmarked users, other runs, live games, linked bookings and
+non-staging database connections. It never restores retired staff access.
+
+Use Node 22.18+ and `psql`. Provide `SUPABASE_DB_URL` privately (the exact staging
+direct or pooler PostgreSQL URL), `SUPABASE_URL` and `FIELD_ENVIRONMENT=staging`.
+Do not paste connection URLs/passwords into shell history or commit them.
+
+```sh
+node supabase/scripts/e2e/reconcile_captured_checkout.mjs \
+  --run=<failed-run-and-attempt> --intent=<exact-intent-uuid> \
+  --player=<exact-player-uuid> --game=<exact-game-uuid> \
+  --creator=<exact-fixture-staff-actor-uuid>
+```
+
+By default it executes the guarded normal finalizer in a transaction and rolls
+it back. After reviewing that dry run, repeat the same selectors with `--apply`
+and `--confirm=RECONCILE_STAGING_E2E:<failed-run-and-attempt>:<exact-intent-uuid>`.
+All guards and finalization run under database locks in one transaction. Commit
+requires a single, full, completed **synthetic** refund from the normal finalizer;
+no Stripe operation is made and no payment is deleted/expired. Its ordinary
+refund reference and reason are durable reconciliation evidence. Repeating the
+exact command verifies that evidence without creating another refund. Unknown
+outcomes fail closed and require private database diagnostics before retrying.
+
 To validate the safety configuration without writing data:
 
 ```sh
@@ -94,7 +139,7 @@ numbers, game times, and run-specific text markers. Important entries are:
 - `accounts.partyTarget`: player that accepts the party invitation.
 - `accounts.onboarding`: separate user prepared with missing name/DOB metadata.
 - `accounts.admin`: active isolated admin/referee.
-- `games.match`: 11 seeded bookings; the mobile test books the final place.
+- `games.match`: 13 seeded bookings; the mobile test books the final place.
 - `games.cancellation`: empty game used to verify cancellation and reopening.
 - `markers.reportDetails` and `markers.supportDetails`: exact text used to find
   the mobile submissions without depending on unrelated staging records.

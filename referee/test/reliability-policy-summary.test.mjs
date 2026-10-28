@@ -37,12 +37,13 @@ test("human summary includes attendance, deposits, sanctions, SR, and appeals", 
     ...section.rules.flatMap((rule) => [rule.title, rule.explanation, ...(rule.facts ?? [])]),
   ]).join("\n");
 
-  assert.match(text, /six|6v6/i);
+  assert.match(text, /Solo matches are 7v7\. Clan matches are 6v6\./);
   assert.match(text, /Player reliability deposit/);
   assert.match(text, /Player sanction ladder/);
   assert.match(text, /Late-player SR/);
   assert.match(text, /Routine traffic is not automatically excused/);
-  assert.match(text, /Field Wallet in BHD/);
+  assert.match(text, /original payment method/);
+  assert.match(text, /Historical wallet balances remain separate/);
 });
 
 test("downloadable document is standalone, printable, and escapes admin copy", () => {
@@ -57,4 +58,14 @@ test("downloadable document is standalone, printable, and escapes admin copy", (
   assert.match(html, /Field Reliability Policy/);
   assert.doesNotMatch(html, /<script>alert/);
   assert.match(html, /&lt;script&gt;/);
+});
+
+
+test("attendance summary distinguishes Season 0 full-time decisions from saved legacy grace periods", () => {
+  const document = buildReliabilityPolicySummary(reliabilityPolicyDefaults, metadata);
+  const rule = document.sections.find(section => section.id === "at-a-glance").rules.find(rule => rule.title === "Check-in is referee managed");
+  assert.match(rule.explanation, /Season 0 solo arrivals remain open until full time/);
+  assert.match(rule.explanation, /missing players become no-shows when the game ends/);
+  assert.match(rule.explanation, /Earlier solo and clan policies keep their saved/);
+  assert.match(rule.explanation, /10 minutes after kickoff/);
 });

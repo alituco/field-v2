@@ -1,5 +1,11 @@
 import type { User } from "https://esm.sh/@supabase/supabase-js@2.86.0";
-import { isAuthOnlyOnboardingFixture } from "../../functions/dev-switch-user/fixture.ts";
+import {
+  isAuthOnlyOnboardingFixture,
+  isProtectedBootstrapFixture,
+} from "../../functions/dev-switch-user/fixture.ts";
+import { cleanAndAssertE2ECheckoutPool } from "./checkouts.ts";
+import { bookedRoleRatingBaselines } from "./rating_tracks.ts";
+import { selectJourneySlots } from "./game_slots.ts";
 
 import {
   type AdminClient,
@@ -10,6 +16,7 @@ import {
   E2E_DEFAULT_BIRTH_DATE,
   E2E_PROFILE_PREFIX,
   E2E_SCHEMA_VERSION,
+  E2E_STAFF_EMAIL,
   E2E_VENUE_PREFIX,
   type E2EAccount,
   type E2EGame,
@@ -40,6 +47,8 @@ const PLAYER_DEFINITIONS = [
   ["+97339009010", "Faisal E2E", "field_e2e_10"],
   ["+97339009011", "Jassim E2E", "field_e2e_11"],
   ["+97339009012", "Rami E2E", "field_e2e_12"],
+  ["+97339009013", "Zaid E2E", "field_e2e_13"],
+  ["+97339009014", "Adam E2E", "field_e2e_14"],
 ] as const;
 
 const ADMIN_DEFINITION = [
@@ -54,10 +63,12 @@ const FILLER_ROLES = [
   "DEF",
   "DEF",
   "DEF",
-  "MID",
-  "MID",
-  "MID",
-  "MID",
+  "ATT",
+  "ATT",
+  "ATT",
+  "ATT",
+  "ATT",
+  "ATT",
   "ATT",
   "ATT",
 ] as const;
@@ -99,6 +110,7 @@ if (config.onboardingPhone !== "+97339009100") {
     "The auth-only onboarding fixture must use the server-allowlisted +97339009100 test number.",
   );
 }
+const authUsersByEmail = new Map<string, User>();
 const authUsersByPhone = await loadAuthUsersByPhone();
 await ensureBootstrapAccount();
 const selectedMainIndex = selectRotatingIndex(
@@ -142,27 +154,7 @@ const onboarding = await ensureAccount(admin, {
   clearAuthOnboarding: true,
 });
 
-const e2eAdmin = await ensureAccount(admin, {
-  phone: ADMIN_DEFINITION[0],
-  displayName: `${E2E_PROFILE_PREFIX} ${ADMIN_DEFINITION[1]}`,
-  username: ADMIN_DEFINITION[2],
-  password: config.testPassword,
-  dateOfBirth: E2E_DEFAULT_BIRTH_DATE,
-  role: "admin",
-});
-
-await admin.from("referee_profiles").upsert(
-  {
-    profile_id: e2eAdmin.profileId,
-    display_name: e2eAdmin.displayName,
-    phone: e2eAdmin.phone,
-    role: "admin",
-    is_active: true,
-  },
-  { onConflict: "profile_id" },
-).then(({ error }) => {
-  if (error) throw new Error(`upsert E2E referee: ${error.message}`);
-});
+const e2eAdmin = await ensureIndependentE2EStaff(admin);
 
 logStep("Closing stale transient E2E state from earlier interrupted runs.");
 await closeStaleTransientState(admin, e2eAdmin, [...players, onboarding]);
@@ -170,6 +162,21 @@ await assertPoolHasNoForeignUpcomingBookings(
   admin,
   [...players, onboarding],
   e2eAdmin,
+);
+await cleanAndAssertE2ECheckoutPool(
+  admin,
+  [...players, onboarding],
+  e2eAdmin,
+);
+
+// Only this protected synthetic account pool moves to the current test market.
+// Retain their rating history; never migrate real players or legacy games.
+await assertNoError(
+  admin.from("player_ratings").update({ region: "phoenix" }).in(
+    "profile_id",
+    players.map((player) => player.profileId),
+  ),
+  "select the Phoenix market for isolated E2E players",
 );
 
 const main = players[selectedMainIndex];
@@ -182,7 +189,7 @@ const venuePrefix = `${E2E_VENUE_PREFIX} ${shortId}]`;
 const createdGames: Array<Omit<E2EGame, "seededConfirmedCount">> = [];
 try {
   logStep("Reserving two unused permanent solo schedule slots.");
-  const [matchStart, cancellationStart] = await findUnusedSoloSlots(admin, 2);
+  const [matchStart, cancellationStart] = await findUnusedSoloSlots(admin);
   const match = await createGame(
     admin,
     e2eAdmin.profileId,
@@ -220,16 +227,20 @@ try {
   }
 
   const policyVersionId = await ensurePolicyTerms(admin, match.id);
-  const ratingsBefore = await loadRatings(admin, players);
+  const rolesByProfile = Object.fromEntries([
+    [main.profileId, match.mainRole],
+    ...fillers.map((player, index) => [player.profileId, FILLER_ROLES[index]]),
+  ]);
+  const ratingsBefore = await loadRatings(admin, rolesByProfile);
 
-  logStep("Seeding 11 of 12 match bookings; the UI creates the final booking.");
+  logStep("Seeding 13 of 14 match bookings; the UI creates the final booking.");
   const bookingRows = fillers.map((player, index) => ({
     game_id: match.id,
     profile_id: player.profileId,
     role: FILLER_ROLES[index],
     player_rating_at_booking: ratingsBefore[player.profileId],
-    amount_paid_fils: 3000,
-    base_amount_fils: 3000,
+    amount_paid_fils: 13000,
+    base_amount_fils: 13000,
     discount_bps: 0,
     reliability_deposit_fils: 0,
     reliability_deposit_status: "NOT_REQUIRED",
@@ -262,6 +273,8 @@ try {
       otpCode: config.otpCode,
       adminProfileId: e2eAdmin.profileId,
       adminPhone: e2eAdmin.phone,
+      adminAuthUserId: e2eAdmin.authUserId,
+      adminEmail: e2eAdmin.email,
     },
     accounts: {
       main,
@@ -273,7 +286,7 @@ try {
     games: {
       match: {
         ...match,
-        seededConfirmedCount: 11,
+        seededConfirmedCount: 13,
       },
       cancellation: {
         ...cancellation,
@@ -369,7 +382,7 @@ async function ensureAccount(
     username: string;
     password: string;
     dateOfBirth: string | null;
-    role: "player" | "admin";
+    role: "player";
     clearAuthOnboarding?: boolean;
   },
 ): Promise<E2EAccount> {
@@ -399,10 +412,14 @@ async function ensureAccount(
   };
 
   if (user) {
-    if (user.user_metadata?.field_e2e !== true) {
+    if (
+      user.app_metadata?.fieldrush_e2e !== true ||
+      user.app_metadata?.fieldrush_e2e_role !==
+        (input.clearAuthOnboarding ? "onboarding" : input.role)
+    ) {
       throw new Error(
         `Refusing to reuse ${input.phone}: the existing auth user is not ` +
-          "owned by Field E2E.",
+          "owned by Field E2E through protected service metadata.",
       );
     }
     const { data: existingProfile, error: existingProfileError } = await client
@@ -471,6 +488,7 @@ async function ensureAccount(
             ...user.app_metadata,
             fieldrush_e2e: true,
             fieldrush_e2e_role: input.role,
+            fieldrush_e2e_run_id: config.runId,
           },
         },
       ).catch((error) => {
@@ -494,6 +512,7 @@ async function ensureAccount(
           fieldrush_e2e_role: input.clearAuthOnboarding
             ? "onboarding"
             : input.role,
+          fieldrush_e2e_run_id: config.runId,
         },
       },
     ).catch((error) => {
@@ -510,6 +529,9 @@ async function ensureAccount(
       const words = input.displayName.trim().split(/\s+/);
       const lastName = words.pop()!;
       const firstName = words.join(" ");
+      const { data: onboardingAccount, error: onboardingAccountError } =
+        await actor.rpc("get_my_fieldrush_account");
+      if (onboardingAccountError) throw onboardingAccountError;
       const { error: signupError } = await actor.rpc(
         "complete_fieldrush_onboarding",
         {
@@ -519,6 +541,9 @@ async function ensureAccount(
             username: input.username,
             date_of_birth: input.dateOfBirth,
             email: `${input.username}@fieldrush-e2e.example`,
+            ...(onboardingAccount.skill_assessment_required === true
+              ? { skill_assessment: "not_sure" }
+              : {}),
           },
           terms_version: "fieldrush-v1",
           privacy_version: "fieldrush-v1",
@@ -547,14 +572,23 @@ async function ensureAccount(
 async function ensureBootstrapAccount(): Promise<void> {
   const target = authUsersByPhone.get(config.bootstrapPhone.replace(/\D/g, ""));
   if (
-    !target || target.app_metadata?.fieldrush_e2e !== true ||
-    target.app_metadata?.fieldrush_e2e_role !== "bootstrap"
+    !target || !isProtectedBootstrapFixture(target)
   ) {
     throw new Error(
       "The configured bootstrap account needs administrator-verified protected app_metadata " +
         "fieldrush_e2e=true and fieldrush_e2e_role=bootstrap. Refusing to onboard an unmarked staging user.",
     );
   }
+  // Only the protected, reserved synthetic bootstrap is refreshed. Public dev
+  // endpoints never create accounts, tag ordinary users or reset passwords.
+  await updateAuthUser(config.supabaseUrl, config.serviceRoleKey, target.id, {
+    password: config.testPassword,
+    app_metadata: {
+      ...target.app_metadata,
+      fieldrush_e2e_run_id: config.runId,
+      fieldrush_e2e_revoked_run_id: null,
+    },
+  });
   const actor = await createE2EUserClient(
     config.supabaseUrl,
     config.bootstrapPhone,
@@ -572,6 +606,9 @@ async function ensureBootstrapAccount(): Promise<void> {
           username: account.username || "field_e2e_bootstrap",
           date_of_birth: account.date_of_birth || E2E_DEFAULT_BIRTH_DATE,
           email: account.email || "field_e2e_bootstrap@fieldrush-e2e.example",
+          ...(account.skill_assessment_required === true
+            ? { skill_assessment: "not_sure" }
+            : {}),
         },
         terms_version: "fieldrush-v1",
         privacy_version: "fieldrush-v1",
@@ -599,12 +636,143 @@ async function loadAuthUsersByPhone(): Promise<Map<string, User>> {
       throw new Error(`list auth users: ${errorMessage(error)}`);
     });
     for (const user of users) {
+      if (user.email) authUsersByEmail.set(user.email.toLowerCase(), user);
       const phone = (user.phone ?? "").replace(/\D/g, "");
       if (phone.length > 0) usersByPhone.set(phone, user);
     }
-    if (users.length < 1000) break;
+    if (users.length < 1000) return usersByPhone;
   }
-  return usersByPhone;
+  throw new Error(
+    "The Auth fixture directory could not be searched completely; no new fixture identity will be created.",
+  );
+}
+
+async function ensureIndependentE2EStaff(
+  client: AdminClient,
+): Promise<E2EAccount> {
+  let user = authUsersByEmail.get(E2E_STAFF_EMAIL);
+  const legacy = authUsersByPhone.get(ADMIN_DEFINITION[0].replace(/\D/g, ""));
+  const displayName = `${E2E_PROFILE_PREFIX} ${ADMIN_DEFINITION[1]}`;
+  if (
+    user &&
+    (user.app_metadata?.fieldrush_e2e !== true ||
+      user.app_metadata?.fieldrush_e2e_role !== "admin" ||
+      user.app_metadata?.fieldrush_account_type !== "staff" || user.phone)
+  ) {
+    throw new Error(
+      "The reserved staff fixture email belongs to an unmarked or player identity. No identity was changed.",
+    );
+  }
+  if (
+    legacy &&
+    (legacy.app_metadata?.fieldrush_e2e !== true ||
+      legacy.app_metadata?.fieldrush_e2e_role !== "admin")
+  ) {
+    throw new Error(
+      "The reserved legacy staff contact belongs to an unmarked account. No identity was changed.",
+    );
+  }
+  const { data: existing, error } = await client.from("referee_profiles")
+    .select("profile_id,auth_user_id,email,display_name,phone,role")
+    .or(`email.eq.${E2E_STAFF_EMAIL},phone.eq.${ADMIN_DEFINITION[0]}`);
+  if (error) {
+    throw new Error(`inspect isolated staff fixture: ${error.message}`);
+  }
+  if ((existing ?? []).length > 1) {
+    throw new Error(
+      "The isolated staff fixture has conflicting retained staff records.",
+    );
+  }
+  const retained = existing?.[0];
+  if (
+    retained &&
+    (retained.role !== "admin" ||
+      !String(retained.display_name).startsWith(E2E_PROFILE_PREFIX) ||
+      (retained.auth_user_id != null
+        ? retained.auth_user_id !== user?.id ||
+          retained.email !== E2E_STAFF_EMAIL
+        : !legacy || retained.profile_id !== legacy.id))
+  ) {
+    throw new Error("Refusing to claim an unmarked retained staff record.");
+  }
+  const metadata = {
+    ...user?.app_metadata,
+    fieldrush_account_type: "staff",
+    fieldrush_e2e: true,
+    fieldrush_e2e_role: "admin",
+    fieldrush_e2e_run_id: config.runId,
+    fieldrush_e2e_revoked_run_id: null,
+  };
+  if (user) {
+    const { data: playerRows, error: playerError } = await client.from(
+      "profiles",
+    ).select("id")
+      .or(`id.eq.${user.id},auth_user_id.eq.${user.id}`);
+    if (playerError || playerRows?.length) {
+      throw new Error(
+        "The isolated staff Auth identity must not own a player profile.",
+      );
+    }
+    user = await updateAuthUser(
+      config.supabaseUrl,
+      config.serviceRoleKey,
+      user.id,
+      {
+        password: config.testPassword,
+        email_confirm: true,
+        app_metadata: metadata,
+      },
+    );
+  } else {
+    // Only this protected synthetic fixture bypasses inbox delivery. Real
+    // invitations remain unverified until their email code is entered.
+    user = await createAuthUser(config.supabaseUrl, config.serviceRoleKey, {
+      email: E2E_STAFF_EMAIL,
+      email_confirm: true,
+      password: config.testPassword,
+      app_metadata: metadata,
+      user_metadata: { display_name: displayName },
+    });
+  }
+  if (
+    user.email?.toLowerCase() !== E2E_STAFF_EMAIL || user.phone ||
+    !user.email_confirmed_at ||
+    user.app_metadata?.fieldrush_account_type !== "staff" ||
+    user.app_metadata?.fieldrush_e2e !== true ||
+    user.app_metadata?.fieldrush_e2e_role !== "admin" ||
+    user.app_metadata?.fieldrush_e2e_run_id !== config.runId
+  ) {
+    throw new Error("The isolated staff Auth acknowledgement was invalid.");
+  }
+  const profileId = requireUuid(
+    retained?.profile_id ?? crypto.randomUUID(),
+    "isolated staff actor id",
+  );
+  if (profileId === user.id) {
+    throw new Error(
+      "Synthetic staff Auth and operational actor keys must be separate.",
+    );
+  }
+  await assertNoError(
+    client.from("referee_profiles").upsert({
+      profile_id: profileId,
+      auth_user_id: user.id,
+      email: E2E_STAFF_EMAIL,
+      display_name: displayName,
+      phone: ADMIN_DEFINITION[0],
+      role: "admin",
+      is_active: true,
+    }, { onConflict: "profile_id" }),
+    "bind isolated staff email identity",
+  );
+  return {
+    profileId,
+    authUserId: requireUuid(user.id, "isolated staff Auth id"),
+    email: E2E_STAFF_EMAIL,
+    phone: ADMIN_DEFINITION[0],
+    displayName,
+    username: ADMIN_DEFINITION[2],
+  };
 }
 
 async function closeStaleTransientState(
@@ -614,8 +782,10 @@ async function closeStaleTransientState(
 ): Promise<void> {
   const { data: games, error: gamesError } = await client
     .from("open_queue_games")
-    .select("id,status,venue,created_by")
-    .eq("created_by", actor.profileId)
+    .select("id,status,venue,created_by,created_by_staff_id")
+    .or(
+      `created_by_staff_id.eq.${actor.profileId},created_by.eq.${actor.profileId}`,
+    )
     .like("venue", `${E2E_VENUE_PREFIX}%`)
     .in("status", ["OPEN", "FULL", "LIVE"]);
   if (gamesError) {
@@ -623,6 +793,14 @@ async function closeStaleTransientState(
   }
 
   for (const game of games ?? []) {
+    if (
+      (game.created_by_staff_id ?? game.created_by) !== actor.profileId ||
+      !String(game.venue).startsWith(E2E_VENUE_PREFIX)
+    ) {
+      throw new Error(
+        "Refusing to cancel a game outside the isolated staff fixture ownership.",
+      );
+    }
     const { error } = await client.rpc("admin_cancel_match", {
       actor_admin_id: actor.profileId,
       match_kind_to_use: "SOLO",
@@ -734,13 +912,13 @@ async function assertPoolHasNoForeignUpcomingBookings(
   if (gameIds.length === 0) return;
   const { data: games, error: gameError } = await client
     .from("open_queue_games")
-    .select("id,status,venue,created_by,starts_at")
+    .select("id,status,venue,created_by,created_by_staff_id,starts_at")
     .in("id", gameIds)
     .in("status", ["OPEN", "FULL", "LIVE"]);
   if (gameError) throw new Error(`load booked E2E games: ${gameError.message}`);
 
   const foreign = (games ?? []).filter((game) =>
-    game.created_by !== actor.profileId ||
+    (game.created_by_staff_id ?? game.created_by) !== actor.profileId ||
     !String(game.venue).startsWith(E2E_VENUE_PREFIX)
   );
   if (foreign.length > 0) {
@@ -763,14 +941,13 @@ async function assertPoolHasNoForeignUpcomingBookings(
 
 async function findUnusedSoloSlots(
   client: AdminClient,
-  count: number,
-): Promise<Date[]> {
+): Promise<[Date, Date]> {
   const now = new Date();
-  const earliest = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-  const latest = new Date(Date.now() + 730 * 24 * 60 * 60 * 1000);
+  const latest = new Date(now.getTime() + 96 * 60 * 60 * 1000);
   const { data: existing, error } = await client
     .from("open_queue_games")
     .select("starts_at,status")
+    .eq("timezone", "America/Phoenix")
     .gte("starts_at", now.toISOString())
     .lte("starts_at", latest.toISOString())
     .neq("status", "CANCELLED")
@@ -778,64 +955,12 @@ async function findUnusedSoloSlots(
     .limit(2000);
   if (error) throw new Error(`load occupied solo slots: ${error.message}`);
 
-  const occupied = new Set(
-    (existing ?? []).map((row) =>
-      new Date(String(row.starts_at)).toISOString()
-    ),
-  );
-  const slots: Date[] = [];
-  const cursor = new Date(Date.UTC(
-    earliest.getUTCFullYear(),
-    earliest.getUTCMonth(),
-    earliest.getUTCDate(),
-    12,
-  ));
-
-  while (cursor <= latest && slots.length < count) {
-    // Bahrain is UTC+3 year-round. 20:30 Bahrain is 17:30 UTC.
-    const weekday = cursor.getUTCDay();
-    if (weekday === 2 || weekday === 5) {
-      const candidate = new Date(Date.UTC(
-        cursor.getUTCFullYear(),
-        cursor.getUTCMonth(),
-        cursor.getUTCDate(),
-        17,
-        30,
-      ));
-      if (
-        candidate.getTime() > earliest.getTime() &&
-        !occupied.has(candidate.toISOString())
-      ) {
-        slots.push(candidate);
-      }
-    }
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
-  }
-
-  if (slots.length !== count) {
+  if ((existing ?? []).length >= 2000) {
     throw new Error(
-      `Could not find ${count} unused Tuesday/Friday solo slots.`,
+      "E2E slot lookup was truncated; refusing an incomplete collision check.",
     );
   }
-
-  const visibleStarts = (existing ?? [])
-    .filter((row) => row.status === "OPEN" || row.status === "FULL")
-    .map((row) => new Date(String(row.starts_at)).getTime());
-  for (const [index, slot] of slots.entries()) {
-    const earlierExisting = visibleStarts.filter((start) =>
-      start < slot.getTime()
-    ).length;
-    const earlierFixtureSlots =
-      slots.slice(0, index).filter((start) => start < slot).length;
-    const feedPosition = earlierExisting + earlierFixtureSlots + 1;
-    if (feedPosition > 40) {
-      throw new Error(
-        "Could not create a discoverable E2E game without touching normal " +
-          `staging fixtures; candidate feed position was ${feedPosition}.`,
-      );
-    }
-  }
-  return slots;
+  return selectJourneySlots(now, existing ?? []);
 }
 
 async function createGame(
@@ -845,15 +970,22 @@ async function createGame(
   start: Date,
   mainRole: E2EGame["mainRole"],
 ): Promise<Omit<E2EGame, "seededConfirmedCount">> {
-  const endsAt = new Date(start.getTime() + 60 * 60 * 1000);
+  const endsAt = new Date(start.getTime() + 30 * 60 * 1000);
   const { data, error } = await client.from("open_queue_games").insert({
+    format_version: "FIELDRUSH_7V7",
+    currency: "USD",
+    capacity: 14,
+    goalkeeper_capacity: 2,
+    defender_capacity: 4,
+    midfielder_capacity: 0,
+    attacker_capacity: 8,
     venue,
     starts_at: start.toISOString(),
     ends_at: endsAt.toISOString(),
-    timezone: "Asia/Bahrain",
-    price_fils: 3000,
-    age_label: "16+ · E2E",
-    created_by: createdBy,
+    timezone: "America/Phoenix",
+    price_fils: 13000,
+    age_label: "18+ · E2E",
+    created_by_staff_id: createdBy,
   }).select("id,venue,starts_at,ends_at,capacity").single();
   if (error || !data) {
     throw new Error(`create E2E game ${venue}: ${error?.message ?? "no row"}`);
@@ -864,7 +996,7 @@ async function createGame(
     startsAt: String(data.starts_at),
     endsAt: String(data.ends_at),
     mainRole,
-    capacity: 12,
+    capacity: 14,
   };
 }
 
@@ -885,22 +1017,13 @@ async function ensurePolicyTerms(
 
 async function loadRatings(
   client: AdminClient,
-  playersToUse: E2EAccount[],
+  rolesByProfile: Record<string, string>,
 ): Promise<Record<string, number>> {
-  const playerIds = playersToUse.map((player) => player.profileId);
+  const playerIds = Object.keys(rolesByProfile);
   const { data, error } = await client
-    .from("player_ratings")
-    .select("profile_id,skill_rating")
+    .from("fieldrush_player_rating_tracks")
+    .select("profile_id,rating_track,skill_rating")
     .in("profile_id", playerIds);
   if (error) throw new Error(`load E2E player ratings: ${error.message}`);
-  const ratings: Record<string, number> = {};
-  for (const row of data ?? []) {
-    ratings[String(row.profile_id)] = Number(row.skill_rating);
-  }
-  for (const player of playersToUse) {
-    if (!Number.isFinite(ratings[player.profileId])) {
-      throw new Error(`Missing Player SR for ${player.displayName}.`);
-    }
-  }
-  return ratings;
+  return bookedRoleRatingBaselines(data ?? [], rolesByProfile);
 }

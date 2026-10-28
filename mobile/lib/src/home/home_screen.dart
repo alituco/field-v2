@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../auth/auth_repository.dart';
 import '../auth/fieldrush_account.dart';
 import '../auth/fieldrush_account_screen.dart';
+import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../clans/clans_screen.dart';
@@ -10,15 +11,25 @@ import '../fixtures/fixture_repository.dart';
 import '../fixtures/fixtures_screen.dart';
 import '../leaderboard/leaderboard_repository.dart';
 import '../leaderboard/leaderboard_screen.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
 import '../moderation/account_restriction_screen.dart';
 import '../moderation/moderation.dart';
 import '../open_queue/open_queue_repository.dart';
+import '../open_queue/open_queue.dart';
+import '../open_queue/fieldrush_booking_flow.dart';
+import '../open_queue/fieldrush_checkout_sheet.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../profile/profile_repository.dart';
-import '../profile/profile_screen.dart';
+import '../profile/fieldrush_you_screen.dart';
+import '../profile/fieldrush_you_settings.dart';
 import '../reliability/reliability_repository.dart';
+import '../referrals/referral_repository.dart';
 import '../support/support_repository.dart';
+import '../ui/fieldrush_toast.dart';
 import 'dashboard_home.dart';
 import 'field_bottom_nav.dart';
+import 'home_discovery_repository.dart';
+import 'tab_refresh_policy.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({
@@ -52,11 +63,16 @@ class _HomeScreenState extends State<HomeScreen> {
       SupabaseOpenQueueRepository();
   final ReliabilityRepository _reliabilityRepository =
       SupabaseReliabilityRepository();
+  final ReferralRepository _referralRepository = SupabaseReferralRepository();
   int _selectedIndex = 0;
   int _homeActivationTick = 0;
+  int _fixturesActivationTick = 0;
   int _clansActivationTick = 0;
   int _ranksActivationTick = 0;
   int _playerRanksActivationTick = 0;
+  int _youActivationTick = 0;
+  final _tabRefresh = TabRefreshPolicy();
+  final _ratingTrack = ValueNotifier(RatingTrack.outfield);
   bool _isSigningOut = false;
   String? _shownModerationNoticeSignature;
 
@@ -66,6 +82,12 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _showModerationNotice();
     });
+  }
+
+  @override
+  void dispose() {
+    _ratingTrack.dispose();
+    super.dispose();
   }
 
   @override
@@ -92,35 +114,30 @@ class _HomeScreenState extends State<HomeScreen> {
         '${status.warningCount}';
     if (_shownModerationNoticeSignature == signature) return;
     _shownModerationNoticeSignature = signature;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        behavior: SnackBarBehavior.floating,
-        backgroundColor: fieldGray900,
-        duration: const Duration(seconds: 8),
-        margin: const EdgeInsets.fromLTRB(16, 16, 16, 100),
-        padding: const EdgeInsets.fromLTRB(16, 13, 8, 13),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(17)),
-        content: ModerationStatusNoticeContent(status: status),
-        action: SnackBarAction(
-          label: 'GOT IT',
-          textColor: fieldEmerald500,
-          onPressed: () {},
-        ),
-      ),
+    showFieldrushToastContent(
+      context,
+      ModerationStatusNoticeContent(status: status),
+      duration: const Duration(seconds: 8),
+      actionLabel: 'GOT IT',
+      onAction: () {},
     );
   }
 
   void _selectTab(int index) {
+    if (index == _selectedIndex) return;
+    final refresh = _tabRefresh.activate(index);
     setState(() {
-      if (index == 0) {
+      if (refresh && index == 0) {
         _homeActivationTick++;
       }
-      if (index == 2) {
+      if (refresh && index == 1) _fixturesActivationTick++;
+      if (refresh && index == 2) {
         _clansActivationTick++;
       }
-      if (index == 3) {
+      if (refresh && index == 3) {
         _ranksActivationTick++;
       }
+      if (refresh && index == 4) _youActivationTick++;
       _selectedIndex = index;
     });
   }
@@ -148,77 +165,211 @@ class _HomeScreenState extends State<HomeScreen> {
     return widget.authRepository.switchToUserForDevelopment(profileId);
   }
 
+  Future<void> _openSoloBooking(OpenQueueGame? game) async {
+    await Navigator.of(context).push<OpenQueueBooking>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushBookingFlow(
+          repository: _openQueueRepository,
+          initialGame: game,
+          onNavigateTab: _selectTab,
+        ),
+      ),
+    );
+    if (mounted) {
+      _tabRefresh.refreshed(0);
+      _tabRefresh.refreshed(1);
+      setState(() {
+        _fixturesActivationTick++;
+        _homeActivationTick++;
+      });
+    }
+  }
+
+  Future<void> _openSoloGame(OpenQueueGame game) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => FieldrushGameDetailScreen(
+          repository: _openQueueRepository,
+          gameId: game.id,
+          initialGame: game,
+          profileRepository: _profileRepository,
+          onNavigateTab: _selectTab,
+          onJoin: (game) async {
+            await showFieldrushCheckout(
+              context: context,
+              repository: _openQueueRepository,
+              game: game,
+            );
+          },
+        ),
+      ),
+    );
+    if (mounted) {
+      _tabRefresh.refreshed(0);
+      _tabRefresh.refreshed(1);
+      setState(() {
+        _fixturesActivationTick++;
+        _homeActivationTick++;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final pages = [
-      DashboardHome(
+    final pages = <WidgetBuilder>[
+      (_) => DashboardHome(
+        ratingTrackController: _ratingTrack,
         activationTick: _homeActivationTick,
         profileRepository: _profileRepository,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         leaderboardRepository: _leaderboardRepository,
         openQueueRepository: _openQueueRepository,
+        discoveryRepository: SupabaseHomeDiscoveryRepository(),
         onOpenClans: () => _selectTab(2),
         onOpenFixtures: () => _selectTab(1),
         onOpenRanks: _openPlayerRanks,
         onOpenProfile: () => _selectTab(4),
         onNavigateTab: _selectTab,
       ),
-      FixturesScreen(
+      (_) => FixturesScreen(
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
         clanRepository: _clanRepository,
         onNavigateTab: _selectTab,
+        activationTick: _fixturesActivationTick,
+        onPlay: _openSoloBooking,
+        onOpenGame: _openSoloGame,
       ),
-      ClansScreen(
+      (_) => ClansScreen(
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         activationTick: _clansActivationTick,
       ),
-      LeaderboardScreen(
+      (_) => LeaderboardScreen(
+        onFindGame: () => _openSoloBooking(null),
+        ratingTrackController: _ratingTrack,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         leaderboardRepository: _leaderboardRepository,
         activationTick: _ranksActivationTick,
         playerActivationTick: _playerRanksActivationTick,
+        onOpenYou: () => _selectTab(4),
       ),
-      ProfileScreen(
+      (_) => FieldrushYouScreen(
+        referralRepository: _referralRepository,
+        ratingTrackController: _ratingTrack,
+        activationTick: _youActivationTick,
         profileRepository: _profileRepository,
+        leaderboardRepository: _leaderboardRepository,
         clanRepository: _clanRepository,
         fixtureRepository: _fixtureRepository,
         openQueueRepository: _openQueueRepository,
         reliabilityRepository: _reliabilityRepository,
         supportRepository: widget.supportRepository,
+        accountRepository: widget.accountRepository,
+        settingsRepository: SupabaseYouSettingsRepository(),
+        onOpenRanks: _openPlayerRanks,
+        onNavigateTab: _selectTab,
         profileSwitcherEnabled: widget.profileSwitcherEnabled,
         onSwitchUser: _switchUser,
         isSigningOut: _isSigningOut,
         onSignOut: _signOut,
-        onOpenAccount: widget.accountRepository == null
-            ? null
-            : () async {
-                await Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) => FieldrushAccountScreen(
-                      authRepository: widget.authRepository,
-                      accountRepository: widget.accountRepository!,
-                    ),
-                  ),
-                );
-              },
+        onOpenAccount: () async {
+          if (widget.accountRepository == null) return;
+          await Navigator.of(context).push<void>(
+            MaterialPageRoute(
+              builder: (_) => FieldrushAccountScreen(
+                authRepository: widget.authRepository,
+                accountRepository: widget.accountRepository!,
+                profileRepository: _profileRepository,
+                bottomNavigationBuilder: (confirmLeave) => FieldBottomNav(
+                  selectedIndex: 4,
+                  onSelected: (index) async {
+                    final navigator = Navigator.of(context);
+                    if (!await confirmLeave() || !mounted) return;
+                    navigator.pop();
+                    _selectTab(index);
+                  },
+                ),
+              ),
+            ),
+          );
+        },
       ),
     ];
 
     return Scaffold(
       key: const ValueKey('home-screen'),
       extendBody: true,
-      backgroundColor: fieldBackground,
-      body: IndexedStack(index: _selectedIndex, children: pages),
+      backgroundColor: _selectedIndex == 0 || _selectedIndex == 4
+          ? FieldrushAuthTheme.cream
+          : fieldBackground,
+      body: HomeTabStack(
+        selectedIndex: _selectedIndex,
+        tabBuilders: pages,
+        onFirstMount: _tabRefresh.refreshed,
+      ),
       bottomNavigationBar: FieldBottomNav(
         selectedIndex: _selectedIndex,
         onSelected: _selectTab,
       ),
     );
   }
+}
+
+/// Mount each destination on its first visit, then keep its element/state in
+/// the same stack slot. Offstage visited pages still receive activation ticks;
+/// untouched destinations perform no repository reads during sign-in.
+class HomeTabStack extends StatefulWidget {
+  const HomeTabStack({
+    super.key,
+    required this.selectedIndex,
+    required this.tabBuilders,
+    this.onFirstMount,
+  }) : assert(selectedIndex >= 0 && selectedIndex < tabBuilders.length);
+
+  final int selectedIndex;
+  final List<WidgetBuilder> tabBuilders;
+  final ValueChanged<int>? onFirstMount;
+
+  @override
+  State<HomeTabStack> createState() => _HomeTabStackState();
+}
+
+class _HomeTabStackState extends State<HomeTabStack> {
+  final _visited = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _visitSelectedTab();
+  }
+
+  @override
+  void didUpdateWidget(covariant HomeTabStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    assert(oldWidget.tabBuilders.length == widget.tabBuilders.length);
+    _visitSelectedTab();
+  }
+
+  void _visitSelectedTab() {
+    if (_visited.add(widget.selectedIndex)) {
+      widget.onFirstMount?.call(widget.selectedIndex);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => IndexedStack(
+    index: widget.selectedIndex,
+    children: [
+      for (var index = 0; index < widget.tabBuilders.length; index++)
+        if (_visited.contains(index))
+          Builder(builder: widget.tabBuilders[index])
+        else
+          const SizedBox.shrink(),
+    ],
+  );
 }
 
 class ModerationStatusNoticeContent extends StatelessWidget {

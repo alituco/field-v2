@@ -4,8 +4,10 @@ import 'package:image_picker/image_picker.dart';
 
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../ui/fieldrush_avatar_image.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
+import '../ui/fieldrush_toast.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
@@ -63,9 +65,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
 
     final validationError = _validate(bio: bio, avatarUrl: avatarUrl);
     if (validationError != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(validationError)));
+      showFieldrushToast(context, validationError);
       return;
     }
 
@@ -94,14 +94,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } catch (error) {
       if (!mounted) return;
       setState(() => _isSaving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not save your profile. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not save your profile. Try again.',
         ),
       );
     }
@@ -133,14 +130,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       });
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open that photo. Try another one.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open that photo. Try another one.',
         ),
       );
     } finally {
@@ -202,16 +196,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                             borderRadius: BorderRadius.circular(999),
                           ),
                         ),
-                        icon: _isPickingImage
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : const Icon(Icons.photo_library_rounded, size: 18),
+                        icon: const Icon(Icons.photo_library_rounded, size: 18),
                         label: Text(
                           _isPickingImage ? 'Opening' : 'Choose Photo',
                         ),
@@ -270,14 +255,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   ),
                 ),
                 child: _isSaving
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                    ? const Text('SAVING PROFILE…')
                     : const Text(
                         'SAVE PROFILE',
                         style: TextStyle(
@@ -334,33 +312,21 @@ class _EditAvatarPreview extends StatelessWidget {
             ],
           ),
           child: ClipOval(
-            child: selectedBytes != null
-                ? Image.memory(selectedBytes, fit: BoxFit.cover)
-                : avatarUrl.isEmpty
-                ? Center(
-                    child: Text(
-                      initials,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 30,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  )
-                : Image.network(
-                    avatarUrl,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => Center(
-                      child: Text(
-                        initials,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 30,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
+            child: FieldrushAvatarImage(
+              size: 92,
+              url: selectedBytes == null ? avatarUrl : null,
+              image: selectedBytes == null ? null : MemoryImage(selectedBytes),
+              fallback: Center(
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 30,
+                    fontWeight: FontWeight.w900,
                   ),
+                ),
+              ),
+            ),
           ),
         );
       },

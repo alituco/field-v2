@@ -1,4 +1,7 @@
 import '../clans/clan.dart';
+import '../open_queue/open_queue.dart';
+import '../ranking/player_rating_visibility.dart';
+import 'package:timezone/timezone.dart' as tz;
 
 class PlayerProfile {
   const PlayerProfile({
@@ -18,6 +21,9 @@ class PlayerProfile {
     this.phone,
     this.avatarUrl,
     this.clan,
+    this.position,
+    this.showUpPercent,
+    this.isFollowedByMe = false,
   });
 
   final String id;
@@ -37,10 +43,79 @@ class PlayerProfile {
   final List<ProfilePreviousGame> previousGames;
   final ProfilePlayerRating? playerRating;
 
+  /// Legacy preferred-position metadata. Public presentation uses the position
+  /// actually played, derived from verified match history below.
+  final String? position;
+
+  /// A public attendance aggregate, if supplied. Private reliability records
+  /// and played-match history cannot establish a public show-up percentage.
+  final double? showUpPercent;
+  final bool isFollowedByMe;
+
+  // The history RPC returns every verified, played FINAL match across solo
+  // and clan play. Legacy appearances are current-clan-only, while SR totals
+  // can reset; neither is the player's lifetime public match record.
+  List<ProfilePreviousGame> get _publicPlayedGames {
+    final byMatch = <String, ProfilePreviousGame>{};
+    for (final game in previousGames) {
+      if (game.id.trim().isEmpty) continue;
+      byMatch.putIfAbsent('${game.type.name}:${game.id}', () => game);
+    }
+    return byMatch.values.toList()..sort((a, b) {
+      final byDate = b.playedAt.compareTo(a.playedAt);
+      if (byDate != 0) return byDate;
+      final byType = a.type.index.compareTo(b.type.index);
+      return byType != 0 ? byType : a.id.compareTo(b.id);
+    });
+  }
+
+  int get playedCount => _publicPlayedGames.length;
+
+  /// Most frequently played booked position. History is already sorted newest
+  /// first, so the most recently played position wins an equal-count tie.
+  /// Unknown legacy roles do not invent a position for a player.
+  String? get playedPosition {
+    final roles = [
+      for (final game in _publicPlayedGames)
+        if (_playedPositionCode(game.playerRole) case final role?) role,
+    ];
+    if (roles.isEmpty) return null;
+    final counts = <String, int>{};
+    for (final role in roles) {
+      counts[role] = (counts[role] ?? 0) + 1;
+    }
+    final most = counts.values.reduce((a, b) => a > b ? a : b);
+    return roles.firstWhere((role) => counts[role] == most);
+  }
+
+  String? get playedPositionLabel => switch (playedPosition) {
+    'GK' => 'Goalkeeper',
+    'DEF' => 'Defender',
+    'MID' => 'Midfielder',
+    'ATT' => 'Attacker',
+    _ => null,
+  };
+
+  /// Unknown or absent results must not be represented as a 0% win rate.
+  double? get winRatePercent {
+    final games = _publicPlayedGames;
+    if (games.isEmpty || games.any((game) => game.outcome == null)) return null;
+    final wins = games.where((game) => game.outcome == ProfileGameOutcome.win);
+    return wins.length * 100 / games.length;
+  }
+
+  /// Newest first. An unresolved score/side keeps its place as an unknown
+  /// result, rather than silently substituting an older match.
+  List<ProfileGameOutcome?> get lastFiveResults => _publicPlayedGames
+      .take(5)
+      .map((game) => game.outcome)
+      .toList(growable: false);
+
   PlayerProfile copyWith({
     int? followingCount,
     int? fansCount,
     List<ProfileHighlight>? highlights,
+    bool? isFollowedByMe,
   }) {
     return PlayerProfile(
       id: id,
@@ -59,6 +134,9 @@ class PlayerProfile {
       career: career,
       previousGames: previousGames,
       playerRating: playerRating,
+      position: position,
+      showUpPercent: showUpPercent,
+      isFollowedByMe: isFollowedByMe ?? this.isFollowedByMe,
     );
   }
 
@@ -77,7 +155,16 @@ class PlayerProfile {
   }
 }
 
-class ProfilePlayerRating {
+String? _playedPositionCode(String? value) =>
+    switch (value?.trim().toUpperCase()) {
+      'GK' || 'GOALKEEPER' => 'GK',
+      'DEF' || 'DEFENDER' => 'DEF',
+      'MID' || 'MIDFIELDER' => 'MID',
+      'ATT' || 'ATTACKER' => 'ATT',
+      _ => null,
+    };
+
+class ProfilePlayerRating with PublicPlayerRating {
   const ProfilePlayerRating({
     required this.skillRating,
     required this.matchesPlayed,
@@ -87,37 +174,71 @@ class ProfilePlayerRating {
     required this.lastChange,
     required this.region,
     required this.events,
+    this.ratingsResetAt,
+    this.ratingsResetSequence,
+    this.visibility,
   });
 
-  final int skillRating;
+  @override
+  final int? skillRating;
+  @override
   final int matchesPlayed;
   final int wins;
   final int losses;
   final int draws;
-  final int lastChange;
+  final int? lastChange;
+  @override
+  final PlayerRatingVisibility? visibility;
   final String region;
   final List<ProfileRatingEvent> events;
+  final DateTime? ratingsResetAt;
+  final int? ratingsResetSequence;
+
+  /// Archived events remain available for match history, but cannot contribute
+  /// to the new period's form or rating change after an administrative reset.
+  List<ProfileRatingEvent> get currentPeriodEvents => ratingsResetAt == null
+      ? events
+      : events.where((event) {
+          final afterDate = !event.playedAt.isBefore(ratingsResetAt!);
+          final afterSequence =
+              ratingsResetSequence == null ||
+              (event.appliedSequence != null &&
+                  event.appliedSequence! > ratingsResetSequence!);
+          return afterDate && afterSequence;
+        }).toList();
 
   String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
 
   factory ProfilePlayerRating.fromJson(Map<String, dynamic> json) {
     final rawEvents = json['events'];
+    final visibility = PlayerRatingVisibility.fromJson(json);
     return ProfilePlayerRating(
-      skillRating: _asInt(json['skill_rating'], fallback: 1200),
+      skillRating: publicRatingNumber(
+        json,
+        'skill_rating',
+        legacyFallback: 1200,
+      ),
       matchesPlayed: _asInt(json['matches_played']),
       wins: _asInt(json['wins']),
       losses: _asInt(json['losses']),
       draws: _asInt(json['draws']),
-      lastChange: _asInt(json['last_change']),
-      region: (json['region'] as String? ?? 'bahrain').trim().toLowerCase(),
+      lastChange: publicRatingNumber(json, 'last_change', legacyFallback: 0),
+      visibility: visibility,
+      region: (json['region'] as String? ?? 'phoenix').trim().toLowerCase(),
+      ratingsResetAt: DateTime.tryParse(
+        json['ratings_reset_at']?.toString() ?? '',
+      ),
+      ratingsResetSequence: _asNullableInt(json['ratings_reset_sequence']),
       events: rawEvents is! List
           ? const []
           : [
               for (final rawEvent in rawEvents)
                 if (rawEvent is Map)
-                  ProfileRatingEvent.fromJson(
-                    Map<String, dynamic>.from(rawEvent),
-                  ),
+                  ProfileRatingEvent.fromJson({
+                    ...Map<String, dynamic>.from(rawEvent),
+                    if (visibility?.ratingVisible == false)
+                      'rating_visible': false,
+                  }),
             ],
     );
   }
@@ -144,6 +265,12 @@ class ProfileRatingEvent {
     this.marginMultiplier,
     this.baseRatingChange,
     this.marginBonusApplied,
+    this.appliedSequence,
+    this.ratingTrack,
+    this.ratingStatus,
+    this.ratingExplanation,
+    this.countedAsPlayed,
+    this.actualPlayedSeconds,
   });
 
   final String id;
@@ -153,9 +280,23 @@ class ProfileRatingEvent {
   final String opponentLabel;
   final String side;
   final String result;
-  final int ratingBefore;
-  final int ratingChange;
-  final int ratingAfter;
+  final int? ratingBefore;
+  final int? ratingChange;
+  final int? ratingAfter;
+  final String? ratingStatus;
+  final String? ratingExplanation;
+  final bool? countedAsPlayed;
+  final int? actualPlayedSeconds;
+
+  String? get publicRatingExplanation =>
+      publicRatingAppearanceExplanation(ratingExplanation, countedAsPlayed);
+
+  bool get hasPublicRating =>
+      permitsPublicRatingResult(ratingStatus) &&
+      ratingBefore != null &&
+      ratingChange != null &&
+      ratingAfter != null &&
+      (countedAsPlayed != false || ratingChange != 0);
   final int? ratingAtMatchStart;
   final double? teamAverageRating;
   final double? opponentAverageRating;
@@ -165,12 +306,20 @@ class ProfileRatingEvent {
   final double? marginMultiplier;
   final int? baseRatingChange;
   final int? marginBonusApplied;
+  final int? appliedSequence;
+  final String? ratingTrack;
 
   bool get isSolo => sourceType == 'OPEN_QUEUE';
 
   String get sourceLabel => isSolo ? 'SOLO' : 'CLAN';
 
   factory ProfileRatingEvent.fromJson(Map<String, dynamic> json) {
+    final status = json['rating_status'] as String?;
+    final numeric = permitsPublicRatingResult(status)
+        ? json
+        : {...json, 'rating_visible': false};
+    final numericVisible =
+        PlayerRatingVisibility.fromJson(numeric)?.ratingVisible != false;
     return ProfileRatingEvent(
       id: (json['event_id'] ?? json['id'] ?? '').toString(),
       sourceType: (json['source_type'] ?? 'CLAN_FIXTURE')
@@ -181,21 +330,33 @@ class ProfileRatingEvent {
       opponentLabel: (json['opponent_label'] as String? ?? 'Match').trim(),
       side: (json['side'] as String? ?? '').trim().toUpperCase(),
       result: (json['result'] as String? ?? '').trim().toUpperCase(),
-      ratingBefore: _asInt(json['rating_before']),
-      ratingChange: _asInt(json['rating_change']),
-      ratingAfter: _asInt(json['rating_after']),
-      ratingAtMatchStart: _asNullableInt(json['rating_at_match_start']),
-      teamAverageRating: _asDouble(json['team_average_rating']),
-      opponentAverageRating: _asDouble(json['opponent_average_rating']),
-      expectedScore: _asDouble(json['expected_score']),
+      ratingBefore: publicRatingNumber(numeric, 'rating_before'),
+      ratingChange: publicRatingNumber(numeric, 'rating_change'),
+      ratingAfter: publicRatingNumber(numeric, 'rating_after'),
+      ratingAtMatchStart: publicRatingNumber(numeric, 'rating_at_match_start'),
+      ratingStatus: status,
+      ratingExplanation: json['rating_explanation'] as String?,
+      countedAsPlayed: json['counted_as_played'] as bool?,
+      actualPlayedSeconds: _asNullableInt(json['actual_played_seconds']),
+      teamAverageRating: numericVisible
+          ? _asDouble(json['team_average_rating'])
+          : null,
+      opponentAverageRating: numericVisible
+          ? _asDouble(json['opponent_average_rating'])
+          : null,
+      expectedScore: numericVisible ? _asDouble(json['expected_score']) : null,
       calculationVersion: switch (json['calculation_version']) {
         null => null,
         final value => value.toString(),
       },
       scoreMargin: _asNullableInt(json['score_margin']),
-      marginMultiplier: _asDouble(json['margin_multiplier']),
-      baseRatingChange: _asNullableInt(json['base_rating_change']),
-      marginBonusApplied: _asNullableInt(json['margin_bonus_applied']),
+      marginMultiplier: numericVisible
+          ? _asDouble(json['margin_multiplier'])
+          : null,
+      baseRatingChange: publicRatingNumber(numeric, 'base_rating_change'),
+      marginBonusApplied: publicRatingNumber(numeric, 'margin_bonus_applied'),
+      appliedSequence: _asNullableInt(json['applied_sequence']),
+      ratingTrack: json['rating_track'] as String?,
     );
   }
 }
@@ -561,6 +722,8 @@ class ProfileHighlight {
     this.isPublic = true,
     this.status = ProfileHighlightStatus.ready,
     this.errorMessage,
+    this.createdAt,
+    this.profileId,
   });
 
   final String id;
@@ -578,6 +741,8 @@ class ProfileHighlight {
   final bool isPublic;
   final ProfileHighlightStatus status;
   final String? errorMessage;
+  final DateTime? createdAt;
+  final String? profileId;
 
   bool get isReady => status == ProfileHighlightStatus.ready;
 
@@ -609,6 +774,8 @@ class ProfileHighlight {
       errorMessage: _nonEmptyString(
         json['processing_error'] ?? json['error_message'],
       ),
+      createdAt: DateTime.tryParse(json['created_at']?.toString() ?? ''),
+      profileId: _nonEmptyString(json['profile_id']),
     );
   }
 
@@ -629,6 +796,46 @@ class ProfileHighlight {
       isPublic: isPublic ?? this.isPublic,
       status: status,
       errorMessage: errorMessage,
+      createdAt: createdAt,
+      profileId: profileId,
+    );
+  }
+}
+
+class ProfileClipRecommendation {
+  const ProfileClipRecommendation({
+    required this.highlight,
+    required this.profileId,
+    required this.username,
+    required this.displayName,
+    this.avatarUrl,
+  });
+
+  final ProfileHighlight highlight;
+  final String profileId;
+  final String username;
+  final String displayName;
+  final String? avatarUrl;
+
+  factory ProfileClipRecommendation.fromJson(Map<String, dynamic> json) {
+    final highlight = json['highlight'];
+    final profileId = _nonEmptyString(json['profile_id']);
+    if (highlight is! Map ||
+        profileId == null ||
+        _nonEmptyString(highlight['id']) == null ||
+        (_nonEmptyString(highlight['profile_id']) != null &&
+            highlight['profile_id'] != profileId)) {
+      throw const FormatException('The clip recommendation is incomplete.');
+    }
+    return ProfileClipRecommendation(
+      highlight: ProfileHighlight.fromJson({
+        ...Map<String, dynamic>.from(highlight),
+        'profile_id': profileId,
+      }),
+      profileId: profileId,
+      username: _nonEmptyString(json['username']) ?? '',
+      displayName: _nonEmptyString(json['display_name']) ?? '',
+      avatarUrl: _nonEmptyString(json['avatar_url']),
     );
   }
 }
@@ -700,6 +907,8 @@ class ProfilePreviousGame {
     required this.awayScore,
     required this.playerSide,
     this.playerRole,
+    this.timezone,
+    this.hasFinalScore = true,
   });
 
   final String id;
@@ -716,12 +925,27 @@ class ProfilePreviousGame {
   final int awayScore;
   final String playerSide;
   final String? playerRole;
+  final String? timezone;
+  final bool hasFinalScore;
 
   bool get isSolo => type == ProfileGameType.solo;
 
   String get typeLabel => isSolo ? 'SOLO' : 'CLAN';
 
+  /// Game-calendar time, never the viewing device's calendar. Clan fixtures
+  /// have always used Bahrain; solo games require their own stored timezone.
+  DateTime? get localPlayedAt {
+    final zone = timezone ?? (isSolo ? null : 'Asia/Bahrain');
+    if (zone == null || zone.trim().isEmpty) return null;
+    try {
+      return gameLocalDateTime(playedAt, zone);
+    } on tz.LocationNotFoundException {
+      return null;
+    }
+  }
+
   ProfileGameOutcome? get outcome {
+    if (!hasFinalScore) return null;
     final isHomeSide = switch (playerSide.trim().toUpperCase()) {
       'HOME' || 'WHITE' => true,
       'AWAY' || 'BLACK' => false,
@@ -741,13 +965,19 @@ class ProfilePreviousGame {
         .toString()
         .toUpperCase();
     final isSolo = rawType == 'SOLO' || rawType == 'OPEN_QUEUE';
+    final timezone = isSolo
+        ? _nonEmptyString(json['timezone'])
+        : 'Asia/Bahrain';
     final playedAtValue =
         json['played_at'] ?? json['starts_at'] ?? json['match_date'];
+    final homeScore = _asNullableInt(json['home_score'] ?? json['white_score']);
+    final awayScore = _asNullableInt(json['away_score'] ?? json['black_score']);
     return ProfilePreviousGame(
       id: (json['match_id'] ?? json['source_id'] ?? json['id'] ?? '')
           .toString(),
       type: isSolo ? ProfileGameType.solo : ProfileGameType.clan,
-      playedAt: _profileGameDate(playedAtValue),
+      playedAt: _profilePreviousGameDate(playedAtValue, timezone),
+      timezone: timezone,
       venue: (json['venue'] as String? ?? '').trim(),
       homeName: (json['home_name'] as String? ?? (isSolo ? 'White Team' : ''))
           .trim(),
@@ -761,8 +991,13 @@ class ProfilePreviousGame {
           .trim()
           .toUpperCase(),
       awayEmblem: json['away_emblem'] as String? ?? (isSolo ? '⚫' : '⚽'),
-      homeScore: _asInt(json['home_score'] ?? json['white_score']),
-      awayScore: _asInt(json['away_score'] ?? json['black_score']),
+      homeScore: homeScore ?? 0,
+      awayScore: awayScore ?? 0,
+      hasFinalScore:
+          homeScore != null &&
+          awayScore != null &&
+          homeScore >= 0 &&
+          awayScore >= 0,
       playerSide: (json['player_side'] ?? json['side'] ?? '')
           .toString()
           .toUpperCase(),
@@ -772,6 +1007,27 @@ class ProfilePreviousGame {
       },
     );
   }
+}
+
+DateTime _profilePreviousGameDate(Object? value, String? timezone) {
+  if (value is String && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+    final calendar = DateTime.tryParse(value);
+    if (calendar != null) {
+      final midnight = DateTime.utc(
+        calendar.year,
+        calendar.month,
+        calendar.day,
+      );
+      // A legacy match_date is a game-calendar date, not a device-local
+      // midnight. Invert the known fixed market offset before storing it.
+      final offset = gameLocalDateTime(
+        midnight,
+        timezone ?? 'UTC',
+      ).difference(midnight);
+      return midnight.subtract(offset).toLocal();
+    }
+  }
+  return _profileGameDate(value);
 }
 
 DateTime _profileGameDate(Object? value) {

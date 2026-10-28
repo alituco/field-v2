@@ -16,9 +16,11 @@ void main() {
       await pumpUntilAny(
         tester,
         [
-          find.byKey(const ValueKey('auth-get-started')),
-          find.byKey(const ValueKey('auth-name-field')),
-          find.byKey(const ValueKey('date-of-birth-selector')),
+          find.byKey(const ValueKey('fieldrush-create-account')),
+          find.byKey(const ValueKey('fieldrush-first-name')),
+          find.byKey(const ValueKey('fieldrush-phone')),
+          find.byKey(const ValueKey('fieldrush-code')),
+          find.byKey(const ValueKey('fieldrush-month')),
           find.byKey(const ValueKey('home-screen')),
         ],
         timeout: const Duration(seconds: 45),

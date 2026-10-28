@@ -3,7 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'fixture.dart';
 import 'fixture_reliability_roster.dart';
 import 'match_resolution.dart';
-import '../payments/tap_payment_service.dart';
+import '../payments/payment_service.dart';
 
 abstract class FixtureRepository {
   Future<List<Fixture>> listFixtures();
@@ -59,6 +59,21 @@ abstract interface class FixtureReliabilityBookingRepository {
   });
 }
 
+abstract interface class FixtureBookingAvailabilityRepository {
+  Future<bool> areClanGamesEnabled();
+}
+
+/// Failed/missing settings must never accidentally reopen paused bookings.
+Future<bool> clanGamesAvailable(FixtureRepository repository) async {
+  if (repository is! FixtureBookingAvailabilityRepository) return false;
+  try {
+    return await (repository as FixtureBookingAvailabilityRepository)
+        .areClanGamesEnabled();
+  } catch (_) {
+    return false;
+  }
+}
+
 abstract interface class FixtureReliabilityRosterRepository {
   Future<FixtureReliabilityRoster> getMyFixtureReliabilityRoster(
     String fixtureId,
@@ -74,14 +89,27 @@ abstract interface class FixtureReliabilityRosterRepository {
 class SupabaseFixtureRepository
     implements
         FixtureRepository,
+        FixtureBookingAvailabilityRepository,
         FixtureReliabilityBookingRepository,
         FixtureReliabilityRosterRepository,
         MatchResolutionRepository {
-  SupabaseClient get _client => Supabase.instance.client;
+  SupabaseFixtureRepository({SupabaseClient? client})
+    : _injectedClient = client;
+
+  final SupabaseClient? _injectedClient;
+  SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
+
+  @override
+  Future<bool> areClanGamesEnabled() async {
+    final settings = await _client.rpc('get_game_payment_settings');
+    return settings is Map && settings['clan_enabled'] == true;
+  }
 
   static const _fixtureSelect = '''
     id,
     status,
+    currency,
+    base_price_fils,
     operational_state,
     operational_state_updated_at,
     operational_reason_code,
@@ -209,8 +237,6 @@ class SupabaseFixtureRepository
       clan_id,
       side,
       played,
-      rating_at_start,
-      rating_change,
       player:profiles!fixture_player_appearances_profile_id_fkey(
         id,
         display_name,
@@ -299,8 +325,8 @@ class SupabaseFixtureRepository
     required DateTime matchDate,
     required FixtureTimeSlot timeSlot,
   }) async {
-    final payment = await TapPaymentService(client: _client).pay(
-      purpose: TapPaymentPurpose.clanCreate,
+    final payment = await PaymentService(client: _client).pay(
+      purpose: PaymentPurpose.clanCreate,
       payload: {
         'clan_id': homeClanId,
         'venue': venue.trim(),
@@ -316,8 +342,8 @@ class SupabaseFixtureRepository
     required String fixtureId,
     required String awayClanId,
   }) async {
-    final payment = await TapPaymentService(client: _client).pay(
-      purpose: TapPaymentPurpose.clanJoin,
+    final payment = await PaymentService(client: _client).pay(
+      purpose: PaymentPurpose.clanJoin,
       payload: {'fixture_id': fixtureId, 'clan_id': awayClanId},
     );
     return _fetchFixture(payment.resourceId);

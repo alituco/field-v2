@@ -1,0 +1,7 @@
+.panel { margin: 0 24px 20px; border: 1px solid var(--fieldrush-border); border-radius: 18px; background: var(--fieldrush-canvas); }
+.panel summary { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; cursor: pointer; padding: 16px; font-weight: 750; }
+.panel summary span:last-child { color: #795921; font-size: 13px; }
+.content { padding: 0 16px 18px; }
+.content p { color: var(--fieldrush-muted); line-height: 1.5; margin: 0 0 12px; }
+.content form { display: grid; gap: 14px; max-width: 520px; }
+.content button { justify-self: start; }

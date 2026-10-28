@@ -95,8 +95,12 @@ if (typeof healthPayload !== "object" || healthPayload === null) {
 
 const tables = [
   "clans",
-  "open_queue_games",
 ];
+// The promoted rating-privacy schema denies anonymous game-table reads in
+// both hosted environments. Never restore those grants to satisfy a probe.
+if (serviceRoleKey) {
+  tables.push("open_queue_games");
+}
 if (serviceRoleKey) {
   tables.push(
     "profiles",
@@ -112,6 +116,7 @@ if (!serviceRoleKey) {
   await assertAnonymousAccessDenied("profiles");
   await assertAnonymousAccessDenied("season_zero_waitlist");
   await assertAnonymousAccessDenied("reliability_policy_versions");
+  await assertAnonymousAccessDenied("open_queue_games");
 }
 const counts = {};
 

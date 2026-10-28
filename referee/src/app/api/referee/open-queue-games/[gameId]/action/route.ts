@@ -16,7 +16,11 @@ import {
   parseRefereeVerifiedInjuryInput,
 } from "@/lib/match-action-input";
 import { canRefereePerformOperationalAction } from "@/lib/match-operational-lock";
+import { soloScheduledDurationSeconds, soloStartDurationSeconds } from "@/lib/match-duration";
 import { isRefereeContext, requireReferee } from "@/lib/referee-session";
+import { finalizeSoloMatch } from "@/lib/solo-match-finalization";
+import { mutateSoloGoal, SoloGoalActionError } from "@/lib/solo-goal-actions";
+import { assertSeasonZeroAcknowledgement, loadSeasonZeroState, runSeasonZeroAction, SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
 
 type RouteContext = { params: Promise<{ gameId: string }> };
 
@@ -27,9 +31,11 @@ type ActionBody = {
     | "resume"
     | "set_time"
     | "goal"
+    | "remove_goal"
     | "blue_card"
     | "expire_blue_card"
     | "finish"
+    | "reopen"
     | "report"
     | "check_in_player"
     | "remove_check_in"
@@ -82,7 +88,6 @@ type ClockRow = {
 const MAX_MATCH_SECONDS = 3 * 60 * 60;
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const requestReceivedAt = new Date().toISOString();
   const refereeContext = await requireReferee(request);
   if (!isRefereeContext(refereeContext)) return refereeContext;
   const { gameId } = await context.params;
@@ -98,7 +103,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const body = (await request.json()) as ActionBody;
     const { data: operationalGame, error: operationalError } = await db
       .from("open_queue_games")
-      .select("operational_state")
+      .select("operational_state,rating_policy_id")
       .eq("id", gameId)
       .single();
     if (operationalError) {
@@ -123,6 +128,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     let result: Record<string, unknown> = {};
 
+    if (operationalGame.rating_policy_id === SEASON_ZERO_POLICY) {
+      const handled = await runSeasonZeroAction(db, refereeContext.referee.profileId, gameId, body);
+      if (handled) {
+        if (body.action === "finish") {
+          try { await queueOpenQueueBroadcastStop(db, gameId, refereeContext.referee.profileId, 30); }
+          catch (broadcastError) { console.error("Could not queue automatic solo broadcast stop", broadcastError); }
+        }
+        return NextResponse.json({ ok: true, ...handled });
+      }
+    }
+
     switch (body.action) {
       case "start":
         await startGame(
@@ -138,13 +154,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
         await pauseGame(db, gameId);
         break;
       case "resume":
-        await resumeGame(db, gameId);
+        await resumeGame(db, gameId, refereeContext.referee.profileId);
         break;
       case "set_time":
         await setGameTime(db, gameId, body.elapsedSeconds);
         break;
       case "goal":
-        await recordGoal(db, gameId, body, requestReceivedAt);
+      case "remove_goal":
+        result = await mutateSoloGoal(db, refereeContext.referee.profileId, gameId, body);
         break;
       case "blue_card":
         await recordBlueCard(db, gameId, body);
@@ -251,6 +268,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       case "record_verified_injury": {
         const injury = parseRefereeVerifiedInjuryInput(body);
+        if (operationalGame.rating_policy_id === SEASON_ZERO_POLICY && injury.replacementAvailable) {
+          throw new Error("This policy does not allow reserve replacements. Record only the injury/refund evidence here and actual playing time separately.");
+        }
         const { data, error } = await db.rpc(
           "referee_record_verified_injury",
           {
@@ -309,7 +329,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       case "stop": {
         const stoppage = parseMatchStoppageInput(body);
-        const { data, error } = await db.rpc("referee_record_match_stoppage", {
+        const isSeasonZero = operationalGame.rating_policy_id === SEASON_ZERO_POLICY;
+        const state = isSeasonZero ? await loadSeasonZeroState(db, refereeContext.referee.profileId, gameId) : null;
+        const { data, error } = await db.rpc(isSeasonZero ? "referee_stop_season_zero_match" : "referee_record_match_stoppage", isSeasonZero ? {
+          actor_referee_id: refereeContext.referee.profileId, game_id_to_use: gameId,
+          request_id_to_use: typeof body.requestId === "string" ? body.requestId : crypto.randomUUID(),
+          expected_revision: body.expectedRevision ?? state?.revision,
+          mode_to_use: stoppage.mode, reason_code_to_use: stoppage.reasonCode, note_to_use: stoppage.note || null,
+        } : {
           actor_referee_id: refereeContext.referee.profileId,
           match_kind_to_use: "SOLO",
           match_id_to_stop: gameId,
@@ -318,7 +345,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
           note_to_use: stoppage.note || null,
         });
         if (error) throw new Error(`Could not stop match: ${error.message}`);
-        result = { stoppageId: String(data), mode: stoppage.mode };
+        if (isSeasonZero) assertSeasonZeroAcknowledgement(data, gameId);
+        result = { stoppageId: isSeasonZero ? data.stoppage_id : String(data), mode: stoppage.mode };
 
         if (stoppage.mode === "ABANDON") {
           try {
@@ -393,7 +421,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Action failed." },
+      { error: error instanceof Error ? error.message : "Action failed.",
+        ...(error instanceof SoloGoalActionError && error.definitivelyRejected ? { goalOperationRejected: true } : {}) },
       { status: 400 },
     );
   }
@@ -415,16 +444,15 @@ async function startGame(
   if (selectedIds.length === 0) {
     throw new Error("Select at least one player from each team.");
   }
-  const safeDuration = clamp(Math.round(durationSeconds ?? 3600), 600, 7200);
-
   const { data: game, error: gameError } = await db
     .from("open_queue_games")
-    .select("status,starts_at,teams_assigned_at,capacity")
+    .select("status,starts_at,ends_at,teams_assigned_at,capacity")
     .eq("id", gameId)
     .single();
   if (gameError || !game) {
     throw new Error(`Could not load solo game: ${gameError?.message ?? "Game not found."}`);
   }
+  const safeDuration = soloStartDurationSeconds(game.starts_at, game.ends_at, durationSeconds);
 
   const scheduledStartMs = new Date(String(game.starts_at)).getTime();
   const isEarlyStart = Number.isFinite(scheduledStartMs) &&
@@ -497,60 +525,18 @@ async function pauseGame(db: SupabaseClient, gameId: string) {
   await insertEvent(db, gameId, "MATCH_PAUSED", minute, second);
 }
 
-async function resumeGame(db: SupabaseClient, gameId: string) {
-  await loadLiveGame(db, gameId);
-  const { minute, second } = splitElapsed(await currentElapsed(db, gameId));
-  await assertNoError(
-    db.from("open_queue_clock_states").update({
-      status: "RUNNING",
-      started_at: new Date().toISOString(),
-    }).eq("game_id", gameId),
-    "Could not resume solo game clock",
-  );
-  await insertEvent(db, gameId, "MATCH_RESUMED", minute, second);
-}
-
-async function recordGoal(
-  db: SupabaseClient,
-  gameId: string,
-  body: ActionBody,
-  occurredAt: string,
-) {
-  await loadLiveGame(db, gameId);
-  const team = requireTeam(body.clanId);
-  const profileId = requireString(body.profileId, "Choose the scorer.");
-  const assistProfileId = body.assistProfileId || null;
-  await assertPlayerOnTeam(db, gameId, team, profileId);
-  if (assistProfileId) await assertPlayerOnTeam(db, gameId, team, assistProfileId);
-
-  const elapsed = await currentElapsed(db, gameId);
-  const split = splitElapsed(elapsed);
-  const minute = clamp(split.minute === 0 ? 1 : split.minute, 1, 240);
-
-  await assertNoError(
-    db.from("open_queue_goals").insert({
-      game_id: gameId,
-      team,
-      profile_id: profileId,
-      assist_profile_id: assistProfileId,
-      minute,
-    }),
-    "Could not record goal",
-  );
-  await insertEvent(
-    db,
-    gameId,
-    "GOAL",
-    minute,
-    split.second,
-    team,
-    profileId,
-    assistProfileId,
-    null,
-    "",
-    occurredAt,
-  );
-  await syncScore(db, gameId);
+async function resumeGame(db: SupabaseClient, gameId: string, actorRefereeId: string) {
+  const { data, error } = await db.rpc("referee_resume_legacy_solo_game", {
+    actor_referee_id: actorRefereeId,
+    game_id_to_use: gameId,
+  });
+  if (error) throw new Error(`Could not resume solo game clock: ${error.message}`);
+  if (!data || data.game_id !== gameId || data.status !== "RUNNING" ||
+      typeof data.started_at !== "string" || !Number.isFinite(Date.parse(data.started_at)) ||
+      !Number.isInteger(data.accumulated_seconds) || data.accumulated_seconds < 0 ||
+      data.accumulated_seconds > MAX_MATCH_SECONDS || typeof data.already_running !== "boolean") {
+    throw new Error("Could not verify the resumed match clock. Refresh before trying again.");
+  }
 }
 
 async function recordBlueCard(db: SupabaseClient, gameId: string, body: ActionBody) {
@@ -609,10 +595,20 @@ async function expireBlueCard(db: SupabaseClient, gameId: string, blueCardId?: s
 }
 
 async function finishGame(db: SupabaseClient, gameId: string) {
-  await assertNoError(
-    db.rpc("referee_complete_open_queue_game", { game_id_to_complete: gameId }),
-    "Could not finalize solo game",
-  );
+  await finalizeSoloMatch(gameId, {
+    complete: () => db.rpc("referee_complete_open_queue_game", { game_id_to_complete: gameId }),
+    readGame: async () => {
+      const result = await db.from("open_queue_games")
+        .select("id,status,operational_state")
+        .eq("id", gameId)
+        .single();
+      if (!result.error && result.data?.status === "LIVE" &&
+          !canRefereePerformOperationalAction(result.data.operational_state, "finish")) {
+        throw new Error("This match is locked for admin review. Refresh the game before trying again.");
+      }
+      return result;
+    },
+  });
 }
 
 async function setGameTime(
@@ -669,22 +665,6 @@ async function setGameTime(
   );
 }
 
-async function syncScore(db: SupabaseClient, gameId: string) {
-  const { data, error } = await db.from("open_queue_goals")
-    .select("team")
-    .eq("game_id", gameId);
-  if (error) throw new Error(`Could not recalculate score: ${error.message}`);
-  const whiteScore = (data ?? []).filter((goal) => goal.team === "WHITE").length;
-  const blackScore = (data ?? []).filter((goal) => goal.team === "BLACK").length;
-  await assertNoError(
-    db.from("open_queue_games").update({
-      white_score: whiteScore,
-      black_score: blackScore,
-    }).eq("id", gameId),
-    "Could not update final score",
-  );
-}
-
 async function assertPlayerOnTeam(
   db: SupabaseClient,
   gameId: string,
@@ -724,18 +704,27 @@ async function loadClock(db: SupabaseClient, gameId: string): Promise<ClockRow> 
     .eq("game_id", gameId)
     .maybeSingle();
   if (error) throw new Error(`Could not load clock: ${error.message}`);
+  let scheduledDuration = 3600;
+  if (!data || data.duration_seconds === null) {
+    const { data: game, error: gameError } = await db.from("open_queue_games")
+      .select("starts_at,ends_at")
+      .eq("id", gameId)
+      .single();
+    if (gameError) throw new Error(`Could not load solo game duration: ${gameError.message}`);
+    scheduledDuration = soloScheduledDurationSeconds(game?.starts_at, game?.ends_at);
+  }
   return data
     ? {
         status: String(data.status),
         started_at: data.started_at ? String(data.started_at) : null,
         accumulated_seconds: Number(data.accumulated_seconds ?? 0),
-        duration_seconds: Number(data.duration_seconds ?? 3600),
+        duration_seconds: Number(data.duration_seconds ?? scheduledDuration),
       }
     : {
         status: "NOT_STARTED",
         started_at: null,
         accumulated_seconds: 0,
-        duration_seconds: 3600,
+        duration_seconds: scheduledDuration,
       };
 }
 

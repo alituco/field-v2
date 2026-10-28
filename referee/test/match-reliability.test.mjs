@@ -1,7 +1,48 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { normalizeMatchReliabilityContext } from "../src/lib/match-reliability.ts";
+import {
+  loadMatchReliabilityContext,
+  normalizeMatchReliabilityContext,
+} from "../src/lib/match-reliability.ts";
+
+test("referee timing uses current attendance instead of a cancelled booking's classification", async () => {
+  const playerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const timingFilters = [];
+  const db = {
+    rpc: async () => ({
+      data: { players: [{ profile_id: playerId, check_in_timing: "LATE" }] },
+      error: null,
+    }),
+    from(table) {
+      const filters = [];
+      return {
+        select() { return this; },
+        eq(column, value) {
+          filters.push([column, value]);
+          if (table === "match_attendance_records") timingFilters.push([column, value]);
+          return this;
+        },
+        is() { return this; },
+        order() { return this; },
+        then(resolve) {
+          const data = table !== "match_attendance_records" ? []
+            : filters.some(([column, value]) => column === "is_current" && value === true)
+              ? [{ profile_id: playerId, check_in_timing: "LATE" }]
+              : [
+                  { profile_id: playerId, check_in_timing: "LATE" },
+                  { profile_id: playerId, check_in_timing: "EARLY" },
+                ];
+          return Promise.resolve({ data, error: null }).then(resolve);
+        },
+      };
+    },
+  };
+
+  const context = await loadMatchReliabilityContext(db, "SOLO", "game");
+  assert.equal(context.players[0].checkInTiming, "LATE");
+  assert.ok(timingFilters.some(([column, value]) => column === "is_current" && value === true));
+});
 
 test("match reliability context preserves server timing and attendance states", () => {
   assert.deepEqual(
@@ -57,6 +98,7 @@ test("match reliability context preserves server timing and attendance states", 
       policyVersionId: "11111111-1111-4111-8111-111111111111",
       kickoffAt: "2026-07-21T17:00:00Z",
       checkInDeadlineAt: "2026-07-21T16:45:00Z",
+      lateCutoffInclusive: false,
       noShowCutoffAt: "2026-07-21T17:10:00Z",
       reserveActivationMinutesAfterKickoff: 12,
       reserveActivationAt: "2026-07-21T17:12:00Z",
@@ -125,8 +167,19 @@ test("browser eligibility defaults closed when the server omits flags", () => {
   const context = normalizeMatchReliabilityContext({ players: [] });
   assert.equal(context?.canCheckIn, false);
   assert.equal(context?.canFinalizeAttendance, false);
+  assert.equal(context?.lateCutoffInclusive, false);
   assert.deepEqual(context?.verifiedInjuries, []);
   assert.deepEqual(context?.openShorthandedPeriods, []);
+});
+
+test("Solo arrival context preserves the server-authored inclusive late boundary", () => {
+  const context = normalizeMatchReliabilityContext({
+    check_in_deadline_at: "2026-10-23T00:20:00Z",
+    late_cutoff_inclusive: true,
+    players: [],
+  });
+  assert.equal(context.checkInDeadlineAt, "2026-10-23T00:20:00Z");
+  assert.equal(context.lateCutoffInclusive, true);
 });
 
 test("match reliability context normalizes server-authored effect evidence", () => {

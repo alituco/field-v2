@@ -3,6 +3,15 @@
 
 begin;
 
+create or replace function pg_temp.verification_player_has_free_game_slot(player_id uuid)
+returns boolean language plpgsql as $availability$
+begin
+  perform public.assert_player_has_one_game(player_id,'SOLO','00000000-0000-0000-0000-000000000000',true);
+  return true;
+exception when raise_exception then return false;
+end;
+$availability$;
+
 do $$
 declare
   player_ids uuid[];
@@ -68,15 +77,7 @@ begin
     select profile.id as profile_id
     from public.profiles profile
     where not public.profile_has_active_play_restriction(profile.id)
-      and (
-      select count(*)
-      from public.open_queue_bookings booking
-      join public.open_queue_games game on game.id = booking.game_id
-      where booking.profile_id = profile.id
-        and booking.status = 'CONFIRMED'
-        and game.status in ('OPEN', 'FULL')
-        and game.starts_at > now()
-    ) < 2
+      and pg_temp.verification_player_has_free_game_slot(profile.id)
     order by profile.id
     limit 12
   ) candidate;
@@ -120,6 +121,8 @@ begin
   where profile_id = any(player_ids);
 
   insert into public.open_queue_games (
+    format_version, currency, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     status,
     venue,
     starts_at,
@@ -127,6 +130,7 @@ begin
     timezone,
     created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 12, 2, 4, 4, 2,
     'OPEN',
     'Margin SR rollback verification A',
     game_starts[1],
@@ -210,6 +214,8 @@ begin
   where profile_id = any(player_ids);
 
   insert into public.open_queue_games (
+    format_version, currency, capacity,
+    goalkeeper_capacity, defender_capacity, midfielder_capacity, attacker_capacity,
     status,
     venue,
     starts_at,
@@ -217,6 +223,7 @@ begin
     timezone,
     created_by
   ) values (
+    'LEGACY_6V6', 'BHD', 12, 2, 4, 4, 2,
     'OPEN',
     'Margin SR rollback verification B',
     game_starts[2],

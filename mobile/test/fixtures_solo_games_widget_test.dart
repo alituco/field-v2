@@ -3,10 +3,93 @@ import 'package:field/src/fixtures/fixture_repository.dart';
 import 'package:field/src/fixtures/fixtures_screen.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
+import 'package:field/src/open_queue/fieldrush_game_detail_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets(
+    'Phoenix evening stays selected after Bahrain has crossed midnight',
+    (tester) async {
+      await _setPhoneSize(tester);
+      final now = DateTime.utc(2026, 10, 23);
+      final tonight = _soloGame(
+        id: 'phoenix-tonight',
+        date: now,
+        kickoff: DateTime.utc(2026, 10, 23, 3, 30),
+        timezone: 'America/Phoenix',
+        status: 'OPEN',
+        confirmedCount: 8,
+      );
+      final tomorrow = _soloGame(
+        id: 'phoenix-tomorrow',
+        date: now,
+        kickoff: DateTime.utc(2026, 10, 24, 3, 30),
+        timezone: 'America/Phoenix',
+        status: 'OPEN',
+        confirmedCount: 8,
+      );
+      await _pumpFixtures(
+        tester,
+        fixtures: [],
+        soloGames: [tonight, tomorrow],
+        now: now,
+      );
+      await _showCard(tester, 'solo-fixture-phoenix-tonight');
+      expect(
+        find.byKey(const ValueKey('solo-fixture-phoenix-tonight')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('solo-fixture-phoenix-tomorrow')),
+        findsNothing,
+      );
+      expect(find.text('Check-in 8:00 PM'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'arrival grouping across midnight retains absolute kickoff order',
+    (tester) async {
+      await _setPhoneSize(tester);
+      tester.view.physicalSize = const Size(390, 1800);
+      final date = _nextMatchDay(DateTime.now().add(const Duration(days: 2)));
+      final earlier = _soloGame(
+        id: 'before-midnight',
+        date: date,
+        status: 'OPEN',
+        confirmedCount: 8,
+        kickoff: DateTime.utc(date.year, date.month, date.day, 20, 50),
+      );
+      final later = _soloGame(
+        id: 'after-midnight',
+        date: date,
+        status: 'OPEN',
+        confirmedCount: 8,
+        kickoff: DateTime.utc(date.year, date.month, date.day, 21, 10),
+      );
+      await _pumpFixtures(tester, fixtures: [], soloGames: [later, earlier]);
+      expect(find.text('Check-in 11:20 PM'), findsOneWidget);
+      expect(find.text('Check-in 11:40 PM'), findsOneWidget);
+      expect(
+        tester
+            .getTopLeft(
+              find.byKey(const ValueKey('solo-fixture-before-midnight')),
+            )
+            .dy,
+        lessThan(
+          tester
+              .getTopLeft(
+                find.byKey(const ValueKey('solo-fixture-after-midnight')),
+              )
+              .dy,
+        ),
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('Fixtures combines clan and solo games in kickoff order', (
     tester,
   ) async {
@@ -34,7 +117,8 @@ void main() {
     expect(find.text('CLAN'), findsOneWidget);
     expect(find.text('SOLO'), findsOneWidget);
     expect(find.text('8/12'), findsOneWidget);
-    expect(find.text('8:30 PM–9:30 PM'), findsOneWidget);
+    expect(find.text('Check-in 8:00 PM'), findsOneWidget);
+    expect(find.text('8:30 PM–9:30 PM'), findsNothing);
     expect(
       tester
           .getTopLeft(find.byKey(const ValueKey('clan-fixture-clan-game')))
@@ -354,14 +438,21 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('SOLO MATCH'), findsOneWidget);
-    expect(find.text('1204 AVG PLAYER RATING'), findsOneWidget);
-    expect(find.text('1202 AVG PLAYER RATING'), findsOneWidget);
-    expect(find.text('MATCH AVG 1203 SR  ·  2 SR SPREAD'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('fixture-section-lineups')));
+    expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
+    expect(find.text('CHECK IN'), findsOneWidget);
+    expect(find.text('8:00 PM', findRichText: true), findsOneWidget);
+    expect(find.textContaining('8:30 PM', findRichText: true), findsNothing);
+    final roster = find.text('See all ›');
+    await tester.scrollUntilVisible(
+      roster,
+      250,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(roster);
     await tester.pumpAndSettle();
-    expect(find.text('White Player (You)'), findsOneWidget);
+    expect(find.text('White Player'), findsOneWidget);
     expect(find.text('Black Player'), findsOneWidget);
+    expect(find.textContaining('8:30 PM', findRichText: true), findsNothing);
     expect(find.text('AVAILABLE SPOTS'), findsNothing);
     expect(find.text('OPEN QUEUE BOOKING'), findsNothing);
   });
@@ -438,11 +529,14 @@ Future<void> _pumpFixtures(
   required List<Fixture> fixtures,
   required List<OpenQueueGame> soloGames,
   Map<String, OpenQueueMatchDetail> soloDetails = const {},
+  DateTime? now,
 }) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: FixturesScreen(
+        // This suite protects the historical clan/6v6 fixture surface.
+        body: LegacyFixturesScreen(
+          now: now,
           fixtureRepository: _FakeFixtureRepository(fixtures),
           openQueueRepository: _FakeOpenQueueRepository(
             soloGames,
@@ -516,6 +610,8 @@ OpenQueueGame _soloGame({
   required DateTime date,
   required String status,
   required int confirmedCount,
+  DateTime? kickoff,
+  String timezone = 'Asia/Bahrain',
   String venue = 'TFA, Saar',
   Map<OpenQueueRole, int> spots = const {
     OpenQueueRole.goalkeeper: 1,
@@ -531,7 +627,8 @@ OpenQueueGame _soloGame({
   int? teamSrSpread,
   MatchOperationalState operationalState = MatchOperationalState.normal,
 }) {
-  final startsAt = DateTime.utc(date.year, date.month, date.day, 17, 30);
+  final startsAt =
+      kickoff ?? DateTime.utc(date.year, date.month, date.day, 17, 30);
   return OpenQueueGame(
     id: id,
     status: status,
@@ -539,7 +636,7 @@ OpenQueueGame _soloGame({
     venue: venue,
     startsAt: startsAt,
     endsAt: startsAt.add(const Duration(hours: 1)),
-    timezone: 'Asia/Bahrain',
+    timezone: timezone,
     priceFils: 3000,
     ageLabel: 'All ages',
     capacity: 12,

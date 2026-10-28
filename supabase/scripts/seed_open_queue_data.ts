@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
 import { assertSafeDevDataTarget } from "./_shared/environment_guard.ts";
+import { legacyOpenQueueFormat } from "./_shared/legacy_open_queue_format.ts";
 
 type ProfileRow = { id: string; phone: string | null };
 type PlayerRatingRow = { profile_id: string; skill_rating: number };
@@ -10,7 +11,7 @@ type FlowEdge = {
   capacity: number;
 };
 
-const maxUpcomingBookingsPerProfile = 2;
+const maxUpcomingBookingsPerProfile = 1;
 
 const url = requireEnv("SUPABASE_URL");
 assertSafeDevDataTarget(url, "Open Queue data seed");
@@ -169,6 +170,7 @@ for (let index = 0; index < gameSpecs.length; index += 1) {
   const { data, error } = await admin
     .from("open_queue_games")
     .insert({
+      ...legacyOpenQueueFormat,
       venue: spec.venue,
       starts_at: startsAt.toISOString(),
       ends_at: endsAt.toISOString(),

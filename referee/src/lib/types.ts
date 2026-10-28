@@ -62,9 +62,15 @@ export type BroadcastDeviceState = {
   currentOpenQueueGameId?: string | null;
   lastSeenAt: string | null;
   errorMessage: string | null;
+  expiresAt?: string;
+  revokedAt?: string | null;
+  reservationActive?: boolean;
+  testCleanupPending?: boolean;
 };
 
 export type BroadcastControlResponse = {
+  /** Server checks the saved minimum, assigned teams and allowed start window. */
+  streamReady?: boolean;
   broadcast: FixtureBroadcastState | null;
   device: BroadcastDeviceState | null;
 };
@@ -227,6 +233,8 @@ export type MatchReliabilityContext = {
   policyVersionId: string | null;
   kickoffAt: string | null;
   checkInDeadlineAt: string | null;
+  /** New Solo arrival contract includes the exact deadline in late arrivals. */
+  lateCutoffInclusive?: boolean;
   noShowCutoffAt: string | null;
   reserveActivationMinutesAfterKickoff: number;
   reserveActivationAt: string | null;
@@ -249,6 +257,12 @@ export type MatchReliabilityContext = {
 };
 
 export type RefereeFixture = {
+  /** Immutable prospective rating policy; absent on legacy fixture responses. */
+  ratingPolicyId?: string;
+  /** Immutable participation policy and total kickoff/continuation threshold. */
+  minimumPlayers?: number;
+  participationRulesVersion?: string;
+  capacity?: number;
   matchKind: MatchKind;
   id: string;
   status: FixtureStatus;
@@ -258,6 +272,13 @@ export type RefereeFixture = {
   day: string;
   timeSlot: string;
   matchDate: string;
+  /** Absolute scheduled times, retained for timezone-safe sorting and filtering. */
+  startsAt?: string;
+  endsAt?: string;
+  /** Venue timezone snapshot; present for solo games. */
+  timezone?: string;
+  /** Saved solo slot length; optional for older responses and clan fixtures. */
+  scheduledDurationSeconds?: number;
   cancellationCode: string | null;
   cancellationReason: string | null;
   cancelledAt: string | null;
@@ -296,6 +317,7 @@ export type RefereeListItem = {
   profileId: string;
   displayName: string;
   phone: string;
+  email?: string | null;
   role: "admin" | "referee";
 };
 

@@ -4,13 +4,19 @@ on:
   schedule:
     - cron: "15 5 * * *"
   workflow_dispatch:
+    inputs:
+      deploy_admin:
+        description: Deploy the current staging admin PWA after smoke checks (no TestFlight upload)
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: supabase-staging-smoke
-  cancel-in-progress: true
+  group: supabase-staging-${{ inputs.deploy_admin && 'admin-deploy' || 'smoke' }}
+  cancel-in-progress: ${{ !inputs.deploy_admin }}
 
 jobs:
   smoke:
@@ -29,3 +35,44 @@ jobs:
 
       - name: Verify staging API and core schema
         run: node .github/scripts/smoke-supabase.mjs
+
+  deploy-admin:
+    name: Deploy staging admin without TestFlight
+    needs: smoke
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/staging' && inputs.deploy_admin
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: staging
+      url: https://ops-staging.field.bh
+    env:
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+
+    steps:
+      - name: Check out the dispatched staging commit
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: referee/package-lock.json
+
+      - name: Verify the staging project
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERCEL_ORG_ID" == "team_O9LXKHTIwc4acVdMxHBkbehR" ]]
+          [[ "$VERCEL_PROJECT_ID" == "prj_NFU1JHsE6LaJXOuC4dwAQNFet228" ]]
+
+      - name: Check the admin source
+        working-directory: referee
+        run: npm ci && npm test && npm run typecheck
+
+      - name: Deploy and verify staging admin
+        shell: bash
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: .github/scripts/deploy-referee-staging.sh

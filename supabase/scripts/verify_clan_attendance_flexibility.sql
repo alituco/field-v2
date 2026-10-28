@@ -40,6 +40,22 @@ begin
       'Clan attendance flexibility verification needs one scheduled fixture with 7 home and 6 away members.';
   end if;
 
+  -- This representative historical clan fixture is about to become active.
+  -- Isolate its players from the independent synthetic solo seed first; the
+  -- canonical one-game guard stays enabled and every change is rolled back.
+  update public.open_queue_games game
+  set status='CANCELLED',cancellation_code='ADMIN_DECISION',
+    cancellation_reason='Isolate clan attendance rollback verification.',
+    cancelled_at=clock_timestamp(),cancelled_by=fixture_to_test.created_by,
+    cancellation_context=jsonb_build_object('source','CLAN_ATTENDANCE_ROLLBACK_VERIFICATION')
+  where public.player_game_blocks_registration(game.status,game.ends_at,game.operational_state)
+    and exists (
+      select 1 from public.open_queue_bookings booking
+      join public.clan_members member on member.profile_id=booking.profile_id and member.left_at is null
+      where booking.game_id=game.id and booking.status='CONFIRMED'
+        and member.clan_id in (fixture_to_test.home_clan_id,fixture_to_test.away_clan_id)
+    );
+
   -- Keep the verifier stable after the checked-in seed dates have passed.
   -- The reschedule is rolled back with the rest of this script.
   update public.fixtures fixture
@@ -57,6 +73,7 @@ begin
   select referee.profile_id into actor_referee_id
   from public.referee_profiles referee
   where referee.is_active
+    and fieldrush_private.staff_identity_is_active(referee.profile_id)
   order by (referee.role = 'admin') desc, referee.created_at, referee.profile_id
   limit 1;
 

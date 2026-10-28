@@ -1,27 +1,43 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../auth/fieldrush_auth_theme.dart';
 import '../clans/clan.dart';
 import '../clans/clan_detail_screen.dart';
 import '../clans/clan_repository.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
+import '../core/read_timeout.dart';
 import '../fixtures/fixture.dart';
 import '../fixtures/fixture_detail_screen.dart';
 import '../fixtures/fixture_repository.dart';
+import '../leaderboard/leaderboard.dart';
+import '../leaderboard/fieldrush_rating_tracks.dart';
+import '../leaderboard/fieldrush_seasons.dart';
+import '../leaderboard/leaderboard_repository.dart';
 import '../moderation/moderation.dart';
 import '../moderation/moderation_repository.dart';
 import '../moderation/report_issue_sheet.dart';
 import '../open_queue/open_queue.dart';
+import '../open_queue/fieldrush_game_detail_screen.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../reliability/reliability_repository.dart';
+import '../ranking/player_rating_visibility.dart';
 import '../reliability/reliability_status_card.dart';
 import '../support/contact_support_sheet.dart';
 import '../support/support_repository.dart';
+import '../ui/field_loading.dart';
+import '../ui/fieldrush_avatar_image.dart';
+import '../ui/fieldrush_toast.dart';
 import 'dev_user_switcher_sheet.dart';
 import 'edit_profile_screen.dart';
+import 'fieldrush_player_profile.dart';
+import 'fieldrush_match_history_screen.dart';
 import 'profile.dart';
 import 'profile_clip_screen.dart';
+import 'profile_clips_screen.dart';
 import 'profile_connections_screen.dart';
 import 'profile_repository.dart';
 
@@ -41,6 +57,7 @@ class ProfileScreen extends StatefulWidget {
     this.isSigningOut = false,
     this.onSignOut,
     this.onOpenAccount,
+    this.ratingRepository,
   });
 
   final ProfileRepository profileRepository;
@@ -56,6 +73,7 @@ class ProfileScreen extends StatefulWidget {
   final bool isSigningOut;
   final VoidCallback? onSignOut;
   final Future<void> Function()? onOpenAccount;
+  final TrackLeaderboardRepository? ratingRepository;
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -71,6 +89,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
   PlayerProfile? _latestProfile;
   String? _openingGameId;
   bool _isOpeningClan = false;
+  bool _isUpdatingFollow = false;
+  FieldrushPlayerRatings? _ratings;
+  RatingTrack _ratingTrack = RatingTrack.outfield;
+  int _profileLoadVersion = 0;
+  int _viewedLoadVersion = 0;
+  bool _viewedTrackSelected = false;
+  String? _viewerId;
+  bool _viewedDetailsReady = false;
+  bool _viewedDetailsLoading = true;
+  bool _viewedRatingLoading = true;
+  final Set<String> _viewedReadErrors = {};
 
   bool get _isCurrentProfile => widget.profileId == null;
   bool get _canManageProfile =>
@@ -103,25 +132,206 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<PlayerProfile> _loadProfile() async {
+    final version = ++_profileLoadVersion;
+    _viewerId = widget.profileRepository.currentUserId;
+    if (!_isCurrentProfile) return _loadViewedProfile(version);
     final profile = _isCurrentProfile
         ? await widget.profileRepository.getCurrentProfile()
         : await widget.profileRepository.getProfile(widget.profileId!);
-    _latestProfile = profile;
+    FieldrushPlayerRatings? ratings;
+    if (widget.ratingRepository != null ||
+        widget.profileRepository is SupabaseProfileRepository) {
+      try {
+        final repository =
+            widget.ratingRepository ?? SupabaseLeaderboardRepository();
+        final season = await loadActiveLeaderboardSeason(repository);
+        if (!mounted || version != _profileLoadVersion) return profile;
+        ratings = await repository.loadPlayerRatings(
+          season: season,
+          profileId: profile.id,
+        );
+      } catch (_) {
+        // Never relabel the old mixed rating as a Keeper rating on RPC failure.
+      }
+    }
+    if (mounted && version == _profileLoadVersion) {
+      _ratings = ratings;
+      if (_latestProfile?.id != profile.id) {
+        _ratingTrack = profile.playedPosition == 'GK'
+            ? RatingTrack.goalkeeper
+            : RatingTrack.outfield;
+      }
+    }
+    if (mounted && version == _profileLoadVersion) _latestProfile = profile;
     return profile;
   }
 
-  Future<void> _refresh() async {
+  Future<PlayerProfile> _loadViewedProfile(int version) async {
+    final viewedVersion = ++_viewedLoadVersion;
+    final repository = widget.profileRepository;
+    final profileId = widget.profileId!;
+    final viewerId = _viewerId = repository.currentUserId;
+    final ratingRepository =
+        widget.ratingRepository ??
+        (repository is SupabaseProfileRepository
+            ? SupabaseLeaderboardRepository()
+            : null);
+    _viewedDetailsLoading = !_viewedDetailsReady;
+    _viewedRatingLoading = _ratings == null && ratingRepository != null;
+    _viewedReadErrors.clear();
+    bool current() =>
+        mounted &&
+        viewedVersion == _viewedLoadVersion &&
+        identical(widget.profileRepository, repository) &&
+        widget.profileId == profileId &&
+        repository.currentUserId == viewerId;
+    void failed(String section, Object error) {
+      if (!current()) return;
+      // Section names only: never put profile IDs or response payloads in logs.
+      debugPrint('Public profile $section read failed: ${error.runtimeType}');
+      if (error is TimeoutException &&
+          error.message?.startsWith('Profile read timed out;') == true) {
+        debugPrint(error.message!);
+      }
+      setState(() => _viewedReadErrors.add(section));
+    }
+
+    final details = repository.getProfile(profileId).timeout(fieldReadTimeout);
+    unawaited(() async {
+      try {
+        final profile = await details;
+        if (!current() || version != _profileLoadVersion) return;
+        setState(() {
+          _latestProfile = profile;
+          _viewedDetailsReady = true;
+          if (!_viewedTrackSelected) {
+            _ratingTrack = profile.playedPosition == 'GK'
+                ? RatingTrack.goalkeeper
+                : RatingTrack.outfield;
+          }
+        });
+      } catch (error) {
+        if (version == _profileLoadVersion) failed('details', error);
+      } finally {
+        if (current()) setState(() => _viewedDetailsLoading = false);
+      }
+    }());
+    if (ratingRepository != null) {
+      unawaited(() async {
+        try {
+          final ratings = await (() async {
+            final season = await loadActiveLeaderboardSeason(ratingRepository);
+            return ratingRepository.loadPlayerRatings(
+              season: season,
+              profileId: profileId,
+            );
+          })().timeout(fieldReadTimeout);
+          if (current()) setState(() => _ratings = ratings);
+        } catch (error) {
+          failed('rating', error);
+        } finally {
+          if (current()) setState(() => _viewedRatingLoading = false);
+        }
+      }());
+    }
     try {
-      final profile = await _loadProfile();
-      if (!mounted) return;
+      final profile = repository is PublicProfileSummaryRepository
+          ? await (repository as PublicProfileSummaryRepository)
+                .getProfileSummary(profileId)
+                .timeout(fieldReadTimeout)
+          : await details;
+      if (current() && !_viewedDetailsReady) _latestProfile = profile;
+      return current() ? _latestProfile ?? profile : profile;
+    } catch (error) {
+      failed('identity', error);
+      if (current() && _latestProfile != null) return _latestProfile!;
+      rethrow;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.profileId != widget.profileId ||
+        oldWidget.profileRepository != widget.profileRepository ||
+        _viewerId != widget.profileRepository.currentUserId) {
+      _latestProfile = null;
+      _ratings = null;
+      _viewedDetailsReady = false;
+      _viewedTrackSelected = false;
+      _ratingTrack = RatingTrack.outfield;
+      _isUpdatingFollow = false;
+      _profileFuture = _loadProfile();
+    }
+  }
+
+  Future<void> _refresh() async {
+    if (_isUpdatingFollow) return;
+    final request = _loadProfile();
+    setState(() {});
+    final version = _profileLoadVersion;
+    try {
+      final profile = await request;
+      if (!mounted || version != _profileLoadVersion) return;
       setState(() {
         _profileFuture = Future.value(profile);
       });
     } catch (error, stackTrace) {
-      if (!mounted) return;
+      if (!mounted || version != _profileLoadVersion) return;
       setState(() {
         _profileFuture = Future.error(error, stackTrace);
       });
+    }
+  }
+
+  Future<void> _toggleViewedFollow() async {
+    final profile = _latestProfile;
+    if (_isUpdatingFollow ||
+        !_canReportProfile ||
+        profile == null ||
+        !_viewedDetailsReady) {
+      return;
+    }
+    final repository = widget.profileRepository;
+    final viewerId = repository.currentUserId;
+    final viewedVersion = _viewedLoadVersion;
+    bool current() =>
+        mounted &&
+        widget.profileId == profile.id &&
+        identical(widget.profileRepository, repository) &&
+        repository.currentUserId == viewerId &&
+        viewedVersion == _viewedLoadVersion;
+    final next = profile.copyWith(isFollowedByMe: !profile.isFollowedByMe);
+    setState(() {
+      // A read started before this write must not overwrite its confirmed state.
+      _profileLoadVersion++;
+      _isUpdatingFollow = true;
+      _latestProfile = next;
+      _profileFuture = Future.value(next);
+    });
+    try {
+      if (profile.isFollowedByMe) {
+        await repository.unfollowProfile(profile.id);
+      } else {
+        await repository.followProfile(profile.id);
+      }
+    } catch (error) {
+      if (!mounted || !current()) return;
+      setState(() {
+        _latestProfile = profile;
+        _profileFuture = Future.value(profile);
+      });
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not update that follow. Try again.',
+        ),
+      );
+    } finally {
+      if (current()) {
+        setState(() => _isUpdatingFollow = false);
+      }
     }
   }
 
@@ -131,9 +341,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     await Clipboard.setData(ClipboardData(text: '@${profile.username}'));
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('@${profile.username} copied')));
+    showFieldrushToast(context, '@${profile.username} copied');
   }
 
   Future<void> _openPreviousGame(ProfilePreviousGame game) {
@@ -147,13 +355,38 @@ class _ProfileScreenState extends State<ProfileScreen> {
           highlight: highlight,
           profileRepository: widget.profileRepository,
           canManage: _canManageProfile,
+          ownerLabel: _latestProfile == null
+              ? null
+              : '@${_latestProfile!.username}',
+          ownerAvatarUrl: _latestProfile?.avatarUrl,
+          ownerInitials: _latestProfile?.initials,
+          fixtureRepository: _fixtureRepository,
+          openQueueRepository: _openQueueRepository,
         ),
       ),
     );
     if (mounted) await _refresh();
   }
 
-  Future<void> _openRatedMatch(ProfilePreviousGame game) async {
+  Future<void> _openAllClips(PlayerProfile profile) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => ProfileClipsScreen(
+          profile: profile,
+          repository: widget.profileRepository,
+          canManage: _canManageProfile,
+          fixtureRepository: _fixtureRepository,
+          openQueueRepository: _openQueueRepository,
+        ),
+      ),
+    );
+    if (mounted) await _refresh();
+  }
+
+  Future<void> _openRatedMatch(
+    ProfilePreviousGame game, {
+    BuildContext? historyContext,
+  }) async {
     final matchId = game.id;
     final isSolo = game.isSolo;
     if (_openingGameId != null) return;
@@ -163,51 +396,73 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (isSolo) {
         final detail = await _openQueueRepository.getMatchDetail(matchId);
         final playerRatingUpdate = _playerRatingUpdateFor(game, detail);
-        if (!mounted) return;
+        if (!mounted ||
+            (historyContext != null &&
+                (!historyContext.mounted ||
+                    ModalRoute.of(historyContext)?.isCurrent != true))) {
+          return;
+        }
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(
-            builder: (_) => FixtureDetailScreen(
-              fixture: detail.toFixture(),
-              fixtureRepository: _fixtureRepository,
-              clanRepository: _clanRepository,
-              myClanMembership: null,
-              sourceLabel: 'SOLO',
-              showTeamRatings: false,
-              playerRatingUpdate: playerRatingUpdate,
-              profileRepository: widget.profileRepository,
-              refreshFixture: () async {
-                final next = await _openQueueRepository.getMatchDetail(matchId);
-                return next.toFixture();
-              },
-            ),
+            builder: (_) => historyContext != null
+                ? FieldrushGameDetailScreen(
+                    repository: _openQueueRepository,
+                    gameId: matchId,
+                    initialDetail: detail,
+                    playerRatingUpdate: playerRatingUpdate,
+                    ratingProfileId: _latestProfile?.id,
+                    profileRepository: widget.profileRepository,
+                    fixtureRepository: _fixtureRepository,
+                  )
+                : FixtureDetailScreen(
+                    fixture: detail.toFixture(),
+                    fixtureRepository: _fixtureRepository,
+                    clanRepository: _clanRepository,
+                    myClanMembership: null,
+                    sourceLabel: 'SOLO',
+                    showTeamRatings: false,
+                    playerRatingUpdate: playerRatingUpdate,
+                    profileRepository: widget.profileRepository,
+                    refreshFixture: () async {
+                      final next = await _openQueueRepository.getMatchDetail(
+                        matchId,
+                      );
+                      return next.toFixture();
+                    },
+                  ),
           ),
         );
       } else {
         final fixture = await _fixtureRepository.getFixture(matchId);
-        if (!mounted) return;
+        if (!mounted ||
+            (historyContext != null &&
+                (!historyContext.mounted ||
+                    ModalRoute.of(historyContext)?.isCurrent != true))) {
+          return;
+        }
         await Navigator.of(context).push<void>(
           MaterialPageRoute<void>(
-            builder: (_) => FixtureDetailScreen(
-              fixture: fixture,
-              fixtureRepository: _fixtureRepository,
-              clanRepository: _clanRepository,
-              myClanMembership: null,
-              sourceLabel: 'CLAN',
-              profileRepository: widget.profileRepository,
+            builder: (_) => Theme(
+              data: FieldrushAuthTheme.theme(context),
+              child: FixtureDetailScreen(
+                fixture: fixture,
+                fixtureRepository: _fixtureRepository,
+                clanRepository: _clanRepository,
+                myClanMembership: null,
+                sourceLabel: 'CLAN',
+                profileRepository: widget.profileRepository,
+              ),
             ),
           ),
         );
       }
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            userFacingError(
-              error,
-              fallback: 'We could not open this match. Try again.',
-            ),
-          ),
+      showFieldrushToast(
+        context,
+        userFacingError(
+          error,
+          fallback: 'We could not open this match. Try again.',
         ),
       );
     } finally {
@@ -219,16 +474,31 @@ class _ProfileScreenState extends State<ProfileScreen> {
     ProfilePreviousGame game,
     OpenQueueMatchDetail detail,
   ) {
-    final ratingEvents = _latestProfile?.playerRating?.events ?? const [];
+    if (!permitsPublicRatingResult(detail.ratingStatus)) return null;
+    final profileId = _latestProfile?.id;
+    final player = detail.players
+        .where((player) => player.id == profileId)
+        .firstOrNull;
+    if (player?.ratingVisible == false ||
+        !permitsPublicRatingResult(player?.ratingStatus)) {
+      return null;
+    }
+    final ratingEvents =
+        _ratings?.mergeHistory(
+          _latestProfile?.playerRating?.events ?? const [],
+        ) ??
+        _latestProfile?.playerRating?.events ??
+        const [];
     for (final event in ratingEvents) {
       if (event.sourceId.trim() != game.id.trim() ||
           event.isSolo != game.isSolo) {
         continue;
       }
+      if (!event.hasPublicRating) return null;
       return FixturePlayerRatingUpdate(
-        ratingBefore: event.ratingBefore,
-        ratingChange: event.ratingChange,
-        ratingAfter: event.ratingAfter,
+        ratingBefore: event.ratingBefore!,
+        ratingChange: event.ratingChange!,
+        ratingAfter: event.ratingAfter!,
         result: event.result.isEmpty ? game.outcome?.label : event.result,
         scoreMargin: event.scoreMargin,
         marginMultiplier: event.marginMultiplier,
@@ -237,12 +507,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
       );
     }
 
-    final profileId = _latestProfile?.id;
     if (profileId == null || profileId.isEmpty) return null;
     for (final player in detail.players) {
       if (player.id != profileId) continue;
       final ratingBefore = player.displayedRating;
-      final ratingChange = player.ratingChange;
+      final ratingChange = player.publicRatingChange;
       if (ratingBefore == null || ratingChange == null) return null;
       return FixturePlayerRatingUpdate(
         ratingBefore: ratingBefore,
@@ -283,6 +552,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       MaterialPageRoute<ProfileConnectionCounts>(
         builder: (_) => ProfileConnectionsScreen(
           profileRepository: widget.profileRepository,
+          username: _latestProfile?.username,
           initialTab: tab,
           onOpenProfile: _openPlayerProfile,
         ),
@@ -330,6 +600,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _openEditProfile() async {
+    final openAccount = widget.onOpenAccount;
+    if (openAccount != null) {
+      await openAccount();
+      if (mounted) {
+        final next = _loadProfile();
+        setState(() => _profileFuture = next);
+      }
+      return;
+    }
     final profile = _latestProfile;
     if (profile == null) return;
 
@@ -377,12 +656,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
           : profileName,
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'Report sent privately · reference ${receipt.shortReference}',
-        ),
-      ),
+    showFieldrushToast(
+      context,
+      'Report sent privately · reference ${receipt.shortReference}',
     );
   }
 
@@ -393,10 +669,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
       requestContext: const {'entry_point': 'profile'},
     );
     if (!mounted || receipt == null) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Request sent · reference ${receipt.shortReference}'),
-      ),
+    showFieldrushToast(
+      context,
+      'Request sent · reference ${receipt.shortReference}',
     );
   }
 
@@ -411,6 +686,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_isCurrentProfile) return _buildViewedProfile(context);
     return FieldHeaderOverlay(
       key: const ValueKey('profile-screen'),
       header: FieldPageHeader(
@@ -490,7 +766,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           }
 
           final profile = snapshot.data!;
-          return RefreshIndicator(
+          return FieldRefreshIndicator(
             color: fieldEmerald600,
             onRefresh: _refresh,
             child: ListView(
@@ -547,6 +823,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     highlights: profile.highlights,
                     showEmptyState: _isCurrentProfile,
                     onOpenHighlight: _openHighlight,
+                    onAllClips: () => _openAllClips(profile),
                   ),
                 ],
                 if (profile.previousGames.isNotEmpty) ...[
@@ -565,6 +842,183 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildViewedProfile(BuildContext context) => Theme(
+    data: FieldrushAuthTheme.theme(context),
+    child: PopScope(
+      canPop: !_isUpdatingFollow,
+      child: Scaffold(
+        key: const ValueKey('profile-screen'),
+        backgroundColor: FieldrushAuthTheme.cream,
+        body: SafeArea(
+          child: FutureBuilder<PlayerProfile>(
+            key: ValueKey(widget.profileId),
+            future: _profileFuture,
+            builder: (context, snapshot) {
+              void back() {
+                if (!_isUpdatingFollow) Navigator.of(context).pop();
+              }
+
+              if (_latestProfile == null &&
+                  (snapshot.connectionState != ConnectionState.done ||
+                      !snapshot.hasError)) {
+                return SingleChildScrollView(
+                  key: const ValueKey('profile-loading'),
+                  child: FieldrushPlayerProfileLoadingContent(onBack: back),
+                );
+              }
+              if (_latestProfile == null) {
+                return ListView(
+                  key: const ValueKey('profile-error'),
+                  padding: const EdgeInsets.all(20),
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: IconButton(
+                        tooltip: 'Back',
+                        onPressed: back,
+                        icon: const Icon(Icons.chevron_left),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      'Player unavailable',
+                      style: TextStyle(
+                        fontFamily: 'Outfit',
+                        fontSize: 24,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      userFacingError(
+                        snapshot.error,
+                        fallback: 'We could not load this profile. Try again.',
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () {
+                        final next = _loadProfile();
+                        setState(() {
+                          _profileFuture = next;
+                        });
+                      },
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                );
+              }
+              final profile = _latestProfile!;
+              return FieldRefreshIndicator(
+                color: FieldrushAuthTheme.forest,
+                onRefresh: _refresh,
+                child: ListView(
+                  key: const ValueKey('profile-content'),
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.only(bottom: 32),
+                  children: [
+                    FieldrushPlayerProfileContent(
+                      profile: profile,
+                      ratings: _ratings,
+                      detailsLoading: _viewedDetailsLoading,
+                      detailsUnavailable:
+                          !_viewedDetailsReady && !_viewedDetailsLoading,
+                      ratingLoading: _viewedRatingLoading,
+                      ratingUnavailable:
+                          _ratings == null &&
+                          (widget.ratingRepository != null ||
+                              widget.profileRepository
+                                  is SupabaseProfileRepository),
+                      track: _ratingTrack,
+                      onTrack: _ratings == null
+                          ? null
+                          : (track) => setState(() {
+                              _viewedTrackSelected = true;
+                              _ratingTrack = track;
+                            }),
+                      isFollowing: profile.isFollowedByMe,
+                      followBusy: _isUpdatingFollow,
+                      onFollow: _canReportProfile && _viewedDetailsReady
+                          ? _toggleViewedFollow
+                          : null,
+                      onReport: _canReportProfile ? _reportProfile : null,
+                      onOpenClan: profile.clan == null
+                          ? null
+                          : () => _openClan(
+                              clanId: profile.clan!.id,
+                              clanName: profile.clan!.name,
+                            ),
+                      onBack: _isUpdatingFollow ? null : back,
+                      positionLabel: profile.playedPositionLabel,
+                      onMatchHistory: _viewedDetailsReady
+                          ? () => _openPublicHistory(profile)
+                          : null,
+                      onClip: _viewedDetailsReady ? _openHighlight : null,
+                      onAllClips: () => _openAllClips(profile),
+                      recentResults: profile.lastFiveResults,
+                      trailingChildren: [
+                        if (_viewedReadErrors.isNotEmpty)
+                          Padding(
+                            key: const ValueKey('player-refresh-error'),
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Column(
+                              children: [
+                                const Text(
+                                  'Some player details could not refresh.',
+                                ),
+                                TextButton(
+                                  key: const ValueKey('player-retry'),
+                                  onPressed: _refresh,
+                                  child: const Text('Try again'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Wrap(
+                            alignment: WrapAlignment.center,
+                            spacing: 12,
+                            children: [
+                              TextButton.icon(
+                                onPressed: _copyProfileHandle,
+                                icon: const Icon(
+                                  Icons.ios_share_rounded,
+                                  size: 15,
+                                ),
+                                label: const Text('Share profile'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Future<void> _openPublicHistory(PlayerProfile profile) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (historyContext) => FieldrushMatchHistoryScreen(
+          profile: profile,
+          playerName: profile.displayName,
+          ratingEvents: _ratings?.mergeHistory(
+            profile.playerRating?.events ?? const [],
+          ),
+          onOpenGame: (game) =>
+              _openRatedMatch(game, historyContext: historyContext),
+        ),
       ),
     );
   }
@@ -862,14 +1316,17 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final change = rating.lastChange;
-    final division = divisionFromRating(rating.skillRating);
-    final nextRating = division.nextDivisionRating;
+    final isPlacement = !rating.ratingVisible;
+    final division = isPlacement
+        ? null
+        : divisionFromRating(rating.skillRating!);
+    final nextRating = division?.nextDivisionRating;
     final nextDivision = nextRating == null
         ? null
         : divisionFromRating(nextRating);
-    final changeColor = change > 0
+    final changeColor = change != null && change > 0
         ? const Color(0xFF35BD69)
-        : change < 0
+        : change != null && change < 0
         ? const Color(0xFFEF4444)
         : const Color(0xFF9A9AA6);
     return Container(
@@ -910,7 +1367,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
-                      division.label.toUpperCase(),
+                      isPlacement ? 'PLACEMENT' : division!.label.toUpperCase(),
                       style: const TextStyle(
                         color: Color(0xFFAAAAB4),
                         fontSize: 11,
@@ -921,7 +1378,9 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                   ),
                   const SizedBox(height: 9),
                   Text(
-                    '${rating.matchesPlayed} rated ${rating.matchesPlayed == 1 ? 'game' : 'games'}',
+                    isPlacement
+                        ? '${2 - rating.placementMatchesRemaining}/$minimumPlayerLeaderboardMatches placement games'
+                        : '${rating.seasonCountedMatches} rated ${rating.seasonCountedMatches == 1 ? 'game' : 'games'}${rating.visibility == null ? '' : ' this season'}',
                     style: const TextStyle(
                       color: Color(0xFF9999A8),
                       fontSize: 11,
@@ -937,7 +1396,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Text(
-                '${rating.skillRating}',
+                isPlacement ? '????' : '${rating.skillRating}',
                 style: const TextStyle(
                   color: Color(0xFF35BD69),
                   fontSize: 58,
@@ -947,17 +1406,18 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 10),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 5),
-                child: Text(
-                  '${change > 0 ? '+' : ''}$change',
-                  style: TextStyle(
-                    color: changeColor,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
+              if (!isPlacement && change != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 5),
+                  child: Text(
+                    '${change > 0 ? '+' : ''}$change',
+                    style: TextStyle(
+                      color: changeColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
           const SizedBox(height: 22),
@@ -965,7 +1425,10 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(999),
             child: LinearProgressIndicator(
               key: const ValueKey('profile-player-rating-progress'),
-              value: division.progressFor(rating.skillRating),
+              value: isPlacement
+                  ? (2 - rating.placementMatchesRemaining) /
+                        minimumPlayerLeaderboardMatches
+                  : division!.progressFor(rating.skillRating!),
               minHeight: 7,
               color: const Color(0xFF35BD69),
               backgroundColor: const Color(0xFF292A2E),
@@ -975,7 +1438,7 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
           Row(
             children: [
               Text(
-                '${division.minimumRating}',
+                isPlacement ? 'UNRANKED' : '${division!.minimumRating}',
                 style: const TextStyle(
                   color: Color(0xFF9999A8),
                   fontSize: 11,
@@ -984,7 +1447,9 @@ class _ProfilePlayerRatingCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                nextRating == null
+                isPlacement
+                    ? 'Complete placement games'
+                    : nextRating == null
                     ? 'TOP DIVISION'
                     : '${nextDivision!.label} · $nextRating',
                 style: const TextStyle(
@@ -1091,11 +1556,13 @@ class _HighlightsCard extends StatelessWidget {
     required this.highlights,
     required this.showEmptyState,
     required this.onOpenHighlight,
+    required this.onAllClips,
   });
 
   final List<ProfileHighlight> highlights;
   final bool showEmptyState;
   final ValueChanged<ProfileHighlight> onOpenHighlight;
+  final VoidCallback onAllClips;
 
   @override
   Widget build(BuildContext context) {
@@ -1112,23 +1579,37 @@ class _HighlightsCard extends StatelessWidget {
                   size: 16,
                 ),
                 const SizedBox(width: 8),
-                const Text(
-                  'CLIPS',
-                  style: TextStyle(
-                    color: fieldGray700,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 0.8,
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'CLIPS',
+                        style: TextStyle(
+                          color: fieldGray700,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.8,
+                        ),
+                      ),
+                      Text(
+                        '${highlights.length} clips',
+                        style: const TextStyle(
+                          color: fieldGray400,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const Spacer(),
-                Text(
-                  '${highlights.length} clips',
-                  style: const TextStyle(
-                    color: fieldGray400,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+                TextButton(
+                  onPressed: onAllClips,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    textStyle: const TextStyle(fontSize: 13),
                   ),
+                  child: const Text('View all clips'),
                 ),
               ],
             ),
@@ -1670,7 +2151,7 @@ class _PreviousGameRow extends StatelessWidget {
                   const SizedBox(
                     width: 20,
                     height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(label: 'Opening game'),
                   )
                 else
                   Row(
@@ -1797,14 +2278,11 @@ class _ProfileAvatar extends StatelessWidget {
         ],
       ),
       child: ClipOval(
-        child: avatarUrl == null || avatarUrl.isEmpty
-            ? _AvatarInitials(profile: profile, size: size)
-            : Image.network(
-                avatarUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) =>
-                    _AvatarInitials(profile: profile, size: size),
-              ),
+        child: FieldrushAvatarImage(
+          size: size,
+          url: avatarUrl,
+          fallback: _AvatarInitials(profile: profile, size: size),
+        ),
       ),
     );
   }
@@ -2035,7 +2513,9 @@ class _HeaderIconButton extends StatelessWidget {
             child: isLoading
                 ? const Padding(
                     padding: EdgeInsets.all(10),
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: FieldLoadingIndicator(
+                      label: 'Opening profile action',
+                    ),
                   )
                 : Icon(icon, color: fieldGray600, size: 18),
           ),

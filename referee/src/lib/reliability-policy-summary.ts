@@ -60,7 +60,7 @@ export function buildReliabilityPolicySummary(
         rules: [
           {
             title: "Match format",
-            explanation: `Solo and clan matches are ${config.solo.playersPerSide}v${config.solo.playersPerSide}. Clan matches also require ${config.clan.playersPerSide} players per side.`,
+            explanation: `Solo matches are ${config.solo.playersPerSide}v${config.solo.playersPerSide}. Clan matches are ${config.clan.playersPerSide}v${config.clan.playersPerSide}. Existing games keep their original format.`,
             facts: [
               `Solo: ${config.solo.playersPerSide} players per side`,
               `Clan: ${config.clan.playersPerSide} players per side`,
@@ -68,7 +68,7 @@ export function buildReliabilityPolicySummary(
           },
           {
             title: "Check-in is referee managed",
-            explanation: `Referees may check players in at any time. A player is late after the check-in deadline, ${config.attendance.checkInLeadMinutes} minutes before kickoff, and becomes a no-show ${config.attendance.noShowGraceMinutes} minutes after kickoff.`,
+            explanation: `Season 0 solo arrivals remain open until full time. Recording arrival also records entry into play, and missing players become no-shows when the game ends. Use each game's saved arrival deadline to determine lateness. Earlier solo and clan policies keep their saved check-in deadline (${config.attendance.checkInLeadMinutes} minutes before kickoff) and no-show grace period (${config.attendance.noShowGraceMinutes} minutes after kickoff).`,
           },
           {
             title: "Strikes expire",
@@ -175,7 +175,7 @@ export function buildReliabilityPolicySummary(
         rules: [
           {
             title: "Player reliability deposit",
-            explanation: `At ${config.solo.reliabilityDeposit.activeStrikeThreshold} active strikes, a player pays a ${percent(config.solo.reliabilityDeposit.depositBps)} reliability deposit. An on-time return goes to Field Wallet.`,
+            explanation: `At ${config.solo.reliabilityDeposit.activeStrikeThreshold} active strikes, a player pays a ${percent(config.solo.reliabilityDeposit.depositBps)} reliability deposit. An on-time return goes to ${config.solo.reliabilityDeposit.onTimeReturnDestination === "FIELD_WALLET" ? "Field Wallet for historical wallet bookings; new card and digital wallet bookings return to the original payment method" : "the original payment method"}.`,
             facts: [`The deposit is forfeited for: ${humanList(config.solo.reliabilityDeposit.forfeitOutcomes)}.`],
           },
           {
@@ -252,7 +252,9 @@ export function buildReliabilityPolicySummary(
           },
           {
             title: "Refund destination",
-            explanation: `Policy refunds are credited to Field Wallet in ${config.wallet.currency}.`,
+            explanation: config.wallet.refundDestination === "FIELD_WALLET"
+              ? "Historical wallet refunds are credited to Field Wallet in the game's currency. New card and digital wallet bookings are refunded to the original payment method. USD and historical BHD balances are kept separately, without currency conversion."
+              : "Refunds return to the original payment method in the booking's currency. Refund processing may continue after a cancellation or an admin decision; completed refunds are never issued twice. Historical wallet balances remain separate.",
           },
         ],
       },

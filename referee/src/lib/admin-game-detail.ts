@@ -8,9 +8,13 @@ import {
   loadAdminGameReserves,
   type AdminGameReserve,
 } from "./admin-game-reserves";
-import { loadAdminOpenQueueGames } from "./open-queue-referee-data";
-import { loadAdminFixtures } from "./referee-data";
+import { loadAdminOpenQueueGame } from "./open-queue-referee-data";
+import { loadAdminFixture } from "./referee-data";
 import type { RefereeFixture } from "./types";
+import { adminGameCurrency, type AdminGameCurrency } from "./admin-game-money";
+import { refundRequiresManualReview } from "./payment-refunds";
+import { loadAdminGamePricing, type AdminGamePricing } from "./admin-game-pricing";
+import { loadAdminGameFormation, type AdminGameFormation } from "./admin-game-formation";
 
 export type AdminGameAuditItem = {
   id: string;
@@ -62,6 +66,8 @@ export type AdminGameResolutionRefund = {
   status: string;
   failureReason: string | null;
   walletTransactionId: string | null;
+  paymentRefundId: string | null;
+  requiresManualReview: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -101,6 +107,9 @@ export type AdminGameResolutionCase = {
 
 export type AdminGameDetail = {
   fixture: RefereeFixture;
+  currency: AdminGameCurrency;
+  pricing: AdminGamePricing | null;
+  formation: AdminGameFormation | null;
   participants: AdminGameParticipants;
   reserves: {
     active: AdminGameReserve[];
@@ -110,6 +119,7 @@ export type AdminGameDetail = {
     profileId: string;
     displayName: string;
     phone: string;
+    email?: string | null;
   } | null;
   ratingSummary:
     | {
@@ -139,8 +149,8 @@ export async function loadAdminGameDetail(
   matchId: string,
 ): Promise<AdminGameDetail> {
   const gamePromise = matchKind === "SOLO"
-    ? loadAdminOpenQueueGames(db)
-    : loadAdminFixtures(db);
+    ? loadAdminOpenQueueGame(db, matchId)
+    : loadAdminFixture(db, matchId);
   const assignmentTable = matchKind === "SOLO"
     ? "open_queue_referee_assignments"
     : "fixture_referee_assignments";
@@ -149,7 +159,7 @@ export async function loadAdminGameDetail(
   const reportKey = matchKind === "SOLO" ? "open_queue_game_id" : "fixture_id";
 
   const [
-    games,
+    fixture,
     participants,
     reserves,
     assignmentResult,
@@ -158,6 +168,9 @@ export async function loadAdminGameDetail(
     stoppageResult,
     ratingSummary,
     resolutionCase,
+    currencyResult,
+    pricing,
+    formation,
   ] = await Promise.all([
     gamePromise,
     loadAdminGameParticipants(db, matchKind, matchId),
@@ -167,6 +180,7 @@ export async function loadAdminGameDetail(
       referee:referee_profiles!${assignmentTable}_referee_id_fkey(
         profile_id,
         display_name,
+        email,
         phone
       )
     `).eq(assignmentKey, matchId).maybeSingle(),
@@ -190,25 +204,33 @@ export async function loadAdminGameDetail(
       ? loadClanRatingSummary(db, matchId)
       : loadSoloRatingSummary(db, matchId),
     loadAdminGameResolution(db, matchKind, matchId),
+    db.from(matchKind === "SOLO" ? "open_queue_games" : "fixtures")
+      .select("currency").eq("id", matchId).single(),
+    matchKind === "SOLO" ? loadAdminGamePricing(db, matchId) : Promise.resolve(null),
+    matchKind === "SOLO" ? loadAdminGameFormation(db, matchId) : Promise.resolve(null),
   ]);
 
-  const fixture = games.find((game) => game.id === matchId);
   if (!fixture) throw new Error(matchKind === "SOLO" ? "Solo game not found." : "Clan fixture not found.");
   if (assignmentResult.error) throw new Error(`Could not load referee: ${assignmentResult.error.message}`);
   if (auditResult.error) throw new Error(`Could not load game audit: ${auditResult.error.message}`);
   if (reportResult.error) throw new Error(`Could not load game reports: ${reportResult.error.message}`);
   if (stoppageResult.error) throw new Error(`Could not load stoppages: ${stoppageResult.error.message}`);
+  if (currencyResult.error) throw new Error(`Could not load game currency: ${currencyResult.error.message}`);
 
   const assignment = assignmentResult.data as Row | null;
   const referee = relation(assignment?.referee);
   return {
     fixture,
+    currency: adminGameCurrency(matchKind, currencyResult.data?.currency),
+    pricing,
+    formation,
     participants,
     reserves,
     assignedReferee: assignment && referee.profile_id ? {
       profileId: text(referee.profile_id),
       displayName: text(referee.display_name, "Referee"),
       phone: text(referee.phone),
+      email: typeof referee.email === "string" ? referee.email : null,
     } : null,
     ratingSummary,
     audit: rows(auditResult.data).map((row) => ({
@@ -268,7 +290,7 @@ async function loadAdminGameResolution(
       .order("revision", { ascending: false }),
     db.from("match_resolution_refunds")
       .select(
-        "id,case_id,revision_id,recipient_profile_id,clan_id,side,amount_fils,refund_bps,destination,status,failure_reason,wallet_transaction_id,created_at,updated_at",
+        "id,case_id,revision_id,recipient_profile_id,clan_id,side,amount_fils,refund_bps,destination,status,failure_reason,wallet_transaction_id,payment_refund_id,created_at,updated_at,payment_refund:payment_refunds(provider_status,payment_intent:payment_intents(external_refund_review_required))",
       )
       .eq("case_id", caseId)
       .order("created_at", { ascending: false }),
@@ -326,6 +348,8 @@ async function loadAdminGameResolution(
       status: text(row.status, "PENDING").toUpperCase(),
       failureReason: nullableText(row.failure_reason),
       walletTransactionId: nullableText(row.wallet_transaction_id),
+      paymentRefundId: nullableText(row.payment_refund_id),
+      requiresManualReview: refundRequiresManualReview(relation(row.payment_refund)),
       createdAt: text(row.created_at),
       updatedAt: text(row.updated_at),
     })),
@@ -387,7 +411,7 @@ async function loadSoloRatingSummary(
 ): Promise<Extract<AdminGameDetail["ratingSummary"], { kind: "SOLO" }>> {
   const { data: bookings, error: bookingError } = await db
     .from("open_queue_bookings")
-    .select("profile_id,team,rating_at_team_assignment")
+    .select("profile_id,role,rating_track,team,rating_at_team_assignment")
     .eq("game_id", gameId)
     .eq("status", "CONFIRMED");
   if (bookingError) throw new Error(`Could not load solo ratings: ${bookingError.message}`);
@@ -399,19 +423,19 @@ async function loadSoloRatingSummary(
     .filter(Boolean);
   const currentRatings = new Map<string, number>();
   if (missingRatingIds.length) {
-    const { data, error } = await db.from("player_ratings")
-      .select("profile_id,skill_rating")
+    const { data, error } = await db.from("fieldrush_player_rating_tracks")
+      .select("profile_id,rating_track,skill_rating")
       .in("profile_id", [...new Set(missingRatingIds)]);
     if (error) throw new Error(`Could not load current player ratings: ${error.message}`);
     for (const row of rows(data)) {
-      currentRatings.set(text(row.profile_id), integer(row.skill_rating, 1200));
+      currentRatings.set(`${text(row.profile_id)}:${text(row.rating_track)}`, integer(row.skill_rating, 1200));
     }
   }
 
   const rated = bookingRows.map((row) => ({
     team: text(row.team).toUpperCase(),
     rating: nullableInteger(row.rating_at_team_assignment) ??
-      currentRatings.get(text(row.profile_id)) ?? 1200,
+      currentRatings.get(`${text(row.profile_id)}:${text(row.rating_track, text(row.role).toUpperCase() === "GK" ? "GOALKEEPER" : "OUTFIELD")}`) ?? 1200,
   }));
   const whiteAverageSr = average(rated.filter((row) => row.team === "WHITE").map((row) => row.rating));
   const blackAverageSr = average(rated.filter((row) => row.team === "BLACK").map((row) => row.rating));

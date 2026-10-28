@@ -11,6 +11,7 @@ import {
   type StopMode,
 } from "@/lib/match-action-input";
 import type { RefereeFixture } from "@/lib/types";
+import { SEASON_ZERO_POLICY } from "@/lib/season-zero-actions";
 
 type SafetyActionBody = Record<
   string,
@@ -184,7 +185,9 @@ export function RefereeSafetyPanel({
       isTeamForfeit
         ? "Provisional 3–0 result recorded and sent to admins for review."
         : stopMode === "ABANDON"
-        ? "Match abandoned. The incident and broadcast stop were recorded."
+        ? fixture.ratingPolicyId === SEASON_ZERO_POLICY
+          ? "Play stopped. Ratings are held for organizer review; no result or forfeit has been awarded."
+          : "Match abandoned. The incident and broadcast stop were recorded."
         : "Safety stop recorded. Resume play only when it is safe.",
     );
   }

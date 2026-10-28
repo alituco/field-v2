@@ -1,9 +1,42 @@
 import '../ranking/rating_division.dart';
+import '../ranking/player_rating_visibility.dart';
 
 const minimumClanLeaderboardMatches = 4;
 const minimumPlayerLeaderboardMatches = 2;
 
-class PlayerRatingLeaderboardEntry {
+/// A bounded server page plus the current player's actual neighboring ranks.
+class PlayerRatingLeaderboardPage {
+  const PlayerRatingLeaderboardPage({
+    required this.players,
+    required this.aroundMe,
+    required this.totalCount,
+    required this.nextOffset,
+  });
+
+  final List<PlayerRatingLeaderboardEntry> players;
+  final List<PlayerRatingLeaderboardEntry> aroundMe;
+  final int totalCount;
+  final int? nextOffset;
+
+  factory PlayerRatingLeaderboardPage.fromJson(Map<String, dynamic> json) {
+    List<PlayerRatingLeaderboardEntry> entries(Object? value) => [
+      for (final row in value as List<dynamic>? ?? const [])
+        PlayerRatingLeaderboardEntry.fromJson(
+          Map<String, dynamic>.from(row as Map),
+        ),
+    ];
+    return PlayerRatingLeaderboardPage(
+      players: entries(json['players']),
+      aroundMe: entries(json['around_me']),
+      totalCount: _leaderboardInt(json['total_count']),
+      nextOffset: json['next_offset'] == null
+          ? null
+          : _leaderboardInt(json['next_offset']),
+    );
+  }
+}
+
+class PlayerRatingLeaderboardEntry with PublicPlayerRating {
   const PlayerRatingLeaderboardEntry({
     required this.rank,
     required this.profileId,
@@ -17,6 +50,7 @@ class PlayerRatingLeaderboardEntry {
     required this.lastChange,
     required this.region,
     this.avatarUrl,
+    this.visibility,
   });
 
   final int rank;
@@ -24,23 +58,30 @@ class PlayerRatingLeaderboardEntry {
   final String displayName;
   final String username;
   final String? avatarUrl;
-  final int skillRating;
+  @override
+  final int? skillRating;
+  @override
   final int matchesPlayed;
   final int wins;
   final int losses;
   final int draws;
-  final int lastChange;
+  final int? lastChange;
+  @override
+  final PlayerRatingVisibility? visibility;
   final String region;
 
   bool get isRanked =>
-      rank > 0 && matchesPlayed >= minimumPlayerLeaderboardMatches;
+      ratingVisible &&
+      rank > 0 &&
+      seasonCountedMatches >= seasonQualificationGames;
 
-  int get gamesNeededToRank => (minimumPlayerLeaderboardMatches - matchesPlayed)
-      .clamp(0, minimumPlayerLeaderboardMatches);
+  int get gamesNeededToRank => (seasonQualificationGames - seasonCountedMatches)
+      .clamp(0, seasonQualificationGames);
 
-  RatingDivision get division => divisionFromRating(skillRating);
+  RatingDivision? get division =>
+      ratingVisible ? divisionFromRating(skillRating!) : null;
 
-  String get divisionLabel => division.label;
+  String get divisionLabel => division?.label ?? 'Placement';
 
   String get recordLabel => '${wins}W · ${draws}D · ${losses}L';
 
@@ -61,13 +102,18 @@ class PlayerRatingLeaderboardEntry {
       displayName: json['display_name'] as String? ?? 'Player',
       username: json['username'] as String? ?? 'player',
       avatarUrl: json['avatar_url'] as String?,
-      skillRating: _leaderboardInt(json['skill_rating'], fallback: 1200),
+      skillRating: publicRatingNumber(
+        json,
+        'skill_rating',
+        legacyFallback: 1200,
+      ),
       matchesPlayed: _leaderboardInt(json['matches_played']),
       wins: _leaderboardInt(json['wins']),
       losses: _leaderboardInt(json['losses']),
       draws: _leaderboardInt(json['draws']),
-      lastChange: _leaderboardInt(json['last_change']),
-      region: json['region'] as String? ?? 'bahrain',
+      lastChange: publicRatingNumber(json, 'last_change', legacyFallback: 0),
+      visibility: PlayerRatingVisibility.fromJson(json),
+      region: json['region'] as String? ?? 'phoenix',
     );
   }
 }
@@ -79,6 +125,8 @@ int _leaderboardInt(Object? value, {int fallback = 0}) {
   return fallback;
 }
 
+enum LeaderboardSeasonLifecycle { draft, scheduled, active, ended }
+
 class LeaderboardSeason {
   const LeaderboardSeason({
     required this.id,
@@ -86,6 +134,9 @@ class LeaderboardSeason {
     required this.rangeLabel,
     required this.startsOn,
     required this.endsOn,
+    this.minimumRatedGames = minimumPlayerLeaderboardMatches,
+    this.visibleToPlayers = true,
+    this.lifecycle,
   });
 
   final String id;
@@ -93,52 +144,152 @@ class LeaderboardSeason {
   final String rangeLabel;
   final String startsOn;
   final String endsOn;
+
+  /// Leaderboard and prize qualification are season-specific; lifetime
+  /// placement remains two games.
+  final int minimumRatedGames;
+
+  /// Visibility only controls the public season picker, not match history.
+  /// Older catalogs omit these fields and retain their date-based behavior.
+  final bool visibleToPlayers;
+  final LeaderboardSeasonLifecycle? lifecycle;
+
+  String get fullLabel =>
+      RegExp(r'^S\d+$', caseSensitive: false).hasMatch(label)
+      ? 'Season ${label.substring(1)}'
+      : label;
+
+  factory LeaderboardSeason.fromJson(Map<String, dynamic> json) {
+    final startsOn = json['starts_on'] as String;
+    final endsOn = json['ends_on'] as String;
+    final start = DateTime.parse(startsOn);
+    final end = DateTime.parse(endsOn);
+    if (end.isBefore(start)) {
+      throw const FormatException('Season end must follow its start.');
+    }
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final rangeLabel = start.year == end.year
+        ? '${months[start.month - 1]} - ${months[end.month - 1]} ${start.year}'
+        : '${months[start.month - 1]} ${start.year} - ${months[end.month - 1]} ${end.year}';
+    final minimumRatedGames = _leaderboardInt(
+      json['minimum_rated_games'],
+      fallback: minimumPlayerLeaderboardMatches,
+    );
+    if (minimumRatedGames < minimumPlayerLeaderboardMatches) {
+      throw const FormatException(
+        'Prize qualification must be at least two games.',
+      );
+    }
+    final visibility = json['visible_to_players'];
+    if (visibility != null && visibility is! bool) {
+      throw const FormatException('Invalid season visibility.');
+    }
+    final lifecycleValue = json['lifecycle'];
+    final lifecycle = switch (lifecycleValue) {
+      null => null,
+      'DRAFT' => LeaderboardSeasonLifecycle.draft,
+      'SCHEDULED' => LeaderboardSeasonLifecycle.scheduled,
+      'ACTIVE' => LeaderboardSeasonLifecycle.active,
+      'ENDED' => LeaderboardSeasonLifecycle.ended,
+      _ => throw const FormatException('Invalid season lifecycle.'),
+    };
+    return LeaderboardSeason(
+      id: json['id'] as String,
+      label: json['label'] as String,
+      rangeLabel: rangeLabel,
+      startsOn: startsOn,
+      endsOn: endsOn,
+      minimumRatedGames: minimumRatedGames,
+      visibleToPlayers: visibility as bool? ?? true,
+      lifecycle: lifecycle,
+    );
+  }
 }
 
-const leaderboardSeasons = [
-  LeaderboardSeason(
-    id: 's0',
-    label: 'S0',
-    rangeLabel: 'Jun - Sep 2026',
-    startsOn: '2026-06-01',
-    endsOn: '2026-09-30',
-  ),
-  LeaderboardSeason(
-    id: 's1',
-    label: 'S1',
-    rangeLabel: 'Oct - Dec 2026',
-    startsOn: '2026-10-01',
-    endsOn: '2026-12-31',
-  ),
-];
+const _initialLeaderboardSeason = LeaderboardSeason(
+  id: 's0',
+  label: 'S0',
+  rangeLabel: 'Jun - Sep 2026',
+  startsOn: '2026-06-01',
+  endsOn: '2026-09-30',
+);
+
+/// Offline/legacy fallback only. Live repositories use the server catalog so
+/// admin edits to future seasons apply consistently throughout the app.
+List<LeaderboardSeason> get leaderboardSeasons =>
+    leaderboardSeasonsThrough(_phoenixToday());
+
+List<LeaderboardSeason> leaderboardSeasonsThrough(DateTime date) {
+  final last = _quarterSeasonNumber(date).clamp(1, 400);
+  return [
+    _initialLeaderboardSeason,
+    for (var number = 1; number <= last; number++) _quarterSeason(number),
+  ];
+}
+
+int _quarterSeasonNumber(DateTime date) =>
+    (date.year - 2026) * 4 + (date.month - 1) ~/ 3 - 2;
+
+LeaderboardSeason _quarterSeason(int number) {
+  const months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  final start = DateTime.utc(2026, 10 + (number - 1) * 3);
+  final end = DateTime.utc(start.year, start.month + 3, 0);
+  String day(DateTime value) => value.toIso8601String().substring(0, 10);
+  return LeaderboardSeason(
+    id: 's$number',
+    label: 'S$number',
+    rangeLabel:
+        '${months[start.month - 1]} - ${months[end.month - 1]} ${start.year}',
+    startsOn: day(start),
+    endsOn: day(end),
+  );
+}
 
 LeaderboardSeason get activeLeaderboardSeason =>
-    leaderboardSeasonForDate(_bahrainToday());
+    leaderboardSeasonForDate(_phoenixToday());
 
 LeaderboardSeason leaderboardSeasonForDate(DateTime date) {
-  final day = DateTime.utc(date.year, date.month, date.day);
-  for (final season in leaderboardSeasons) {
-    final startsOn = DateTime.parse('${season.startsOn}T00:00:00Z');
-    final endsOn = DateTime.parse('${season.endsOn}T00:00:00Z');
-    if (!day.isBefore(startsOn) && !day.isAfter(endsOn)) return season;
-  }
-
-  final first = leaderboardSeasons.first;
-  final firstStart = DateTime.parse('${first.startsOn}T00:00:00Z');
-  if (day.isBefore(firstStart)) return first;
-  return leaderboardSeasons.last;
+  final number = _quarterSeasonNumber(date);
+  return number < 1 ? _initialLeaderboardSeason : _quarterSeason(number);
 }
 
 bool isActiveLeaderboardSeason(LeaderboardSeason season, {DateTime? now}) {
-  final bahrainDay = now ?? _bahrainToday();
-  final day = DateTime.utc(bahrainDay.year, bahrainDay.month, bahrainDay.day);
+  final marketDay = now ?? _phoenixToday();
+  final day = DateTime.utc(marketDay.year, marketDay.month, marketDay.day);
   final startsOn = DateTime.parse('${season.startsOn}T00:00:00Z');
   final endsOn = DateTime.parse('${season.endsOn}T00:00:00Z');
   return !day.isBefore(startsOn) && !day.isAfter(endsOn);
 }
 
-DateTime _bahrainToday() {
-  final now = DateTime.now().toUtc().add(const Duration(hours: 3));
+DateTime _phoenixToday() {
+  // Phoenix does not observe daylight saving time.
+  final now = DateTime.now().toUtc().subtract(const Duration(hours: 7));
   return DateTime.utc(now.year, now.month, now.day);
 }
 

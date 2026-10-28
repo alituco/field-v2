@@ -7,6 +7,36 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('paused clan games are disabled while Solo stays available', (
+    tester,
+  ) async {
+    await _setPhoneSize(tester);
+    final repository = _FakeFixtureRepository(
+      const MyClanMembership(clan: _mintMavericks, role: 'leader'),
+      clanEnabled: false,
+    );
+    await _pumpFixtures(tester, fixtureRepository: repository);
+    await tester.tap(find.text('PLAY'));
+    await _pumpAsync(tester);
+    expect(find.text('PAUSED'), findsOneWidget);
+    expect(
+      find.textContaining('Clan games are currently unavailable'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('play-clan-choice')));
+    await _pumpAsync(tester);
+    expect(find.text('Host for Mint Mavericks'), findsNothing);
+    expect(find.text('Solo game'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('play-solo-choice')));
+    await tester.pump(const Duration(milliseconds: 350));
+    await _pumpAsync(tester);
+    expect(find.text('WHERE DO YOU PLAY?'), findsOneWidget);
+  });
+
+  test('unavailable clan booking settings fail closed', () async {
+    expect(await clanGamesAvailable(_UnavailableSettingsRepository()), isFalse);
+  });
+
   test('match schedule policy uses Tuesday/Friday and the clan-only slot', () {
     expect(isFixtureMatchDay(DateTime(2026, 7, 14)), isTrue);
     expect(isFixtureMatchDay(DateTime(2026, 7, 17)), isTrue);
@@ -247,7 +277,8 @@ Future<void> _pumpFixtures(
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
-        body: FixturesScreen(
+        // These permissions and scheduling tests target legacy clan play.
+        body: LegacyFixturesScreen(
           fixtureRepository: fixtureRepository,
           openQueueRepository: const _FakeOpenQueueRepository(),
           onNavigateTab: onNavigateTab,
@@ -289,16 +320,23 @@ const _mintMavericks = FixtureClan(
   skillRating: 1600,
 );
 
-class _FakeFixtureRepository implements FixtureRepository {
-  _FakeFixtureRepository(this.membership) : _memberships = null;
+class _FakeFixtureRepository
+    implements FixtureRepository, FixtureBookingAvailabilityRepository {
+  _FakeFixtureRepository(this.membership, {this.clanEnabled = true})
+    : _memberships = null;
 
   _FakeFixtureRepository.sequence(List<MyClanMembership?> memberships)
     : membership = null,
+      clanEnabled = true,
       _memberships = memberships;
 
   final MyClanMembership? membership;
   final List<MyClanMembership?>? _memberships;
   int _membershipCallCount = 0;
+  final bool clanEnabled;
+
+  @override
+  Future<bool> areClanGamesEnabled() async => clanEnabled;
 
   @override
   Future<List<Fixture>> listFixtures() async => const [];
@@ -312,6 +350,15 @@ class _FakeFixtureRepository implements FixtureRepository {
     return memberships[index];
   }
 
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _UnavailableSettingsRepository
+    implements FixtureRepository, FixtureBookingAvailabilityRepository {
+  @override
+  Future<bool> areClanGamesEnabled() async =>
+      throw StateError('Settings unavailable');
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

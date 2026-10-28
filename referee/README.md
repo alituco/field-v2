@@ -36,14 +36,138 @@ Open `http://localhost:3001` on the referee phone or simulator browser.
 ```sh
 npm run typecheck
 npm test
+npm run test:ui
 npm run test:e2e -- --list
 ```
+
+`test:ui` runs isolated admin fields, schedules and referee-clock flows on port 3000 with mocked
+authentication/API responses. It does not create accounts, fields or games in
+staging. It covers required saved-field selection, the empty-catalogue handoff,
+map validation, archive/restore, failed saves, and preserving game drafts.
+For the Safari-engine coordinate regressions, install the Playwright WebKit
+browser (`npx playwright install webkit`) and run
+`FIELD_UI_WEBKIT=1 npm run test:ui`. Coordinates use explicit decimal/range
+validation rather than locale-dependent native number inputs.
 
 The Playwright journey under `e2e/` runs against the local production build
 connected to Field Staging. GitHub Actions creates its isolated manifest,
 executes the referee/admin workflow, verifies Postgres afterward, and cleans
 mutable test state. It is guarded for the exact Field Staging project and must
 not be pointed at production.
+
+## Ending and reopening a Solo match
+
+Apply `20261023000100_referee_finish_and_reopen.sql` before deploying the updated
+referee app. Assigned referees can end an active Season 0 Solo match while its
+clock is running or paused, including before the planned duration. Ending early
+saves the score and playing evidence without awarding SR or a rated appearance;
+the existing full-duration SR eligibility rule is unchanged.
+
+Open the completed match and choose **Reopen match** to continue. The score,
+roster, and recorded playing time remain intact, and the clock stays paused until
+the referee chooses **Resume**. Reopening withdraws the previous SR result and
+holds later results that depend on it; ending the match again replays those
+results without duplicate awards. Each transition checks the current revision
+and records an audit entry. A player's other active booking or checkout must be
+resolved before reopening. Cancelled matches and organizer-reviewed decisions
+remain under organizer control. Historical legacy and clan match workflows are
+unchanged.
+
+Ending a match still requests the usual delayed broadcast stop. Reopening the
+match does not reopen that broadcast; a stopped stream remains ended.
+
+## Saved fields and solo games
+
+Apply `20261011000100_saved_fields_and_game_locations.sql` to the target
+database **before** deploying this admin/mobile version. Running Next.js locally
+does not automatically apply database migrations.
+
+- Open **Admin → Fields** (`/admin/fields`) to add or edit a pitch. Each field
+  requires a name, street address, city/region/country, and valid map coordinates.
+- **Create solo game** requires an active saved field. If none exist, it opens
+  `/admin/fields/new` and returns to game creation with the new field selected.
+- Archiving hides a field from new games; restore it to make it available again.
+  Existing games keep their original location snapshot even if a field changes.
+- Mobile booking/details display that snapshot; Directions uses the precise pin.
+  Legacy games are not assigned invented addresses or coordinates.
+- One-off games accept any future date and kickoff, with a 30–180 minute duration
+  (default 60). Times are in America/Phoenix. Format stays seven-a-side and USD.
+- The same pitch cannot have overlapping non-cancelled games. Adjacent slots and
+  parallel games at different pitches are supported.
+
+Catalog access and mutations require an active admin. Players can read their
+game's public location, not private catalog/audit data. The database enforces
+active-field selection, snapshot consistency, and audit records. Historical and
+isolated service-owned test games remain compatible.
+
+## Recurring game schedules
+
+Apply `20261011000200_configurable_solo_schedules.sql` after the saved-fields
+migration. Open **Admin → Schedules** (`/admin/schedules`), or use **Recurring
+schedules** from Games. Select an active saved pitch, weekdays, kickoff, duration,
+start/end dates, price, and booking window (7–84 days; default 28).
+
+- Saving an active schedule opens bookings for eligible future dates within its
+  window immediately. A database cron job runs hourly at minute 7 to extend it.
+  Next.js does not need to remain open for recurring games to be generated.
+- Edits apply only to games not yet generated. Published games keep their times,
+  duration, price and location. Pause stops generation, not existing bookings.
+- Skip a future date with a reason; removing a skip makes that date eligible
+  again. If a game already exists, cancel it from its own game page instead.
+  Cancelled or removed generated games are never silently recreated.
+- Conflicts (including archived fields) appear in the schedule details. Correct
+  the pitch/time or field status and use **Generate next games** to retry.
+- Referee clocks default to each game's saved duration, with the existing
+  three-hour safety cap. Attendance, refund and team-draw policy rules stay intact.
+
+Schedule configuration and mutation RPCs require an active admin. The hourly
+worker is private and runs already-approved active schedules; it cannot be
+called by mobile clients. Schedule changes and generated games are audited.
+The isolated `supabase/scripts/test_game_schedules.mjs` suite covers permissions,
+overlap rejection, date windows, idempotency and preservation of existing games.
+
+## Editing a published game's price
+
+Apply `20261011000300_edit_solo_game_prices.sql` and deploy the updated
+`stripe-payment` function. Open an upcoming solo game's overview and choose
+**Edit price**. Admins can set free entry or $0.50–$100 per player, with a required
+audited reason. Started, cancelled, under-review and legacy games are read-only.
+
+- Only this game's future checkouts use the new price. Recurring schedule
+  templates, other generated games and the default price do not change.
+- Existing payments are never topped up or automatically refunded by a price
+  edit. Valid, unexpired checkouts keep their original server-owned quote.
+- Payment history retains the actual original match fee, deposit, total paid and
+  completed refunds for each booking, including cancelled/rebooked entries.
+  Missing historical amounts are shown as unrecorded, never inferred from the
+  game's current price.
+- Cancellation refunds still use each booking's original amounts. Concurrent
+  admin price changes require an explicit refresh before another save.
+
+`supabase/scripts/test_game_prices.mjs` checks authorization, concurrent edits,
+payment-quote preservation and original-amount refunds. Web unit/browser tests
+cover validation, audit requests and the payment history UI.
+
+Apply `20261011000400_enforce_bookable_game_prices.sql` with these changes.
+New one-off games and new or edited schedule prices accept free entry or
+$0.50–$100 in whole cents, matching Stripe's minimum charge. Historical games
+and payments retain their recorded prices and remain operable.
+
+## Interest signups
+
+Apply `20261012000600_capture_fieldrush_launch_interest.sql` to the target database
+**before** deploying this admin version. Open **Admin → Interest** to view email
+signups and existing player applications in the private `season_zero_waitlist`
+table. Only active admins can read the list.
+
+The public Fieldrush site and production admin use the same canonical production
+database, `zjsjuuhborxrlmdcpvlj`. Staging uses synthetic test entries in its own
+database and must not be connected to production.
+
+The list shows signup source, placement and consent date. The **Launch updates**
+filter includes earlier player applicants who subsequently subscribe without
+changing their original interest or status. An earlier application alone does
+not grant launch-update consent. Saving these signups does not send emails.
 
 ## Current Flow
 

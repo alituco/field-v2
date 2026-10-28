@@ -22,7 +22,8 @@ export type AdminReserveCandidate = {
   displayName: string;
   username: string | null;
   avatarUrl: string | null;
-  skillRating: number;
+  outfieldRating: number;
+  keeperRating: number;
   eligible: boolean;
   unavailableReason: string | null;
 };
@@ -127,7 +128,8 @@ export async function loadAdminReserveCandidates(
       displayName: text(profile.display_name, "Player"),
       username: nullableText(profile.username),
       avatarUrl: nullableText(profile.avatar_url),
-      skillRating: ratingFrom(profile.player_ratings),
+      outfieldRating: ratingFrom(rows(profile.fieldrush_player_rating_tracks).find((row) => row.rating_track === "OUTFIELD")),
+      keeperRating: ratingFrom(rows(profile.fieldrush_player_rating_tracks).find((row) => row.rating_track === "GOALKEEPER")),
       eligible: !isParticipant && !isReserve,
       unavailableReason: isParticipant
         ? "Already in the official roster"
@@ -142,7 +144,7 @@ async function searchProfiles(
   db: SupabaseClient,
   search: string,
 ): Promise<Row[]> {
-  const select = "id,display_name,username,avatar_url,player_ratings(skill_rating)";
+  const select = "id,display_name,username,avatar_url,fieldrush_player_rating_tracks(rating_track,skill_rating)";
   const build = () => {
     let query = db.from("profiles").select(select).order("display_name").limit(20);
     return query;

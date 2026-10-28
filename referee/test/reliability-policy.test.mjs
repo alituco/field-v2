@@ -18,8 +18,22 @@ import {
 test("the canonical reliability policy defaults pass strict validation", () => {
   assert.deepEqual(validateReliabilityPolicyConfig(reliabilityPolicyDefaults), []);
   assert.deepEqual(parseReliabilityPolicyConfig(reliabilityPolicyDefaults), reliabilityPolicyDefaults);
-  assert.equal(reliabilityPolicyDefaults.solo.playersPerSide, 6);
+  assert.equal(reliabilityPolicyDefaults.solo.playersPerSide, 7);
   assert.equal(reliabilityPolicyDefaults.clan.playersPerSide, 6);
+});
+
+test("historical six-a-side solo policies remain readable and normalize new drafts to seven", () => {
+  const historical = cloneReliabilityPolicyConfig(reliabilityPolicyDefaults);
+  historical.solo.playersPerSide = 6;
+  assert.ok(validateReliabilityPolicyConfig(historical).some((issue) =>
+    issue.path === "solo.playersPerSide"));
+  assert.deepEqual(validateReliabilityPolicyConfig(historical, {
+    allowLegacySoloSixSide: true,
+  }), []);
+  const editable = normalizeReliabilityPolicyDraftConfig(historical);
+  assert.equal(editable.solo.playersPerSide, 7);
+  assert.equal(historical.solo.playersPerSide, 6);
+  assert.deepEqual(validateReliabilityPolicyConfig(editable), []);
 });
 
 test("historical seven-a-side clan policies remain readable but cannot become drafts", () => {
@@ -41,6 +55,20 @@ test("historical seven-a-side clan policies remain readable but cannot become dr
 test("draft revision tokens preserve PostgreSQL microseconds", () => {
   const revision = "2026-07-17T00:47:48.977107+00:00";
   assert.equal(validReliabilityRevision(revision), revision);
+});
+
+test("new drafts refund original methods without rewriting historical wallet policies", () => {
+  const historical = cloneReliabilityPolicyConfig(reliabilityPolicyDefaults);
+  historical.wallet.refundDestination = "FIELD_WALLET";
+  historical.wallet.currency = "BHD";
+  historical.solo.reliabilityDeposit.onTimeReturnDestination = "FIELD_WALLET";
+  assert.deepEqual(validateReliabilityPolicyConfig(historical), []);
+  const editable = normalizeReliabilityPolicyDraftConfig(historical);
+  assert.equal(editable.wallet.refundDestination, "ORIGINAL_PAYMENT_METHOD");
+  assert.equal(editable.wallet.currency, "USD");
+  assert.equal(editable.solo.reliabilityDeposit.onTimeReturnDestination, "ORIGINAL_PAYMENT_METHOD");
+  assert.equal(historical.wallet.refundDestination, "FIELD_WALLET");
+  assert.equal(historical.wallet.currency, "BHD");
 });
 
 test("validation rejects unknown settings, unsafe thresholds, and overlapping cancellation bands", () => {

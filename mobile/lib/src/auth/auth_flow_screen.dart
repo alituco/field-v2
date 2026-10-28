@@ -7,6 +7,7 @@ import '../core/user_facing_error.dart';
 import 'auth_repository.dart';
 import 'date_of_birth.dart';
 import 'onboarding_status.dart';
+import '../ui/fieldrush_toast.dart';
 
 enum AuthStep { welcome, phone, otp, name, dateOfBirth }
 
@@ -257,9 +258,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen>
     try {
       await widget.authRepository.sendPhoneOtp(phone);
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Code sent again.')));
+      showFieldrushToast(context, 'Code sent again.');
     } catch (error) {
       if (!mounted) return;
       setState(
@@ -1632,23 +1631,8 @@ class _PrimaryButtonState extends State<_PrimaryButton> {
             mainAxisAlignment: MainAxisAlignment.center,
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (widget.isLoading) ...[
-                SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      disabled
-                          ? Colors.white.withValues(alpha: 0.30)
-                          : const Color(0xFF022C22),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 10),
-              ],
               Text(
-                widget.label.toUpperCase(),
+                widget.isLoading ? 'PLEASE WAIT…' : widget.label.toUpperCase(),
                 style: TextStyle(
                   color: disabled
                       ? Colors.white.withValues(alpha: 0.30)

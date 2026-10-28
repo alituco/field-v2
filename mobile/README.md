@@ -72,7 +72,39 @@ flutter analyze
 flutter test
 ```
 
-See [Tap Payments](../docs/tap-payments.md) for the secure local checkout
+### Screenshot (golden) tests
+
+Game-detail screenshots use exact pixel comparisons with bundled fonts and a
+390 × 844 logical viewport at device pixel ratio 1. Flutter's custom-font
+rasterization differs between host operating systems, even when the logical
+target platform is the same. Reviewed baselines therefore live in
+`test/goldens/macos/` and `test/goldens/linux/`, selected by the actual host OS.
+There is no cross-platform fallback or permitted percentage of differing pixels.
+
+Use the CI-pinned Flutter **3.44.1**. Linux baselines target **Ubuntu 24.04 x64**;
+macOS baselines target the Apple Silicon development environment. To check just
+these screens from `mobile/`:
+
+```sh
+flutter test test/fieldrush_game_detail_screen_test.dart
+```
+
+After an intentional visual change, regenerate on each supported host and
+visually review both sets before committing:
+
+```sh
+flutter test test/fieldrush_game_detail_screen_test.dart --update-goldens
+```
+
+Do not regenerate baselines in the CI verification command or increase a pixel
+tolerance to make failures disappear. CI retains expected, actual, and diff
+PNGs as `flutter-golden-failures-Linux` for seven days when comparisons fail;
+download that artifact to inspect the change. Local failure images go into
+`test/failures/` and are not committed. Other host operating systems require
+their own deliberately generated and reviewed baselines before running these
+golden tests.
+
+See [Stripe Payments](../docs/stripe-payments.md) for the secure local checkout
 setup, supported payment methods, and device requirements.
 
 The hosted Android journey lives in

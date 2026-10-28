@@ -1,0 +1,131 @@
+name: Upload production iOS to TestFlight
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type BUILD_PRODUCTION_IOS to build/sign/upload the production app
+        required: true
+        type: string
+      backend_confirmation:
+        description: Type PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT after production deployment, health and provider configuration checks
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+concurrency:
+  group: production-ios-upload
+  cancel-in-progress: false
+
+jobs:
+  release-evidence:
+    name: Verify tested and deployed production code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PRODUCTION_RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+      PRODUCTION_BACKEND_CONFIRMATION: ${{ inputs.backend_confirmation }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      - name: Require successful CI, staging journey, and production backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/verify-production-ios-release.mjs
+
+  upload:
+    name: Build, sign, and upload Field Production
+    needs: release-evidence
+    if: github.ref == 'refs/heads/prod'
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment:
+      name: production
+    env:
+      FIELD_ENVIRONMENT: production
+      SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+      IOS_PRODUCTION_BUNDLE_ID: ${{ vars.IOS_PRODUCTION_BUNDLE_ID }}
+      APPLE_MERCHANT_ID: merchant.com.alialtaraif.fieldrush.production
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      PRODUCTION_EMAIL_DELIVERY_ENABLED: ${{ vars.PRODUCTION_EMAIL_DELIVERY_ENABLED || 'false' }}
+      PRODUCTION_PUSH_NOTIFICATIONS_ENABLED: ${{ vars.PRODUCTION_PUSH_NOTIFICATIONS_ENABLED || 'false' }}
+      PUSH_FIREBASE_API_KEY: ${{ vars.PUSH_FIREBASE_API_KEY }}
+      PUSH_FIREBASE_PROJECT_ID: ${{ vars.PUSH_FIREBASE_PROJECT_ID }}
+      PUSH_FIREBASE_SENDER_ID: ${{ vars.PUSH_FIREBASE_SENDER_ID }}
+      PUSH_FIREBASE_IOS_APP_ID: ${{ vars.PUSH_FIREBASE_IOS_APP_ID }}
+      PUSH_FIREBASE_IOS_BUNDLE_ID: com.alialtaraif.field
+      PRODUCTION_RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+      PRODUCTION_BACKEND_CONFIRMATION: ${{ inputs.backend_confirmation }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0 (Node 24)
+
+      - name: Recheck release evidence after production environment approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/verify-production-ios-release.mjs
+
+      - name: Recheck production health and anonymous privacy before signing
+        timeout-minutes: 2
+        run: node .github/scripts/smoke-supabase.mjs
+
+      - name: Require Xcode 26 or newer
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcode_major="$(xcodebuild -version | awk '/^Xcode / {split($2, version, "."); print version[1]}')"
+          if [[ -z "$xcode_major" || "$xcode_major" -lt 26 ]]; then
+            echo "::error::Production uploads require Xcode 26 or newer."
+            exit 1
+          fi
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Build, sign, validate, and upload the production app
+        shell: bash
+        env:
+          APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APP_STORE_CONNECT_PRIVATE_KEY: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY }}
+          IOS_DISTRIBUTION_CERTIFICATE_BASE64: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_BASE64 }}
+          IOS_DISTRIBUTION_CERTIFICATE_PASSWORD: ${{ secrets.IOS_DISTRIBUTION_CERTIFICATE_PASSWORD }}
+          IOS_PRODUCTION_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PRODUCTION_PROVISIONING_PROFILE_BASE64 }}
+        run: bash .github/scripts/upload-production-testflight.sh
+
+      - name: Record what was uploaded
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo 'Field Production was uploaded to App Store Connect app **6827873998** for processing.'
+            echo ''
+            echo "Email delivery: **${PRODUCTION_EMAIL_DELIVERY_ENABLED}**; phone push: **${PRODUCTION_PUSH_NOTIFICATIONS_ENABLED}**."
+            echo ''
+            echo 'Internal TestFlight qualification upload only. Before App Review, verify this build on real devices, including phone/email, live payment/refund, deletion and each enabled feature.'
+            echo 'This workflow does not submit for App Review or publish the app.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload production build failure diagnostics
+        if: failure() || cancelled()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production-testflight-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: ignore
+          retention-days: 7
+          path: mobile/build/production-testflight-artifacts/

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadRowsForIds } from "./paginated-rows";
 
 import type {
   BlueCard,
@@ -10,6 +11,7 @@ import type {
 } from "./types";
 import { nullableSr, persistedOpenQueueTeam } from "./open-queue-ratings";
 import { loadMatchReliabilityContext } from "./match-reliability";
+import { soloScheduledDurationSeconds } from "./match-duration";
 import {
   loadRefereeRiskSignals,
   riskContextFor,
@@ -33,6 +35,10 @@ const BLACK = {
 
 const gameSelect = `
   id,
+  rating_policy_id,
+  minimum_players,
+  participation_rules_version,
+  capacity,
   status,
   operational_state,
   operational_state_updated_at,
@@ -57,30 +63,40 @@ export async function loadRefereeOpenQueueGames(
   db: SupabaseClient,
   refereeId: string,
 ): Promise<RefereeFixture[]> {
-  const { data: assignments, error: assignmentsError } = await db
-    .from("open_queue_referee_assignments")
-    .select("game_id")
-    .eq("referee_id", refereeId);
-
-  if (assignmentsError) throw assignmentsError;
-  const gameIds = (assignments ?? []).map((row) => String(row.game_id));
+  const assignedGameIds = new Set<string>();
+  const pageSize = 200;
+  for (let from = 0; ; from += pageSize) {
+    const { data: assignments, error } = await db
+      .from("open_queue_referee_assignments")
+      .select("game_id")
+      .eq("referee_id", refereeId)
+      .order("game_id")
+      .range(from, from + pageSize - 1);
+    if (error) throw error;
+    for (const row of assignments ?? []) assignedGameIds.add(String(row.game_id));
+    if ((assignments ?? []).length < pageSize) break;
+  }
+  const gameIds = [...assignedGameIds];
   if (gameIds.length === 0) return [];
 
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await db
-    .from("open_queue_games")
-    .select(gameSelect)
-    .in("id", gameIds)
-    .in("status", ["FULL", "LIVE", "FINAL"])
-    .gte("starts_at", since)
-    .order("starts_at");
-
-  if (error) throw error;
-  return hydrateOpenQueueRows(
-    db,
-    (data ?? []) as Record<string, unknown>[],
-    true,
-  );
+  const fixtures: RefereeFixture[] = [];
+  // Assignment is the visibility boundary, not status or age. Bounded batches
+  // also keep long assignment histories below REST URL and response limits.
+  for (let index = 0; index < gameIds.length; index += 50) {
+    const { data, error } = await db
+      .from("open_queue_games")
+      .select(gameSelect)
+      .in("id", gameIds.slice(index, index + 50))
+      .order("starts_at")
+      .order("id");
+    if (error) throw error;
+    fixtures.push(...await hydrateOpenQueueRows(
+      db,
+      (data ?? []) as Record<string, unknown>[],
+      true,
+    ));
+  }
+  return fixtures;
 }
 
 export async function loadAdminOpenQueueGames(
@@ -101,6 +117,16 @@ export async function loadAdminOpenQueueGames(
     (data ?? []) as Record<string, unknown>[],
     false,
   );
+}
+
+export async function loadAdminOpenQueueGame(
+  db: SupabaseClient,
+  gameId: string,
+): Promise<RefereeFixture | null> {
+  const { data, error } = await db.from("open_queue_games")
+    .select(gameSelect).eq("id", gameId).maybeSingle();
+  if (error) throw error;
+  return (await hydrateOpenQueueRows(db, data ? [data] : [], false))[0] ?? null;
 }
 
 async function hydrateOpenQueueRows(
@@ -146,6 +172,10 @@ async function hydrateOpenQueueRows(
 
     return {
       matchKind: "SOLO",
+      ratingPolicyId: String(row.rating_policy_id ?? "LEGACY"),
+      minimumPlayers: nullableNumber(row.minimum_players) ?? undefined,
+      participationRulesVersion: nullableString(row.participation_rules_version) ?? undefined,
+      capacity: nullableNumber(row.capacity) ?? undefined,
       id,
       status: String(row.status) as RefereeFixture["status"],
       operationalState: nullableString(row.operational_state),
@@ -154,6 +184,10 @@ async function hydrateOpenQueueRows(
       day: zonedPart(startsAt, timezone, "weekday").toUpperCase(),
       timeSlot: `${zonedTime(startsAt, timezone)} - ${zonedTime(endsAt, timezone)}`,
       matchDate: zonedDate(startsAt, timezone),
+      timezone,
+      startsAt,
+      endsAt,
+      scheduledDurationSeconds: soloScheduledDurationSeconds(startsAt, endsAt),
       cancellationCode: nullableString(row.cancellation_code),
       cancellationReason: nullableString(row.cancellation_reason),
       cancelledAt: nullableString(row.cancelled_at),
@@ -189,7 +223,7 @@ async function loadPlayers(
   db: SupabaseClient,
   gameIds: string[],
 ): Promise<GamePlayer[]> {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_bookings")
     .select(`
       id,
@@ -206,11 +240,10 @@ async function loadPlayers(
         avatar_url
       )
     `)
-    .in("game_id", gameIds)
+    .in("game_id", ids)
     .eq("status", "CONFIRMED")
-    .order("booked_at");
-
-  if (error) throw error;
+    .order("booked_at").order("id")
+    .range(from, to));
 
   return (data ?? []).map((row) => {
     const profile = asObject(row.profiles);
@@ -231,11 +264,10 @@ async function loadPlayers(
 
 async function loadClocks(db: SupabaseClient, gameIds: string[]) {
   const clocks = new Map<string, FixtureClock>();
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_clock_states")
     .select("game_id,status,started_at,accumulated_seconds,duration_seconds")
-    .in("game_id", gameIds);
-  if (error) throw error;
+    .in("game_id", ids).order("game_id").range(from, to));
 
   for (const row of data ?? []) {
     clocks.set(String(row.game_id), {
@@ -249,12 +281,11 @@ async function loadClocks(db: SupabaseClient, gameIds: string[]) {
 }
 
 async function loadGoals(db: SupabaseClient, gameIds: string[]) {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_goals")
     .select("id,game_id,team,profile_id,assist_profile_id,minute,created_at")
-    .in("game_id", gameIds)
-    .order("minute");
-  if (error) throw error;
+    .in("game_id", ids)
+    .order("minute").order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -268,14 +299,13 @@ async function loadGoals(db: SupabaseClient, gameIds: string[]) {
 }
 
 async function loadEvents(db: SupabaseClient, gameIds: string[]) {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_events")
     .select(
       "id,game_id,event_type,team,profile_id,assist_profile_id,blue_card_id,minute,second,note,created_at",
     )
-    .in("game_id", gameIds)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
+    .in("game_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),
@@ -293,14 +323,13 @@ async function loadEvents(db: SupabaseClient, gameIds: string[]) {
 }
 
 async function loadBlueCards(db: SupabaseClient, gameIds: string[]) {
-  const { data, error } = await db
+  const data = await loadRowsForIds(gameIds, (ids, from, to) => db
     .from("open_queue_blue_cards")
     .select(
       "id,game_id,team,profile_id,started_at,expires_at,duration_seconds,status,minute,second",
     )
-    .in("game_id", gameIds)
-    .order("created_at", { ascending: false });
-  if (error) throw error;
+    .in("game_id", ids)
+    .order("created_at", { ascending: false }).order("id").range(from, to));
 
   return (data ?? []).map((row) => ({
     id: String(row.id),

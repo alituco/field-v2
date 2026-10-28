@@ -1,7 +1,7 @@
 import {
   createClient,
   type SupabaseClient,
-} from "https://esm.sh/@supabase/supabase-js@2.86.0";
+} from "npm:@supabase/supabase-js@2.86.0";
 import { completeLocalFieldrushFixture } from "./_shared/fieldrush_fixture.ts";
 
 type ProfileRow = { id: string; phone: string | null };
@@ -17,56 +17,64 @@ const admin = createClient(url, serviceRoleKey, {
 
 const testSlotSeed = 3650 +
   crypto.getRandomValues(new Uint32Array(1))[0] % 1000;
-let first: ProfileRow;
-let second: ProfileRow;
-let participants: ProfileRow[];
-let firstClient: SupabaseClient;
-let secondClient: SupabaseClient;
-
-participants = [];
-for (let index = 1; index <= 12; index += 1) {
+const participants: ProfileRow[] = [];
+for (let index = 1; index <= 14; index += 1) {
   participants.push(await createVerificationProfile(String(index)));
 }
-[first, second] = participants;
+const [first, second] = participants;
 
-firstClient = await signedInClient(first.phone!);
-secondClient = await signedInClient(second.phone!);
+const firstClient = await signedInClient(first.phone!);
+const secondClient = await signedInClient(second.phone!);
 
+const { data: season, error: seasonError } = await admin.from(
+  "fieldrush_seasons",
+)
+  .select("starts_on,ends_on").eq("lifecycle", "ACTIVE").single();
+if (seasonError) throw seasonError;
 const { data: ownRatings, error: ownRatingError } = await firstClient.rpc(
-  "get_my_player_rating",
+  "get_fieldrush_player_ratings",
+  {
+    profile_id_to_use: first.id,
+    season_starts_on: season.starts_on,
+    season_ends_on: season.ends_on,
+  },
 );
 if (ownRatingError) throw ownRatingError;
 assert(
-  ownRatings.length === 1 && ownRatings[0].profile_id === first.id,
-  "The current-player rating RPC must return the signed-in player's row.",
+  ownRatings.profile_id === first.id &&
+    ownRatings.ratings.OUTFIELD.skill_rating === null &&
+    ownRatings.ratings.GOALKEEPER.skill_rating === null &&
+    ownRatings.ratings.OUTFIELD.lifetime_counted_matches === 0,
+  "The role-aware rating RPC must return the signed-in player with numeric SR hidden before placement.",
 );
 
 await verifyFinalRoleRace();
 await verifyWaitlistStateIsRejected();
 await verifyFullGameReopensWithPolicyRefund();
 console.log(
-  "Open Queue verified locally: atomic final spot, no waitlist state, hard caps, policy-backed cancellation/refund, wallet credit, and FULL→OPEN.",
+  "Open Queue verified locally: USD 13, 7v7 hard caps, atomic final spot, one upcoming/active game total, no waitlist, original-method policy refund with no wallet credit, and FULL→OPEN.",
 );
 
 async function verifyFinalRoleRace() {
-  const game = await createGame(futureBahrainOpenQueueStart(0), "RACE");
+  const game = await createGame(futurePhoenixOpenQueueStart(0), "RACE");
   await insertBooking(game.id, participants[2], "GK", "verify-race-existing");
 
   const paymentReferences = await Promise.all([
     prepareCapturedPayment(firstClient, first.id, game.id, "GK"),
     prepareCapturedPayment(secondClient, second.id, game.id, "GK"),
   ]);
-  const calls = [firstClient, secondClient].map((client, index) =>
-    client.rpc("book_open_queue_game", {
-      game_id_to_book: game.id,
-      role_to_book: "GK",
-      payment_method_to_use: "CARD",
-      payment_reference_to_use: paymentReferences[index],
+  const calls = paymentReferences.map((intentId) =>
+    admin.rpc("finalize_payment_intent", {
+      intent_id_to_finalize: intentId,
     })
   );
   const results = await Promise.all(calls);
-  const successes = results.filter((result) => result.error === null);
-  const failures = results.filter((result) => result.error !== null);
+  const successes = results.filter((result) =>
+    result.error === null && result.data?.status === "FINALIZED"
+  );
+  const failures = results.filter((result) =>
+    result.error !== null || result.data?.status !== "FINALIZED"
+  );
   assert(
     successes.length === 1,
     "Exactly one player must win the final goalkeeper spot.",
@@ -76,9 +84,50 @@ async function verifyFinalRoleRace() {
     "Exactly one final-spot booking must be rejected.",
   );
   assert(
-    failures[0].error!.message.includes("position just filled"),
+    (failures[0].error?.message ?? failures[0].data?.failure_reason ?? "")
+      .includes("position just filled"),
     "The losing booking should receive the position-filled business error.",
   );
+
+  // A different non-overlapping day is still a second registration. Verify
+  // both the player-facing preflight and direct fixture insertion reject it.
+  const nextGame = await createGame(futurePhoenixOpenQueueStart(3), "LIMIT");
+  const winningClient = results[0].data?.status === "FINALIZED"
+    ? firstClient
+    : secondClient;
+  const { error: limitError } = await winningClient.rpc(
+    "preview_open_queue_booking_cost",
+    { game_id_to_book: nextGame.id, role_to_book: "DEF" },
+  );
+  assert(
+    limitError?.message.includes("one upcoming or active game") === true,
+    "A player with one registered game must not start checkout for another day.",
+  );
+  let directRejected = false;
+  try {
+    await insertBooking(nextGame.id, participants[2], "DEF", "verify-limit");
+  } catch (error) {
+    assert(
+      (error as { message?: string }).message?.includes(
+        "one upcoming or active game",
+      ) === true,
+      "Direct second-game registration must fail at the same one-game rule.",
+    );
+    directRejected = true;
+  }
+  assert(directRejected, "Direct registration bypassed the one-game limit.");
+
+  // Retire this completed synthetic scenario before the next scenario reuses
+  // its participants. Never bypass the registration guard or erase payments.
+  const { error: retireError } = await admin.from("open_queue_games").update({
+    status: "CANCELLED",
+    cancellation_code: "ADMIN_DECISION",
+    cancellation_reason: "Open Queue final-spot verification completed.",
+    cancelled_at: new Date().toISOString(),
+    cancelled_by: first.id,
+    cancellation_context: { source: "OPEN_QUEUE_VERIFICATION" },
+  }).eq("id", game.id);
+  if (retireError) throw retireError;
 }
 
 async function prepareCapturedPayment(
@@ -92,31 +141,37 @@ async function prepareCapturedPayment(
     { game_id_to_book: gameId, role_to_book: role },
   );
   if (quoteError) throw quoteError;
+  assert(
+    quote.currency === "USD" && quote.total_fils === 13000,
+    "Synthetic captured checkout must use the authoritative USD 13 quote.",
+  );
 
   const id = crypto.randomUUID();
   const compactId = id.replaceAll("-", "");
   const chargeId = `chg_verify_${compactId}`;
-  const { error } = await admin.from("tap_payment_intents").insert({
+  const { error } = await admin.from("payment_intents").insert({
     id,
     profile_id: profileId,
     purpose: "SOLO_BOOKING",
     status: "CAPTURED",
-    currency: "BHD",
+    provider: "STAGING_E2E",
+    currency: quote.currency,
     amount_fils: Number(quote.total_fils),
     payload: { game_id: gameId, role },
     quote_snapshot: quote,
     transaction_reference: `field_verify_${compactId}`,
-    tap_charge_id: chargeId,
-    tap_payment_method: "CARD",
-    tap_status: "CAPTURED",
+    provider_intent_id: `field_e2e_intent_${compactId}`,
+    provider_payment_id: chargeId,
+    payment_method: "CARD",
+    provider_status: "SUCCEEDED",
     captured_at: new Date().toISOString(),
   });
   if (error) throw error;
-  return chargeId;
+  return id;
 }
 
 async function verifyFullGameReopensWithPolicyRefund() {
-  const game = await createGame(futureBahrainOpenQueueStart(2), "FULL");
+  const game = await createGame(futurePhoenixOpenQueueStart(2), "FULL");
   const roles = [
     "GK",
     "GK",
@@ -124,14 +179,33 @@ async function verifyFullGameReopensWithPolicyRefund() {
     "DEF",
     "DEF",
     "DEF",
-    "MID",
-    "MID",
-    "MID",
-    "MID",
+    "DEF",
+    "DEF",
+    "ATT",
+    "ATT",
+    "ATT",
+    "ATT",
     "ATT",
     "ATT",
   ];
   for (let index = 0; index < participants.length; index += 1) {
+    if (index === 0) {
+      const intentId = await prepareCapturedPayment(
+        firstClient,
+        first.id,
+        game.id,
+        roles[index],
+      );
+      const { data, error } = await admin.rpc("finalize_payment_intent", {
+        intent_id_to_finalize: intentId,
+      });
+      if (error) throw error;
+      assert(
+        data?.status === "FINALIZED",
+        "The cancellable booking must have a verified synthetic provider payment.",
+      );
+      continue;
+    }
     await insertBooking(
       game.id,
       participants[index],
@@ -148,7 +222,7 @@ async function verifyFullGameReopensWithPolicyRefund() {
   if (fullGameError) throw fullGameError;
   assert(
     fullGame.status === "FULL",
-    "The twelfth confirmed booking must mark a game FULL.",
+    "The fourteenth confirmed booking must mark a game FULL.",
   );
 
   const booking = await ownBooking(firstClient, game.id);
@@ -174,8 +248,12 @@ async function verifyFullGameReopensWithPolicyRefund() {
   );
   assert(
     preview.refund_amount_fils ===
-      Math.floor(3000 * preview.refund_bps / 10000),
+      Math.floor(13000 * preview.refund_bps / 10000),
     "The quoted refund must be calculated from the stored base price.",
+  );
+  assert(
+    preview.refund_destination === "ORIGINAL_PAYMENT_METHOD",
+    "The new payment cancellation quote must not offer wallet credit.",
   );
 
   const { data: cancelled, error: cancelError } = await firstClient.rpc(
@@ -201,23 +279,38 @@ async function verifyFullGameReopensWithPolicyRefund() {
   );
 
   if (preview.refund_amount_fils > 0) {
-    const { data: walletCredit, error: walletError } = await admin
-      .from("field_wallet_transactions")
-      .select("amount_fils,transaction_type")
-      .eq("booking_id", booking.id)
-      .eq("transaction_type", "BOOKING_REFUND")
-      .single();
+    assert(
+      cancelled.refund_destination === "ORIGINAL_PAYMENT_METHOD" &&
+        cancelled.refund_status === "PROCESSED",
+      "Local synthetic cancellation must settle its original-method refund.",
+    );
+    const { data: refund, error: refundError } = await admin.from(
+      "payment_refunds",
+    )
+      .select("amount_fils,amount_minor,currency,status,provider_status")
+      .eq("intent_id", cancelled.payment_intent_id).single();
+    if (refundError) throw refundError;
+    assert(
+      refund.amount_fils === preview.refund_amount_fils &&
+        refund.amount_minor === Math.floor(preview.refund_amount_fils / 10) &&
+        refund.currency === "USD" && refund.status === "SUCCEEDED" &&
+        refund.provider_status === "staging_e2e",
+      "The isolated refund ledger must match the quoted USD amount; no real provider is contacted.",
+    );
+    const { data: credits, error: walletError } = await admin.from(
+      "field_wallet_transactions",
+    ).select("id,currency").eq("booking_id", booking.id);
     if (walletError) throw walletError;
     assert(
-      walletCredit.amount_fils === preview.refund_amount_fils,
-      "A refundable cancellation must credit the quoted amount to Field Wallet.",
+      credits.length === 0,
+      "Original-method refunds must never credit a USD or historical wallet.",
     );
   }
 }
 
 async function verifyWaitlistStateIsRejected() {
   const game = await createGame(
-    futureBahrainOpenQueueStart(1),
+    futurePhoenixOpenQueueStart(1),
     "NO-WAITLIST",
   );
   const { data: rating, error: ratingError } = await admin
@@ -231,11 +324,11 @@ async function verifyWaitlistStateIsRejected() {
   const { error } = await admin.from("open_queue_bookings").insert({
     game_id: game.id,
     profile_id: first.id,
-    role: "MID",
+    role: "DEF",
     status: "WAITLIST",
     player_rating_at_booking: rating.skill_rating,
-    amount_paid_fils: 3000,
-    base_amount_fils: 3000,
+    amount_paid_fils: 13000,
+    base_amount_fils: 13000,
     discount_bps: 0,
     reliability_deposit_fils: 0,
     reliability_deposit_status: "NOT_REQUIRED",
@@ -253,10 +346,18 @@ async function createGame(startsAt: Date, suffix: string) {
   const { data, error } = await admin
     .from("open_queue_games")
     .insert({
+      format_version: "FIELDRUSH_7V7",
+      currency: "USD",
+      timezone: "America/Phoenix",
+      capacity: 14,
+      goalkeeper_capacity: 2,
+      defender_capacity: 6,
+      midfielder_capacity: 0,
+      attacker_capacity: 6,
       venue: `[OQ VERIFY ${suffix}] ${crypto.randomUUID().slice(0, 8)}`,
       starts_at: startsAt.toISOString(),
       ends_at: new Date(startsAt.getTime() + 60 * 60 * 1000).toISOString(),
-      price_fils: 3000,
+      price_fils: 13000,
     })
     .select("id")
     .single();
@@ -282,8 +383,8 @@ async function insertBooking(
     profile_id: profile.id,
     role,
     player_rating_at_booking: rating.skill_rating,
-    amount_paid_fils: 3000,
-    base_amount_fils: 3000,
+    amount_paid_fils: 13000,
+    base_amount_fils: 13000,
     discount_bps: 0,
     reliability_deposit_fils: 0,
     reliability_deposit_status: "NOT_REQUIRED",
@@ -328,8 +429,8 @@ async function signedInClient(phone: string) {
 }
 
 async function createVerificationProfile(label: string): Promise<ProfileRow> {
-  const digits = String(Math.floor(10_000_000 + Math.random() * 89_999_999));
-  const phone = `+973${digits}`;
+  const digits = String(Math.floor(1_000_000 + Math.random() * 8_999_999));
+  const phone = `+1480${digits}`;
   const { data, error } = await admin.auth.admin.createUser({
     phone,
     password,
@@ -347,19 +448,19 @@ async function createVerificationProfile(label: string): Promise<ProfileRow> {
     phone,
     password,
     firstName: "Open Queue",
-    lastName: `Verify ${label}`,
+    lastName: "Verification",
     dateOfBirth: "2000-01-01",
     username: `oq_verify_${digits}`,
   });
   return { id: data.user.id, phone };
 }
 
-function futureBahrainOpenQueueStart(slotOffset: number) {
+function futurePhoenixOpenQueueStart(slotOffset: number) {
   assert(
     Number.isInteger(slotOffset) && slotOffset >= 0,
     "Open Queue slot offset must be a non-negative integer.",
   );
-  const nowInBahrain = new Date(Date.now() + 3 * 60 * 60 * 1000);
+  const nowInPhoenix = new Date(Date.now() - 7 * 60 * 60 * 1000);
   let matchingSlot = 0;
   for (
     let daysAhead = testSlotSeed;
@@ -367,9 +468,9 @@ function futureBahrainOpenQueueStart(slotOffset: number) {
     daysAhead += 1
   ) {
     const localDate = new Date(Date.UTC(
-      nowInBahrain.getUTCFullYear(),
-      nowInBahrain.getUTCMonth(),
-      nowInBahrain.getUTCDate() + daysAhead,
+      nowInPhoenix.getUTCFullYear(),
+      nowInPhoenix.getUTCMonth(),
+      nowInPhoenix.getUTCDate() + daysAhead,
       12,
     ));
     const weekday = localDate.getUTCDay();
@@ -381,8 +482,8 @@ function futureBahrainOpenQueueStart(slotOffset: number) {
     return new Date(Date.UTC(
       localDate.getUTCFullYear(),
       localDate.getUTCMonth(),
-      localDate.getUTCDate(),
-      17,
+      localDate.getUTCDate() + 1,
+      3,
       30,
     ));
   }

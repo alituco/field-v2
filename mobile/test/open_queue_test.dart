@@ -4,16 +4,128 @@ import 'package:field/src/ranking/rating_division.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'configured minimum is total players and remains separate from full capacity',
+    () {
+      final base = <String, dynamic>{
+        'id': 'small-game',
+        'status': 'OPEN',
+        'capacity': 14,
+        'starts_at': '2099-01-01T00:00:00Z',
+        'ends_at': '2099-01-01T01:00:00Z',
+        'confirmed_count': 2,
+        'minimum_players': 2,
+        'participation_rules_version': 's0-configurable-v1',
+        'teams_assigned_at': '2098-12-31T23:00:00Z',
+      };
+      for (final game in [
+        OpenQueueGame.fromJson(base),
+        OpenQueueGame.fromBookingJson(base),
+      ]) {
+        expect(game.minimumPlayers, 2);
+        expect(game.hasMinimumPlayers, isTrue);
+        expect(game.isFull, isFalse);
+        expect(game.isUpcomingMatchConfirmed, isTrue);
+        expect(game.hasActiveTeamAssignment, isTrue);
+        expect(game.statusLabel, 'Minimum reached');
+        expect(game.minimumPlayersLabel, '2 minimum · 14 maximum');
+      }
+      final below = OpenQueueGame.fromJson({...base, 'minimum_players': 3});
+      expect(below.hasMinimumPlayers, isFalse);
+      expect(below.isUpcomingMatchConfirmed, isFalse);
+      expect(
+        below.minimumPlayersProgressLabel,
+        '1 more needed · 3 minimum · 14 maximum',
+      );
+      final odd = OpenQueueGame.fromJson({
+        ...base,
+        'minimum_players': 3,
+        'confirmed_count': 3,
+      });
+      expect(odd.hasMinimumPlayers, isTrue);
+      final old = OpenQueueGame.fromJson({
+        ...base,
+        'participation_rules_version': 's0-standard-v1',
+      });
+      expect(old.hasMinimumPlayers, isFalse);
+      expect(old.isUpcomingMatchConfirmed, isFalse);
+      expect(old.statusLabel, 'Spots available');
+      final malformed = OpenQueueGame.fromJson({...base, 'minimum_players': 1});
+      expect(malformed.hasMinimumPlayers, isFalse);
+      expect(malformed.requiredMinimumPlayers, 14);
+    },
+  );
+
+  test(
+    'game division ranges describe server admission and preserve old all-division games',
+    () {
+      OpenQueueGame game(int highest, int lowest) => OpenQueueGame(
+        id: 'game',
+        status: 'OPEN',
+        venue: 'Phoenix',
+        startsAt: DateTime.utc(2099),
+        endsAt: DateTime.utc(2099, 1, 1, 1),
+        timezone: 'America/Phoenix',
+        priceFils: 13000,
+        ageLabel: '18+',
+        capacity: 14,
+        confirmedCount: 0,
+        spots: const {},
+        highestDivision: highest,
+        lowestDivision: lowest,
+      );
+      final restricted = game(2, 4);
+      expect(restricted.divisionRangeLabel, 'DIV 2–4');
+      expect(restricted.allowedDivisions, [2, 3, 4]);
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1200, matchesPlayed: 1),
+        isTrue,
+      );
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1200, matchesPlayed: 2),
+        isTrue,
+      );
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1099, matchesPlayed: 2),
+        isFalse,
+      );
+      expect(
+        restricted.allowsPlayerDivision(skillRating: 1650, matchesPlayed: 2),
+        isFalse,
+      );
+      expect(
+        game(1, 5).allowsPlayerDivision(skillRating: 1200, matchesPlayed: 0),
+        isTrue,
+      );
+      expect(game(3, 3).divisionRangeLabel, 'DIV 3');
+      final json = <String, dynamic>{
+        'id': 'game',
+        'starts_at': '2099-01-01T00:00:00Z',
+        'ends_at': '2099-01-01T01:00:00Z',
+        'highest_division': 2,
+        'lowest_division': 4,
+      };
+      for (final parsed in [
+        OpenQueueGame.fromJson(json),
+        OpenQueueGame.fromBookingJson(json),
+      ]) {
+        expect(parsed.allowedDivisions, [2, 3, 4]);
+      }
+      json.remove('highest_division');
+      json.remove('lowest_division');
+      expect(OpenQueueGame.fromJson(json).acceptsPlacementPlayers, isTrue);
+    },
+  );
   test('Player Rating uses the shared five-division thresholds', () {
     expect(ratingDivisionLabel(0), 'Division 5');
-    expect(ratingDivisionLabel(999), 'Division 5');
-    expect(ratingDivisionLabel(1000), 'Division 4');
+    expect(ratingDivisionLabel(1099), 'Division 5');
+    expect(ratingDivisionLabel(1100), 'Division 4');
     expect(ratingDivisionLabel(1299), 'Division 4');
     expect(ratingDivisionLabel(1300), 'Division 3');
-    expect(ratingDivisionLabel(1599), 'Division 3');
-    expect(ratingDivisionLabel(1600), 'Division 2');
-    expect(ratingDivisionLabel(1799), 'Division 2');
-    expect(ratingDivisionLabel(1800), 'Division 1');
+    expect(ratingDivisionLabel(1499), 'Division 3');
+    expect(ratingDivisionLabel(1500), 'Division 2');
+    expect(ratingDivisionLabel(1649), 'Division 2');
+    expect(ratingDivisionLabel(1650), 'Division 1');
     expect(ratingDivisionLabel(2600), 'Division 1');
   });
 
@@ -47,18 +159,117 @@ void main() {
     },
   );
 
-  test('role caps match balanced six-a-side teams', () {
+  test('older 7v7 payloads retain their original 1/3/3 formation', () {
     expect(OpenQueueRole.goalkeeper.matchCapacity, 2);
-    expect(OpenQueueRole.defender.matchCapacity, 4);
-    expect(OpenQueueRole.midfielder.matchCapacity, 4);
-    expect(OpenQueueRole.attacker.matchCapacity, 2);
+    expect(OpenQueueRole.defender.matchCapacity, 6);
+    expect(OpenQueueRole.midfielder.matchCapacity, 0);
+    expect(OpenQueueRole.attacker.matchCapacity, 6);
+    expect(OpenQueueRole.midfielder.legacyMatchCapacity, 4);
     expect(
       OpenQueueRole.values.fold<int>(
         0,
         (total, role) => total + role.matchCapacity,
       ),
-      12,
+      14,
     );
+  });
+
+  group('saved game formation', () {
+    Map<String, dynamic> gameJson({int capacity = 14}) => {
+      'id': 'formation-game',
+      'status': 'OPEN',
+      'starts_at': '2099-01-01T00:00:00Z',
+      'ends_at': '2099-01-01T01:00:00Z',
+      'capacity': capacity,
+      'goalkeeper_spots': 2,
+      'defender_spots': 4,
+      'midfielder_spots': 0,
+      'attacker_spots': 8,
+    };
+
+    test(
+      'feed, match detail and booking history use saved 1/2/4 capacities',
+      () {
+        final json = {
+          ...gameJson(),
+          'goalkeeper_capacity': 2,
+          'defender_capacity': 4,
+          'midfielder_capacity': 0,
+          'attacker_capacity': 8,
+        };
+        for (final game in [
+          OpenQueueGame.fromJson(json),
+          OpenQueueGame.fromBookingJson(json),
+          OpenQueueMatchDetail.fromJson({'game': json}).game,
+        ]) {
+          expect(game.goalkeeperCapacity, 2);
+          expect(game.defenderCapacity, 4);
+          expect(game.midfielderCapacity, 0);
+          expect(game.attackerCapacity, 8);
+          expect(game.capacityFor(OpenQueueRole.goalkeeper), 2);
+          expect(game.capacityFor(OpenQueueRole.defender), 4);
+          expect(game.capacityFor(OpenQueueRole.midfielder), 0);
+          expect(game.capacityFor(OpenQueueRole.attacker), 8);
+        }
+      },
+    );
+
+    test('omitted capacity metadata preserves old 7v7 and 6v6 history', () {
+      for (final parse in [
+        OpenQueueGame.fromJson,
+        OpenQueueGame.fromBookingJson,
+      ]) {
+        final seven = parse(gameJson());
+        expect(seven.goalkeeperCapacity, isNull);
+        expect(seven.defenderCapacity, isNull);
+        expect(seven.attackerCapacity, isNull);
+        expect(seven.capacityFor(OpenQueueRole.goalkeeper), 2);
+        expect(seven.capacityFor(OpenQueueRole.defender), 6);
+        expect(seven.capacityFor(OpenQueueRole.midfielder), 0);
+        expect(seven.capacityFor(OpenQueueRole.attacker), 6);
+        final six = parse(gameJson(capacity: 12));
+        expect(six.capacityFor(OpenQueueRole.goalkeeper), 2);
+        expect(six.capacityFor(OpenQueueRole.defender), 4);
+        expect(six.capacityFor(OpenQueueRole.midfielder), 4);
+        expect(six.capacityFor(OpenQueueRole.attacker), 2);
+      }
+    });
+
+    test('zero defender capacity stays unavailable even with stale spots', () {
+      final game = OpenQueueGame.fromJson({
+        ...gameJson(),
+        'goalkeeper_capacity': 2,
+        'defender_capacity': 0,
+        'midfielder_capacity': 0,
+        'attacker_capacity': 12,
+      });
+      expect(game.capacityFor(OpenQueueRole.defender), 0);
+      expect(game.canBook(OpenQueueRole.defender), isFalse);
+      expect(game.canBook(OpenQueueRole.attacker), isTrue);
+    });
+
+    test('booking copies keep their saved formation', () {
+      final booking = OpenQueueBooking.fromJson({
+        'id': 'booking',
+        'game_id': 'formation-game',
+        'profile_id': 'profile',
+        'role': 'ATT',
+        'status': 'CONFIRMED',
+        'amount_paid_fils': 13000,
+        'booked_at': '2098-12-31T12:00:00Z',
+        'game': {
+          ...gameJson(),
+          'goalkeeper_capacity': 2,
+          'defender_capacity': 4,
+          'midfielder_capacity': 0,
+          'attacker_capacity': 8,
+        },
+      });
+      final copied = booking.copyWith();
+      expect(copied.game.capacityFor(OpenQueueRole.defender), 4);
+      expect(copied.game.capacityFor(OpenQueueRole.attacker), 8);
+      expect(copied.role, OpenQueueRole.attacker);
+    });
   });
 
   test('fixture feed games parse results and the caller booking safely', () {
@@ -143,6 +354,45 @@ void main() {
     expect(booking.game.isFull, isFalse);
     expect(booking.assignedTeam, isNull);
     expect(booking.kitInstruction, isNull);
+  });
+
+  for (final team in [openQueueWhiteTeamId, openQueueBlackTeamId]) {
+    test('assigned $team kit does not depend on public SR aggregates', () {
+      final booking = _privacyMaskedAssignment(team: team);
+
+      expect(booking.game.hasActiveTeamAssignment, isTrue);
+      expect(booking.assignedTeam, team);
+      expect(booking.kitInstruction, 'WEAR $team');
+      expect(booking.game.whiteAverageSr, isNull);
+      expect(booking.game.blackAverageSr, isNull);
+      expect(booking.game.matchAverageSr, isNull);
+      expect(booking.game.teamSrSpread, isNull);
+    });
+  }
+
+  test('privacy-independent assignment retains canonical readiness guards', () {
+    for (final overrides in <Map<String, Object?>>[
+      {'status': 'OPEN'},
+      {'confirmed_count': 13},
+      {'capacity': 0, 'confirmed_count': 0},
+      {'teams_assigned_at': null},
+      {'team_assignment_at': '2099-01-01T00:00:00Z'},
+      {'white_score': 1, 'black_score': 0},
+      {'status': 'CANCELLED'},
+    ]) {
+      final booking = _privacyMaskedAssignment(gameOverrides: overrides);
+      expect(
+        booking.game.hasActiveTeamAssignment,
+        isFalse,
+        reason: '$overrides',
+      );
+      expect(booking.assignedTeam, isNull, reason: '$overrides');
+      expect(booking.kitInstruction, isNull, reason: '$overrides');
+    }
+    final invalidTeam = _privacyMaskedAssignment(team: 'GREEN');
+    expect(invalidTeam.game.hasActiveTeamAssignment, isTrue);
+    expect(invalidTeam.assignedTeam, isNull);
+    expect(invalidTeam.kitInstruction, isNull);
   });
 
   test('played or scored games are never upcoming reservations', () {
@@ -259,6 +509,143 @@ void main() {
     expect(context.partyLockLeadLabel, '2 hours 15 minutes before kickoff');
   });
 
+  test(
+    'solo lobby aggregate is independent of individual rating visibility',
+    () {
+      final detail = OpenQueueMatchDetail.fromJson({
+        'game': {
+          'id': 'solo-detail',
+          'status': 'OPEN',
+          'starts_at': '2026-10-23T01:00:00Z',
+          'ends_at': '2026-10-23T02:00:00Z',
+        },
+        'lobby_average_sr': 1150.4,
+        'players': [
+          {
+            'id': 'placement-player',
+            'display_name': 'Placement Player',
+            'role': 'DEF',
+            'skill_rating': null,
+            'rating_at_match_start': null,
+            'rating_at_team_assignment': null,
+            'rating_visible': false,
+            'matches_played': 1,
+          },
+        ],
+      });
+      expect(detail.lobbyAverageSr, 1150);
+      expect(detail.players.single.displayedRating, isNull);
+      expect(
+        OpenQueueMatchDetail.fromJson({
+          'game': {
+            'id': 'legacy',
+            'starts_at': '2026-10-23T01:00:00Z',
+            'ends_at': '2026-10-23T02:00:00Z',
+          },
+        }).lobbyAverageSr,
+        isNull,
+      );
+    },
+  );
+
+  for (final status in ['OPEN', 'FULL', 'LIVE']) {
+    for (final sr in [1228, 0, -20]) {
+      test(
+        'current roster SR $sr is visible during $status without a snapshot',
+        () {
+          final detail = OpenQueueMatchDetail.fromJson({
+            'id': 'pregame',
+            'status': status,
+            'starts_at': '2026-10-27T20:30:00Z',
+            'ends_at': '2026-10-27T21:30:00Z',
+            'rating_status': 'UNSETTLED',
+            'players': [
+              {
+                'id': 'me',
+                'display_name': 'Ali A.',
+                'role': 'ATT',
+                'is_me': true,
+                'rating_visible': true,
+                'roster_skill_rating': sr,
+                'rating_at_team_assignment': null,
+                'rating_at_match_start': null,
+                'rating_status': 'UNSETTLED',
+                'rating_change': 40,
+              },
+            ],
+          });
+          final player = detail.players.single;
+          expect(detail.rosterRatingFor(player), sr);
+          expect(player.displayedRating, isNull);
+          expect(player.ratingChange, isNull);
+          expect(detail.viewerRatingUpdate, isNull);
+          expect(player.toFixtureLineupPlayer().displayedRating, isNull);
+        },
+      );
+    }
+  }
+
+  test('roster SR respects placement privacy even for the viewer', () {
+    final player = OpenQueuePlayer.fromJson({
+      'id': 'me',
+      'display_name': 'Placement',
+      'role': 'GK',
+      'is_me': true,
+      'rating_visible': false,
+      'roster_skill_rating': 1200,
+    });
+    expect(player.rosterSkillRating, isNull);
+    final detail = OpenQueueMatchDetail.fromJson({
+      'status': 'FULL',
+      'starts_at': '2026-10-27T20:30:00Z',
+      'ends_at': '2026-10-27T21:30:00Z',
+    });
+    expect(detail.rosterRatingFor(player), isNull);
+    expect(
+      detail.rosterRatingFor(
+        const OpenQueuePlayer(
+          id: 'hidden',
+          displayName: 'Hidden',
+          role: OpenQueueRole.attacker,
+          team: '',
+          played: false,
+          isMe: false,
+          ratingVisible: false,
+          rosterSkillRating: 1200,
+        ),
+      ),
+      isNull,
+    );
+  });
+
+  for (final status in ['FINAL', 'CANCELLED']) {
+    test('$status roster keeps its frozen SR rather than current SR', () {
+      final detail = OpenQueueMatchDetail.fromJson({
+        'id': 'historical',
+        'status': status,
+        'starts_at': '2026-10-27T20:30:00Z',
+        'ends_at': '2026-10-27T21:30:00Z',
+        'rating_status': 'RATED',
+        'players': [
+          {
+            'id': 'me',
+            'display_name': 'Ali A.',
+            'role': 'ATT',
+            'is_me': true,
+            'rating_visible': true,
+            'roster_skill_rating': 1600,
+            'rating_at_match_start': 1200,
+            'rating_change': 28,
+            'rating_status': 'RATED',
+          },
+        ],
+      });
+      expect(detail.rosterRatingFor(detail.players.single), 1200);
+      expect(detail.viewerRatingUpdate?.ratingBefore, 1200);
+      expect(detail.viewerRatingUpdate?.ratingAfter, 1228);
+    });
+  }
+
   test('solo match detail maps teams, clock, goals, and replay data', () {
     final detail = OpenQueueMatchDetail.fromJson({
       'id': 'solo-detail',
@@ -365,3 +752,36 @@ void main() {
     );
   });
 }
+
+OpenQueueBooking _privacyMaskedAssignment({
+  String team = openQueueWhiteTeamId,
+  Map<String, Object?> gameOverrides = const {},
+}) => OpenQueueBooking.fromJson({
+  'id': 'booking',
+  'game_id': 'game',
+  'profile_id': 'profile',
+  'role': 'ATT',
+  'status': 'CONFIRMED',
+  'team': team,
+  'amount_paid_fils': 8000,
+  'booked_at': '2026-10-15T12:00:00Z',
+  'game': {
+    'id': 'game',
+    'status': 'FULL',
+    'venue': 'Reach 11 Fields',
+    'starts_at': '2099-01-01T01:00:00Z',
+    'ends_at': '2099-01-01T02:00:00Z',
+    'timezone': 'America/Phoenix',
+    'currency': 'USD',
+    'price_fils': 8000,
+    'capacity': 14,
+    'confirmed_count': 14,
+    'teams_assigned_at': '2000-01-01T00:00:00Z',
+    'team_assignment_at': '2000-01-01T00:00:00Z',
+    'white_average_sr': null,
+    'black_average_sr': null,
+    'match_average_sr': null,
+    'team_sr_spread': null,
+    ...gameOverrides,
+  },
+});

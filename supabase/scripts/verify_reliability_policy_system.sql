@@ -6,6 +6,7 @@ declare
   supported_config jsonb;
   function_text text;
   result_signature text;
+  helper_signature text;
   published_count integer;
 begin
   select policy.config into seeded_config
@@ -23,15 +24,15 @@ begin
     raise exception 'The initial check-in opening lead must be 120 minutes.';
   end if;
   supported_config := jsonb_set(
-    jsonb_set(seeded_config, '{solo,playersPerSide}', '6'::jsonb),
+    jsonb_set(seeded_config, '{solo,playersPerSide}', '7'::jsonb),
     '{clan,playersPerSide}',
     '6'::jsonb
   );
   if not public.reliability_policy_release_controls_are_valid(supported_config) then
-    raise exception 'The current six-a-side format violates a release-locked structural control.';
+    raise exception 'The current Solo 7v7 / Clan 6v6 format violates a release-locked structural control.';
   end if;
   if public.reliability_policy_release_controls_are_valid(
-    jsonb_set(supported_config, '{solo,playersPerSide}', '7'::jsonb)
+    jsonb_set(supported_config, '{solo,playersPerSide}', '6'::jsonb)
   ) or public.reliability_policy_release_controls_are_valid(
     jsonb_set(supported_config, '{clan,playersPerSide}', '7'::jsonb)
   ) or public.reliability_policy_release_controls_are_valid(
@@ -204,6 +205,15 @@ begin
   select pg_get_functiondef(
     'public.preview_clan_fixture_cancellation(uuid)'::regprocedure
   ) into function_text;
+  if position('preview_clan_fixture_cancellation_policy' in function_text) = 0
+    or has_function_privilege('authenticated',
+      'public.preview_clan_fixture_cancellation_policy(uuid)', 'EXECUTE')
+  then
+    raise exception 'Clan refund preview bypasses its protected cancellation policy.';
+  end if;
+  select pg_get_functiondef(
+    'public.preview_clan_fixture_cancellation_policy(uuid)'::regprocedure
+  ) into function_text;
   if position('payer_profile_id' in function_text) = 0
     or position('- ''payer_profile_id''' in function_text) = 0
     or position('- ''opponent_payer_profile_id''' in function_text) = 0
@@ -215,7 +225,7 @@ begin
     'public.preview_join_clan_fixture_charge(uuid,uuid)'::regprocedure
   ) into function_text;
   if position('terms_to_use.policy_snapshot' in function_text) = 0
-    or position('clan_fixture_charge_quote_from_snapshot' in function_text) = 0
+    or position('clan_fixture_charge_quote_for_price' in function_text) = 0
   then
     raise exception 'AWAY clan preview does not use the fixture''s frozen policy snapshot.';
   end if;
@@ -261,6 +271,18 @@ begin
   select pg_get_functiondef(
     'public.get_my_reliability_status()'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.get_my_reliability_status_before_display()') is not null then
+    if position('public.get_my_reliability_status_before_display()' in function_text) = 0
+      or has_function_privilege('anon', 'public.get_my_reliability_status_before_display()', 'EXECUTE')
+      or has_function_privilege('authenticated', 'public.get_my_reliability_status_before_display()', 'EXECUTE')
+      or has_function_privilege('service_role', 'public.get_my_reliability_status_before_display()', 'EXECUTE')
+    then
+      raise exception 'Reliability display must delegate to the protected status implementation.';
+    end if;
+    select pg_get_functiondef(
+      'public.get_my_reliability_status_before_display()'::regprocedure
+    ) into function_text;
+  end if;
   if position('allowed_appeal_categories' in function_text) = 0
     or position('terms.policy_snapshot' in function_text) = 0
   then
@@ -279,15 +301,95 @@ begin
   select pg_get_functiondef(
     'public.cancel_open_queue_booking(uuid)'::regprocedure
   ) into function_text;
-  if position('replacement_marketplace_open' in function_text) = 0
-    or position('profile_has_active_play_restriction' in function_text) = 0
+  if position('cancel_open_queue_booking_policy' in function_text) = 0
+    or has_function_privilege('authenticated',
+      'public.cancel_open_queue_booking_policy(uuid)', 'EXECUTE')
   then
-    raise exception 'Replacement promotion ignores its cutoff or play restrictions.';
+    raise exception 'Solo refund wrapper bypasses its protected cancellation policy.';
+  end if;
+  select pg_get_functiondef(
+    'public.cancel_open_queue_booking_policy(uuid)'::regprocedure
+  ) into function_text;
+  if position('replacement_marketplace_open' in function_text) = 0 then
+    raise exception 'Replacement promotion ignores its marketplace cutoff.';
+  end if;
+  if to_regprocedure('fieldrush_private.enqueue_replacement_offer(uuid,uuid)') is not null then
+    -- The cancellation now commits one job instead of scanning every profile
+    -- while holding the game lock. Follow the entire protected pipeline rather
+    -- than requiring its recipient checks to remain in the old inline body.
+    if position('fieldrush_private.enqueue_replacement_offer(game_to_reopen.id,booking_to_cancel.id)' in function_text)=0
+      or position('insert into public.notifications' in lower(function_text))>0 then
+      raise exception 'Cancellation bypasses the bounded replacement queue.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.enqueue_replacement_offer(uuid,uuid)'::regprocedure) into function_text;
+    if position('replacement_source_booking_id=source_to_use' in function_text)=0
+      or position('replacement_offer_expires_at>clock_timestamp()' in function_text)=0 then
+      raise exception 'Replacement queue does not bind its live source and expiry.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.process_replacement_notifications()'::regprocedure) into function_text;
+    if position('fieldrush_private.replacement_recipient_eligible' in function_text)=0
+      or position('limit 4' in lower(function_text))=0 or position('limit 100' in lower(function_text))=0
+      or position('open_spots_enabled_at<=job.created_at' in function_text)=0 then
+      raise exception 'Replacement worker lacks bounded eligible opt-in fanout.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.replacement_recipient_eligible(uuid,uuid,uuid)'::regprocedure) into function_text;
+    if position('profile_has_active_play_restriction' in function_text)=0
+      or position('profile_has_active_reliability_booking_restriction' in function_text)=0
+      or position('is_fieldrush_account_active' in function_text)=0
+      or position('settings.open_spots' in function_text)=0
+      or position('a.preferred_city_id=city.id' in function_text)=0
+      or position('replacement_offer_expires_at>clock_timestamp()' in function_text)=0 then
+      raise exception 'Replacement recipient eligibility ignores restrictions, consent, city or expiry.';
+    end if;
+    select pg_get_functiondef('fieldrush_private.notification_source_is_current(uuid)'::regprocedure) into function_text;
+    -- The selected player-push rollout wraps this dispatcher while delegating
+    -- legacy replacement receipts to the unchanged, still-private checker.
+    if position('fieldrush_private.notification_source_before_player_push(n.id)' in function_text)>0 then
+      if exists(select 1 from unnest(array['anon','authenticated','service_role']) caller_role
+        where has_function_privilege(caller_role,'fieldrush_private.notification_source_before_player_push(uuid)','EXECUTE')) then
+        raise exception 'The wrapped replacement source checker is directly client-callable.';
+      end if;
+      function_text:=function_text||pg_get_functiondef('fieldrush_private.notification_source_before_player_push(uuid)'::regprocedure);
+    end if;
+    if position('fieldrush_private.replacement_recipient_eligible' in function_text)=0
+      or position('settings.open_spots_enabled_at<=job.created_at' in function_text)=0 then
+      raise exception 'Replacement dispatch does not recheck current eligibility and original consent.';
+    end if;
+    foreach helper_signature in array array[
+      'fieldrush_private.enqueue_replacement_offer(uuid,uuid)',
+      'fieldrush_private.process_replacement_notifications()',
+      'fieldrush_private.replacement_recipient_eligible(uuid,uuid,uuid)',
+      'fieldrush_private.notification_source_is_current(uuid)'
+    ] loop
+      if exists(select 1 from unnest(array['anon','authenticated','service_role']) caller_role
+        where has_function_privilege(caller_role,helper_signature,'EXECUTE')) then
+        raise exception 'Replacement helper is directly client-callable: %.',helper_signature;
+      end if;
+    end loop;
+  elsif position('profile_has_active_play_restriction' in function_text)=0 then
+    raise exception 'Legacy replacement promotion ignores play restrictions.';
   end if;
 
   select pg_get_functiondef(
     'public.list_open_queue_games()'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.list_open_queue_games_before_arrival_notice()') is not null then
+    if position('public.list_open_queue_games_before_arrival_notice()' in function_text)=0
+      or exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r,'public.list_open_queue_games_before_arrival_notice()','EXECUTE')) then
+      raise exception 'Arrival game listing bypasses its private marketplace/privacy boundary.';
+    end if;
+    function_text:=function_text||pg_get_functiondef('public.list_open_queue_games_before_arrival_notice()'::regprocedure);
+  end if;
+  if to_regprocedure('public.list_open_queue_games_before_sr_privacy()') is not null then
+    if position('public.list_open_queue_games_before_sr_privacy()' in function_text)=0
+      or position('fieldrush_rating_private.public_match_ratings_visible' in function_text)=0
+      or exists(select 1 from unnest(array['anon','authenticated','service_role']) r
+        where has_function_privilege(r,'public.list_open_queue_games_before_sr_privacy()','EXECUTE')) then
+      raise exception 'Public game listing bypasses its private marketplace/privacy boundary.';
+    end if;
+    function_text:=function_text||pg_get_functiondef('public.list_open_queue_games_before_sr_privacy()'::regprocedure);
+  end if;
   if position('postCheckInDeadlineMarketplaceEnabled' in function_text) = 0
     or position('terms.check_in_deadline_at' in function_text) = 0
   then
@@ -494,7 +596,24 @@ begin
       and trigger_info.tgname = 'prevent_same_solo_game_rebooking'
       and not trigger_info.tgisinternal
   ) then
-    raise exception 'Cancelled solo bookings can still poison a same-game rebooking attendance row.';
+    raise exception 'The serialized solo rebooking attendance guard is missing.';
+  end if;
+
+  if not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'match_attendance_records'
+      and column_name = 'is_current' and is_nullable = 'NO'
+  ) or to_regclass('public.current_match_attendance_records') is null
+    or to_regclass('public.match_attendance_solo_booking_idx') is null
+    or to_regclass('public.match_attendance_solo_current_profile_idx') is null
+  then
+    raise exception 'Booking-scoped attendance history and current-record constraints are missing.';
+  end if;
+  if has_table_privilege('anon', 'public.current_match_attendance_records', 'SELECT')
+    or has_table_privilege('authenticated', 'public.current_match_attendance_records', 'SELECT')
+    or not has_table_privilege('service_role', 'public.current_match_attendance_records', 'SELECT')
+  then
+    raise exception 'The current-attendance view must remain server-only.';
   end if;
 
   if not exists (

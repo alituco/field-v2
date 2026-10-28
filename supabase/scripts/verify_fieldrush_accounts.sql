@@ -73,7 +73,7 @@ select pg_temp.expect_error(format('select public.save_fieldrush_onboarding_draf
   jsonb_build_object('date_of_birth', (current_date - interval '18 years' + interval '1 day')::date)), '22023');
 select public.save_fieldrush_onboarding_draft(jsonb_build_object('first_name','Alex', 'last_name','Morgan',
   'username','fieldrush_test_alex', 'date_of_birth',(current_date - interval '18 years')::date,
-  'email','alex@example.test'));
+  'email','alex@example.test','skill_assessment','not_sure'));
 select pg_temp.check_assert(public.get_my_fieldrush_account()->>'first_name' = 'Alex', 'draft must persist');
 select pg_temp.check_assert(not exists(select 1 from public.profiles where id = 'fd000000-0000-4000-8000-000000000001'),
   'draft must not create a publicly discoverable profile');
@@ -106,7 +106,7 @@ insert into public.profile_settings (profile_id, home_city)
 select set_config('request.jwt.claims', '{"sub":"fd000000-0000-4000-8000-000000000003","role":"authenticated"}', true);
 set local role authenticated;
 select pg_temp.expect_error($q$select public.complete_fieldrush_onboarding(
-  '{"first_name":"Sam","last_name":"Smith","username":"fieldrush_test_sam","date_of_birth":"2000-01-01","email":"sam@example.test"}',
+  '{"first_name":"Sam","last_name":"Smith","username":"fieldrush_test_sam","date_of_birth":"2000-01-01","email":"sam@example.test","skill_assessment":"not_sure"}',
   'fieldrush-v1','fieldrush-v1')$q$, '42501');
 reset role;
 
@@ -117,7 +117,7 @@ select pg_temp.check_assert(public.get_my_fieldrush_account()->>'first_name' = '
 select pg_temp.check_assert(not (public.check_fieldrush_username('FIELDRUSH_TEST_ALEX')->>'available')::boolean,
   'username collision is case-insensitive');
 select pg_temp.expect_error($q$select public.complete_fieldrush_onboarding(
-  '{"first_name":"Sam","last_name":"Smith","username":"fieldrush_test_alex","date_of_birth":"2000-01-01","email":"sam@example.test"}',
+  '{"first_name":"Sam","last_name":"Smith","username":"fieldrush_test_alex","date_of_birth":"2000-01-01","email":"sam@example.test","skill_assessment":"not_sure"}',
   'fieldrush-v1','fieldrush-v1')$q$, '23505');
 reset role;
 
@@ -131,7 +131,7 @@ select set_config('request.jwt.claims', jsonb_build_object('sub','fd000000-0000-
   'role','authenticated','iat',extract(epoch from now())::bigint,
   'amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',extract(epoch from now()-interval '1 day')::bigint)))::text,true);
 set local role authenticated;
-select pg_temp.expect_error('select public.prepare_fieldrush_account_deletion()', '42501');
+select pg_temp.expect_error('select public.prepare_fieldrush_account_deletion(true)', '42501');
 reset role;
 select set_config('request.jwt.claims', jsonb_build_object('sub','fd000000-0000-4000-8000-000000000001',
   'role','authenticated','amr',jsonb_build_array(jsonb_build_object('method','otp','timestamp',extract(epoch from now())::bigint)))::text,true);
@@ -140,21 +140,22 @@ insert into public.field_wallet_accounts(profile_id,balance_fils)
 set local role authenticated;
 select pg_temp.expect_error('select public.prepare_fieldrush_account_deletion()', '22023');
 reset role;
-update public.field_wallet_accounts set balance_fils = 0 where profile_id = 'fd000000-0000-4000-8000-000000000001';
 set local role authenticated;
-select public.prepare_fieldrush_account_deletion();
+select public.prepare_fieldrush_account_deletion(true);
 select pg_temp.check_assert(public.get_my_fieldrush_account()->>'status' = 'deletion_pending', 'deletion must pause the account');
 select pg_temp.check_assert(not public.is_fieldrush_account_active('fd000000-0000-4000-8000-000000000001'),
   'pending deletion cannot participate');
 reset role;
--- A refund may legitimately arrive after prepare. It must not be lost just
--- because the user's avatar cleanup is already in progress.
-update public.field_wallet_accounts set balance_fils = 100 where profile_id = 'fd000000-0000-4000-8000-000000000001';
-select pg_temp.expect_error($q$delete from auth.users where id = 'fd000000-0000-4000-8000-000000000001'$q$, '22023');
-select pg_temp.check_assert(exists(select 1 from auth.users where id = 'fd000000-0000-4000-8000-000000000001'),
-  'a late refund must block final Auth deletion');
-update public.field_wallet_accounts set balance_fils = 0 where profile_id = 'fd000000-0000-4000-8000-000000000001';
+-- Final deletion forfeits the remaining balance, including settled credits
+-- arriving after prepare. Unsettled payment/refund claims still block deletion
+-- (covered by verify_account_deletion_wallet_forfeiture.sql).
+update public.field_wallet_accounts set balance_fils = 200 where profile_id = 'fd000000-0000-4000-8000-000000000001';
 delete from auth.users where id = 'fd000000-0000-4000-8000-000000000001';
+select pg_temp.check_assert((select balance_fils=0 from public.field_wallet_accounts
+  where profile_id='fd000000-0000-4000-8000-000000000001'), 'deleted wallet must have zero remaining balance');
+select pg_temp.check_assert((select sum(amount_fils)=200 from public.field_wallet_transactions
+  where profile_id='fd000000-0000-4000-8000-000000000001' and transaction_type='ACCOUNT_DELETION_FORFEITURE'
+    and direction='DEBIT'), 'wallet forfeiture must retain an audit debit');
 select pg_temp.check_assert((select display_name = 'Deleted player' and phone is null and username is null
   and auth_user_id is null and account_deleted_at is not null from public.profiles
   where id = 'fd000000-0000-4000-8000-000000000001'), 'deleted profile must be anonymized, retaining its historical key');

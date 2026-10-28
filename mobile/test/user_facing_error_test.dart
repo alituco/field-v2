@@ -52,7 +52,32 @@ void main() {
             code: 'P0001',
           ),
         ),
-        'You already have 2 upcoming solo games. Cancel one before booking another.',
+        'You already have an upcoming or active game. Finish or cancel it before booking another.',
+      );
+    });
+
+    test('explains single-game registration and unfinished checkout conflicts', () {
+      expect(
+        userFacingError(
+          const PostgrestException(
+            message:
+                'You can only be registered in one upcoming or active game. Finish or cancel your current game before booking another.',
+            code: 'P0001',
+          ),
+        ),
+        'You already have an upcoming or active game. Finish or cancel it before booking another.',
+      );
+      expect(
+        userFacingError(
+          const FunctionException(
+            status: 409,
+            details: {
+              'error':
+                  'Finish or cancel your earlier game checkout before booking another game.',
+            },
+          ),
+        ),
+        'Finish or cancel your earlier checkout before booking another game.',
       );
     });
 
@@ -99,6 +124,21 @@ void main() {
         userFacingError(error, fallback: 'We could not book this match.'),
         'We could not book this match.',
       );
+    });
+
+    test('missing RPC or table uses the screen fallback, not schema details', () {
+      for (final code in ['PGRST202', 'PGRST205']) {
+        final error = PostgrestException(
+          message:
+              'Could not find the function public.list_fieldrush_player_rating_page '
+              'in the schema cache.',
+          code: code,
+        );
+        expect(
+          userFacingError(error, fallback: 'Could not load ranks. Try again.'),
+          'Could not load ranks. Try again.',
+        );
+      }
     });
   });
 }
