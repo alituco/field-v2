@@ -122,7 +122,7 @@ class _FieldrushReliabilityScreenState
             ),
       body: SafeArea(
         bottom: false,
-        child: RefreshIndicator(
+        child: FieldRefreshIndicator(
           onRefresh: _load,
           color: FieldrushAuthTheme.forest,
           child: ListView(

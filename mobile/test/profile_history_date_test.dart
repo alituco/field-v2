@@ -54,10 +54,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('OCTOBER 2026'), findsOneWidget);
-    expect(find.text('NOVEMBER 2026'), findsOneWidget);
-    expect(find.text('Oct 31 · 2–1'), findsOneWidget);
-    expect(find.text('Nov 1 · 2–1'), findsOneWidget);
+    final year = DateTime.now().year == 2026 ? '' : ' 2026';
+    expect(find.text('OCTOBER$year'), findsOneWidget);
+    expect(find.text('NOVEMBER$year'), findsOneWidget);
+    expect(find.text('Sat, Oct 31 · 2–1'), findsOneWidget);
+    expect(find.text('Sun, Nov 1 · 2–1'), findsOneWidget);
     expect(find.text('DATE UNAVAILABLE'), findsOneWidget);
     expect(find.text('Date unavailable · 2–1'), findsOneWidget);
     expect(tester.takeException(), isNull);
