@@ -38,16 +38,20 @@ function provider(options = {}) {
   };
 }
 
-test('production preflight reads only the selected live merchant and endpoint', async () => {
-  const fixture = provider();
-  assert.deepEqual(await preflight(env, fixture.fetcher), { project: env.SUPABASE_PROJECT_REF, verified: true });
-  assert.equal(fixture.calls.length, 2);
-  for (const call of fixture.calls) {
-    assert.equal(call.method, undefined);
-    assert.equal(new URL(call.url).origin, 'https://api.stripe.com');
-    assert.equal(call.headers['Stripe-Version'], '2026-09-30.endive');
-  }
-});
+for (const secretKey of ['sk_live_fixture', 'rk_live_fixture']) {
+  test(`${secretKey.slice(0, 2)} production preflight reads only the selected live merchant and endpoint`, async () => {
+    const fixture = provider();
+    assert.deepEqual(await preflight({ ...env, STRIPE_SECRET_KEY: secretKey }, fixture.fetcher),
+      { project: env.SUPABASE_PROJECT_REF, verified: true });
+    assert.equal(fixture.calls.length, 2);
+    for (const call of fixture.calls) {
+      assert.equal(call.method, undefined);
+      assert.equal(new URL(call.url).origin, 'https://api.stripe.com');
+      assert.equal(call.headers.Authorization, `Bearer ${secretKey}`);
+      assert.equal(call.headers['Stripe-Version'], '2026-09-30.endive');
+    }
+  });
+}
 
 test('requires exact production, explicit live confirmation, matching key modes and bounded worker secrets before requests', async () => {
   for (const changes of [
@@ -56,7 +60,14 @@ test('requires exact production, explicit live confirmation, matching key modes 
     { PRODUCTION_STRIPE_LIVE_ROLLOUT: undefined },
     { PRODUCTION_STRIPE_LIVE_ROLLOUT: 'true' },
     { STRIPE_SECRET_KEY: 'sk_test_fixture' },
+    { STRIPE_SECRET_KEY: 'rk_test_fixture' },
+    { STRIPE_SECRET_KEY: 'rk_live_' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture/other' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture ' },
+    { STRIPE_SECRET_KEY: 'sk_live_fixture\n' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture\n' },
     { STRIPE_SECRET_KEY: 'sk_live_fixture\nOTHER=bad' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture\nOTHER=bad' },
     { STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' },
     { STRIPE_WEBHOOK_SECRET: '' },
     { STRIPE_WEBHOOK_ENDPOINT_ID: '../other' },
@@ -72,6 +83,24 @@ test('requires exact production, explicit live confirmation, matching key modes 
     assert.throws(() => validateConfiguration({ ...env, ...changes }));
     await assert.rejects(preflight({ ...env, ...changes }, fixture.fetcher));
     assert.deepEqual(fixture.calls, []);
+  }
+});
+
+test('restricted live keys retain account/webhook checks and fail before any mutation', async () => {
+  for (const options of [
+    { account: { ...account, id: 'acct_other' } },
+    { account: { ...account, charges_enabled: false } },
+    { account: { ...account, payouts_enabled: false } },
+    { account: { ...account, details_submitted: false } },
+    { endpoint: { ...endpoint, livemode: false } },
+    { endpoint: { ...endpoint, url: 'https://other.example/webhook' } },
+    { failAt: 1 }, { failAt: 2 },
+  ]) {
+    const fixture = provider(options);
+    await assert.rejects(configure({ ...env, STRIPE_SECRET_KEY: 'rk_live_fixture' }, fixture.fetcher));
+    assert.ok(fixture.calls.length >= 1 && fixture.calls.length <= 2);
+    assert.ok(fixture.calls.every(call => call.method === undefined &&
+      new URL(call.url).origin === 'https://api.stripe.com'));
   }
 });
 

@@ -41,12 +41,21 @@ be reused if they authorize this team/app. GitHub cannot reveal existing secret
 values; use the securely held originals when configuring another environment.
 Never commit credentials or attach them to review artifacts.
 
-Create an App Store distribution profile named **Field Production App Store**
+Create an App Store distribution profile named **Fieldrush Production App Store**
 for the production Bundle ID. Enable Apple Pay and assign
-**merchant.com.alialtaraif.fieldrush**. If phone push will be enabled, also
+**merchant.com.alialtaraif.fieldrush.production**. If phone push will be enabled, also
 enable Push Notifications and regenerate the profile with production APNs.
 The uploader validates profile identity, expiration, distribution type and
 entitlements before importing the signing certificate.
+
+Production uses its own Apple Pay merchant and processing certificate so the
+staging merchant `merchant.com.alialtaraif.fieldrush` can retain its active
+certificate. Obtain the production payment-processing CSR from the intended
+live Stripe account, issue the certificate for the production merchant, and
+upload that certificate back to the same live account. Never replace staging's
+certificate to activate production. The production workflow passes the isolated
+merchant to Flutter's `APPLE_MERCHANT_ID` client setting; staging keeps its
+existing merchant and build settings.
 
 ## Phone push opt-in
 

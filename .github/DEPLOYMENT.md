@@ -263,6 +263,10 @@ GitHub environment `production`:
 - secret `SUPABASE_ACCESS_TOKEN`
 - secret `SUPABASE_DB_PASSWORD` for Field Production
 - secrets `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` from the live account
+  (`rk_live_…` or `sk_live_…`, and `pk_live_…`). Prefer a restricted backend key
+  with Accounts read, Payment Intents write, Charges and Refunds write, and
+  Webhook Endpoints write. Both server key formats must pass the same live
+  account and exact production webhook checks before deployment.
 - secret `STRIPE_WEBHOOK_SECRET` for the exact production Stripe webhook
 - secret `STRIPE_RECONCILE_SECRET`, 32–512 base64url/hex-safe characters
   (`A–Z`, `a–z`, `0–9`, `_`, `-`); `openssl rand -hex 32` is suitable

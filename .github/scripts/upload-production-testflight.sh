@@ -7,8 +7,8 @@ readonly expected_ref="refs/heads/prod"
 readonly expected_supabase_url="https://zjsjuuhborxrlmdcpvlj.supabase.co"
 readonly expected_team_id="69B646V2WM"
 readonly expected_bundle_id="com.alialtaraif.field"
-readonly expected_profile_name="Field Production App Store"
-readonly expected_merchant_id="merchant.com.alialtaraif.fieldrush"
+readonly expected_profile_name="Fieldrush Production App Store"
+readonly expected_merchant_id="merchant.com.alialtaraif.fieldrush.production"
 
 fail() { echo "::error::$1" >&2; exit 1; }
 if [[ "$#" -gt 1 || ( "$#" -eq 1 && "$1" != --check-inputs ) ]]; then

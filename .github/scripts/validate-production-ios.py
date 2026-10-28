@@ -8,8 +8,8 @@ import sys
 
 TEAM = "69B646V2WM"
 BUNDLE = "com.alialtaraif.field"
-MERCHANT = "merchant.com.alialtaraif.fieldrush"
-PROFILE = "Field Production App Store"
+MERCHANT = "merchant.com.alialtaraif.fieldrush.production"
+PROFILE = "Fieldrush Production App Store"
 
 
 class ValidationError(ValueError):
@@ -45,7 +45,7 @@ def validate_entitlements(entitlements, push, *, signed_app):
 
 def validate_profile(profile, push):
     require(profile.get("Name") == PROFILE,
-            "The provisioning profile must be named Field Production App Store.")
+            "The provisioning profile must be named Fieldrush Production App Store.")
     require(profile.get("TeamIdentifier") == [TEAM],
             "The provisioning profile belongs to a different Apple team.")
     require("ProvisionedDevices" not in profile and not profile.get("ProvisionsAllDevices"),
