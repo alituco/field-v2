@@ -917,7 +917,8 @@ Future<void> _bookGameThroughUi(
     find.text('STEP 3 OF 3'),
     reason: 'Choosing the game did not open the review step.',
   );
-  expect(find.text(game.calendarDateLabel), findsWidgets);
+  // Review advertises arrival, which can fall before the kickoff's date.
+  expect(find.text(game.displayCalendarDateLabel), findsWidgets);
   expect(find.text(bookingRoleName(role)), findsOneWidget);
   expect(
     find.text(game.hasConfigurableMinimum ? 'Up to 7v7' : '7v7'),
