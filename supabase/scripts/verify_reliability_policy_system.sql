@@ -271,6 +271,18 @@ begin
   select pg_get_functiondef(
     'public.get_my_reliability_status()'::regprocedure
   ) into function_text;
+  if to_regprocedure('public.get_my_reliability_status_before_display()') is not null then
+    if position('public.get_my_reliability_status_before_display()' in function_text) = 0
+      or has_function_privilege('anon', 'public.get_my_reliability_status_before_display()', 'EXECUTE')
+      or has_function_privilege('authenticated', 'public.get_my_reliability_status_before_display()', 'EXECUTE')
+      or has_function_privilege('service_role', 'public.get_my_reliability_status_before_display()', 'EXECUTE')
+    then
+      raise exception 'Reliability display must delegate to the protected status implementation.';
+    end if;
+    select pg_get_functiondef(
+      'public.get_my_reliability_status_before_display()'::regprocedure
+    ) into function_text;
+  end if;
   if position('allowed_appeal_categories' in function_text) = 0
     or position('terms.policy_snapshot' in function_text) = 0
   then

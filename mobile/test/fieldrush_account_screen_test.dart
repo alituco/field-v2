@@ -10,6 +10,7 @@ import 'package:field/src/home/navigation_profile_scope.dart';
 import 'package:field/src/profile/profile.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/ui/fieldrush_modal.dart';
+import 'package:field/src/ui/fieldrush_toast.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -1367,11 +1368,20 @@ void main() {
     expect(profiles.saved?.bio, 'New bio from another screen');
     expect(profiles.saved?.avatarUrl, 'https://example.com/uploaded.png');
     expect(find.text('Photo updated.'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(FieldrushToast),
+        matching: find.text('Photo updated.'),
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(const Key('fieldrush-reset-photo')), findsOneWidget);
     expect(
       find.text('NAV AVATAR: https://example.com/uploaded.png'),
       findsOneWidget,
     );
+    await tester.pump(const Duration(milliseconds: 2200));
+    expect(find.text('Photo updated.'), findsNothing);
   });
 
   testWidgets(
@@ -1393,8 +1403,17 @@ void main() {
       expect(profiles.saved?.bio, 'A football player');
       expect(profiles.uploadCalls, 0);
       expect(find.text('Photo reset.'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(FieldrushToast),
+          matching: find.text('Photo reset.'),
+        ),
+        findsOneWidget,
+      );
       expect(find.byKey(const Key('fieldrush-reset-photo')), findsNothing);
       expect(find.text('NAV AVATAR: HOME ICON'), findsOneWidget);
+      await tester.pump(const Duration(milliseconds: 2200));
+      expect(find.text('Photo reset.'), findsNothing);
     },
   );
 

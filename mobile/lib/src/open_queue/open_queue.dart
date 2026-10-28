@@ -533,6 +533,10 @@ class OpenQueueGame {
   String get checkInDeadlineTimeLabel => _clock(localCheckInDeadlineAt);
   String get checkInCalendarDateLabel => _calendarLabel(localCheckInAt);
 
+  /// Planned finish includes ten minutes beyond the advertised match slot.
+  String get plannedEndTimeLabel =>
+      _clock(localDateTime(endsAt.add(const Duration(minutes: 10))));
+
   /// Presentation-only: future cards show arrival; live/history show kickoff.
   DateTime get displayStartsAt => isUpcoming ? checkInAt : startsAt;
   DateTime get localDisplayStartsAt => localDateTime(displayStartsAt);
@@ -798,6 +802,15 @@ class OpenQueueMatchDetail {
   /// players whose individual placement rating is hidden.
   final int? lobbyAverageSr;
 
+  /// Current public SR belongs to the roster, not the match's frozen result.
+  int? rosterRatingFor(OpenQueuePlayer player) {
+    if (player.ratingVisible == false) return null;
+    if (const {'OPEN', 'FULL', 'LIVE'}.contains(game.status)) {
+      return player.rosterSkillRating ?? player.displayedRating;
+    }
+    return player.displayedRating;
+  }
+
   String? get viewerRatingStatus =>
       players.where((p) => p.isMe).firstOrNull?.ratingStatus ?? ratingStatus;
 
@@ -960,6 +973,7 @@ class OpenQueuePlayer {
     this.avatarUrl,
     this.ratingAtTeamAssignment,
     this.ratingAtMatchStart,
+    this.rosterSkillRating,
     this.ratingChange,
     this.ratingVisible,
     this.ratingStatus,
@@ -978,6 +992,7 @@ class OpenQueuePlayer {
   final bool isMe;
   final int? ratingAtTeamAssignment;
   final int? ratingAtMatchStart;
+  final int? rosterSkillRating;
   final int? ratingChange;
   final bool? ratingVisible;
   final String? ratingStatus;
@@ -1014,6 +1029,7 @@ class OpenQueuePlayer {
         'rating_at_team_assignment',
       ),
       ratingAtMatchStart: publicRatingNumber(json, 'rating_at_match_start'),
+      rosterSkillRating: publicRatingNumber(json, 'roster_skill_rating'),
       ratingChange: publicRatingNumber(numeric, 'rating_change'),
       ratingVisible: json['rating_visible'] as bool?,
       ratingStatus: status,

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { LoadingSkeleton } from "@/components/loading-skeleton";
 import { SeasonZeroRatingReviewPanel } from "@/components/season-zero-rating-review-panel";
+import { AdminUnassignedPlayersPanel } from "@/components/admin-unassigned-players-panel";
 import { GameFormationPanel } from "../../../game-formation-panel";
 
 import type {
@@ -304,6 +305,12 @@ export default function AdminGameDetailPage() {
             setNotice("Formation updated. Booking positions and party limits now use this game’s saved formation.");
             await load(true);
           }} /> : null}
+
+          {fixture.matchKind === "SOLO" ? <AdminUnassignedPlayersPanel key={`unassigned:${fixture.id}`} fixture={fixture} accessToken={accessToken}
+            busy={lockingTeams || fillingBots} onSaved={async () => {
+              setNotice("Player assignments saved. Existing teams have been preserved.");
+              await load(true);
+            }} /> : null}
 
           <section className={styles.card}>
             <SectionHead eyebrow="OFFICIAL ROSTER" title="Players" detail="Confirmed, checked-in and historical participation for this game." />

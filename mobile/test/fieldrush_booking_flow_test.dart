@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:field/src/open_queue/fieldrush_booking_flow.dart';
+import 'package:field/src/open_queue/featured_field.dart';
 import 'package:field/src/ui/field_loading.dart';
 import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
 import 'package:field/src/open_queue/open_queue.dart';
@@ -15,6 +16,143 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2099, 6, 1);
 
 void main() {
+  testWidgets('featured field does not hide games at other fields', (
+    tester,
+  ) async {
+    final repository = _FeaturedRepository([_game('one')])
+      ..featured = FeaturedField.fromJson({
+        'id': 'other-field',
+        'name': 'Rose Park',
+        'address': '50 Park Road',
+        'city': 'Phoenix',
+        'state': 'AZ',
+        'country_code': 'US',
+        'market_city_id': 'phoenix',
+        'latitude': 33.5,
+        'longitude': -112.0,
+      });
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: repository,
+        now: _now,
+        startAtGames: true,
+        initialRoles: const {OpenQueueRole.defender},
+      ),
+    );
+    expect(repository.requestedCity, 'phoenix');
+    expect(find.text('FEATURED FIELD'), findsOneWidget);
+    expect(find.text('Rose Park'), findsOneWidget);
+    expect(find.text('50 Park Road, Phoenix, AZ, US'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('booking-field-directions')),
+      findsOneWidget,
+    );
+    expect(find.text('1 GAME NEEDS A DEFENDER'), findsOneWidget);
+    expect(
+      find.textContaining('Check-in 8:00 PM · Reach 11 Fields'),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('booking-game-one')));
+    await tester.pumpAndSettle();
+    expect(find.text('STEP 3 OF 3'), findsOneWidget);
+    expect(find.textContaining('Reach 11 Fields'), findsOneWidget);
+    expect(find.text('Rose Park'), findsNothing);
+    expect(repository.bookCalls, 0);
+  });
+
+  testWidgets('optional field request cannot hold up available games', (
+    tester,
+  ) async {
+    final pending = Completer<FeaturedField?>();
+    final repository = _FeaturedRepository([_game('one')])
+      ..pendingField = pending;
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: repository,
+        now: _now,
+        startAtGames: true,
+      ),
+    );
+    expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+    await tester.pump(const Duration(seconds: 12));
+    await tester.pumpAndSettle();
+    expect(find.text('Try again'), findsNothing);
+    expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+    pending.complete(null);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('featured field from another city is not displayed', (
+    tester,
+  ) async {
+    final repository = _FeaturedRepository([_game('one')])
+      ..featured = const FeaturedField(
+        id: 'foreign',
+        name: 'Other city field',
+        address: 'Somewhere else',
+        cityId: 'other-city',
+        directionsUri: null,
+      );
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: repository,
+        now: _now,
+        startAtGames: true,
+      ),
+    );
+    expect(find.text('Other city field'), findsNothing);
+    expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+    expect(find.text('WHERE YOU’LL PLAY'), findsOneWidget);
+  });
+
+  testWidgets('mixed games keep their own arrival time fee and division', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      FieldrushBookingFlow(
+        repository: _Repository([
+          _game(
+            'one',
+            venue: 'First pitch',
+            fieldId: 'one',
+            highestDivision: 1,
+            lowestDivision: 2,
+          ),
+          _game(
+            'two',
+            venue: 'Second pitch',
+            fieldId: 'two',
+            start: _now.add(const Duration(days: 2, hours: 5)),
+            price: 9000,
+            highestDivision: 3,
+            lowestDivision: 5,
+          ),
+        ]),
+        now: _now,
+        startAtGames: true,
+      ),
+    );
+    expect(find.byKey(const ValueKey('booking-field-showcase')), findsNothing);
+    expect(
+      find.textContaining(r'Check-in 8:00 PM · First pitch · $13.00'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(r'Check-in 9:30 PM · Second pitch · $9.00'),
+      findsOneWidget,
+    );
+    expect(find.text('DIV 1–2'), findsOneWidget);
+    expect(find.text('DIV 3–5'), findsOneWidget);
+    expect(find.byKey(const ValueKey('booking-game-one')), findsOneWidget);
+    expect(find.byKey(const ValueKey('booking-game-two')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('position picker uses the listed game formation', (tester) async {
     final repository = _Repository([
       _game('launch', defenderCapacity: 4, attackerCapacity: 8),
@@ -191,12 +329,14 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('booking-see-games')));
       await tester.pumpAndSettle();
       expect(find.text('STEP 2 OF 3'), findsOneWidget);
-      expect(find.text('Your spot · Attacker'), findsOneWidget);
+      expect(find.text('6 spots left · you’d play attacker'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('booking-game-one')));
       await tester.pumpAndSettle();
       expect(find.text('STEP 3 OF 3'), findsOneWidget);
       expect(find.text('Attacker'), findsOneWidget);
       expect(find.text('7v7'), findsOneWidget);
+      expect(find.text('Ends at'), findsOneWidget);
+      expect(find.text('9:40 PM'), findsOneWidget);
       expect(find.textContaining('60 min'), findsOneWidget);
       expect(repository.bookCalls, 0);
       await tester.ensureVisible(
@@ -666,7 +806,11 @@ void main() {
       RepaintBoundary(
         key: const ValueKey('preview'),
         child: FieldrushBookingFlow(
-          repository: _Repository([_game('one'), _game('two', days: 5)]),
+          repository: _Repository([
+            _game('one', address: '2425 E Deer Valley Rd'),
+            _game('two', days: 5, address: '2425 E Deer Valley Rd'),
+          ]),
+          initialRoles: const {OpenQueueRole.defender},
           now: _now,
           onNavigateTab: (_) {},
         ),
@@ -762,10 +906,23 @@ OpenQueueGame _game(
   int? defenderCapacity,
   int? attackerCapacity,
   DateTime? actualStartedAt,
+  String venue = 'Reach 11 Fields',
+  String? fieldId,
+  int price = 13000,
+  int highestDivision = 1,
+  int lowestDivision = 5,
+  String? address,
 }) => OpenQueueGame(
   id: id,
   status: status,
-  venue: 'Reach 11 Fields',
+  venue: venue,
+  fieldId: fieldId,
+  locationAddress: address,
+  locationCity: address == null ? null : 'Phoenix',
+  locationState: address == null ? null : 'AZ',
+  locationCountryCode: address == null ? null : 'US',
+  highestDivision: highestDivision,
+  lowestDivision: lowestDivision,
   startsAt: start ?? _now.add(Duration(days: days, hours: 3, minutes: 30)),
   endsAt: (start ?? _now.add(Duration(days: days, hours: 3, minutes: 30))).add(
     Duration(minutes: durationMinutes),
@@ -775,7 +932,7 @@ OpenQueueGame _game(
   attackerCapacity: attackerCapacity,
   timezone: 'America/Phoenix',
   currency: 'USD',
-  priceFils: 13000,
+  priceFils: price,
   ageLabel: '18+',
   capacity: 14,
   minimumPlayers: minimumPlayers ?? 10,
@@ -875,5 +1032,19 @@ class _ReadRepository extends _Repository {
     final pending = nextBookings;
     nextBookings = null;
     return pending?.future ?? super.getMyUpcomingBookings();
+  }
+}
+
+class _FeaturedRepository extends _Repository
+    implements OpenQueueFeaturedFieldRepository {
+  _FeaturedRepository(super.games);
+  FeaturedField? featured;
+  Completer<FeaturedField?>? pendingField;
+  String? requestedCity;
+
+  @override
+  Future<FeaturedField?> getFeaturedField(String cityId) async {
+    requestedCity = cityId;
+    return pendingField == null ? featured : await pendingField!.future;
   }
 }

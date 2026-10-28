@@ -226,8 +226,6 @@ class FieldrushYouContent extends StatefulWidget {
 }
 
 class _FieldrushYouContentState extends State<FieldrushYouContent> {
-  bool _reliabilityOpen = false;
-
   @override
   Widget build(BuildContext context) {
     final rating = widget.rating;
@@ -405,7 +403,6 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
             child: Column(
               children: [
                 _reliabilityRow(),
-                if (_reliabilityOpen) _reliabilityDetail(),
                 if (!ranked && widget.profile.previousGames.isNotEmpty)
                   _SettingRow(
                     key: const ValueKey('you-match-history'),
@@ -470,10 +467,10 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
         : status.headline;
     final color = !unavailable && !status.isGoodStanding ? _danger : _muted;
     return Semantics(
-      expanded: _reliabilityOpen,
+      button: true,
       child: InkWell(
         key: const ValueKey('you-reliability'),
-        onTap: () => setState(() => _reliabilityOpen = !_reliabilityOpen),
+        onTap: widget.onReliability,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 52),
           child: Padding(
@@ -524,57 +521,11 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(
-                  _reliabilityOpen
-                      ? Icons.keyboard_arrow_down
-                      : Icons.chevron_right,
-                  size: 18,
-                  color: _muted,
-                ),
+                const Icon(Icons.chevron_right, size: 18, color: _muted),
               ],
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _reliabilityDetail() {
-    final status = widget.reliability;
-    return Container(
-      key: const ValueKey('you-reliability-expanded'),
-      width: double.infinity,
-      decoration: const BoxDecoration(
-        color: Color(0xFFFBFAF4),
-        border: Border(top: BorderSide(color: Color(0xFFF0ECE0))),
-      ),
-      padding: const EdgeInsets.fromLTRB(18, 13, 18, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            widget.reliabilityLoading
-                ? 'Loading your attendance record…'
-                : widget.reliabilityUnavailable || status == null
-                ? 'Your reliability record could not be loaded. Try opening the full record again.'
-                : status.supportingText,
-            style: _jakarta(12).copyWith(height: 1.45),
-          ),
-          TextButton(
-            key: const ValueKey('you-reliability-details'),
-            onPressed: widget.onReliability,
-            style: TextButton.styleFrom(
-              foregroundColor: _green,
-              padding: EdgeInsets.zero,
-              minimumSize: const Size(44, 44),
-              alignment: Alignment.centerLeft,
-            ),
-            child: Text(
-              'View attendance & appeals',
-              style: _jakarta(11.5, color: _green),
-            ),
-          ),
-        ],
       ),
     );
   }

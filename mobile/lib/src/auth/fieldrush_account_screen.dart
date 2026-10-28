@@ -18,6 +18,7 @@ import '../home/navigation_profile_scope.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_avatar_image.dart';
 import '../ui/fieldrush_modal.dart';
+import '../ui/fieldrush_toast.dart';
 import '../legal/fieldrush_policy_links.dart';
 import '../markets/fieldrush_city.dart';
 import '../markets/fieldrush_city_repository.dart';
@@ -263,10 +264,8 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
       final updated = await repository.getCurrentProfile();
       if (mounted) {
         FieldNavigationProfileScope.profileChanged(context, updated);
-        setState(() {
-          _profile = updated;
-          _notice = reset ? 'Photo reset.' : 'Photo updated.';
-        });
+        setState(() => _profile = updated);
+        showFieldrushToast(context, reset ? 'Photo reset.' : 'Photo updated.');
       }
     } catch (error) {
       if (mounted) {

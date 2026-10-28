@@ -1,3 +1,5 @@
+import { parseCityId } from "./admin-cities.ts";
+
 export type AdminField = {
   id: string;
   name: string;
@@ -12,11 +14,12 @@ export type AdminField = {
   latitude: number;
   longitude: number;
   isActive: boolean;
+  isFeatured?: boolean;
   createdAt: string;
   updatedAt: string;
 };
 
-export const FIELD_SELECT = "id,name,address,city,state,country_code,market_city_id,market:fieldrush_cities!market_city_id(id,display_name,timezone,active),latitude,longitude,is_active,created_at,updated_at";
+export const FIELD_SELECT = "id,name,address,city,state,country_code,market_city_id,market:fieldrush_cities!market_city_id(id,display_name,timezone,active,featured_field_id),latitude,longitude,is_active,created_at,updated_at";
 
 const FIELD_KEYS = ["name", "address", "city", "state", "countryCode", "marketCityId", "latitude", "longitude", "isActive"];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -26,6 +29,14 @@ export function parseFieldId(value: unknown): string {
     throw new Error("Choose a saved field before creating the game.");
   }
   return value;
+}
+
+export function parseFeaturedFieldInput(value: unknown): { cityId: string; featured: boolean } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid featured field details.");
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).some((key) => !["cityId", "featured"].includes(key))) throw new Error("Unknown featured field detail. Reload the fields.");
+  if (typeof body.featured !== "boolean") throw new Error("Choose whether to feature this field.");
+  return { cityId: parseCityId(body.cityId), featured: body.featured };
 }
 
 function text(value: unknown, label: string, min: number, max: number): string {
@@ -86,6 +97,7 @@ export function serializeAdminField(row: Record<string, unknown>): AdminField {
     id: String(row.id), name: String(row.name), address: String(row.address), city: String(row.city),
     state: String(row.state), countryCode: String(row.country_code), latitude: Number(row.latitude),
     longitude: Number(row.longitude), isActive: row.is_active === true,
+    isFeatured: row.is_active === true && market.active === true && market.featured_field_id === row.id,
     marketCityId: String(row.market_city_id ?? ""), marketCityName: String(market.display_name ?? ""),
     marketTimezone: String(market.timezone ?? ""), marketActive: market.active === true,
     createdAt: String(row.created_at), updatedAt: String(row.updated_at),

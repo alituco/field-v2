@@ -544,7 +544,15 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Score unavailable'), findsOneWidget);
       expect(find.textContaining('0–0'), findsNothing);
-      expect(find.text('—'), findsOneWidget);
+      final row = find.byKey(const ValueKey('player-history-unknown-result'));
+      expect(
+        find.descendant(of: row, matching: find.text('—')),
+        findsNWidgets(2),
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('SR')),
+        findsOneWidget,
+      );
       expect(find.text('D'), findsNothing);
       expect(tester.takeException(), isNull);
     },

@@ -1193,6 +1193,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 'Format',
                 '${game.hasConfigurableMinimum ? 'Up to ' : ''}${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
               ),
+              _Fact('Ends at', game.plannedEndTimeLabel),
               if (game.hasConfigurableMinimum)
                 _Fact('Players needed', game.minimumPlayersLabel),
               _Fact(
@@ -1432,7 +1433,7 @@ class FieldrushGameRosterScreen extends StatelessWidget {
                                     ),
                                   ),
                                 Text(
-                                  '${player.displayedRating ?? '—'}',
+                                  '${detail.rosterRatingFor(player) ?? '—'}',
                                   style: _display(15),
                                 ),
                                 const SizedBox(width: 3),

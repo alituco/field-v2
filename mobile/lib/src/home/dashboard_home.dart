@@ -31,7 +31,7 @@ import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
 import '../profile/fieldrush_payment_history_screen.dart';
 import '../reliability/reliability_repository.dart';
-import '../reliability/reliability_status_card.dart';
+import '../reliability/fieldrush_reliability_screen.dart';
 import '../ranking/fieldrush_divisions_screen.dart';
 import 'fieldrush_home_widgets.dart';
 import 'activity_revision.dart';
@@ -727,20 +727,9 @@ class _DashboardHomeState extends State<DashboardHome>
       if (item.opensReliability) {
         await Navigator.of(context).push<void>(
           MaterialPageRoute(
-            builder: (_) => Theme(
-              data: FieldrushAuthTheme.theme(context),
-              child: Scaffold(
-                backgroundColor: FieldrushAuthTheme.cream,
-                appBar: AppBar(title: const Text('Reliability')),
-                body: ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    ReliabilityStatusCard(
-                      repository: SupabaseReliabilityRepository(),
-                    ),
-                  ],
-                ),
-              ),
+            builder: (_) => FieldrushReliabilityScreen(
+              repository: SupabaseReliabilityRepository(),
+              onNavigateTab: widget.onNavigateTab,
             ),
           ),
         );

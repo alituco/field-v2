@@ -55,6 +55,8 @@ class ReliabilityStatus {
     this.walletBalanceFils = 0,
     this.walletCurrency = 'BHD',
     this.walletBalances = const [],
+    this.policyDisplay,
+    this.timezone = 'UTC',
   });
 
   final DateTime? serverNow;
@@ -71,6 +73,8 @@ class ReliabilityStatus {
   final int walletBalanceFils;
   final String walletCurrency;
   final List<FieldWalletBalance> walletBalances;
+  final ReliabilityPolicyDisplay? policyDisplay;
+  final String timezone;
 
   String get walletBalanceLabel => FieldWalletBalance(
     currency: walletCurrency,
@@ -179,6 +183,8 @@ class ReliabilityStatus {
                 ),
       ],
       allowedAppealCategories: allowedAppealCategories,
+      policyDisplay: ReliabilityPolicyDisplay.fromJson(json['policy_display']),
+      timezone: _string(json['timezone']) ?? 'UTC',
       incidents: [
         if (rawIncidents is List)
           for (final raw in rawIncidents)
@@ -186,10 +192,107 @@ class ReliabilityStatus {
               ReliabilityIncident.fromJson(
                 row,
                 fallbackAppealCategories: allowedAppealCategories,
+                fallbackTimezone: _string(json['timezone']) ?? 'UTC',
               ),
       ],
     );
   }
+}
+
+/// Read-only presentation of the currently published solo attendance rules.
+/// Existing bookings retain their own policy snapshots on the server.
+class ReliabilityPolicyDisplay {
+  const ReliabilityPolicyDisplay({
+    required this.strikeLifetimeDays,
+    required this.lateStrikes,
+    required this.noShowStrikes,
+    required this.cancellationRules,
+    required this.sanctions,
+    required this.depositThreshold,
+    required this.depositBps,
+  });
+
+  final int strikeLifetimeDays;
+  final int lateStrikes;
+  final int noShowStrikes;
+  final List<ReliabilityCancellationRule> cancellationRules;
+  final List<ReliabilitySanctionRule> sanctions;
+  final int depositThreshold;
+  final int depositBps;
+
+  static ReliabilityPolicyDisplay? fromJson(Object? value) {
+    final row = _map(value);
+    if (row == null || row['sanctions'] is! List) return null;
+    final cancellations = _map(row['cancellations']);
+    final deposit = _map(row['deposit']);
+    return ReliabilityPolicyDisplay(
+      strikeLifetimeDays: _int(row['strike_lifetime_days']),
+      lateStrikes: _int(row['late_strikes']),
+      noShowStrikes: _int(row['no_show_strikes']),
+      cancellationRules: [
+        for (final key in ['late', 'veryLate', 'afterKickoff'])
+          if (_map(cancellations?[key]) case final rule?)
+            if (_int(rule['strikes']) > 0)
+              ReliabilityCancellationRule(
+                code: key,
+                strikes: _int(rule['strikes']),
+                minimumHoursBeforeKickoff:
+                    rule['minimumHoursBeforeKickoff'] == null
+                    ? null
+                    : _int(rule['minimumHoursBeforeKickoff']),
+                maximumHoursBeforeKickoff: switch (key) {
+                  'late' => _int(
+                    _map(cancellations?['early'])?['minimumHoursBeforeKickoff'],
+                  ),
+                  'veryLate' => _int(
+                    _map(cancellations?['late'])?['minimumHoursBeforeKickoff'],
+                  ),
+                  _ => null,
+                },
+              ),
+      ],
+      sanctions: [
+        for (final value in row['sanctions'] as List)
+          if (_map(value) case final rule?)
+            ReliabilitySanctionRule(
+              threshold: _int(rule['threshold']),
+              kind: _string(rule['kind']) ?? '',
+              durationDays: rule['durationDays'] == null
+                  ? null
+                  : _int(rule['durationDays']),
+              releaseFutureBookings: _bool(rule['releaseFutureBookings']),
+            ),
+      ]..sort((a, b) => a.threshold.compareTo(b.threshold)),
+      depositThreshold: _int(deposit?['activeStrikeThreshold']),
+      depositBps: _int(deposit?['depositBps']),
+    );
+  }
+}
+
+class ReliabilityCancellationRule {
+  const ReliabilityCancellationRule({
+    required this.code,
+    required this.strikes,
+    required this.minimumHoursBeforeKickoff,
+    required this.maximumHoursBeforeKickoff,
+  });
+  final String code;
+  final int strikes;
+  final int? minimumHoursBeforeKickoff;
+  final int? maximumHoursBeforeKickoff;
+}
+
+class ReliabilitySanctionRule {
+  const ReliabilitySanctionRule({
+    required this.threshold,
+    required this.kind,
+    required this.durationDays,
+    required this.releaseFutureBookings,
+  });
+  final int threshold;
+  final String kind;
+  final int? durationDays;
+  final bool releaseFutureBookings;
 }
 
 class FieldWalletBalance {
@@ -219,6 +322,13 @@ class ReliabilityIncident {
     required this.canAppeal,
     required this.matchLabel,
     required this.allowedAppealCategories,
+    this.timezone = 'UTC',
+    this.strikeActive,
+    this.originalOutcome,
+    this.originalStrikeDelta,
+    this.appealSubmittedAt,
+    this.appealReviewedAt,
+    this.appealResolutionNote,
   });
 
   final String attendanceRecordId;
@@ -233,6 +343,25 @@ class ReliabilityIncident {
   final bool canAppeal;
   final String? matchLabel;
   final List<ReliabilityAppealCategory> allowedAppealCategories;
+  final String timezone;
+  final bool? strikeActive;
+  final String? originalOutcome;
+  final int? originalStrikeDelta;
+  final DateTime? appealSubmittedAt;
+  final DateTime? appealReviewedAt;
+  final String? appealResolutionNote;
+
+  bool get appealPending =>
+      ['OPEN', 'REVIEWING'].contains(appealStatus?.toUpperCase());
+  bool get excused =>
+      outcome.toUpperCase() == 'EXCUSED' ||
+      appealStatus?.toUpperCase() == 'OVERTURNED';
+
+  bool isActiveAt(DateTime now) =>
+      !excused &&
+      (strikeActive ??
+          (strikeDelta > 0 &&
+              (strikeExpiresAt == null || strikeExpiresAt!.isAfter(now))));
 
   String get outcomeLabel => switch (outcome.toUpperCase()) {
     'ON_TIME' => 'On time',
@@ -249,6 +378,7 @@ class ReliabilityIncident {
   factory ReliabilityIncident.fromJson(
     Map<String, dynamic> json, {
     List<ReliabilityAppealCategory> fallbackAppealCategories = const [],
+    String fallbackTimezone = 'UTC',
   }) {
     final allowedAppealCategories =
         json.containsKey('allowed_appeal_categories')
@@ -280,6 +410,17 @@ class ReliabilityIncident {
           _bool(json['can_appeal']) && allowedAppealCategories.isNotEmpty,
       matchLabel: _string(json['match_label'] ?? json['fixture_label']),
       allowedAppealCategories: allowedAppealCategories,
+      timezone: _string(json['timezone']) ?? fallbackTimezone,
+      strikeActive: json['strike_active'] is bool
+          ? json['strike_active'] as bool
+          : null,
+      originalOutcome: _string(json['original_outcome']),
+      originalStrikeDelta: json['original_strike_delta'] == null
+          ? null
+          : _int(json['original_strike_delta']),
+      appealSubmittedAt: _date(json['appeal_submitted_at']),
+      appealReviewedAt: _date(json['appeal_reviewed_at']),
+      appealResolutionNote: _string(json['appeal_resolution_note']),
     );
   }
 }
