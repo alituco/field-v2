@@ -11,8 +11,8 @@ const successfulRun = (run, sha) => run?.head_sha === sha &&
 /** Read-only release gate. No signing credentials or hosted writes are needed. */
 export function verifyProductionIosRelease({ env = process.env, readGithub } = {}) {
   if (env.PRODUCTION_RELEASE_CONFIRMATION !== 'BUILD_PRODUCTION_IOS' ||
-      env.PRODUCTION_BACKEND_CONFIRMATION !== 'PRODUCTION_BACKEND_VERIFIED') {
-    throw new Error('Confirm BUILD_PRODUCTION_IOS and PRODUCTION_BACKEND_VERIFIED before uploading.');
+      env.PRODUCTION_BACKEND_CONFIRMATION !== 'PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT') {
+    throw new Error('Confirm BUILD_PRODUCTION_IOS and PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT before uploading.');
   }
   const runNumber = Number(env.GITHUB_RUN_NUMBER);
   if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_NUMBER ?? '') || !Number.isSafeInteger(runNumber)) {

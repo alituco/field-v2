@@ -17,7 +17,10 @@ function runSmoke({
     ? "nfdkdhdevpstfspazbfn"
     : "zjsjuuhborxrlmdcpvlj";
   const script = `
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, options = {}) => {
+      if (options.method && options.method !== 'GET') {
+        throw new Error('Read-only smoke check must never send a mutation request.');
+      }
       const path = new URL(url).pathname;
       if (path === '/auth/v1/health') {
         return new Response(JSON.stringify({ name: 'GoTrue' }), { status: ${healthStatus} });
@@ -157,3 +160,12 @@ test("production smoke refuses a staging URL", () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /SUPABASE_URL does not match/);
 });
+
+for (const healthStatus of [401, 500]) {
+  test(`production readiness rejects failed Auth health before signing (HTTP ${healthStatus})`, () => {
+    const result = runSmoke({ healthStatus });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(`auth\\/v1\\/health failed with HTTP ${healthStatus}`));
+    assert.doesNotMatch(result.stdout, /smoke check passed/);
+  });
+}

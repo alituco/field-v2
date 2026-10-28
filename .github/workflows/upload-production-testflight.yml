@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       backend_confirmation:
-        description: Type PRODUCTION_BACKEND_VERIFIED after live auth/payment/refund/deletion checks
+        description: Type PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT after production deployment, health and provider configuration checks
         required: true
         type: string
 
@@ -48,6 +48,7 @@ jobs:
       name: production
     env:
       FIELD_ENVIRONMENT: production
+      SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
       SUPABASE_URL: https://${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}.supabase.co
       SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
       APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
@@ -72,6 +73,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/verify-production-ios-release.mjs
+
+      - name: Recheck production health and anonymous privacy before signing
+        timeout-minutes: 2
+        run: node .github/scripts/smoke-supabase.mjs
 
       - name: Require Xcode 26 or newer
         shell: bash
@@ -111,7 +116,8 @@ jobs:
             echo ''
             echo "Email delivery: **${PRODUCTION_EMAIL_DELIVERY_ENABLED}**; phone push: **${PRODUCTION_PUSH_NOTIFICATIONS_ENABLED}**."
             echo ''
-            echo 'Validate this production build on real devices before App Review. This workflow does not submit or publish the app.'
+            echo 'Internal TestFlight qualification upload only. Before App Review, verify this build on real devices, including phone/email, live payment/refund, deletion and each enabled feature.'
+            echo 'This workflow does not submit for App Review or publish the app.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload production build failure diagnostics

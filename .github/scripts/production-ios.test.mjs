@@ -17,7 +17,7 @@ const baseEnv = {
   GITHUB_REPOSITORY: 'alituco/field-v2', GITHUB_SHA: sha,
   GITHUB_RUN_NUMBER: '12',
   PRODUCTION_RELEASE_CONFIRMATION: 'BUILD_PRODUCTION_IOS',
-  PRODUCTION_BACKEND_CONFIRMATION: 'PRODUCTION_BACKEND_VERIFIED',
+  PRODUCTION_BACKEND_CONFIRMATION: 'PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT',
 };
 const run = { head_sha: sha, head_branch: 'prod', status: 'completed', conclusion: 'success', event: 'workflow_dispatch' };
 
@@ -57,6 +57,7 @@ test('wrong branch/event/repository/confirmations fail before reading GitHub', (
     { GITHUB_REPOSITORY: 'other/repo' }, { GITHUB_SHA: 'latest' },
     { GITHUB_RUN_NUMBER: '0' },
     { PRODUCTION_RELEASE_CONFIRMATION: '' }, { PRODUCTION_BACKEND_CONFIRMATION: '' },
+    { PRODUCTION_BACKEND_CONFIRMATION: 'PRODUCTION_BACKEND_VERIFIED' },
   ]) {
     assert.throws(() => verifyProductionIosRelease({ env: { ...baseEnv, ...changes }, readGithub: () => assert.fail('must not read GitHub') }));
   }
@@ -155,6 +156,7 @@ test('production input preflight rejects environment/credential mistakes before 
   for (const invalid of [
     { GITHUB_REF: 'refs/heads/staging' }, { GITHUB_EVENT_NAME: 'push' },
     { PRODUCTION_RELEASE_CONFIRMATION: 'yes' }, { PRODUCTION_BACKEND_CONFIRMATION: '' },
+    { PRODUCTION_BACKEND_CONFIRMATION: 'PRODUCTION_BACKEND_VERIFIED' },
     { SUPABASE_URL: 'https://nfdkdhdevpstfspazbfn.supabase.co' }, { SUPABASE_URL: `${env.SUPABASE_URL}/path` },
     { STRIPE_PUBLISHABLE_KEY: 'pk_test_fixture' }, { APPLE_TEAM_ID: 'OTHERTEAM1' },
     { IOS_PRODUCTION_BUNDLE_ID: 'com.alialtaraif.field.staging' }, { APPLE_MERCHANT_ID: 'merchant.other' },
@@ -253,6 +255,25 @@ test('production workflow is manual/protected and validates archive and exported
   assert.match(read('mobile/ios/Runner/Runner-production.entitlements'), /<string>merchant\.com\.alialtaraif\.fieldrush\.production<\/string>/);
   assert.doesNotMatch(read('mobile/ios/Runner/Runner-production.entitlements'), /aps-environment/);
   assert.match(read('mobile/ios/Runner/Runner-production-push.entitlements'), /<key>aps-environment<\/key>\s*<string>production<\/string>/);
+});
+
+test('internal TestFlight readiness rechecks public production health before any signing action', () => {
+  const workflow = read('.github/workflows/upload-production-testflight.yml');
+  assert.match(workflow, /description: Type PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT after production deployment, health and provider configuration checks/);
+  assert.doesNotMatch(workflow, /PRODUCTION_BACKEND_VERIFIED|after live auth\/payment\/refund\/deletion checks/);
+  assert.match(workflow, /^      SUPABASE_PROJECT_REF: \$\{\{ vars\.PRODUCTION_SUPABASE_PROJECT_REF \}\}$/m);
+  assert.match(workflow, /^      SUPABASE_URL: https:\/\/\$\{\{ vars\.PRODUCTION_SUPABASE_PROJECT_REF \}\}\.supabase\.co$/m);
+  assert.match(workflow, /^      SUPABASE_PUBLISHABLE_KEY: \$\{\{ vars\.PRODUCTION_SUPABASE_PUBLISHABLE_KEY \}\}$/m);
+  assert.doesNotMatch(workflow, /SUPABASE_SERVICE_ROLE_KEY|FIELD_SUPABASE_SECRET_KEY/);
+  const healthStep = workflow.match(/      - name: Recheck production health and anonymous privacy before signing[\s\S]*?(?=\n      - name:)/)?.[0];
+  assert.ok(healthStep, 'read-only health/privacy check must be a required step');
+  assert.match(healthStep, /timeout-minutes: 2\n        run: node \.github\/scripts\/smoke-supabase\.mjs/);
+  assert.doesNotMatch(healthStep, /continue-on-error|if:/);
+  const healthIndex = workflow.indexOf(healthStep);
+  assert.ok(workflow.lastIndexOf('run: node .github/scripts/verify-production-ios-release.mjs') < healthIndex);
+  assert.ok(healthIndex < workflow.indexOf('run: bash .github/scripts/upload-production-testflight.sh'));
+  assert.match(workflow, /Internal TestFlight qualification upload only/);
+  assert.match(workflow, /Before App Review[\s\S]*live payment\/refund, deletion/);
 });
 
 test('production Apple Pay uses its own merchant and profile while staging keeps its existing identity', () => {
