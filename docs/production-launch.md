@@ -96,14 +96,19 @@ merely because a daily backup exists.
 4. Use the protected [backend deployment](../.github/DEPLOYMENT.md) with
    `DEPLOY_PRODUCTION`, `BACKUP_VERIFIED`, and `LIVE_STRIPE_READY` only when each
    assertion is true. The live account/webhook preflight precedes mutations.
-5. Qualify live auth, a controlled payment and refund, deletion, staff operations,
-   recording services and notification consent/delivery. Local/mock tests do
-   not establish these live outcomes.
-6. Use the protected [production iOS upload](production-ios.md), then qualify
-   the processed TestFlight build on real devices.
-7. Complete store assets/declarations and reviewer access, select the exact
-   qualified build, and submit it for App Review. Publish manually after approval
-   when operations are ready.
+5. Check production health, authentication/privacy boundaries, actual SMS/email
+   delivery, live Stripe account/webhook settings, deletion configuration and
+   other services enabled for internal testing.
+6. Use the protected [production iOS upload](production-ios.md) to obtain the
+   internal TestFlight qualification build. Then qualify that actual build on
+   real devices: phone/email login and recovery, a deliberately authorized live
+   payment and original-method refund, deletion and its safeguards, staff
+   operations, and enabled recording/notification features. Local/mock tests
+   and readiness probes do not establish those live outcomes.
+7. Finish those live checks plus store assets/declarations and reliable reviewer
+   access before selecting the exact qualified build for App Review. Publish
+   manually after Apple approval when operations are ready. The first internal
+   TestFlight upload does not submit the app or make it public.
 
 Signing and server credentials belong outside this repository. Local setup
 material is stored under `$HOME/.config/fieldrush/production/` with restricted

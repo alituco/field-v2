@@ -34,8 +34,8 @@ done
   || fail "Production iOS uploads require a manual dispatch from prod."
 [[ "$PRODUCTION_RELEASE_CONFIRMATION" == BUILD_PRODUCTION_IOS ]] \
   || fail "Confirm the production iOS build with BUILD_PRODUCTION_IOS."
-[[ "$PRODUCTION_BACKEND_CONFIRMATION" == PRODUCTION_BACKEND_VERIFIED ]] \
-  || fail "Confirm the live backend/auth/payment checks with PRODUCTION_BACKEND_VERIFIED."
+[[ "$PRODUCTION_BACKEND_CONFIRMATION" == PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT ]] \
+  || fail "Confirm production backend configuration and health are ready for internal TestFlight qualification with PRODUCTION_BACKEND_READY_FOR_TESTFLIGHT."
 [[ "$SUPABASE_URL" == "$expected_supabase_url" ]] \
   || fail "The production app must target Field Production."
 [[ "$APPLE_TEAM_ID" == "$expected_team_id" && "$IOS_PRODUCTION_BUNDLE_ID" == "$expected_bundle_id" ]] \
