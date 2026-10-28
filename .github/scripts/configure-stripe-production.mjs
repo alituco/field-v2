@@ -23,7 +23,7 @@ function matchesEntire(pattern, value) {
 export function validateConfiguration(env) {
   if (env.SUPABASE_PROJECT_REF !== project ||
       env.PRODUCTION_STRIPE_LIVE_ROLLOUT !== 'LIVE_STRIPE_READY' ||
-      !matchesEntire(/^sk_live_[A-Za-z0-9_]+$/, env.STRIPE_SECRET_KEY) ||
+      !matchesEntire(/^(?:sk|rk)_live_[A-Za-z0-9_]+$/, env.STRIPE_SECRET_KEY) ||
       !matchesEntire(/^pk_live_[A-Za-z0-9_]+$/, env.STRIPE_PUBLISHABLE_KEY) ||
       !matchesEntire(/^whsec_[A-Za-z0-9_]+$/, env.STRIPE_WEBHOOK_SECRET) ||
       !matchesEntire(/^acct_[A-Za-z0-9]+$/, env.STRIPE_ACCOUNT_ID) ||

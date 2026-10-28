@@ -39,7 +39,7 @@ fi
 if [[ "$target" == production ]]; then
   stripe_reconcile_secret="${STRIPE_RECONCILE_SECRET:-}"
   if [[ "${PRODUCTION_STRIPE_LIVE_ROLLOUT:-}" != LIVE_STRIPE_READY ||
-    ! "${STRIPE_SECRET_KEY:-}" =~ ^sk_live_[A-Za-z0-9_]+$ ||
+    ! "${STRIPE_SECRET_KEY:-}" =~ ^(sk|rk)_live_[A-Za-z0-9_]+$ ||
     ! "${STRIPE_PUBLISHABLE_KEY:-}" =~ ^pk_live_[A-Za-z0-9_]+$ ||
     ! "${STRIPE_WEBHOOK_SECRET:-}" =~ ^whsec_[A-Za-z0-9_]+$ ||
     ! "${STRIPE_WEBHOOK_ENDPOINT_ID:-}" =~ ^we_[A-Za-z0-9]+$ ||

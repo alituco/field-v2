@@ -270,6 +270,13 @@ test('production requires explicit live configuration before invoking any deploy
     { PRODUCTION_STRIPE_LIVE_ROLLOUT: undefined },
     { PRODUCTION_STRIPE_LIVE_ROLLOUT: 'true' },
     { STRIPE_SECRET_KEY: fixtureEnv.STRIPE_SECRET_KEY },
+    { STRIPE_SECRET_KEY: 'rk_test_fixture' },
+    { STRIPE_SECRET_KEY: 'rk_live_' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture/other' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture ' },
+    { STRIPE_SECRET_KEY: 'sk_live_fixture\n' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture\n' },
+    { STRIPE_SECRET_KEY: 'rk_live_fixture\nOTHER=bad' },
     { STRIPE_PUBLISHABLE_KEY: fixtureEnv.STRIPE_PUBLISHABLE_KEY },
     { STRIPE_WEBHOOK_SECRET: undefined },
     { STRIPE_WEBHOOK_ENDPOINT_ID: undefined },
@@ -288,19 +295,24 @@ test('production requires explicit live configuration before invoking any deploy
   }
 });
 
-test('failed production provider preflight never invokes Supabase or changes data', (t) => {
-  const result = runProduction(deployment(t, { failure: 'production-preflight' }));
-  assert.equal(result.status, 42, result.output);
-  assert.deepEqual(result.calls.map(call => call.command), ['node']);
-  assert.deepEqual(result.calls[0].args, ['.github/scripts/configure-stripe-production.mjs', '--preflight']);
-  assert.doesNotMatch(result.output, /Linking|deployment completed/);
-});
+for (const keyPrefix of ['sk', 'rk']) {
+  test(`failed production provider preflight with ${keyPrefix} key never invokes Supabase or changes data`, (t) => {
+    const result = runProduction(deployment(t, { failure: 'production-preflight' }),
+      { STRIPE_SECRET_KEY: `${keyPrefix}_live_deployment_fixture_only` });
+    assert.equal(result.status, 42, result.output);
+    assert.deepEqual(result.calls.map(call => call.command), ['node']);
+    assert.deepEqual(result.calls[0].args, ['.github/scripts/configure-stripe-production.mjs', '--preflight']);
+    assert.doesNotMatch(result.output, /Linking|deployment completed/);
+  });
+}
 
 test('confirmed production deploys payment/deletion/inert push without developer authentication or automatic activation', (t) => {
   const forbidden = ['dev-phone-login', 'dev-switch-user', 'staging-admin-session'];
   const harness = deployment(t, { functions: [...forbidden, 'tap-payment', 'keep-function'], secrets: [...retiredSecrets, ...unrelatedSecrets] });
   for (let run = 0; run < 2; run++) {
-    const result = runProduction(harness);
+    const result = runProduction(harness, {
+      STRIPE_SECRET_KEY: `${run === 0 ? 'sk' : 'rk'}_live_deployment_fixture_only`,
+    });
     assert.equal(result.status, 0, result.output);
     assert.match(result.output, /Supabase production deployment completed/);
     assert.equal(result.calls[0].command, 'node');
@@ -347,6 +359,7 @@ test('requires sandbox keys and recovery credentials before staging migrations',
   for (const overrides of [
     { STRIPE_SECRET_KEY: undefined },
     { STRIPE_SECRET_KEY: 'sk_live_placeholder' },
+    { STRIPE_SECRET_KEY: 'rk_live_placeholder' },
     { STRIPE_RECONCILE_SECRET: 'short' },
     { STRIPE_WEBHOOK_ENDPOINT_ID: undefined },
     { SUPABASE_ACCESS_TOKEN: undefined },
