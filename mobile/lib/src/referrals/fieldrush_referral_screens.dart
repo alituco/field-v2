@@ -301,6 +301,10 @@ class _FieldrushReferralsScreenState extends State<FieldrushReferralsScreen>
                 )
               else
                 ReferralPrizeBanner(summary: data),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(20, 12, 20, 0),
+                child: ReferralOfficialRulesNotice(),
+              ),
               ReferralSectionLabel(
                 'PRIZE PLACES',
                 trailing: Text(
