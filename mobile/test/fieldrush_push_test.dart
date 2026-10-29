@@ -56,7 +56,7 @@ void main() {
     String iosAppId = '1:123456789:ios:abcdef',
     String androidAppId = '1:123456789:android:fedcba',
     String iosBundleId = 'com.alialtaraif.field',
-    String androidPackageId = 'com.field.field',
+    String androidPackageId = 'gg.fieldrush.app',
   }) => FieldrushPushConfiguration(
     enabled: enabled,
     environment: environment,
@@ -101,6 +101,7 @@ void main() {
       }
       for (final invalid in [
         productionConfig(androidPackageId: ''),
+        productionConfig(androidPackageId: 'com.field.field'),
         productionConfig(androidPackageId: 'com.field.field.staging'),
         productionConfig(androidAppId: '1:987654321:android:abcdef'),
         productionConfig(androidAppId: '1:123456789:ios:abcdef'),

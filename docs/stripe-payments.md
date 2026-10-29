@@ -193,10 +193,10 @@ sandbox records. See [Stripe's Google Pay testing guide](https://docs.stripe.com
 
 Before live payments, submit the Android app through the Google Pay & Wallet
 Console using integration type **Gateway**, provide the required screenshots,
-and obtain approval. Configure proper Android release signing: the current
-`mobile/android/app/build.gradle.kts` release build still uses the debug signing
-configuration, which is unsuitable for Google Pay production. Live rollout
-also requires production wallet mode and live Stripe keys. See
+and obtain approval. The protected [production Android builder](production-android.md)
+uses its pinned upload certificate; unsigned CI builds are not suitable for
+Google Pay production. Live rollout also requires production wallet mode,
+live Stripe keys and physical-device qualification. See
 [Google's production requirements](https://developers.google.com/pay/api/android/guides/test-and-deploy/publish-your-integration).
 
 ## Local testing
