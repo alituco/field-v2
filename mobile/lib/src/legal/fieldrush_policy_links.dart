@@ -5,10 +5,28 @@ import 'package:url_launcher/url_launcher.dart';
 import '../auth/fieldrush_auth_theme.dart';
 
 /// Open the public document without tying an app flow to a policy request.
-Future<void> openFieldrushPolicy(BuildContext context, String path) async {
-  final uri = Uri.https('fieldrush.gg', path);
+Future<void> openFieldrushPolicy(BuildContext context, String path) =>
+    _openFieldrushDocument(
+      context,
+      Uri.https('fieldrush.gg', path),
+      LaunchMode.externalApplication,
+    );
+
+/// Contest rules stay inside the app at this fixed, public HTTPS destination.
+Future<void> openFieldrushReferralRules(BuildContext context) =>
+    _openFieldrushDocument(
+      context,
+      Uri.https('www.fieldrush.gg', '/referral-rules'),
+      LaunchMode.inAppBrowserView,
+    );
+
+Future<void> _openFieldrushDocument(
+  BuildContext context,
+  Uri uri,
+  LaunchMode mode,
+) async {
   try {
-    if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+    if (await launchUrl(uri, mode: mode)) return;
   } catch (_) {
     // Keep the current draft and give the player the destination to retry.
   }
