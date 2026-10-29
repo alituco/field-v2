@@ -117,12 +117,16 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     } catch (_) {
       // Always attempt disposal even when the native player cannot pause.
     }
-    try {
-      await controller?.dispose();
-    } catch (_) {
-      // The player is already detached; a failed native disposal must not
-      // restore the old clip while its safety state is unknown.
-    }
+    // Pause completes before navigation. Native teardown may wait on an event
+    // stream that has already detached, so it must not hold the safety/loading
+    // surface or block the next route. Generations reject all old callbacks.
+    unawaited(() async {
+      try {
+        await controller?.dispose();
+      } catch (_) {
+        // Cleanup cannot restore an old clip or interfere with a new route.
+      }
+    }());
   }
 
   Future<void> _authorizeContent() async {

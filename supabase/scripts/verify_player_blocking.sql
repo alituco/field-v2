@@ -33,7 +33,8 @@ grant select on block_fixtures,block_snapshots to authenticated,anon,service_rol
 
 do $$
 declare ids uuid[]:='{}'; player uuid; i integer; clan uuid; other_clan uuid; game uuid;
-  party uuid; other_party uuid; invitation uuid; staff_login uuid:=gen_random_uuid(); staff_key uuid:=gen_random_uuid();
+  kickoff timestamptz; party uuid; other_party uuid; invitation uuid;
+  staff_login uuid:=gen_random_uuid(); staff_key uuid:=gen_random_uuid();
 begin
   for i in 1..6 loop
     player:=gen_random_uuid(); ids:=array_append(ids,player);
@@ -60,11 +61,24 @@ begin
   insert into public.clan_members(clan_id,profile_id,role) values(other_clan,ids[4],'leader');
   insert into block_fixtures values('other_clan',other_clan);
   perform pg_temp.block_actor(ids[1],'service_role');
+  -- Exercise the permanent legacy schedule rather than bypassing its trigger.
+  -- Select the first unoccupied future Tuesday/Friday at 20:30 in Bahrain.
+  select ((candidate.day::date+time '20:30') at time zone 'Asia/Bahrain') into kickoff
+  from generate_series(
+    ((now() at time zone 'Asia/Bahrain')::date+30)::timestamp,
+    ((now() at time zone 'Asia/Bahrain')::date+365)::timestamp,
+    interval '1 day') candidate(day)
+  where extract(isodow from candidate.day) in (2,5)
+    and not exists(select 1 from public.open_queue_games g where g.field_id is null
+      and g.status<>'CANCELLED'
+      and g.starts_at=((candidate.day::date+time '20:30') at time zone 'Asia/Bahrain'))
+  order by candidate.day limit 1;
+  if kickoff is null then raise exception 'No permitted vacant legacy slot for the blocking fixture.'; end if;
   insert into public.open_queue_games(format_version,currency,timezone,capacity,
     goalkeeper_capacity,defender_capacity,midfielder_capacity,attacker_capacity,
     venue,starts_at,ends_at,price_fils,created_by)
     values('LEGACY_6V6','BHD','Asia/Bahrain',12,2,4,4,2,
-      'Disposable player blocking contract pitch',now()+interval '30 days',now()+interval '30 days 1 hour',0,ids[1]) returning id into game;
+      'Disposable player blocking contract pitch',kickoff,kickoff+interval '1 hour',0,ids[1]) returning id into game;
   insert into public.open_queue_bookings(game_id,profile_id,role,amount_paid_fils,
     base_amount_fils,payment_method,payment_status)
     values(game,ids[2],'GK',0,0,'FREE','PAID');

@@ -72,7 +72,7 @@ void main() {
                   {..._profile(id), 'content_hidden': false},
             ];
           } else if (path.endsWith('/list_fieldrush_discover_profiles')) {
-            expect(jsonDecode(request.body), isEmpty);
+            expect(jsonDecode(request.body), isNull);
             payload = [_profile('discover-player'), _profile('follow-0')];
           } else if (path.endsWith('/list_fieldrush_connection_clans')) {
             final ids = (jsonDecode(request.body)['profile_ids_to_use'] as List)

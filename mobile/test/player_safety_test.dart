@@ -27,9 +27,8 @@ void main() {
       final requests = <http.Request>[];
       final client = _client((request) async {
         requests.add(request);
-        final body = jsonDecode(request.body) as Map;
         if (request.url.path.endsWith('/list_fieldrush_blocked_players')) {
-          expect(body, isEmpty);
+          expect(jsonDecode(request.body), isNull);
           return _response(
             request,
             blocked
@@ -44,6 +43,7 @@ void main() {
                 : [],
           );
         }
+        final body = jsonDecode(request.body) as Map;
         if (request.url.path.endsWith('/set_fieldrush_player_block')) {
           expect(body.keys.toSet(), {'profile_id_to_use', 'blocked_to_use'});
           blocked = body['blocked_to_use'] as bool;
@@ -308,8 +308,8 @@ void main() {
     );
     await tester.pumpAndSettle();
     final row = find.text('Blocked players');
-    await tester.ensureVisible(row);
-    await tester.tap(row);
+
+    await _tapVisible(tester, row);
     expect(opened, 1);
   });
 
@@ -536,8 +536,8 @@ void main() {
       );
       await tester.pumpAndSettle();
       final next = find.byKey(const ValueKey('up-next-clip-next'));
-      await tester.ensureVisible(next);
-      await tester.tap(next);
+
+      await _tapVisible(tester, next);
       await tester.pumpAndSettle();
       expect(find.text('Clip next'), findsWidgets);
       safety.incomingBlock = true;
@@ -568,7 +568,10 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('profile-grid-clip-first')));
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('profile-grid-clip-first')),
+      );
       await tester.pumpAndSettle();
       profiles.failProfile = true;
       key.currentState!.pop();
@@ -598,7 +601,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Other Player'));
+      await _tapVisible(tester, find.text('Other Player'));
       await tester.pumpAndSettle();
       expect(find.text('Other Player'), findsNothing);
       expect(find.byKey(const ValueKey('follow-other')), findsNothing);
@@ -632,11 +635,14 @@ void main() {
       await _pumpProfile(tester, profiles, safety);
       await tester.pumpAndSettle();
       final action = find.byKey(const ValueKey('player-block-action'));
-      await tester.ensureVisible(action);
-      await tester.tap(action);
+
+      await _tapVisible(tester, action);
       await tester.pumpAndSettle();
       expect(find.text(playerBlockScope), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('player-block-confirm')));
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('player-block-confirm')),
+      );
       await tester.pumpAndSettle();
       expect(safety.writes, [true]);
       expect(
@@ -647,9 +653,15 @@ void main() {
       expect(find.text('Share profile'), findsNothing);
       expect(find.text('Follow'), findsNothing);
       expect(find.text('Report player'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('player-block-action')));
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('player-block-action')),
+      );
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('player-block-confirm')));
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('player-block-confirm')),
+      );
       await tester.pumpAndSettle();
       expect(safety.writes, [true, false]);
       expect(
@@ -665,15 +677,18 @@ void main() {
     await _pumpProfile(tester, _Profiles(), safety);
     await tester.pumpAndSettle();
     final action = find.byKey(const ValueKey('player-block-action'));
-    await tester.ensureVisible(action);
-    await tester.tap(action);
+
+    await _tapVisible(tester, action);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Cancel'));
+    await _tapVisible(tester, find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(safety.writes, isEmpty);
-    await tester.tap(action);
+    await _tapVisible(tester, action);
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('player-block-confirm')));
+    await _tapVisible(
+      tester,
+      find.byKey(const ValueKey('player-block-confirm')),
+    );
     await tester.pumpAndSettle();
     expect(safety.writes, [true]);
     expect(find.byKey(const ValueKey('blocked-profile-content')), findsNothing);
@@ -690,16 +705,19 @@ void main() {
       await _pumpProfile(tester, _Profiles(), safety);
       await tester.pumpAndSettle();
       final action = find.byKey(const ValueKey('player-block-action'));
-      await tester.ensureVisible(action);
-      await tester.tap(action);
+
+      await _tapVisible(tester, action);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('player-block-confirm')));
+      await _tapVisible(
+        tester,
+        find.byKey(const ValueKey('player-block-confirm')),
+      );
       await tester.pumpAndSettle();
       expect(safety.blocked, isTrue);
       expect(find.text('Other Player'), findsNothing);
       expect(find.byKey(const ValueKey('profile-error')), findsOneWidget);
       safety.failRead = false;
-      await tester.tap(find.text('Try again'));
+      await _tapVisible(tester, find.text('Try again'));
       await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('blocked-profile-content')),
@@ -749,9 +767,12 @@ void main() {
           find.byKey(const ValueKey('blocked-player-other')),
           findsOneWidget,
         );
-        await tester.tap(find.byKey(const ValueKey('unblock-other')));
+        await _tapVisible(tester, find.byKey(const ValueKey('unblock-other')));
         await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('player-block-confirm')));
+        await _tapVisible(
+          tester,
+          find.byKey(const ValueKey('player-block-confirm')),
+        );
         await tester.pumpAndSettle();
         expect(
           find.byKey(const ValueKey('blocked-player-other')),
@@ -779,7 +800,7 @@ void main() {
       expect(find.byKey(const ValueKey('profile-error')), findsOneWidget);
       expect(find.text('Other Player'), findsNothing);
       safety.failRead = false;
-      await tester.tap(find.text('Try again'));
+      await _tapVisible(tester, find.text('Try again'));
       await tester.pumpAndSettle();
       expect(find.text('Other Player'), findsWidgets);
     },
@@ -1003,4 +1024,13 @@ class _ConnectionProfiles extends _Profiles {
       discover: [],
     );
   }
+}
+
+Future<void> _tapVisible(WidgetTester tester, Finder target) async {
+  expect(target, findsOneWidget);
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  final visibleTarget = target.hitTestable();
+  expect(visibleTarget, findsOneWidget);
+  await tester.tap(visibleTarget);
 }
