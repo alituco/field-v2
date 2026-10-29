@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/viewer_safe_identities.dart';
 
 import 'open_queue_party.dart';
 
@@ -48,7 +49,23 @@ mixin SupabaseOpenQueuePartyRepository
         Map<String, dynamic>.from(value.first as Map),
       _ => throw StateError('Party details are unavailable.'),
     };
-    return OpenQueuePartyContext.fromJson(json);
+    final safe = await viewerSafeIdentityPayload(partyClient, json);
+    if (safe['eligible_players'] is List) {
+      safe['eligible_players'] = [
+        for (final row in safe['eligible_players'] as List)
+          if (row is Map && row['content_hidden'] != true) row,
+      ];
+    }
+    if (safe['received_invites'] is List) {
+      safe['received_invites'] = [
+        for (final row in safe['received_invites'] as List)
+          if (row is Map &&
+              row['owner'] is Map &&
+              row['owner']['content_hidden'] != true)
+            row,
+      ];
+    }
+    return OpenQueuePartyContext.fromJson(safe);
   }
 
   @override
@@ -122,8 +139,10 @@ mixin SupabaseOpenQueuePartyRepository
       _ => const <dynamic>[],
     };
     return [
-      for (final row in rows)
-        if (row is Map)
+      for (final row in await viewerSafeIdentityRows(partyClient, rows))
+        if (row is Map &&
+            row['inviter'] is Map &&
+            row['inviter']['content_hidden'] != true)
           OpenQueuePartyInviteNotification.fromJson(
             Map<String, dynamic>.from(row),
           ),

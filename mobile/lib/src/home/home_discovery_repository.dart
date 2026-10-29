@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/viewer_safe_identities.dart';
 import '../ranking/player_rating_visibility.dart';
 
 class HomePlayerResult with PublicPlayerRating {
@@ -159,23 +160,24 @@ class SupabaseHomeDiscoveryRepository
             )
             as List;
     return [
-      for (final row in rows)
-        HomePlayerResult(
-          id: row['id'] as String,
-          name: row['display_name'] as String? ?? 'Player',
-          username: row['username'] as String? ?? '',
-          avatarUrl: _nonEmptyString(row['avatar_url']),
-          skillRating: publicRatingNumber(
-            Map<String, dynamic>.from(row as Map),
-            'skill_rating',
+      for (final row in await viewerSafeIdentityRows(_client, rows))
+        if (row['content_hidden'] != true)
+          HomePlayerResult(
+            id: row['id'] as String,
+            name: row['display_name'] as String? ?? 'Player',
+            username: row['username'] as String? ?? '',
+            avatarUrl: _nonEmptyString(row['avatar_url']),
+            skillRating: publicRatingNumber(
+              Map<String, dynamic>.from(row as Map),
+              'skill_rating',
+            ),
+            visibility: PlayerRatingVisibility.fromJson(
+              Map<String, dynamic>.from(row),
+            ),
+            matchesPlayed: (row['matches_played'] as num?)?.toInt() ?? 0,
+            cityName: _nonEmptyString(row['city_name']),
+            isSelf: row['is_self'] == true,
           ),
-          visibility: PlayerRatingVisibility.fromJson(
-            Map<String, dynamic>.from(row),
-          ),
-          matchesPlayed: (row['matches_played'] as num?)?.toInt() ?? 0,
-          cityName: _nonEmptyString(row['city_name']),
-          isSelf: row['is_self'] == true,
-        ),
     ];
   }
 

@@ -669,7 +669,17 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       ),
       child: InkWell(
         key: ValueKey('home-search-player-${player.id}'),
-        onTap: () => widget.onPlayer(player.id),
+        onTap: () async {
+          // Clear cached discovery identity before returning from player safety
+          // actions; a failed refresh must not re-show an old avatar.
+          setState(() {
+            _players = [];
+            _loading = true;
+            _request++;
+          });
+          await widget.onPlayer(player.id);
+          if (mounted) await _load();
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
           child: Row(

@@ -246,12 +246,14 @@ void main() {
         (_) => [
           {
             'id': 'a',
+            'content_hidden': false,
             'display_name': 'Dana',
             'username': 'dana',
             'avatar_url': '  ',
           },
           {
             'id': 'b',
+            'content_hidden': false,
             'display_name': 'Sam',
             'username': 'sam',
             'avatar_url': null,
@@ -263,8 +265,16 @@ void main() {
         client: client,
       ).searchPlayers('da');
       expect(players.map((player) => player.avatarUrl), [null, null]);
-      expect(requests.single.url.path, '/rest/v1/rpc/search_fieldrush_players');
-      expect(jsonDecode(requests.single.body), {'query_to_use': 'da'});
+      expect(requests.first.url.path, '/rest/v1/rpc/search_fieldrush_players');
+      expect(jsonDecode(requests.first.body), {'query_to_use': 'da'});
+      expect(requests, hasLength(2));
+      expect(
+        requests.last.url.path,
+        '/rest/v1/rpc/list_fieldrush_profile_identities',
+      );
+      expect(jsonDecode(requests.last.body), {
+        'profile_ids_to_use': ['a', 'b'],
+      });
     },
   );
 

@@ -18,6 +18,9 @@ import 'goal_clip_downloader.dart';
 import 'profile.dart';
 import 'profile_clip_actions.dart';
 import 'profile_repository.dart';
+import 'player_safety_repository.dart';
+import 'blocked_players_screen.dart';
+import '../core/read_timeout.dart';
 
 class ProfileClipScreen extends StatefulWidget {
   const ProfileClipScreen({
@@ -31,10 +34,12 @@ class ProfileClipScreen extends StatefulWidget {
     this.ownerInitials,
     this.fixtureRepository,
     this.openQueueRepository,
+    this.playerSafetyRepository,
   });
 
   final ProfileHighlight highlight;
   final ProfileRepository profileRepository;
+  final PlayerSafetyRepository? playerSafetyRepository;
   final bool canManage;
   final GoalClipDownloader? downloader;
   final String? ownerLabel;
@@ -71,32 +76,155 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   bool _openingFullMatch = false;
   bool _playbackSuspended = false;
 
+  bool _checkingSafety = true;
+  bool _contentAllowed = false;
+  String? _contentError;
+  int _safetyGeneration = 0;
+  String? _safetyViewerId;
+
   @override
   void initState() {
     super.initState();
-    unawaited(_loadRecommendations());
-    unawaited(_loadSourceMatch());
-    if (_highlight.isProcessing) {
-      _startStatusPolling();
-      unawaited(_refreshHighlight());
-    } else {
-      unawaited(_syncVideoPlayer());
+    unawaited(_authorizeContent());
+  }
+
+  bool get _mayDisplayContent =>
+      _contentAllowed &&
+      !_checkingSafety &&
+      _safetyViewerId == widget.profileRepository.currentUserId;
+
+  Future<void> _invalidateClipContent() async {
+    _safetyGeneration++;
+    _loadGeneration++;
+    _statusTimer?.cancel();
+    _statusTimer = null;
+    final controller = _controller;
+    setState(() {
+      _checkingSafety = true;
+      _contentAllowed = false;
+      _contentError = null;
+      _controller = null;
+      _loadedVideoUrl = null;
+      _isLoadingVideo = false;
+      _isRefreshing = false;
+      _recommendations = const [];
+      _loadingRecommendations = true;
+      _recommendationsFailed = false;
+      _sourceFixture = null;
+    });
+    try {
+      await controller?.dispose();
+    } catch (_) {
+      // The player is already detached; a failed native disposal must not
+      // restore the old clip while its safety state is unknown.
+    }
+  }
+
+  Future<void> _authorizeContent() async {
+    await _invalidateClipContent();
+    if (!mounted) {
+      return;
+    }
+    final generation = _safetyGeneration;
+    final repository = widget.profileRepository;
+    final viewerId = _safetyViewerId = repository.currentUserId;
+    final safety = widget.playerSafetyRepository ?? playerSafetyFor(repository);
+    bool current() =>
+        mounted &&
+        generation == _safetyGeneration &&
+        identical(widget.profileRepository, repository) &&
+        repository.currentUserId == viewerId;
+    setState(() {
+      _checkingSafety = true;
+      _contentAllowed = false;
+      _contentError = null;
+    });
+    try {
+      if (safety != null) {
+        var owner = _highlight.profileId?.trim();
+        if (owner == null || owner.isEmpty) {
+          final refreshed = await repository
+              .refreshHighlight(_highlight.id)
+              .timeout(fieldReadTimeout);
+          if (!current()) {
+            return;
+          }
+          if (refreshed.id != _highlight.id) {
+            throw const FormatException('Clip unavailable.');
+          }
+          _highlight = refreshed;
+          owner = refreshed.profileId?.trim();
+        }
+        if (owner == null || owner.isEmpty) {
+          throw const FormatException('Clip owner unavailable.');
+        }
+        if (owner != viewerId) {
+          if (!_highlight.isPublic) {
+            throw const FormatException('Clip unavailable.');
+          }
+          final state = await safety.getState(owner).timeout(fieldReadTimeout);
+          if (!current()) {
+            return;
+          }
+          if (state.interactionBlocked) {
+            setState(() => _checkingSafety = false);
+            return;
+          }
+        }
+      }
+      if (!current()) {
+        return;
+      }
+      setState(() {
+        _checkingSafety = false;
+        _contentAllowed = true;
+      });
+      unawaited(_loadRecommendations());
+      unawaited(_loadSourceMatch());
+      if (_highlight.isProcessing) {
+        _startStatusPolling();
+        unawaited(_refreshHighlight());
+      } else {
+        unawaited(_syncVideoPlayer());
+      }
+    } catch (error) {
+      if (current()) {
+        setState(() {
+          _checkingSafety = false;
+          _contentError = userFacingError(
+            error,
+            fallback: 'We could not open this clip. Try again.',
+          );
+        });
+      }
     }
   }
 
   Future<void> _loadRecommendations() async {
+    if (!_mayDisplayContent) {
+      return;
+    }
+    final safetyGeneration = _safetyGeneration;
     try {
       final clips = await widget.profileRepository.getClipRecommendations(
         highlightId: _highlight.id,
       );
-      if (!mounted) return;
+      if (!mounted ||
+          safetyGeneration != _safetyGeneration ||
+          !_mayDisplayContent) {
+        return;
+      }
       setState(() {
         _recommendations = clips;
         _loadingRecommendations = false;
         _recommendationsFailed = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted ||
+          safetyGeneration != _safetyGeneration ||
+          !_mayDisplayContent) {
+        return;
+      }
       setState(() {
         _loadingRecommendations = false;
         _recommendationsFailed = true;
@@ -105,30 +233,41 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   }
 
   Future<void> _loadSourceMatch() async {
+    if (!_mayDisplayContent) {
+      return;
+    }
+    final safetyGeneration = _safetyGeneration;
     try {
       final fixture = await loadProfileClipFixture(
         _highlight,
         fixtureRepository: widget.fixtureRepository,
         openQueueRepository: widget.openQueueRepository,
       );
-      if (mounted) setState(() => _sourceFixture = fixture);
+      if (mounted &&
+          safetyGeneration == _safetyGeneration &&
+          _mayDisplayContent) {
+        setState(() => _sourceFixture = fixture);
+      }
     } catch (_) {
       // The clip remains watchable when its original match cannot be loaded.
     }
   }
 
   Future<void> _openNext(ProfileClipRecommendation next) async {
-    if (_openingNext) return;
+    if (_openingNext || !_mayDisplayContent) {
+      return;
+    }
     _openingNext = true;
     _playbackSuspended = true;
     try {
-      await _controller?.pause();
+      await _invalidateClipContent();
       if (!mounted) return;
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => ProfileClipScreen(
             highlight: next.highlight,
             profileRepository: widget.profileRepository,
+            playerSafetyRepository: widget.playerSafetyRepository,
             canManage: next.profileId == widget.profileRepository.currentUserId,
             ownerLabel: next.username.isEmpty
                 ? next.displayName
@@ -141,24 +280,27 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
           ),
         ),
       );
-      if (mounted) await _loadRecommendations();
     } finally {
       _openingNext = false;
       _playbackSuspended = false;
+      if (mounted) await _authorizeContent();
     }
   }
 
   Future<void> _openFullMatch() async {
-    if (_openingFullMatch) return;
+    if (_openingFullMatch || !_mayDisplayContent) {
+      return;
+    }
     _playbackSuspended = true;
     setState(() => _openingFullMatch = true);
     try {
-      await _controller?.pause();
+      final sourceFixture = _sourceFixture;
+      await _invalidateClipContent();
       if (!mounted) return;
       await openProfileClipFullMatch(
         context,
         highlight: _highlight,
-        initialFixture: _sourceFixture,
+        initialFixture: sourceFixture,
         fixtureRepository: widget.fixtureRepository,
         openQueueRepository: widget.openQueueRepository,
         profileRepository: widget.profileRepository,
@@ -166,13 +308,17 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       );
     } finally {
       _playbackSuspended = false;
-      if (mounted) setState(() => _openingFullMatch = false);
+      if (mounted) {
+        setState(() => _openingFullMatch = false);
+        await _authorizeContent();
+      }
     }
   }
 
   @override
   void dispose() {
     _loadGeneration += 1;
+    _safetyGeneration++;
     _statusTimer?.cancel();
     final controller = _controller;
     unawaited(controller?.dispose());
@@ -188,13 +334,20 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   }
 
   Future<ProfileHighlight?> _refreshHighlight({bool showError = false}) async {
-    if (_isRefreshing) return null;
+    if (_isRefreshing || !_mayDisplayContent) {
+      return null;
+    }
+    final safetyGeneration = _safetyGeneration;
     _isRefreshing = true;
     try {
       final next = await widget.profileRepository.refreshHighlight(
         _highlight.id,
       );
-      if (!mounted) return null;
+      if (!mounted ||
+          safetyGeneration != _safetyGeneration ||
+          !_mayDisplayContent) {
+        return null;
+      }
       setState(() => _highlight = next);
       if (!next.isProcessing) _statusTimer?.cancel();
       await _syncVideoPlayer();
@@ -211,11 +364,14 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       }
       return null;
     } finally {
-      _isRefreshing = false;
+      if (safetyGeneration == _safetyGeneration) _isRefreshing = false;
     }
   }
 
   Future<void> _syncVideoPlayer() async {
+    if (!_mayDisplayContent) {
+      return;
+    }
     final videoUrl = _highlight.videoUrl?.trim();
     if (!_highlight.isReady || videoUrl == null || videoUrl.isEmpty) return;
     if (_loadedVideoUrl == videoUrl &&
@@ -228,7 +384,9 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     _controller = null;
     _loadedVideoUrl = null;
     if (previous != null) await previous.dispose();
-    if (!mounted || generation != _loadGeneration) return;
+    if (!mounted || generation != _loadGeneration || !_mayDisplayContent) {
+      return;
+    }
     setState(() {
       _isLoadingVideo = true;
       _playerError = null;
@@ -238,7 +396,7 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
     try {
       await next.initialize();
       await next.setLooping(false);
-      if (!mounted || generation != _loadGeneration) {
+      if (!mounted || generation != _loadGeneration || !_mayDisplayContent) {
         await next.dispose();
         return;
       }
@@ -250,7 +408,9 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       // The user explicitly opened this post. Start just this clip; the gallery
       // itself never creates players or records views for unseen tiles.
       try {
-        if (_playbackSuspended) return;
+        if (_playbackSuspended || !_mayDisplayContent) {
+          return;
+        }
         await next.play();
         if (mounted && generation == _loadGeneration) {
           unawaited(_recordViewOnce());
@@ -260,7 +420,9 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       }
     } catch (_) {
       await next.dispose();
-      if (!mounted || generation != _loadGeneration) return;
+      if (!mounted || generation != _loadGeneration || !_mayDisplayContent) {
+        return;
+      }
       setState(() {
         _isLoadingVideo = false;
         _playerError = 'This clip could not be loaded.';
@@ -269,7 +431,9 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   }
 
   Future<void> _togglePlayback() async {
-    if (_playbackSuspended) return;
+    if (_playbackSuspended || !_mayDisplayContent) {
+      return;
+    }
     final controller = _controller;
     if (controller == null || !controller.value.isInitialized) return;
     if (controller.value.isPlaying) {
@@ -287,13 +451,18 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
   }
 
   Future<void> _recordViewOnce() async {
-    if (_viewRecorded) return;
+    if (_viewRecorded || !_mayDisplayContent) {
+      return;
+    }
+    final safetyGeneration = _safetyGeneration;
     _viewRecorded = true;
     try {
       final views = await widget.profileRepository.recordHighlightView(
         _highlight.id,
       );
-      if (mounted) {
+      if (mounted &&
+          safetyGeneration == _safetyGeneration &&
+          _mayDisplayContent) {
         setState(() => _highlight = _highlight.copyWith(views: views));
       }
     } catch (_) {
@@ -490,6 +659,43 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_checkingSafety ||
+        !_contentAllowed ||
+        _safetyViewerId != widget.profileRepository.currentUserId) {
+      return Theme(
+        data: FieldrushAuthTheme.theme(context),
+        child: Scaffold(
+          key: const ValueKey('profile-clip-safety'),
+          appBar: AppBar(title: const Text('Clip')),
+          body: Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: _checkingSafety
+                  ? const FieldLoadingIndicator(label: 'Loading clip')
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _contentError ?? 'This clip is unavailable.',
+                          textAlign: TextAlign.center,
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          playerBlockScope,
+                          textAlign: TextAlign.center,
+                        ),
+                        if (_contentError != null)
+                          TextButton(
+                            onPressed: _authorizeContent,
+                            child: const Text('Try again'),
+                          ),
+                      ],
+                    ),
+            ),
+          ),
+        ),
+      );
+    }
     final isMutating = _isUpdatingVisibility || _isDeleting;
     return Theme(
       data: FieldrushAuthTheme.theme(context),

@@ -388,6 +388,13 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
       widget.onOpenYou!();
       return;
     }
+    setState(() {
+      _players = [];
+      _neighbors = [];
+      _placements = [];
+      _loading = true;
+      _generation++;
+    });
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => Scaffold(
@@ -401,6 +408,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen> {
         ),
       ),
     );
+    if (mounted) await _load();
   }
 
   Future<void> _togglePlacements({bool more = false}) async {

@@ -521,6 +521,24 @@ void main() {
         'test-key',
         authOptions: const AuthClientOptions(autoRefreshToken: false),
         httpClient: MockClient((request) async {
+          if (request.url.path.endsWith('/list_fieldrush_profile_identities')) {
+            expect(jsonDecode(request.body), {
+              'profile_ids_to_use': ['keeper'],
+            });
+            return http.Response(
+              jsonEncode([
+                {
+                  'id': 'keeper',
+                  'display_name': 'Keeper K.',
+                  'username': 'keeper',
+                  'content_hidden': false,
+                },
+              ]),
+              200,
+              headers: {'content-type': 'application/json'},
+              request: request,
+            );
+          }
           expect(
             request.url.path,
             '/rest/v1/rpc/list_fieldrush_placement_page',

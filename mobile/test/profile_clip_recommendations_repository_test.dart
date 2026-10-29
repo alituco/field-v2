@@ -17,6 +17,12 @@ void main() {
         authOptions: const AuthClientOptions(autoRefreshToken: false),
         httpClient: MockClient((request) async {
           requests.add(request);
+          if (request.url.path.endsWith('/list_fieldrush_profile_identities')) {
+            expect(jsonDecode(request.body), {
+              'profile_ids_to_use': ['creator'],
+            });
+            return _identityResponse(request);
+          }
           expect(
             request.url.path,
             '/rest/v1/rpc/get_profile_clip_recommendations',
@@ -53,7 +59,7 @@ void main() {
       expect(result.single.highlight.views, 14);
       expect(result.single.highlight.createdAt, DateTime.utc(2026, 10, 19, 10));
       expect(result.single.highlight.copyWith(views: 15).profileId, 'creator');
-      expect(requests, hasLength(1));
+      expect(requests, hasLength(2));
     },
   );
 
@@ -150,18 +156,22 @@ void main() {
         'test-key',
         authOptions: const AuthClientOptions(autoRefreshToken: false),
         httpClient: MockClient(
-          (request) async => http.Response(
-            jsonEncode([
-              row('private', {'is_public': false}),
-              row('current', {}),
-              row('unready', {'processing_status': 'PROCESSING'}),
-              row('missing-media', {'video_url': ''}),
-              row('visible', {}),
-            ]),
-            200,
-            headers: {'content-type': 'application/json'},
-            request: request,
-          ),
+          (request) async =>
+              request.url.path.endsWith('/list_fieldrush_profile_identities')
+              ? _identityResponse(request)
+              : http.Response(
+                  jsonEncode([
+                    row('private', {'is_public': false}),
+                    row('current', {}),
+                    row('unready', {'processing_status': 'PROCESSING'}),
+                    row('missing-media', {'video_url': ''}),
+                    row('visible', {}),
+                    {...row('blocked-owner', {}), 'profile_id': 'blocked'},
+                  ]),
+                  200,
+                  headers: {'content-type': 'application/json'},
+                  request: request,
+                ),
         ),
       );
       addTearDown(client.dispose);
@@ -196,3 +206,18 @@ const _recommendation = {
     'created_at': '2026-10-19T10:00:00Z',
   },
 };
+
+http.Response _identityResponse(http.Request request) => http.Response(
+  jsonEncode([
+    {
+      'id': 'creator',
+      'username': 'player.one',
+      'display_name': 'Player One',
+      'avatar_url': 'https://example.com/avatar.jpg',
+      'content_hidden': false,
+    },
+  ]),
+  200,
+  headers: {'content-type': 'application/json'},
+  request: request,
+);

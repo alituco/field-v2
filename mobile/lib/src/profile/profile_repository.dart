@@ -5,6 +5,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'avatar_image.dart';
 import 'profile.dart';
+import 'player_safety_repository.dart';
+import 'viewer_safe_identities.dart';
 import '../core/read_timeout.dart';
 
 abstract class ProfileRepository {
@@ -98,7 +100,8 @@ class SupabaseProfileRepository
         ProfileRepository,
         ProfileClipRecommendationsRepository,
         ProfileSummaryRepository,
-        PublicProfileSummaryRepository {
+        PublicProfileSummaryRepository,
+        PlayerSafetyRepositoryProvider {
   SupabaseProfileRepository({SupabaseClient? client})
     : _injectedClient = client;
 
@@ -106,6 +109,12 @@ class SupabaseProfileRepository
 
   final SupabaseClient? _injectedClient;
   SupabaseClient get _client => _injectedClient ?? Supabase.instance.client;
+  late final _safetyRepository = SupabasePlayerSafetyRepository(
+    client: _client,
+  );
+
+  @override
+  PlayerSafetyRepository get playerSafetyRepository => _safetyRepository;
 
   @override
   String? get currentUserId => _client.auth.currentUser?.id;
@@ -264,11 +273,12 @@ class SupabaseProfileRepository
     if (response is! List) {
       throw StateError('The next clips could not be loaded.');
     }
+    final safeRecommendations = await viewerSafeIdentityRows(_client, response);
     final recommendations = [
-      for (final row in response)
-        if (row is Map)
+      for (final row in safeRecommendations)
+        if (row is Map && row['content_hidden'] != true)
           ProfileClipRecommendation.fromJson(Map<String, dynamic>.from(row))
-        else
+        else if (row is! Map)
           throw StateError('The next clips returned an invalid response.'),
     ];
     // Keep the display boundary private even if an older server returns an
@@ -337,6 +347,7 @@ class SupabaseProfileRepository
       username: profile.username,
       bio: profile.bio,
       avatarUrl: profile.avatarUrl,
+      contentHidden: profile.contentHidden,
       followingCount: 0,
       fansCount: 0,
       appearances: 0,
@@ -357,6 +368,25 @@ class SupabaseProfileRepository
   }
 
   Future<PlayerProfile> _getProfile(String profileId) async {
+    final identity = profileId == currentUserId
+        ? null
+        : await _loadProfile(profileId).timeout(fieldReadTimeout);
+    if (identity?.contentHidden == true) {
+      return PlayerProfile(
+        id: profileId,
+        displayName: identity!.displayName,
+        username: '',
+        bio: '',
+        contentHidden: true,
+        followingCount: 0,
+        fansCount: 0,
+        appearances: 0,
+        goals: 0,
+        assists: 0,
+        highlights: const [],
+        career: const [],
+      );
+    }
     final pending = <String>{};
     Future<T> part<T>(String name, Future<T> request) {
       pending.add(name);
@@ -365,7 +395,10 @@ class SupabaseProfileRepository
 
     final results =
         await Future.wait<dynamic>([
-          part('identity', _loadProfile(profileId)),
+          part(
+            'identity',
+            identity == null ? _loadProfile(profileId) : Future.value(identity),
+          ),
           part('clan', _loadCurrentClan(profileId)),
           part('connections', _loadConnectionCounts(profileId)),
           part('clips', _loadHighlights(profileId)),
@@ -397,6 +430,7 @@ class SupabaseProfileRepository
       bio: profile.bio,
       avatarUrl: profile.avatarUrl,
       clan: clan,
+      contentHidden: profile.contentHidden,
       followingCount: connectionCounts.following,
       fansCount: connectionCounts.fans,
       isFollowedByMe: connectionCounts.isFollowedByMe,
@@ -425,11 +459,9 @@ class SupabaseProfileRepository
     final fanIds = relatedIds[1];
     final followedByMe = followingIds.toSet();
 
-    final profilesResponse = await _client
-        .from('profiles')
-        .select('id, display_name, username, avatar_url')
-        .neq('id', user.id)
-        .order('display_name');
+    final profilesResponse = await _client.rpc(
+      'list_fieldrush_discover_profiles',
+    );
     final profileRows = [
       for (final row in profilesResponse as List<dynamic>)
         Map<String, dynamic>.from(row as Map),
@@ -510,10 +542,10 @@ class SupabaseProfileRepository
     final profiles = <String, Map<String, dynamic>>{};
     for (var offset = 0; offset < ids.length; offset += 100) {
       final end = (offset + 100).clamp(0, ids.length);
-      final rows = await _client
-          .from('profiles')
-          .select('id, display_name, username, avatar_url')
-          .inFilter('id', ids.sublist(offset, end));
+      final rows = await _client.rpc(
+        'list_fieldrush_profile_identities',
+        params: {'profile_ids_to_use': ids.sublist(offset, end)},
+      );
       for (final row in rows) {
         profiles[row['id'] as String] = Map<String, dynamic>.from(row);
       }
@@ -625,6 +657,18 @@ class SupabaseProfileRepository
   }
 
   Future<_ProfileRow> _loadProfile(String userId) async {
+    if (userId != currentUserId) {
+      final response = await _client.rpc(
+        'get_fieldrush_profile_identity',
+        params: {'profile_id_to_use': userId},
+      );
+      if (response is! Map ||
+          response['id'] != userId ||
+          response['content_hidden'] is! bool) {
+        throw const FormatException('Invalid player identity.');
+      }
+      return _ProfileRow.fromJson(Map<String, dynamic>.from(response));
+    }
     final response = await _client
         .from('profiles')
         .select('''
@@ -641,58 +685,29 @@ class SupabaseProfileRepository
   }
 
   Future<ProfileClan?> _loadCurrentClan(String userId) async {
-    final response = await _client
-        .from('clan_members')
-        .select('''
-          role,
-          clans(
-            id,
-            name,
-            tag,
-            emblem,
-            theme_id,
-            pattern_id,
-            skill_rating
-          )
-        ''')
-        .eq('profile_id', userId)
-        .isFilter('left_at', null)
-        .maybeSingle();
-
+    final response = await _client.rpc(
+      'get_fieldrush_profile_clan',
+      params: {'profile_id_to_use': userId},
+    );
     if (response == null) return null;
-    final row = Map<String, dynamic>.from(response);
-    final clanData = row['clans'];
-    if (clanData is! Map) return null;
-
-    return ProfileClan.fromJson(Map<String, dynamic>.from(clanData));
+    if (response is! Map) {
+      throw const FormatException('Invalid clan identity.');
+    }
+    return ProfileClan.fromJson(Map<String, dynamic>.from(response));
   }
 
   Future<Map<String, ProfileClan>> _loadClansForProfiles(
     Iterable<String> profileIds,
   ) async {
     final ids = profileIds.toList();
-    if (ids.isEmpty) return const {};
-
     final clans = <String, ProfileClan>{};
     for (var offset = 0; offset < ids.length; offset += 100) {
       final end = (offset + 100).clamp(0, ids.length);
-      final response = await _client
-          .from('clan_members')
-          .select('''
-          profile_id,
-          clans(
-            id,
-            name,
-            tag,
-            emblem,
-            theme_id,
-            pattern_id,
-            skill_rating
-          )
-          ''')
-          .inFilter('profile_id', ids.sublist(offset, end))
-          .isFilter('left_at', null);
-      for (final row in response) {
+      final response = await _client.rpc(
+        'list_fieldrush_connection_clans',
+        params: {'profile_ids_to_use': ids.sublist(offset, end)},
+      );
+      for (final row in response as List<dynamic>) {
         final entry = _connectionClanFromRow(Map<String, dynamic>.from(row));
         if (entry != null) clans[entry.key] = entry.value;
       }
@@ -815,7 +830,7 @@ class SupabaseProfileRepository
     };
 
     return [
-      for (final row in rows)
+      for (final row in await viewerSafeIdentityRows(_client, rows))
         ProfileCareerEntry.fromJson(Map<String, dynamic>.from(row as Map)),
     ];
   }
@@ -947,12 +962,14 @@ class _ProfileRow {
     required this.username,
     required this.bio,
     this.avatarUrl,
+    this.contentHidden = false,
   });
 
   final String displayName;
   final String username;
   final String bio;
   final String? avatarUrl;
+  final bool contentHidden;
 
   factory _ProfileRow.fromJson(Map<String, dynamic> json) {
     final displayName = (json['display_name'] as String? ?? 'Player').trim();
@@ -960,11 +977,14 @@ class _ProfileRow {
 
     return _ProfileRow(
       displayName: displayName.isEmpty ? 'Player' : displayName,
-      username: username.isEmpty
-          ? _usernameFromDisplayName(displayName)
-          : username,
+      username: json['content_hidden'] == true
+          ? ''
+          : (username.isEmpty
+                ? _usernameFromDisplayName(displayName)
+                : username),
       bio: (json['bio'] as String? ?? '').trim(),
       avatarUrl: json['avatar_url'] as String?,
+      contentHidden: json['content_hidden'] == true,
     );
   }
 }

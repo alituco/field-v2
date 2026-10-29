@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/viewer_safe_identities.dart';
 
 import 'fixture.dart';
 import 'fixture_reliability_roster.dart';
@@ -258,7 +259,10 @@ class SupabaseFixtureRepository
           .order('time_slot'),
       _loadRegionRanks(),
     ]);
-    final rows = results[0] as List<dynamic>;
+    final rows = await viewerSafeIdentityRows(
+      _client,
+      results[0] as List<dynamic>,
+    );
     final regionRanks = results[1] as Map<String, int>;
 
     return [
@@ -305,7 +309,10 @@ class SupabaseFixtureRepository
     final response = results[0];
 
     if (response == null) return null;
-    final row = Map<String, dynamic>.from(response);
+    final row = await viewerSafeIdentityPayload(
+      _client,
+      Map<String, dynamic>.from(response),
+    );
     final clanData = row['clans'];
     if (clanData is! Map) return null;
     final clanJson = Map<String, dynamic>.from(clanData);
@@ -518,7 +525,10 @@ class SupabaseFixtureRepository
           .single(),
       _loadRegionRanks(),
     ]);
-    final response = Map<String, dynamic>.from(results[0] as Map);
+    final response = await viewerSafeIdentityPayload(
+      _client,
+      Map<String, dynamic>.from(results[0] as Map),
+    );
     final regionRanks = results[1] as Map<String, int>;
 
     return _fixtureFromRow(

@@ -36,6 +36,8 @@ import 'edit_profile_screen.dart';
 import 'fieldrush_player_profile.dart';
 import 'fieldrush_match_history_screen.dart';
 import 'profile.dart';
+import 'player_safety_repository.dart';
+import 'blocked_players_screen.dart';
 import 'profile_clip_screen.dart';
 import 'profile_clips_screen.dart';
 import 'profile_connections_screen.dart';
@@ -58,9 +60,11 @@ class ProfileScreen extends StatefulWidget {
     this.onSignOut,
     this.onOpenAccount,
     this.ratingRepository,
+    this.playerSafetyRepository,
   });
 
   final ProfileRepository profileRepository;
+  final PlayerSafetyRepository? playerSafetyRepository;
   final ClanRepository? clanRepository;
   final FixtureRepository? fixtureRepository;
   final OpenQueueRepository? openQueueRepository;
@@ -90,6 +94,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
   String? _openingGameId;
   bool _isOpeningClan = false;
   bool _isUpdatingFollow = false;
+  bool _isUpdatingBlock = false;
+  PlayerSafetyState? _playerSafety;
+  PlayerSafetyRepository? get _safetyRepository =>
+      widget.playerSafetyRepository ??
+      playerSafetyFor(widget.profileRepository);
   FieldrushPlayerRatings? _ratings;
   RatingTrack _ratingTrack = RatingTrack.outfield;
   int _profileLoadVersion = 0;
@@ -196,6 +205,27 @@ class _ProfileScreenState extends State<ProfileScreen> {
       setState(() => _viewedReadErrors.add(section));
     }
 
+    final safetyRepository = _safetyRepository;
+    if (_canReportProfile && safetyRepository != null) {
+      // A previous identity must not remain visible while safety is unknown.
+      _latestProfile = null;
+      _playerSafety = null;
+      _viewedDetailsReady = false;
+      final safety = await safetyRepository
+          .getState(profileId)
+          .timeout(fieldReadTimeout);
+      if (!current()) {
+        return _hiddenProfile(profileId);
+      }
+      _playerSafety = safety;
+      if (safety.interactionBlocked) {
+        final hidden = _hiddenProfile(profileId);
+        _latestProfile = hidden;
+        _viewedDetailsLoading = false;
+        _viewedRatingLoading = false;
+        return hidden;
+      }
+    }
     final details = repository.getProfile(profileId).timeout(fieldReadTimeout);
     unawaited(() async {
       try {
@@ -254,8 +284,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.profileId != widget.profileId ||
         oldWidget.profileRepository != widget.profileRepository ||
+        oldWidget.playerSafetyRepository != widget.playerSafetyRepository ||
         _viewerId != widget.profileRepository.currentUserId) {
       _latestProfile = null;
+      _playerSafety = null;
+      _isUpdatingBlock = false;
       _ratings = null;
       _viewedDetailsReady = false;
       _viewedTrackSelected = false;
@@ -287,6 +320,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _toggleViewedFollow() async {
     final profile = _latestProfile;
     if (_isUpdatingFollow ||
+        _isUpdatingBlock ||
+        _playerSafety?.interactionBlocked == true ||
         !_canReportProfile ||
         profile == null ||
         !_viewedDetailsReady) {
@@ -334,6 +369,139 @@ class _ProfileScreenState extends State<ProfileScreen> {
       }
     }
   }
+
+  PlayerProfile _hiddenProfile(String id) => PlayerProfile(
+    id: id,
+    displayName: 'Blocked player',
+    username: '',
+    bio: '',
+    contentHidden: true,
+    followingCount: 0,
+    fansCount: 0,
+    appearances: 0,
+    goals: 0,
+    assists: 0,
+    highlights: const [],
+    career: const [],
+  );
+
+  Future<void> _togglePlayerBlock() async {
+    final repository = _safetyRepository;
+    final profileId = widget.profileId;
+    if (repository == null ||
+        profileId == null ||
+        !_canReportProfile ||
+        _isUpdatingBlock ||
+        _isUpdatingFollow ||
+        _playerSafety == null) {
+      return;
+    }
+    final viewerId = repository.currentUserId;
+    final profileRepository = widget.profileRepository;
+    final nextBlocked = !_playerSafety!.blockedByMe;
+    bool current() =>
+        mounted &&
+        widget.profileId == profileId &&
+        identical(widget.profileRepository, profileRepository) &&
+        identical(_safetyRepository, repository) &&
+        repository.currentUserId == viewerId;
+    final confirmed = await confirmPlayerBlock(context, blocked: nextBlocked);
+    if (!confirmed || !current()) {
+      return;
+    }
+    setState(() => _isUpdatingBlock = true);
+    try {
+      await repository
+          .setBlocked(profileId, blocked: nextBlocked)
+          .timeout(fieldReadTimeout);
+      if (!current()) {
+        return;
+      }
+      setState(() {
+        _latestProfile = null;
+        _ratings = null;
+        _viewedDetailsReady = false;
+        _profileFuture = _loadProfile();
+      });
+      showFieldrushToast(
+        context,
+        nextBlocked ? 'Player blocked' : 'Player unblocked',
+      );
+    } catch (error) {
+      if (current()) {
+        // A timeout can follow a committed server write. Never keep an old
+        // authored identity visible while the confirmed safety state is unknown.
+        setState(() {
+          _latestProfile = null;
+          _playerSafety = null;
+          _ratings = null;
+          _viewedDetailsReady = false;
+          _profileFuture = _loadProfile();
+        });
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'We could not confirm this change. Try again.',
+          ),
+        );
+      }
+    } finally {
+      if (current()) {
+        setState(() => _isUpdatingBlock = false);
+      }
+    }
+  }
+
+  Widget _blockedProfile(VoidCallback back) => ListView(
+    key: const ValueKey('blocked-profile-content'),
+    padding: const EdgeInsets.all(20),
+    children: [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: IconButton(
+          tooltip: 'Back',
+          onPressed: _isUpdatingBlock ? null : back,
+          icon: const Icon(Icons.chevron_left),
+        ),
+      ),
+      const SizedBox(height: 24),
+      const Icon(Icons.block_outlined, size: 40),
+      const SizedBox(height: 16),
+      const Text(
+        'Profile content hidden',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          fontFamily: 'Outfit',
+          fontSize: 24,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      const SizedBox(height: 16),
+      const Text(playerBlockScope, textAlign: TextAlign.center),
+      if (_canReportProfile && _playerSafety != null) ...[
+        const SizedBox(height: 24),
+        OutlinedButton.icon(
+          key: const ValueKey('player-block-action'),
+          onPressed: _isUpdatingBlock ? null : _togglePlayerBlock,
+          icon: const Icon(Icons.block_outlined),
+          label: Text(
+            _isUpdatingBlock
+                ? 'Updating…'
+                : (_playerSafety!.blockedByMe
+                      ? 'Unblock player'
+                      : 'Block player'),
+          ),
+        ),
+      ],
+      if (_canReportProfile)
+        TextButton.icon(
+          onPressed: _isUpdatingBlock ? null : _reportProfile,
+          icon: const Icon(Icons.flag_outlined),
+          label: const Text('Report player'),
+        ),
+    ],
+  );
 
   Future<void> _copyProfileHandle() async {
     final profile = _latestProfile;
@@ -849,7 +1017,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Widget _buildViewedProfile(BuildContext context) => Theme(
     data: FieldrushAuthTheme.theme(context),
     child: PopScope(
-      canPop: !_isUpdatingFollow,
+      canPop: !_isUpdatingFollow && !_isUpdatingBlock,
       child: Scaffold(
         key: const ValueKey('profile-screen'),
         backgroundColor: FieldrushAuthTheme.cream,
@@ -859,7 +1027,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
             future: _profileFuture,
             builder: (context, snapshot) {
               void back() {
-                if (!_isUpdatingFollow) Navigator.of(context).pop();
+                if (!_isUpdatingFollow && !_isUpdatingBlock)
+                  Navigator.of(context).pop();
               }
 
               if (_latestProfile == null &&
@@ -913,6 +1082,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 );
               }
               final profile = _latestProfile!;
+              if (profile.contentHidden ||
+                  _playerSafety?.interactionBlocked == true) {
+                return _blockedProfile(back);
+              }
               return FieldRefreshIndicator(
                 color: FieldrushAuthTheme.forest,
                 onRefresh: _refresh,
@@ -941,18 +1114,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               _ratingTrack = track;
                             }),
                       isFollowing: profile.isFollowedByMe,
-                      followBusy: _isUpdatingFollow,
-                      onFollow: _canReportProfile && _viewedDetailsReady
+                      followBusy: _isUpdatingFollow || _isUpdatingBlock,
+                      onFollow:
+                          _canReportProfile &&
+                              _viewedDetailsReady &&
+                              !_isUpdatingBlock
                           ? _toggleViewedFollow
                           : null,
                       onReport: _canReportProfile ? _reportProfile : null,
+                      onBlock:
+                          _canReportProfile &&
+                              _playerSafety != null &&
+                              !_isUpdatingFollow
+                          ? _togglePlayerBlock
+                          : null,
+                      blockBusy: _isUpdatingBlock,
                       onOpenClan: profile.clan == null
                           ? null
                           : () => _openClan(
                               clanId: profile.clan!.id,
                               clanName: profile.clan!.name,
                             ),
-                      onBack: _isUpdatingFollow ? null : back,
+                      onBack: _isUpdatingFollow || _isUpdatingBlock
+                          ? null
+                          : back,
                       positionLabel: profile.playedPositionLabel,
                       onMatchHistory: _viewedDetailsReady
                           ? () => _openPublicHistory(profile)

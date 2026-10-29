@@ -107,6 +107,7 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
         return;
       }
       setState(() {
+        _connections = null;
         _error = error;
         _isLoading = false;
       });
@@ -159,13 +160,31 @@ class _ProfileConnectionsScreenState extends State<ProfileConnectionsScreen> {
   }
 
   Future<void> _openProfile(String profileId) async {
-    if (_openingProfile) return;
-    _openingProfile = true;
+    if (_openingProfile || _busyIds.isNotEmpty) {
+      return;
+    }
+    setState(() {
+      _openingProfile = true;
+      _connections = null;
+      _error = null;
+      _isLoading = true;
+      _loadRequest++;
+    });
     try {
       await widget.onOpenProfile(profileId);
-      if (mounted) await _loadConnections();
+    } catch (error) {
+      if (mounted) {
+        showFieldrushToast(
+          context,
+          userFacingError(
+            error,
+            fallback: 'We could not open that player. Try again.',
+          ),
+        );
+      }
     } finally {
       _openingProfile = false;
+      if (mounted) await _loadConnections(showLoading: true);
     }
   }
 

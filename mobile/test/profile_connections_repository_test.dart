@@ -60,34 +60,28 @@ void main() {
               ];
             }
           } else if (path.endsWith('/profiles')) {
-            if (query['id'] == 'eq.viewer') {
-              payload = {'id': 'viewer', 'display_name': 'Viewer'};
-            } else {
-              expect(select, 'id,display_name,username,avatar_url');
-              if (query['id']?.startsWith('in.(') == true) {
-                final ids = _inIds(query['id']!);
-                expect(ids.length, lessThanOrEqualTo(100));
-                payload = [
-                  for (final id in ids)
-                    // Simulate normal profiles RLS: no fabricated fallback
-                    // identity is allowed for a hidden target.
-                    if (!id.startsWith('hidden-')) _profile(id),
-                ];
-              } else {
-                expect(query['id'], 'neq.viewer');
-                expect(query['order'], 'display_name.desc.nullslast');
-                payload = [_profile('discover-player'), _profile('follow-0')];
-              }
-            }
-          } else if (path.endsWith('/clan_members')) {
-            if (query['profile_id']?.startsWith('in.(') == true) {
-              final ids = _inIds(query['profile_id']!);
-              expect(ids.length, lessThanOrEqualTo(100));
-              expect(ids.any((id) => id.startsWith('hidden-')), isFalse);
-              payload = [];
-            } else {
-              payload = null;
-            }
+            expect(query['id'], 'eq.viewer');
+            payload = {'id': 'viewer', 'display_name': 'Viewer'};
+          } else if (path.endsWith('/list_fieldrush_profile_identities')) {
+            final ids = (jsonDecode(request.body)['profile_ids_to_use'] as List)
+                .cast<String>();
+            expect(ids.length, lessThanOrEqualTo(100));
+            payload = [
+              for (final id in ids)
+                if (!id.startsWith('hidden-'))
+                  {..._profile(id), 'content_hidden': false},
+            ];
+          } else if (path.endsWith('/list_fieldrush_discover_profiles')) {
+            expect(jsonDecode(request.body), isEmpty);
+            payload = [_profile('discover-player'), _profile('follow-0')];
+          } else if (path.endsWith('/list_fieldrush_connection_clans')) {
+            final ids = (jsonDecode(request.body)['profile_ids_to_use'] as List)
+                .cast<String>();
+            expect(ids.length, lessThanOrEqualTo(100));
+            expect(ids.any((id) => id.startsWith('hidden-')), isFalse);
+            payload = [];
+          } else if (path.endsWith('/get_fieldrush_profile_clan')) {
+            payload = null;
           } else if (path.endsWith('/get_player_rating_history')) {
             payload = null;
           } else if (path.endsWith('/list_profile_previous_games') ||
@@ -166,12 +160,6 @@ Map<String, dynamic> _profile(String id) => {
   'display_name': id,
   'username': id.replaceAll('-', '.'),
 };
-
-List<String> _inIds(String filter) => filter
-    .substring(4, filter.length - 1)
-    .split(',')
-    .map((id) => id.replaceAll('"', ''))
-    .toList();
 
 Map<String, dynamic> _session(String id) {
   final expires =
