@@ -1,0 +1,119 @@
+name: Build production Android App Bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type BUILD_PRODUCTION_ANDROID to build and sign the production App Bundle
+        required: true
+        type: string
+      backend_confirmation:
+        description: Type PRODUCTION_BACKEND_READY_FOR_ANDROID after production deployment, health and provider configuration checks
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  deployments: read
+
+concurrency:
+  group: production-android-build
+  cancel-in-progress: false
+
+jobs:
+  release-evidence:
+    name: Verify tested and deployed production code
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      PRODUCTION_RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+      PRODUCTION_BACKEND_CONFIRMATION: ${{ inputs.backend_confirmation }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Require successful CI, staging journey, and production backend deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/verify-production-android-release.mjs
+
+  build:
+    name: Build and validate Field Production Android
+    needs: release-evidence
+    if: github.ref == 'refs/heads/prod'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    environment:
+      name: production
+    env:
+      FIELD_ENVIRONMENT: production
+      SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+      SUPABASE_URL: https://${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}.supabase.co
+      SUPABASE_PUBLISHABLE_KEY: ${{ vars.PRODUCTION_SUPABASE_PUBLISHABLE_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_PUBLISHABLE_KEY }}
+      ANDROID_PRODUCTION_PACKAGE_ID: ${{ vars.ANDROID_PRODUCTION_PACKAGE_ID }}
+      ANDROID_UPLOAD_CERTIFICATE_SHA256: ${{ vars.ANDROID_UPLOAD_CERTIFICATE_SHA256 }}
+      PRODUCTION_EMAIL_DELIVERY_ENABLED: ${{ vars.PRODUCTION_EMAIL_DELIVERY_ENABLED || 'false' }}
+      PRODUCTION_ANDROID_PUSH_NOTIFICATIONS_ENABLED: ${{ vars.PRODUCTION_ANDROID_PUSH_NOTIFICATIONS_ENABLED || 'false' }}
+      PRODUCTION_RELEASE_CONFIRMATION: ${{ inputs.confirmation }}
+      PRODUCTION_BACKEND_CONFIRMATION: ${{ inputs.backend_confirmation }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Recheck release evidence after production environment approval
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/verify-production-android-release.mjs
+
+      - name: Recheck production health and anonymous privacy before signing
+        timeout-minutes: 2
+        run: node .github/scripts/smoke-supabase.mjs
+
+      - name: Reserve disk space on this disposable Android runner
+        run: bash .github/scripts/prepare-android-runner.sh
+
+      - name: Set up Java
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+          cache-dependency-path: |
+            mobile/android/**/*.gradle*
+            mobile/android/gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          flutter-version: 3.44.1
+          channel: stable
+          cache: true
+
+      - name: Build, sign, and validate the production App Bundle
+        shell: bash
+        env:
+          ANDROID_UPLOAD_KEYSTORE_BASE64: ${{ secrets.ANDROID_UPLOAD_KEYSTORE_BASE64 }}
+          ANDROID_UPLOAD_STORE_PASSWORD: ${{ secrets.ANDROID_UPLOAD_STORE_PASSWORD }}
+          ANDROID_UPLOAD_KEY_ALIAS: ${{ secrets.ANDROID_UPLOAD_KEY_ALIAS }}
+          ANDROID_UPLOAD_KEY_PASSWORD: ${{ secrets.ANDROID_UPLOAD_KEY_PASSWORD }}
+        run: bash .github/scripts/build-production-android.sh
+
+      - name: Save only the validated bundle and public release metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fieldrush-production-android-${{ github.run_number }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          path: mobile/build/production-android-artifacts/
+
+      - name: Record what was prepared
+        shell: bash
+        run: |
+          {
+            echo 'A signed Fieldrush Android App Bundle for **gg.fieldrush.app** passed artifact validation.'
+            echo ''
+            echo 'Android phone push remains off. Google OAuth and Google Pay retain their existing configuration and require separate production/device qualification.'
+            echo 'Download the bundle for the first manual Play Console internal-testing upload.'
+            echo 'This workflow does not upload to Google Play, submit for review, or publish the app.'
+          } >> "$GITHUB_STEP_SUMMARY"

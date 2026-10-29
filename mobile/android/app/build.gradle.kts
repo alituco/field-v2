@@ -5,6 +5,19 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Only the protected production builder supplies these values. Ordinary CI
+// compiles unsigned production releases; it must never fall back to a debug key.
+val uploadSigning = listOf(
+    "ANDROID_UPLOAD_KEYSTORE_PATH",
+    "ANDROID_UPLOAD_STORE_PASSWORD",
+    "ANDROID_UPLOAD_KEY_ALIAS",
+    "ANDROID_UPLOAD_KEY_PASSWORD",
+).associateWith { providers.environmentVariable(it).orNull }
+check(uploadSigning.values.all { it.isNullOrBlank() } ||
+    uploadSigning.values.all { !it.isNullOrBlank() }) {
+    "Provide all Android upload signing inputs, or none for an unsigned CI build."
+}
+
 android {
     namespace = "com.field.field"
     compileSdk = flutter.compileSdkVersion
@@ -21,7 +34,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Keep the existing staging base identity; production overrides it below.
         applicationId = "com.field.field"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
@@ -31,6 +44,18 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        if (uploadSigning.values.all { !it.isNullOrBlank() }) {
+            create("productionUpload") {
+                storeFile = file(uploadSigning.getValue("ANDROID_UPLOAD_KEYSTORE_PATH")!!)
+                storeType = "PKCS12"
+                storePassword = uploadSigning.getValue("ANDROID_UPLOAD_STORE_PASSWORD")
+                keyAlias = uploadSigning.getValue("ANDROID_UPLOAD_KEY_ALIAS")
+                keyPassword = uploadSigning.getValue("ANDROID_UPLOAD_KEY_PASSWORD")
+            }
+        }
+    }
+
     productFlavors {
         create("staging") {
             dimension = "environment"
@@ -38,19 +63,22 @@ android {
             versionNameSuffix = "-staging"
             resValue("string", "app_name", "Fieldrush Staging")
             manifestPlaceholders["authRedirectScheme"] = "com.alialtaraif.field.staging"
+            signingConfig = signingConfigs.getByName("debug")
         }
         create("production") {
             dimension = "environment"
+            applicationId = "gg.fieldrush.app"
             resValue("string", "app_name", "Fieldrush")
             manifestPlaceholders["authRedirectScheme"] = "com.alialtaraif.field"
+            signingConfig = signingConfigs.findByName("productionUpload")
         }
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Flavor signing applies: staging debug key, production upload key
+            // or unsigned compilation. Store artifacts must pass signature checks.
+            signingConfig = null
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",

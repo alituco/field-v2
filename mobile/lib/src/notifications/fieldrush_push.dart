@@ -115,7 +115,9 @@ class FieldrushPushConfiguration {
     final isProduction = environment == 'production';
     final expectedIdentity = isIos
         ? 'com.alialtaraif.field${isProduction ? '' : '.staging'}'
-        : 'com.field.field${isProduction ? '' : '.staging'}';
+        : isProduction
+        ? 'gg.fieldrush.app'
+        : 'com.field.field.staging';
     if ((isIos ? iosBundleId : androidPackageId) != expectedIdentity) {
       return false;
     }
