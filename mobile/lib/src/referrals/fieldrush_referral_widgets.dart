@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../home/fieldrush_home_widgets.dart';
+import '../legal/fieldrush_policy_links.dart';
 import 'referrals.dart';
 
 const referralWash = Color(0xFFF2EFE3);
@@ -170,6 +171,10 @@ class _FieldrushReferralCardState extends State<FieldrushReferralCard> {
                       ],
                     ),
                   ),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(18, 12, 18, 0),
+                  child: ReferralOfficialRulesNotice(),
+                ),
                 ReferralOwnCode(code: data.ownCode, onShare: widget.onShare),
                 const Divider(height: 1, color: referralLine),
                 _ReferralTap(
@@ -642,6 +647,32 @@ class ReferralPersonCard extends StatelessWidget {
         ],
       ),
     ),
+  );
+}
+
+class ReferralOfficialRulesNotice extends StatelessWidget {
+  const ReferralOfficialRulesNotice({super.key});
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        'Apple is not a sponsor of, and is not involved in, this promotion.',
+        style: referralText(11.5, height: 1.45),
+      ),
+      TextButton(
+        onPressed: () => openFieldrushReferralRules(context),
+        style: TextButton.styleFrom(
+          foregroundColor: FieldrushAuthTheme.forest,
+          padding: EdgeInsets.zero,
+          minimumSize: const Size(0, 44),
+          alignment: Alignment.centerLeft,
+          textStyle: referralText(12, weight: FontWeight.w800),
+        ),
+        child: const Text('Official rules'),
+      ),
+    ],
   );
 }
 

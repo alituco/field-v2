@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 const _season = ReferralSeason(id: 's1', label: 'S0', ended: false);
 const _me = ReferralPerson(
@@ -44,6 +45,7 @@ ReferralSummary _summary({
   int count = 0,
   List<ReferralFriend> friends = const [],
   int? friendOffset,
+  bool ended = false,
 }) => ReferralSummary(
   serverNow: _now,
   entryExpiresAt: _now.add(expiresIn),
@@ -51,7 +53,7 @@ ReferralSummary _summary({
   ownCode: 'JALVAREZ',
   referrer: referrer,
   referrerCredited: credited,
-  season: _season,
+  season: ReferralSeason(id: _season.id, label: _season.label, ended: ended),
   referralCount: count,
   waitingCount: friends.where((friend) => !friend.qualified).length,
   rank: count >= 2 ? 12 : null,
@@ -65,8 +67,9 @@ ReferralLeaderboard _board({
   List<ReferralEntry> prizes = const [],
   List<ReferralEntry> entries = const [],
   int? next,
+  bool ended = false,
 }) => ReferralLeaderboard(
-  season: _season,
+  season: ReferralSeason(id: _season.id, label: _season.label, ended: ended),
   prizeEntries: prizes,
   entries: entries,
   me: ReferralEntry(
@@ -405,6 +408,60 @@ void main() {
     expect(find.text('Marcus K.'), findsNWidgets(2));
   });
 
+  for (final ended in [false, true]) {
+    testWidgets(
+      '${ended ? 'ended' : 'active'} referral promotion keeps rules and Apple disclosure on both surfaces',
+      (tester) async {
+        final previous = UrlLauncherPlatform.instance;
+        final launcher = _RulesLauncher();
+        UrlLauncherPlatform.instance = launcher;
+        addTearDown(() => UrlLauncherPlatform.instance = previous);
+        final repo = _Repository()
+          ..summary = _summary(ended: ended)
+          ..board = _board(ended: ended);
+        const disclosure =
+            'Apple is not a sponsor of, and is not involved in, this promotion.';
+
+        await _pump(
+          tester,
+          Scaffold(
+            body: SingleChildScrollView(
+              child: FieldrushReferralCard(
+                summary: repo.summary,
+                onShare: () {},
+                onOpenLeaderboard: () {},
+                onOpenCode: () {},
+              ),
+            ),
+          ),
+        );
+        expect(find.text(disclosure), findsOneWidget);
+        expect(find.text(r'$250'), ended ? findsNothing : findsOneWidget);
+        await tester.ensureVisible(find.text('Official rules'));
+        await tester.tap(find.text('Official rules'));
+        await tester.pumpAndSettle();
+
+        await _pumpBoard(tester, repo);
+        expect(find.text(disclosure), findsOneWidget);
+        expect(find.text(r'$250'), ended ? findsNothing : findsOneWidget);
+        await tester.ensureVisible(find.text('Official rules'));
+        await tester.tap(find.text('Official rules'));
+        await tester.pumpAndSettle();
+        expect(launcher.urls, [
+          'https://www.fieldrush.gg/referral-rules',
+          'https://www.fieldrush.gg/referral-rules',
+        ]);
+        expect(
+          launcher.modes,
+          everyElement(PreferredLaunchMode.inAppBrowserView),
+        );
+        expect(repo.checked, isEmpty);
+        expect(repo.claimed, isEmpty);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
   for (final width in [320.0, 430.0]) {
     testWidgets('referral screens fit width $width with larger text', (
       tester,
@@ -429,8 +486,10 @@ void main() {
         textScale: 1.5,
       );
       expect(tester.takeException(), isNull);
+      expect(find.text('Official rules'), findsOneWidget);
       await _pumpBoard(tester, repo, width: width, textScale: 1.5);
       expect(tester.takeException(), isNull);
+      expect(find.text('Official rules'), findsOneWidget);
     });
   }
 
@@ -703,6 +762,21 @@ Future<void> _pumpBoard(
   height: height,
   textScale: textScale,
 );
+
+class _RulesLauncher extends UrlLauncherPlatform {
+  final urls = <String>[];
+  final modes = <PreferredLaunchMode>[];
+
+  @override
+  Null get linkDelegate => null;
+
+  @override
+  Future<bool> launchUrl(String url, LaunchOptions options) async {
+    urls.add(url);
+    modes.add(options.mode);
+    return true;
+  }
+}
 
 class _Repository implements ReferralRepository {
   String user = 'me';

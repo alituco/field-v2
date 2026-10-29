@@ -97,6 +97,57 @@ void main() {
   });
 
   testWidgets(
+    'referral rules open the fixed public HTTPS page inside the app',
+    (tester) async {
+      await show(
+        tester,
+        Builder(
+          builder: (context) => TextButton(
+            onPressed: () => openFieldrushReferralRules(context),
+            child: const Text('Official rules'),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Official rules'));
+      await tester.pumpAndSettle();
+      expect(launcher.urls, ['https://www.fieldrush.gg/referral-rules']);
+      expect(launcher.modes, [PreferredLaunchMode.inAppBrowserView]);
+    },
+  );
+
+  for (final throws in [false, true]) {
+    testWidgets(
+      'referral rules ${throws ? 'exception' : 'rejection'} keeps the screen and shows the destination',
+      (tester) async {
+        launcher
+          ..succeeds = false
+          ..throws = throws;
+        await show(
+          tester,
+          Builder(
+            builder: (context) => TextButton(
+              onPressed: () => openFieldrushReferralRules(context),
+              child: const Text('Official rules'),
+            ),
+          ),
+        );
+        await tester.tap(find.text('Official rules'));
+        await tester.pumpAndSettle();
+        expect(find.text('Official rules'), findsOneWidget);
+        expect(
+          find.text(
+            'Could not open https://www.fieldrush.gg/referral-rules. Please try again.',
+          ),
+          findsOneWidget,
+        );
+        expect(launcher.urls, ['https://www.fieldrush.gg/referral-rules']);
+        expect(launcher.modes, [PreferredLaunchMode.inAppBrowserView]);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
     'failed link launch leaves the current screen and shows the URL',
     (tester) async {
       launcher.succeeds = false;
@@ -117,6 +168,7 @@ class _Launcher extends UrlLauncherPlatform {
   final urls = <String>[];
   final modes = <PreferredLaunchMode>[];
   bool succeeds = true;
+  bool throws = false;
 
   @override
   Null get linkDelegate => null;
@@ -125,6 +177,7 @@ class _Launcher extends UrlLauncherPlatform {
   Future<bool> launchUrl(String url, LaunchOptions options) async {
     urls.add(url);
     modes.add(options.mode);
+    if (throws) throw StateError('URL launcher unavailable.');
     return succeeds;
   }
 }
