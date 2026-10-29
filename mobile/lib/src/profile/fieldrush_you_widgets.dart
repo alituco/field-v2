@@ -180,6 +180,7 @@ class FieldrushYouContent extends StatefulWidget {
     required this.onSignOut,
     this.isSigningOut = false,
     this.onSupport,
+    this.onBlockedPlayers,
     this.onSwitchUser,
     this.onAllClips,
     this.referralSection,
@@ -218,6 +219,7 @@ class FieldrushYouContent extends StatefulWidget {
   final VoidCallback onSignOut;
   final bool isSigningOut;
   final VoidCallback? onSupport;
+  final VoidCallback? onBlockedPlayers;
   final VoidCallback? onSwitchUser;
   final Widget? referralSection;
 
@@ -433,6 +435,11 @@ class _FieldrushYouContentState extends State<FieldrushYouContent> {
                   value: widget.paymentMethodsLabel,
                   onTap: widget.onPaymentMethods,
                 ),
+                if (widget.onBlockedPlayers case final onBlockedPlayers?)
+                  _SettingRow(
+                    label: 'Blocked players',
+                    onTap: onBlockedPlayers,
+                  ),
                 if (widget.onSupport case final onSupport?)
                   _SettingRow(label: 'Help & support', onTap: onSupport),
                 if (widget.onSwitchUser case final onSwitchUser?)

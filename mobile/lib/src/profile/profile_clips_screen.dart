@@ -4,10 +4,12 @@ import '../auth/fieldrush_auth_theme.dart';
 import '../fixtures/fixture_repository.dart';
 import '../open_queue/open_queue_repository.dart';
 import '../ui/field_loading.dart';
-import '../ui/fieldrush_toast.dart';
 import 'profile.dart';
 import 'profile_clip_screen.dart';
 import 'profile_repository.dart';
+import 'player_safety_repository.dart';
+import 'blocked_players_screen.dart';
+import '../core/read_timeout.dart';
 
 /// One shared gallery for your own clips and other players' public clips.
 class ProfileClipsScreen extends StatefulWidget {
@@ -33,26 +35,65 @@ class ProfileClipsScreen extends StatefulWidget {
 class _ProfileClipsScreenState extends State<ProfileClipsScreen> {
   late PlayerProfile _profile = widget.profile;
   bool _refreshing = false;
+  bool _mustRefreshIdentity = false;
+  String? _refreshError;
+  int _refreshRequest = 0;
 
-  Future<void> _refresh() async {
+  @override
+  void initState() {
+    super.initState();
+    if (playerSafetyFor(widget.repository) != null) {
+      _mustRefreshIdentity = true;
+      _refresh();
+    }
+  }
+
+  Future<void> _refresh({bool requireFresh = false}) async {
+    if (requireFresh) {
+      _refreshRequest++;
+      _refreshing = false;
+    }
     if (_refreshing) return;
-    _refreshing = true;
+    final request = ++_refreshRequest;
+    final repository = widget.repository;
+    final viewer = repository.currentUserId;
+    setState(() {
+      _refreshing = true;
+      _mustRefreshIdentity = true;
+      _refreshError = null;
+    });
+    bool current() =>
+        mounted &&
+        request == _refreshRequest &&
+        identical(widget.repository, repository) &&
+        viewer == repository.currentUserId;
     try {
-      final profile = await widget.repository.getProfile(_profile.id);
-      if (mounted) setState(() => _profile = profile);
+      final profile = await repository
+          .getProfile(_profile.id)
+          .timeout(fieldReadTimeout);
+      if (current()) {
+        setState(() {
+          _profile = profile;
+          _mustRefreshIdentity = false;
+        });
+      }
     } catch (_) {
-      if (mounted) {
-        showFieldrushToast(
-          context,
-          'Could not refresh clips. Pull down to try again.',
-        );
+      if (current()) {
+        setState(() => _refreshError = 'Could not refresh clips. Try again.');
       }
     } finally {
-      _refreshing = false;
+      if (current()) {
+        setState(() => _refreshing = false);
+      }
     }
   }
 
   Future<void> _open(ProfileHighlight clip) async {
+    setState(() {
+      _mustRefreshIdentity = true;
+      _refreshError = null;
+      _refreshRequest++;
+    });
     await Navigator.of(context).push<ProfileHighlight>(
       MaterialPageRoute(
         builder: (_) => ProfileClipScreen(
@@ -69,11 +110,21 @@ class _ProfileClipsScreenState extends State<ProfileClipsScreen> {
         ),
       ),
     );
-    if (mounted) await _refresh();
+    if (mounted) await _refresh(requireFresh: true);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_mustRefreshIdentity || _profile.contentHidden) {
+      return PlayerContentRefreshScreen(
+        error:
+            _refreshError ??
+            (_profile.contentHidden
+                ? 'This player’s clips are unavailable.'
+                : null),
+        onRetry: () => _refresh(requireFresh: true),
+      );
+    }
     final clips = _profile.highlights
         .where((clip) => widget.canManage || clip.isPublic)
         .toList();

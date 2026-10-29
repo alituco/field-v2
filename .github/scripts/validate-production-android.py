@@ -157,19 +157,28 @@ def validate_relro(loads, relros):
         start, end = relro['vaddr'], relro['vaddr'] + relro['memsz']
         if start == end:
             continue
-        containing = [load for load in loads if load['vaddr'] <= start
-                      and end <= load['vaddr'] + load['memsz']]
+        # Some linkers pad RELRO's p_memsz beyond its LOAD's logical end.
+        # Android maps/protects whole pages, so that tail is valid only within
+        # the owner's mapped final page. The start must still name actual data.
+        # LLVM17 Writer.cpp:setPhdrs and bionic linker_phdr.cpp document this.
+        containing = [load for load in loads
+                      if load['vaddr'] <= start < load['vaddr'] + load['memsz']
+                      and end <= ((load['vaddr'] + load['memsz'] + PAGE - 1) // PAGE) * PAGE]
         require(containing, 'RELRO range is outside loadable memory.')
-        if end % PAGE == 0:
-            continue
-        # An unaligned end is safe when RELRO owns its entire LOAD and rounding
-        # protection up cannot cover subsequent writable data (Android guide).
-        own = [load for load in containing if load['vaddr'] == start
-               and load['vaddr'] + load['memsz'] == end]
-        require(own, 'RELRO protection overlaps subsequent writable data on a 16 KB page.')
+        require(len(containing) == 1, 'RELRO ownership is ambiguous.')
+        owner = containing[0]
+        rounded_start = (start // PAGE) * PAGE
         rounded_end = ((end + PAGE - 1) // PAGE) * PAGE
-        require(not any(load['flags'] & PF_W and load not in own and load['memsz']
-                        and load['vaddr'] < rounded_end and load['vaddr'] + load['memsz'] > end
+        if owner['flags'] & PF_W:
+            require(max(owner['vaddr'], rounded_start) >= start,
+                    'RELRO protection overlaps preceding writable data on a 16 KB page.')
+            require(min(owner['vaddr'] + owner['memsz'], rounded_end) <= end,
+                    'RELRO protection overlaps subsequent writable data on a 16 KB page.')
+        # Check even an aligned RELRO end: declared padding must never hide
+        # another writable LOAD in the page that mprotect will make read-only.
+        require(not any(load['flags'] & PF_W and load is not owner and load['memsz']
+                        and load['vaddr'] < rounded_end
+                        and load['vaddr'] + load['memsz'] > rounded_start
                         for load in loads), 'RELRO protection overlaps another writable LOAD on a 16 KB page.')
 
 

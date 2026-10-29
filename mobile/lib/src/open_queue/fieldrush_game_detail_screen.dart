@@ -17,6 +17,7 @@ import '../home/fieldrush_home_widgets.dart';
 import '../payments/refund_status.dart';
 import '../profile/profile_repository.dart';
 import '../profile/profile_screen.dart';
+import '../profile/blocked_players_screen.dart';
 import '../ranking/player_rating_visibility.dart';
 import '../ui/field_loading.dart';
 import '../ui/fieldrush_toast.dart';
@@ -110,6 +111,8 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   bool _acting = false;
   bool _refreshing = false;
   int _loadGeneration = 0;
+  bool _safetyRefreshPending = false;
+  bool _playerProfileOpen = false;
   bool _bookingKnown = false;
   late _Section _section = widget.initiallyShowWatch
       ? _Section.watch
@@ -186,6 +189,9 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
   }
 
   Future<void> _load({bool quiet = false, bool requireFresh = false}) async {
+    if (_playerProfileOpen && quiet) {
+      return;
+    }
     if (_refreshing && quiet && !requireFresh) return;
     final generation = ++_loadGeneration;
     _refreshing = true;
@@ -197,6 +203,7 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
       if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _detail = detail;
+        _safetyRefreshPending = false;
         _loading = false;
         _error = null;
         _bookingKnown = false;
@@ -384,6 +391,14 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
 
   Future<void> _openPlayer(String id) async {
     if (id.trim().isEmpty) return;
+    setState(() {
+      _safetyRefreshPending = true;
+      _playerProfileOpen = true;
+      _error = null;
+      _detail = null;
+      _loading = true;
+      _loadGeneration++;
+    });
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => Scaffold(
@@ -397,21 +412,41 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
         ),
       ),
     );
+    if (mounted) {
+      setState(() {
+        _playerProfileOpen = false;
+        _safetyRefreshPending = true;
+        _detail = null;
+        _loadGeneration++;
+      });
+      await _load(requireFresh: true);
+    }
   }
 
   Future<void> _roster() async {
     final detail = _detail;
     if (detail == null) return;
+    String? selectedPlayer;
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => FieldrushGameRosterScreen(
           detail: detail,
-          onPlayer: _openPlayer,
+          onPlayer: (id) {
+            selectedPlayer = id;
+            Navigator.of(context).pop();
+          },
           onNavigateTab: widget.onNavigateTab,
         ),
       ),
     );
-    if (mounted) await _load(requireFresh: true);
+    if (!mounted) {
+      return;
+    }
+    if (selectedPlayer != null) {
+      await _openPlayer(selectedPlayer!);
+    } else {
+      await _load(requireFresh: true);
+    }
   }
 
   Future<void> _clips(Duration position, {bool highlights = false}) async {
@@ -452,6 +487,12 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_safetyRefreshPending) {
+      return PlayerContentRefreshScreen(
+        error: _error,
+        onRetry: () => _load(requireFresh: true),
+      );
+    }
     final game = _game;
     return Theme(
       data: FieldrushAuthTheme.theme(context),

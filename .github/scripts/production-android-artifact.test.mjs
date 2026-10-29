@@ -195,6 +195,80 @@ test('rejects malformed ELF ranges, ABI headers, and missing Flutter core librar
 });
 
 const relro = (vaddr, memsz) => ({ type: 0x6474e552, offset: 0x4000, vaddr, filesz: 0x100, memsz, flags: 4, align: 1 });
+
+// Program headers from Google's datastore-core-android:1.1.7 AAR, used by the
+// locked shared_preferences_android 2.4.13 dependency. AAR SHA256:
+// adca1d7cde73406fcca2a0eeabac63459adc9d1fe201b79ba08711fa2e331984.
+// These offline structural fixtures contain no vendor executable bytes.
+const datastoreSegments = {
+  'arm64-v8a': [
+    { type: 1, offset: 0, vaddr: 0, filesz: 0x11c0, memsz: 0x11c0, flags: 5, align: PAGE },
+    { type: 1, offset: 0x11c0, vaddr: 0x51c0, filesz: 0x268, memsz: 0x268, flags: 6, align: PAGE },
+    { type: 1, offset: 0x1428, vaddr: 0x9428, filesz: 0, memsz: 1, flags: 6, align: PAGE },
+    { ...relro(0x51c0, 0xe40), offset: 0x11c0, filesz: 0x268 },
+  ],
+  x86_64: [
+    { type: 1, offset: 0, vaddr: 0, filesz: 0xf20, memsz: 0xf20, flags: 5, align: PAGE },
+    { type: 1, offset: 0xf20, vaddr: 0x4f20, filesz: 0x228, memsz: 0x228, flags: 6, align: PAGE },
+    { ...relro(0x4f20, 0x10e0), offset: 0xf20, filesz: 0x228 },
+  ],
+};
+
+test('accepts real Datastore RELRO padding within the mapped final LOAD page', async t => {
+  for (const abi of Object.keys(datastoreSegments)) await t.test(abi, child => {
+    const entries = [...new Set(['arm64-v8a', abi])].flatMap(coreAbi =>
+      ['libflutter.so', 'libapp.so'].map(name => ({
+        name: `base/lib/${coreAbi}/${name}`, bytes: elf(coreAbi),
+      })));
+    entries.push({ name: `base/lib/${abi}/libdatastore_shared_counter.so`,
+      bytes: elf(abi, { segments: datastoreSegments[abi] }) });
+    const result = fixture(child, { entries }).run();
+    assert.equal(result.status, 0, result.stderr);
+  });
+});
+
+test('rejects padded RELRO outside actual mapped memory', async t => {
+  const base = datastoreSegments['arm64-v8a'];
+  for (const [name, changes] of [
+    ['one byte past mapped page', { vaddr: 0x51c0, memsz: 0x8001 - 0x51c0 }],
+    ['start at logical LOAD end', { vaddr: 0x5428, memsz: 0x6000 - 0x5428 }],
+    ['entirely in page padding', { vaddr: 0x5500, memsz: 0x100 }],
+  ]) await t.test(name, child => reject(child, {
+    entries: arm64Entries({ segments: [...base.slice(0, -1), { ...base.at(-1), ...changes }] }),
+  }, /outside loadable memory/));
+});
+
+test('rejects another writable LOAD in RELRO padding, including aligned protection ends', async t => {
+  for (const [name, vaddr, end] of [
+    ['inside declared padding', 0x5800, 0x6000],
+    ['inside rounded padding', 0x7000, 0x6000],
+    ['aligned declared end', 0x7000, 0x8000],
+  ]) await t.test(name, child => reject(child, {
+    entries: arm64Entries({ segments: [
+      ...datastoreSegments['arm64-v8a'].slice(0, 2),
+      { type: 1, offset: vaddr - 0x4000, vaddr, filesz: 1, memsz: 1, flags: 6, align: PAGE },
+      { ...datastoreSegments['arm64-v8a'].at(-1), memsz: end - 0x51c0 },
+    ] }),
+  }, /another writable LOAD/));
+});
+
+test('rejects writable prefix data on the first RELRO-protected page', t => reject(t, {
+  entries: arm64Entries({ segments: [
+    { type: 1, offset: 0, vaddr: 0, filesz: PAGE, memsz: PAGE, flags: 5, align: PAGE },
+    { type: 1, offset: PAGE, vaddr: PAGE, filesz: PAGE, memsz: PAGE, flags: 6, align: PAGE },
+    relro(0x4800, 0x3800),
+  ] }),
+}, /preceding writable data/));
+
+test('allows writable prefix data confined to an earlier unprotected page', t => {
+  const result = fixture(t, { entries: arm64Entries({ segments: [
+    { type: 1, offset: 0, vaddr: 0, filesz: PAGE, memsz: PAGE, flags: 5, align: PAGE },
+    { type: 1, offset: PAGE, vaddr: PAGE, filesz: 0x5000, memsz: 0x5000, flags: 6, align: PAGE },
+    { ...relro(0x8000, 0x1000), offset: 0x8000 },
+  ] }) }).run();
+  assert.equal(result.status, 0, result.stderr);
+});
+
 test('rejects RELRO rounding over writable data in the same LOAD', t => reject(t, {
   entries: arm64Entries({ segments: [
     { type: 1, offset: 0, vaddr: 0, filesz: 0x4000, memsz: 0x4000, flags: 5, align: PAGE },

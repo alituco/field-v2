@@ -77,9 +77,11 @@ void main() {
           final path = request.url.path;
           Object? payload;
           var status = 200;
-          if (path.endsWith('/profiles')) {
+          if (path.endsWith('/profiles') ||
+              path.endsWith('/get_fieldrush_profile_identity')) {
             payload = {
               'id': 'player',
+              'content_hidden': false,
               'display_name': 'Dana',
               'username': 'dana',
               'bio': '',
@@ -99,7 +101,7 @@ void main() {
                 : [
                     {'id': 'phoenix', 'timezone': 'America/Phoenix'},
                   ];
-          } else if (path.endsWith('/clan_members') ||
+          } else if (path.endsWith('/get_fieldrush_profile_clan') ||
               path.endsWith('/get_player_rating_history')) {
             payload = null;
           } else {

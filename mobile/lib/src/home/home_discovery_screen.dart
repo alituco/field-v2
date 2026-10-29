@@ -121,11 +121,32 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
     }
   }
 
+  void _invalidatePendingPartyActivity() {
+    bool pendingInvite(HomeNotification item) =>
+        item.type?.trim().toUpperCase() == 'OPEN_QUEUE_PARTY_INVITE';
+    // The Activity feed contains unresolved receipts. A pending invitation may
+    // become blocked/resolved in another route; only a fresh server read may
+    // restore its authored body and action. Keep operational notices cached.
+    _notifications.removeWhere(pendingInvite);
+    _latestActivity.removeWhere((_, item) => pendingInvite(item));
+  }
+
   Future<void> _load() async {
+    // A destination can change player safety. Do not let a background reply
+    // repopulate pending invitations while that route is still open.
+    if (!widget.search && _openingNotificationId != null) {
+      return;
+    }
     final request = ++_request;
     setState(() {
       _loading = true;
       _error = null;
+      if (widget.search) {
+        _players = [];
+        _clans = [];
+      } else {
+        _invalidatePendingPartyActivity();
+      }
     });
     try {
       if (widget.search) {
@@ -175,7 +196,11 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
 
   Future<void> _open(HomeNotification item) async {
     if (_openingNotificationId != null) return;
-    setState(() => _openingNotificationId = item.id);
+    setState(() {
+      _openingNotificationId = item.id;
+      _request++;
+      _invalidatePendingPartyActivity();
+    });
     if (item.readAt == null && !_read.contains(item.id)) {
       setState(() => _read.add(item.id));
       unawaited(_saveRead(item.id));
@@ -540,6 +565,13 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
   }
 
   Future<void> _openClan(Clan clan) async {
+    _debounce?.cancel();
+    setState(() {
+      _request++;
+      _clans = [];
+      _loading = true;
+      _error = null;
+    });
     try {
       final membership = await _clanRepository.getMyClanMembership();
       if (!mounted) return;
@@ -557,12 +589,13 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       if (mounted) await _load();
     } catch (error) {
       if (mounted) {
-        setState(
-          () => _error = userFacingError(
+        setState(() {
+          _loading = false;
+          _error = userFacingError(
             error,
             fallback: 'Could not open this clan. Try again.',
-          ),
-        );
+          );
+        });
       }
     }
   }
@@ -669,7 +702,17 @@ class _HomeDiscoveryScreenState extends State<HomeDiscoveryScreen>
       ),
       child: InkWell(
         key: ValueKey('home-search-player-${player.id}'),
-        onTap: () => widget.onPlayer(player.id),
+        onTap: () async {
+          // Clear cached discovery identity before returning from player safety
+          // actions; a failed refresh must not re-show an old avatar.
+          setState(() {
+            _players = [];
+            _loading = true;
+            _request++;
+          });
+          await widget.onPlayer(player.id);
+          if (mounted) await _load();
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 12),
           child: Row(
