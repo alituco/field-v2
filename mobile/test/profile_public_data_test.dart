@@ -183,9 +183,14 @@ void main() {
           httpClient: MockClient((request) async {
             final path = request.url.path;
             final Object? payload;
-            if (path.endsWith('/profiles')) {
-              payload = {'id': 'player', 'display_name': 'Player'};
-            } else if (path.endsWith('/clan_members') ||
+            if (path.endsWith('/profiles') ||
+                path.endsWith('/get_fieldrush_profile_identity')) {
+              payload = {
+                'id': 'player',
+                'display_name': 'Player',
+                'content_hidden': false,
+              };
+            } else if (path.endsWith('/get_fieldrush_profile_clan') ||
                 path.endsWith('/get_player_rating_history')) {
               payload = null;
             } else if (path.endsWith('/list_profile_previous_games')) {
@@ -280,9 +285,14 @@ void main() {
           httpClient: MockClient((request) async {
             final path = request.url.path;
             Object? payload;
-            if (path.endsWith('/profiles')) {
-              payload = {'id': 'player', 'display_name': 'Player'};
-            } else if (path.endsWith('/clan_members') ||
+            if (path.endsWith('/profiles') ||
+                path.endsWith('/get_fieldrush_profile_identity')) {
+              payload = {
+                'id': 'player',
+                'display_name': 'Player',
+                'content_hidden': false,
+              };
+            } else if (path.endsWith('/get_fieldrush_profile_clan') ||
                 path.endsWith('/get_player_rating_history')) {
               payload = null;
             } else if (path.endsWith('/list_profile_previous_games')) {
@@ -360,9 +370,11 @@ void main() {
             requests.add(request);
             final path = request.url.path;
             final Object? payload;
-            if (path.endsWith('/profiles')) {
+            if (path.endsWith('/profiles') ||
+                path.endsWith('/get_fieldrush_profile_identity')) {
               payload = {
                 'id': 'player',
+                'content_hidden': false,
                 'display_name': 'Public Player',
                 'username': 'public.player',
                 'bio': 'Plays solo',
@@ -371,7 +383,7 @@ void main() {
                 'phone': '+16025550101',
                 'email': 'private@example.com',
               };
-            } else if (path.endsWith('/clan_members')) {
+            } else if (path.endsWith('/get_fieldrush_profile_clan')) {
               payload = null;
             } else if (path.endsWith('/profile_follows')) {
               final query = request.url.queryParameters;
@@ -450,12 +462,22 @@ void main() {
         expect(profile.position, isNull);
         expect(profile.showUpPercent, isNull);
         final profileRequest = requests.singleWhere(
-          (request) => request.url.path.endsWith('/profiles'),
+          (request) => request.url.path.endsWith(
+            viewerId == 'player'
+                ? '/profiles'
+                : '/get_fieldrush_profile_identity',
+          ),
         );
-        expect(
-          profileRequest.url.queryParameters['select'],
-          'id,display_name,username,bio,avatar_url',
-        );
+        if (viewerId == 'player') {
+          expect(
+            profileRequest.url.queryParameters['select'],
+            'id,display_name,username,bio,avatar_url',
+          );
+        } else {
+          expect(jsonDecode(profileRequest.body), {
+            'profile_id_to_use': 'player',
+          });
+        }
         final exactFollowRequests = requests.where(
           (request) =>
               request.url.path.endsWith('/profile_follows') &&

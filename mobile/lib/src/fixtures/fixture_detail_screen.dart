@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
+import '../profile/blocked_players_screen.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../ui/field_loading.dart';
@@ -451,6 +452,8 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
   bool _isCancelling = false;
   bool _isCompleting = false;
   bool _isRefreshing = false;
+  bool _safetyRefreshPending = false;
+  int _identityReadGeneration = 0;
   bool _isLoadingRoster = false;
   bool _isSavingRoster = false;
   bool _isLoadingMatchResolution = false;
@@ -751,6 +754,12 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   Future<void> _openPlayerProfile(String profileId) async {
     if (profileId.trim().isEmpty) return;
+    _refreshTimer?.cancel();
+    setState(() {
+      _safetyRefreshPending = true;
+      _errorText = null;
+      _identityReadGeneration++;
+    });
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => Scaffold(
@@ -762,6 +771,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         ),
       ),
     );
+    if (mounted) await _refreshFixture(requireFreshIdentity: true);
   }
 
   Future<void> _openClan(FixtureClan fixtureClan) async {
@@ -786,6 +796,12 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       }
       if (!mounted) return;
 
+      _refreshTimer?.cancel();
+      setState(() {
+        _safetyRefreshPending = true;
+        _errorText = null;
+        _identityReadGeneration++;
+      });
       await Navigator.of(context).push<void>(
         MaterialPageRoute<void>(
           builder: (_) => ClanDetailScreen(
@@ -796,6 +812,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
           ),
         ),
       );
+      if (mounted) await _refreshFixture(requireFreshIdentity: true);
     } catch (error) {
       if (!mounted) return;
       showFieldrushToast(
@@ -810,8 +827,16 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
     }
   }
 
-  Future<void> _refreshFixture({bool quiet = false}) async {
+  Future<void> _refreshFixture({
+    bool quiet = false,
+    bool requireFreshIdentity = false,
+  }) async {
+    if (requireFreshIdentity) {
+      _identityReadGeneration++;
+      _isRefreshing = false;
+    }
     if (_isRefreshing) return;
+    final identityGeneration = _identityReadGeneration;
     if (!quiet) {
       setState(() => _errorText = null);
     }
@@ -821,8 +846,11 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       final fixture =
           await (widget.refreshFixture?.call() ??
               widget.fixtureRepository.getFixture(_fixture.id));
-      if (!mounted) return;
+      if (!mounted || identityGeneration != _identityReadGeneration) {
+        return;
+      }
       setState(() {
+        _safetyRefreshPending = false;
         _fixture = fixture;
         _didChange = true;
       });
@@ -830,7 +858,9 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
       unawaited(_loadReliabilityRoster(quiet: true));
       unawaited(_loadMatchResolution());
     } catch (error) {
-      if (!mounted || quiet) return;
+      if (!mounted || quiet || identityGeneration != _identityReadGeneration) {
+        return;
+      }
       setState(
         () => _errorText = userFacingError(
           error,
@@ -838,7 +868,7 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
         ),
       );
     } finally {
-      _isRefreshing = false;
+      if (identityGeneration == _identityReadGeneration) _isRefreshing = false;
     }
   }
 
@@ -1076,6 +1106,12 @@ class _FixtureDetailScreenState extends State<FixtureDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_safetyRefreshPending) {
+      return PlayerContentRefreshScreen(
+        error: _errorText,
+        onRetry: () => _refreshFixture(requireFreshIdentity: true),
+      );
+    }
     final bottomAction = _canJoin
         ? _JoinActionBar(
             canJoin: _canJoin,

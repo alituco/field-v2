@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:field/src/clans/clan.dart';
+import 'package:field/src/clans/clan_detail_screen.dart';
 import 'package:field/src/clans/clan_repository.dart';
 import 'package:field/src/fixtures/fixture.dart';
 import 'package:field/src/fixtures/fixture_detail_screen.dart';
@@ -246,12 +247,14 @@ void main() {
         (_) => [
           {
             'id': 'a',
+            'content_hidden': false,
             'display_name': 'Dana',
             'username': 'dana',
             'avatar_url': '  ',
           },
           {
             'id': 'b',
+            'content_hidden': false,
             'display_name': 'Sam',
             'username': 'sam',
             'avatar_url': null,
@@ -263,8 +266,16 @@ void main() {
         client: client,
       ).searchPlayers('da');
       expect(players.map((player) => player.avatarUrl), [null, null]);
-      expect(requests.single.url.path, '/rest/v1/rpc/search_fieldrush_players');
-      expect(jsonDecode(requests.single.body), {'query_to_use': 'da'});
+      expect(requests.first.url.path, '/rest/v1/rpc/search_fieldrush_players');
+      expect(jsonDecode(requests.first.body), {'query_to_use': 'da'});
+      expect(requests, hasLength(2));
+      expect(
+        requests.last.url.path,
+        '/rest/v1/rpc/list_fieldrush_profile_identities',
+      );
+      expect(jsonDecode(requests.last.body), {
+        'profile_ids_to_use': ['a', 'b'],
+      });
     },
   );
 
@@ -348,6 +359,51 @@ void main() {
       await tester.pumpAndSettle();
       expect(tile, findsNothing);
       expect(find.text("You're all caught up."), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'clan search cannot retain authored artwork after a failed return refresh',
+    (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      final clans = _SearchClans();
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          home: HomeDiscoveryScreen(
+            repository: _ActivityDiscovery(),
+            search: true,
+            initialClans: true,
+            clanRepository: clans,
+            onPlayer: (_) async {},
+            onNotification: (_) async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final row = find.byKey(const ValueKey('home-search-clan-search-clan'));
+      expect(row, findsOneWidget);
+      await tester.ensureVisible(row);
+      await tester.pumpAndSettle();
+      expect(row.hitTestable(), findsOneWidget);
+      await tester.tap(row.hitTestable());
+      await tester.pumpAndSettle();
+      expect(find.byType(ClanDetailScreen), findsOneWidget);
+      clans.failReads = true;
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(clans.reads, greaterThanOrEqualTo(3));
+      expect(row, findsNothing);
+      expect(
+        find.textContaining('Original club artwork', findRichText: true),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Original clan motto', findRichText: true),
+        findsNothing,
+      );
+      expect(find.text('Try again'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -517,6 +573,157 @@ void main() {
     );
     expect(find.text("You're all caught up."), findsOneWidget);
   });
+
+  testWidgets(
+    'failed Activity return preserves operational notices and cannot restore pending invite bodies',
+    (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      final dismissReceipt = Completer<void>();
+      final repository = _ActivityDiscovery(dismissReceipt: dismissReceipt)
+        ..feed = [
+          _pendingPartyActivity('party-open'),
+          _pendingPartyActivity('party-dismissed'),
+          _operationalActivity(),
+        ];
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          home: HomeDiscoveryScreen(
+            repository: repository,
+            onPlayer: (_) async {},
+            onNotification: (_) async {
+              await navigator.currentState!.push<void>(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const Scaffold(body: Text('Game destination')),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('home-notification-resolve-party-dismissed')),
+      );
+      await tester.pump();
+      await tester.tap(
+        find.byKey(const ValueKey('home-notification-party-open')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Game destination'), findsOneWidget);
+      // Any read-receipt/realtime invalidation while the detail route is open
+      // must not fetch an older pending invitation back into its backdrop.
+      expect(repository.loads, 1);
+      repository.failNotifications = true;
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      // An earlier optimistic dismissal can also fail after the safety change.
+      // Its saved _latestActivity entry must not resurrect the private body.
+      dismissReceipt.completeError(StateError('Offline after safety change'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('home-notification-party-open')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-notification-resolve-party-open')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-notification-party-dismissed')),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Private party invitation', findRichText: true),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-notification-official')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Your refund is processing.', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.text('Try again'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'a pre-navigation Activity reply cannot restore invitations after a failed return refresh',
+    (tester) async {
+      final navigator = GlobalKey<NavigatorState>();
+      final originalFeed = [
+        _pendingPartyActivity('party'),
+        _operationalActivity(),
+      ];
+      final repository = _ActivityDiscovery()..feed = originalFeed;
+      await tester.pumpWidget(
+        MaterialApp(
+          navigatorKey: navigator,
+          home: HomeDiscoveryScreen(
+            repository: repository,
+            onPlayer: (_) async {},
+            onNotification: (_) async {
+              await navigator.currentState!.push<void>(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const Scaffold(body: Text('Activity destination')),
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final staleReply = Completer<List<HomeNotification>>();
+      repository.pendingNotifications = staleReply;
+      repository.changes.add(null);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(repository.loads, 2);
+      expect(
+        find.byKey(const ValueKey('home-notification-party')),
+        findsNothing,
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('home-notification-official')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Activity destination'), findsOneWidget);
+      repository.pendingNotifications = null;
+      repository.failNotifications = true;
+      navigator.currentState!.pop();
+      await tester.pumpAndSettle();
+      expect(repository.loads, 3);
+      staleReply.complete(originalFeed);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('home-notification-party')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-notification-resolve-party')),
+        findsNothing,
+      );
+      expect(
+        find.textContaining('Private party invitation', findRichText: true),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('home-notification-official')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Your refund is processing.', findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.text('Try again'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('server read and dismiss changes refresh an open Activity page', (
     tester,
@@ -1195,12 +1402,21 @@ class _ActivityDiscovery extends Fake
   final persistedReads = <String>{};
   final changes = StreamController<void>.broadcast();
   List<HomeNotification>? feed;
+  bool failNotifications = false;
+  Completer<List<HomeNotification>>? pendingNotifications;
   int loads = 0;
   @override
   Stream<void> watchActivityChanges() => changes.stream;
   @override
   Future<List<HomeNotification>> notifications() async {
     loads++;
+    final pending = pendingNotifications;
+    if (pending != null) {
+      return pending.future;
+    }
+    if (failNotifications) {
+      throw StateError('Activity is offline');
+    }
     return feed ??
         [
           for (final id in ['first', 'second'])
@@ -1318,4 +1534,59 @@ class _PreviewDiscovery extends Fake implements HomeDiscoveryRepository {
       username: 'alexreyes',
     ),
   ];
+}
+
+HomeNotification _pendingPartyActivity(String id) => HomeNotification(
+  id: id,
+  title: 'Inviter $id',
+  body: 'Private party invitation from $id',
+  createdAt: DateTime.utc(2026, 10, 10),
+  type: 'OPEN_QUEUE_PARTY_INVITE',
+  entityType: 'OPEN_QUEUE_PARTY_MEMBERSHIP',
+  entityId: 'membership-$id',
+  data: const {'game_id': 'game'},
+);
+HomeNotification _operationalActivity() => HomeNotification(
+  id: 'official',
+  title: 'Booking refund',
+  body: 'Your refund is processing.',
+  createdAt: DateTime.utc(2026, 10, 10),
+  type: 'PLAYER_CHECKOUT_REFUND_PENDING',
+  entityType: 'OPEN_QUEUE_GAME',
+  entityId: 'game',
+);
+
+class _SearchClans extends Fake implements ClanRepository {
+  bool failReads = false;
+  int reads = 0;
+  @override
+  Future<List<Clan>> listClans() async {
+    reads++;
+    if (failReads) {
+      throw StateError('Offline after player safety changed');
+    }
+    return const [
+      Clan(
+        id: 'search-clan',
+        name: 'Original club artwork',
+        tag: 'ORI',
+        motto: 'Original clan motto',
+        emblem: '🦁',
+        themeId: 'pitch',
+        patternId: 'solid',
+        skillRating: 1200,
+        wins: 0,
+        losses: 0,
+        memberCount: 1,
+        createdBy: 'creator',
+      ),
+    ];
+  }
+
+  @override
+  Future<ClanMembership?> getMyClanMembership() async => null;
+  @override
+  Future<List<ClanMember>> listClanMembers(String id) async => [];
+  @override
+  Future<List<ClanJoinRequest>> listPendingJoinRequests(String id) async => [];
 }

@@ -35,6 +35,8 @@ import 'fieldrush_match_history_screen.dart';
 import 'fieldrush_you_settings.dart';
 import 'fieldrush_you_widgets.dart';
 import 'profile.dart';
+import 'player_safety_repository.dart';
+import 'blocked_players_screen.dart';
 import 'profile_clip_screen.dart';
 import 'profile_clips_screen.dart';
 import 'profile_connections_screen.dart';
@@ -67,9 +69,11 @@ class FieldrushYouScreen extends StatefulWidget {
     this.onNavigateTab,
     this.referralRepository,
     this.historyRepository,
+    this.playerSafetyRepository,
   });
 
   final ProfileRepository profileRepository;
+  final PlayerSafetyRepository? playerSafetyRepository;
   final LeaderboardRepository leaderboardRepository;
   final ClanRepository clanRepository;
   final FixtureRepository fixtureRepository;
@@ -677,6 +681,23 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
     }
   }
 
+  PlayerSafetyRepository? get _safetyRepository =>
+      widget.playerSafetyRepository ??
+      playerSafetyFor(widget.profileRepository);
+
+  Future<void> _openBlockedPlayers() async {
+    final repository = _safetyRepository;
+    if (repository == null) {
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => BlockedPlayersScreen(repository: repository),
+      ),
+    );
+    if (mounted) await _load();
+  }
+
   Future<void> _openNotifications() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute(
@@ -879,6 +900,9 @@ class _FieldrushYouScreenState extends State<FieldrushYouScreen> {
                         onAllClips: _openAllClips,
                         onReliability: _openReliability,
                         onNotifications: _openNotifications,
+                        onBlockedPlayers: _safetyRepository == null
+                            ? null
+                            : _openBlockedPlayers,
                         onWallet: _openWallet,
                         onPaymentMethods: () =>
                             Navigator.of(context).push<void>(

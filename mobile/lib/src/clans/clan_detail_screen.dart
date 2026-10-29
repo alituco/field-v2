@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/blocked_players_screen.dart';
 
 import '../auth/fieldrush_auth_theme.dart';
 import '../core/field_confirmation_dialog.dart';
@@ -62,6 +63,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
       _working = false;
   String? _error, _reliabilityError, _workingRequest;
   int _generation = 0;
+  bool _safetyRefreshPending = false;
   String? get _profileId {
     try {
       return Supabase.instance.client.auth.currentUser?.id;
@@ -113,6 +115,7 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
             .firstOrNull;
         _loading = false;
         _error = null;
+        _safetyRefreshPending = false;
       });
     } catch (error) {
       if (mounted && generation == _generation) {
@@ -398,21 +401,29 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
       ],
     ),
   );
-  Future<void> _openPlayer(ClanMember member) =>
-      Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => Scaffold(
-            backgroundColor: FieldrushAuthTheme.cream,
-            body: ProfileScreen(
-              profileId: member.profileId,
-              profileRepository: SupabaseProfileRepository(),
-              clanRepository: widget.clanRepository,
-              fixtureRepository: widget.fixtureRepository,
-              moderationRepository: widget.moderationRepository,
-            ),
+  Future<void> _openPlayer(ClanMember member) async {
+    setState(() {
+      _safetyRefreshPending = true;
+      _error = null;
+      _generation++;
+    });
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: FieldrushAuthTheme.cream,
+          body: ProfileScreen(
+            profileId: member.profileId,
+            profileRepository: SupabaseProfileRepository(),
+            clanRepository: widget.clanRepository,
+            fixtureRepository: widget.fixtureRepository,
+            moderationRepository: widget.moderationRepository,
           ),
         ),
-      );
+      ),
+    );
+    if (mounted) await _load();
+  }
+
   Future<void> _showMemberActions(ClanMember member) async {
     if (_working || !_manager || member.isOwner) return;
     final action = await showFieldrushModal<String>(
@@ -640,7 +651,17 @@ class _ClanDetailScreenState extends State<ClanDetailScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => Theme(
+  Widget build(BuildContext context) => _safetyRefreshPending
+      ? PlayerContentRefreshScreen(
+          error: _error,
+          onRetry: () {
+            setState(() => _error = null);
+            _load();
+          },
+        )
+      : _buildClanContent(context);
+
+  Widget _buildClanContent(BuildContext context) => Theme(
     data: FieldrushAuthTheme.theme(context),
     child: Scaffold(
       backgroundColor: FieldrushAuthTheme.cream,

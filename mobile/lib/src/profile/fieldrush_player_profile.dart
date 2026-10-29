@@ -52,6 +52,8 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
     required this.onBack,
     this.onFollow,
     this.onReport,
+    this.onBlock,
+    this.blockBusy = false,
     this.onOpenClan,
     this.positionLabel,
     this.onMatchHistory,
@@ -74,6 +76,8 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
   final VoidCallback? onBack;
   final VoidCallback? onFollow;
   final VoidCallback? onReport;
+  final VoidCallback? onBlock;
+  final bool blockBusy;
   final VoidCallback? onOpenClan;
   final String? positionLabel;
   final VoidCallback? onMatchHistory;
@@ -194,6 +198,16 @@ class FieldrushPlayerProfileContent extends StatelessWidget {
           onClip: onClip!,
           onAllClips: onAllClips,
           clipKeyPrefix: 'player',
+        ),
+      if (onBlock != null)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: TextButton.icon(
+            key: const ValueKey('player-block-action'),
+            onPressed: blockBusy ? null : onBlock,
+            icon: const Icon(Icons.block_outlined, size: 16),
+            label: Text(blockBusy ? 'Updating…' : 'Block player'),
+          ),
         ),
       if (onReport != null)
         Padding(

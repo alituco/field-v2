@@ -41,9 +41,17 @@ void main() {
         httpClient: MockClient((request) async {
           final path = request.url.path;
           Object? payload = [];
-          if (path.endsWith('/profiles')) {
+          if (path.endsWith('/get_fieldrush_player_safety')) {
+            payload = {
+              'profile_id': 'other',
+              'blocked_by_me': false,
+              'interaction_blocked': false,
+            };
+          } else if (path.endsWith('/profiles') ||
+              path.endsWith('/get_fieldrush_profile_identity')) {
             payload = {
               'id': 'other',
+              'content_hidden': false,
               'display_name': 'Other Player',
               'username': 'other',
               'bio': '',
@@ -54,7 +62,7 @@ void main() {
               return stalled.future;
             }
             payload = null;
-          } else if (path.endsWith('/clan_members')) {
+          } else if (path.endsWith('/get_fieldrush_profile_clan')) {
             payload = null;
           } else if (path.endsWith('/profile_follows') &&
               request.url.queryParameters.containsKey('following_id') &&
