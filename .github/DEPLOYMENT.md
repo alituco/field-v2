@@ -203,7 +203,9 @@ deletion and phone notifications still require their own explicit runtime
 activation and qualification.
 
 See [production iOS](../docs/production-ios.md) for protected signing and
-TestFlight uploads, [production push](../docs/production-push.md) for isolated
+TestFlight uploads, [production Android](../docs/production-android.md) for the
+protected signed App Bundle and Play qualification sequence,
+[production push](../docs/production-push.md) for isolated
 Firebase/APNs setup, and [production launch](../docs/production-launch.md) for
 the store record and remaining operational checks.
 

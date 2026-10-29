@@ -111,11 +111,12 @@ ${merchant?'<key>com.apple.developer.in-app-payments</key><array><string>merchan
     }
   }finally{rmSync(root,{recursive:true,force:true});}
 });
-test('native SDK auto-init and the app feature flag default off without changing Android identity',()=>{
+test('native SDK auto-init defaults off and production identity preserves the staging app',()=>{
   const android=read('mobile/android/app/src/main/AndroidManifest.xml');
   assert.match(android,/POST_NOTIFICATIONS/);
   assert.match(android,/firebase_messaging_auto_init_enabled" android:value="false"/);
   assert.match(read('mobile/android/app/build.gradle.kts'),/applicationId = "com\.field\.field"/);
+  assert.match(read('mobile/android/app/build.gradle.kts'),/create\("production"\) \{\s*dimension = "environment"\s*applicationId = "gg\.fieldrush\.app"/);
   assert.match(read('mobile/android/app/build.gradle.kts'),/applicationIdSuffix = "\.staging"/);
   const options=read('mobile/lib/src/notifications/firebase_staging_options.dart');
   assert.match(options,/Android: com.field.field.staging/);

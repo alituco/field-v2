@@ -16,7 +16,7 @@ client values belong in the protected production build configuration:
 - `PUSH_FIREBASE_IOS_BUNDLE_ID=com.alialtaraif.field`
 
 Android separately requires its production Firebase app ID and
-`PUSH_FIREBASE_ANDROID_PACKAGE_ID=com.field.field`. An iOS build does not need
+`PUSH_FIREBASE_ANDROID_PACKAGE_ID=gg.fieldrush.app`. An iOS build does not need
 the Android app ID, and vice versa. The client rejects missing platform
 identities, wrong providers, sender/app-number mismatches, and the known staging
 Firebase apps in a production build. Production never falls back to staging

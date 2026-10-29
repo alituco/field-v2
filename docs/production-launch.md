@@ -11,6 +11,7 @@ protected deployment history and real-device evidence.
 | App Store app | Fieldrush: Pickup Soccer, Apple ID `6827873998` |
 | Installed iOS app name | Fieldrush |
 | iOS Bundle ID | `com.alialtaraif.field` |
+| Android application ID | `gg.fieldrush.app` |
 | Apple team | `69B646V2WM` |
 | Apple Pay merchant | `merchant.com.alialtaraif.fieldrush.production` |
 | Distribution profile | Fieldrush Production App Store |
