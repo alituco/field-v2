@@ -33,7 +33,7 @@ grant select on block_fixtures,block_snapshots to authenticated,anon,service_rol
 
 do $$
 declare ids uuid[]:='{}'; player uuid; i integer; clan uuid; other_clan uuid; game uuid;
-  kickoff timestamptz; party uuid; other_party uuid; invitation uuid;
+  kickoff timestamptz; party uuid; other_party uuid; invitation uuid; notification uuid;
   staff_login uuid:=gen_random_uuid(); staff_key uuid:=gen_random_uuid();
 begin
   for i in 1..6 loop
@@ -91,6 +91,11 @@ begin
   perform pg_temp.block_actor(ids[1]);
   party:=public.create_open_queue_party(game);
   invitation:=public.invite_open_queue_party_member(party,ids[2]);
+  select n.id into notification from public.notifications n
+    where n.type='OPEN_QUEUE_PARTY_INVITE' and n.related_entity_id=invitation
+      and n.recipient_profile_id=ids[2] and n.resolved_at is null;
+  perform pg_temp.block_expect(notification is not null,'ordinary accepted-party fixture starts with its real receipt');
+  insert into block_fixtures values('accepted_notification',notification);
   perform pg_temp.block_actor(ids[2]);
   perform public.respond_open_queue_party_invitation(invitation,true);
   perform pg_temp.block_actor(ids[4]);
@@ -98,6 +103,11 @@ begin
   perform pg_temp.block_actor(ids[1]);
   invitation:=public.invite_open_queue_party_member(party,ids[4]);
   insert into block_fixtures values('party',party),('other_party',other_party),('pending_invite',invitation);
+  select n.id into notification from public.notifications n
+    where n.type='OPEN_QUEUE_PARTY_INVITE' and n.related_entity_id=invitation
+      and n.recipient_profile_id=ids[4] and n.resolved_at is null;
+  perform pg_temp.block_expect(notification is not null,'ordinary pending invitation creates its retained receipt');
+  insert into block_fixtures values('pending_notification',notification);
   perform pg_temp.block_actor(ids[4]);
   perform pg_temp.block_expect(jsonb_array_length(public.get_open_queue_party_context(game)->'received_invites')=1
     and jsonb_array_length(public.list_my_open_queue_party_invite_notifications())=1,
@@ -121,6 +131,8 @@ begin
       from public.fieldrush_player_rating_tracks r where r.profile_id=ids[2])),
     ('parties',(select jsonb_agg(to_jsonb(p) order by p.id) from public.open_queue_parties p where game_id=game)),
     ('party_members',(select jsonb_agg(to_jsonb(m) order by m.id) from public.open_queue_party_members m where game_id=game)),
+    ('pending_notification',(select to_jsonb(n) from public.notifications n where n.id=notification)),
+    ('staff',(select to_jsonb(s) from public.referee_profiles s where s.profile_id=staff_key)),
     ('visible_members',public.list_fieldrush_clan_members(clan)),
     ('visible_clan',(select value from jsonb_array_elements(public.list_fieldrush_clans()) where value->>'id'=clan::text));
   -- A historical/operator-created hybrid can still satisfy the older active
@@ -131,6 +143,25 @@ begin
   insert into public.referee_profiles(profile_id,auth_user_id,email,display_name,phone,role,is_active)
     values(gen_random_uuid(),ids[6],'blocking_hybrid@example.test','Blocking hybrid fixture',null,'referee',true);
 end $$;
+
+select pg_temp.block_actor((select id from block_fixtures where key='p4'));
+set local role authenticated;
+select pg_temp.block_expect(exists(select 1 from public.notifications
+  where id=(select id from block_fixtures where key='pending_notification')),
+  'unblocked recipient sees the actual pending receipt through Home direct SELECT RLS');
+select pg_temp.block_expect(public.my_fieldrush_party_receipt_is_visible((select id from block_fixtures where key='pending_notification')),
+  'owner-bounded receipt predicate permits the unblocked recipient');
+select pg_temp.block_expect(public.get_my_player_notification((select id from block_fixtures where key='pending_notification')) is not null,
+  'unblocked pending receipt is available for the existing cold notification route');
+reset role;
+select pg_temp.block_actor((select id from block_fixtures where key='p3'));
+set local role authenticated;
+select pg_temp.block_expect(not public.my_fieldrush_party_receipt_is_visible((select id from block_fixtures where key='pending_notification'))
+  and not public.my_fieldrush_party_receipt_is_visible(gen_random_uuid()),
+  'unrelated and unknown receipt IDs reveal the same false owner-bounded result');
+select pg_temp.block_expect(public.get_my_player_notification((select id from block_fixtures where key='pending_notification')) is null,
+  'cold notification lookup cannot expose another recipient receipt');
+reset role;
 
 -- Exercise actual transaction advisory locks, not source-text assertions. The
 -- deliberate subtransaction rollback releases each acquired lock and restores
@@ -232,6 +263,11 @@ begin
   result:=public.set_fieldrush_player_block(a,false);
   perform pg_temp.block_expect(result->>'blocked_by_me'='false' and result->>'interaction_blocked'='true','unblock controls only the caller own edge');
   perform pg_temp.block_expect(public.get_fieldrush_profile_identity(a)->>'content_hidden'='true','target also sees a redacted peer identity');
+  perform pg_temp.block_expect(exists(select 1 from public.notifications
+    where id=(select id from block_fixtures where key='accepted_notification') and resolved_at is not null),
+    'blocking leaves prior direct-table visibility of accepted historical receipts unchanged');
+  perform pg_temp.block_expect(public.my_fieldrush_party_receipt_is_visible((select id from block_fixtures where key='accepted_notification')),
+    'new receipt policy restricts pending invitations, not accepted historical records');
   perform pg_temp.block_reject(format('insert into public.profile_follows(follower_id,following_id) values(%L,%L)',b,a),'42501');
 end $$;
 reset role;
@@ -345,7 +381,20 @@ select pg_temp.block_expect(jsonb_array_length(public.get_open_queue_party_conte
   'blocked inviter has no actionable incoming invitation or raw owner content');
 select pg_temp.block_expect(jsonb_array_length(public.list_my_open_queue_party_invite_notifications())=0,
   'blocked inviter has no actionable pending invitation notification');
+select pg_temp.block_expect(not exists(select 1 from public.notifications
+  where id=(select id from block_fixtures where key='pending_notification')),
+  'Home direct SELECT cannot show a blocked pending party receipt or its authored body');
+select pg_temp.block_expect(not public.my_fieldrush_party_receipt_is_visible((select id from block_fixtures where key='pending_notification')),
+  'own blocked pending receipt is no longer eligible for display');
+select pg_temp.block_expect(public.get_my_player_notification((select id from block_fixtures where key='pending_notification')) is null,
+  'cold notification route rejects a blocked pending invitation');
 reset role;
+select pg_temp.block_actor(null,'service_role');
+select pg_temp.block_expect(not fieldrush_private.notification_source_is_current((select id from block_fixtures where key='pending_notification')),
+  'context-free trusted push source validation rejects the blocked pending receipt');
+select pg_temp.block_expect((select to_jsonb(n)=(select data from block_snapshots where key='pending_notification')
+  from public.notifications n where id=(select id from block_fixtures where key='pending_notification')),
+  'trusted raw pending receipt and all its delivery/read metadata remain unchanged');
 select pg_temp.block_expect((select jsonb_agg(to_jsonb(p) order by p.id)=(select data from block_snapshots where key='parties')
   from public.open_queue_parties p where game_id=(select id from block_fixtures where key='game')),
   'blocking and denied invitation acceptance preserve existing accepted parties');
@@ -373,13 +422,20 @@ reset role;
 delete from public.profile_blocks where blocker_profile_id=(select id from block_fixtures where key='p6');
 select pg_temp.block_actor((select id from block_fixtures where key='staff_login'));
 set local role authenticated;
-select pg_temp.block_expect(public.is_active_moderation_admin((select id from block_fixtures where key='staff_key')),'staff moderation duty remains active');
+select pg_temp.block_expect(public.current_fieldrush_staff_id()=(select id from block_fixtures where key='staff_key'),
+  'staff retains its authorized active bound identity');
 select pg_temp.block_reject('select public.list_fieldrush_blocked_players()','42501');
 select pg_temp.block_expect((select count(*)=0 from public.profile_blocks),'staff login receives no other player private block list');
 reset role;
+select pg_temp.block_expect((select to_jsonb(s)=(select data from block_snapshots where key='staff')
+  from public.referee_profiles s where s.profile_id=(select id from block_fixtures where key='staff_key')),
+  'staff role, active duty and binding remain byte-for-byte unchanged');
 select pg_temp.block_actor((select id from block_fixtures where key='p1'),'service_role');
 set local role service_role;
 select pg_temp.block_expect((select count(*)=2 from public.profile_blocks),'trusted service role can retain administrative block-table access');
+select pg_temp.block_expect(exists(select 1 from public.notifications
+  where id=(select id from block_fixtures where key='pending_notification')),
+  'trusted service role retains operational access to the stored blocked receipt');
 select pg_temp.block_expect((select value->>'name'='Blocking target club'
   from jsonb_array_elements(public.list_fieldrush_clans()) where value->>'id'=(select id::text from block_fixtures where key='clan')),
   'service-role operational clan reads ignore player content preferences even with a subject claim');
@@ -389,6 +445,8 @@ set local role anon;
 select pg_temp.block_reject('select * from public.profile_blocks','42501');
 select pg_temp.block_reject('select public.list_fieldrush_blocked_players()','42501');
 select pg_temp.block_reject('select public.list_fieldrush_discover_profiles()','42501');
+select pg_temp.block_reject(format('select public.my_fieldrush_party_receipt_is_visible(%L)',
+  (select id from block_fixtures where key='pending_notification')),'42501');
 reset role;
 
 -- Unblocking is idempotent and does not recreate either old follow relationship.
@@ -418,4 +476,15 @@ select pg_temp.block_expect(not exists(select 1 from public.profile_blocks where
 select pg_temp.block_expect(not has_function_privilege('authenticated','public.list_fieldrush_clans_before_player_blocks()','execute')
   and not has_function_privilege('anon','public.get_fieldrush_profile_identity(uuid)','execute'),
   'unmasked wrapper implementations and new identity RPCs retain the intended ACL boundary');
+do $$
+declare external_role text;
+begin
+  foreach external_role in array array['anon','authenticated','service_role'] loop
+    perform pg_temp.block_expect(not has_function_privilege(external_role,
+      'fieldrush_private.player_game_notification_source_before_player_blocks(uuid)','execute')
+      and not has_function_privilege(external_role,
+      'fieldrush_private.player_game_notification_source_is_current(uuid)','execute'),
+      'private notification source implementations stay inaccessible to '||external_role);
+  end loop;
+end $$;
 select 'Player blocking contracts passed' as result;

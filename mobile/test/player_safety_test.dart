@@ -696,35 +696,39 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'uncertain committed block plus failed safety refresh never keeps authored content',
-    (tester) async {
-      final safety = _Safety()
-        ..failAfterCommit = true
-        ..failReadAfterWrite = true;
-      await _pumpProfile(tester, _Profiles(), safety);
-      await tester.pumpAndSettle();
-      final action = find.byKey(const ValueKey('player-block-action'));
+  for (final uncertainWrite in [false, true]) {
+    testWidgets(
+      '${uncertainWrite ? 'uncertain committed' : 'confirmed'} block plus failed safety refresh never keeps authored content',
+      (tester) async {
+        final safety = _Safety()
+          ..failAfterCommit = uncertainWrite
+          ..failReadAfterWrite = true;
+        await _pumpProfile(tester, _Profiles(), safety);
+        await tester.pumpAndSettle();
+        final action = find.byKey(const ValueKey('player-block-action'));
 
-      await _tapVisible(tester, action);
-      await tester.pumpAndSettle();
-      await _tapVisible(
-        tester,
-        find.byKey(const ValueKey('player-block-confirm')),
-      );
-      await tester.pumpAndSettle();
-      expect(safety.blocked, isTrue);
-      expect(find.text('Other Player'), findsNothing);
-      expect(find.byKey(const ValueKey('profile-error')), findsOneWidget);
-      safety.failRead = false;
-      await _tapVisible(tester, find.text('Try again'));
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('blocked-profile-content')),
-        findsOneWidget,
-      );
-    },
-  );
+        await _tapVisible(tester, action);
+        await tester.pumpAndSettle();
+        await _tapVisible(
+          tester,
+          find.byKey(const ValueKey('player-block-confirm')),
+        );
+        await tester.pumpAndSettle();
+        expect(safety.blocked, isTrue);
+        expect(find.text('Other Player'), findsNothing);
+        expect(find.byKey(const ValueKey('profile-error')), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        safety.failRead = false;
+        await _tapVisible(tester, find.text('Try again'));
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('blocked-profile-content')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets(
     'an incoming block hides content without exposing an unblock action',
@@ -894,6 +898,7 @@ class _Safety implements PlayerSafetyRepository {
       throw StateError('Unavailable');
     }
     this.blocked = blocked;
+    failRead = failReadAfterWrite;
     return state;
   }
 

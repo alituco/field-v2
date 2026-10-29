@@ -459,6 +459,48 @@ begin
   return result;
 end $$;
 
+-- Home reads recipient-owned notification rows directly, while cold links and
+-- the push worker validate source freshness through private definer functions.
+-- Apply the same pending-invitation boundary to both paths without deleting a
+-- receipt or changing operational/nonparty notices or delivery configuration.
+create function fieldrush_safety_private.party_receipt_blocked(notification_id_to_use uuid)
+returns boolean language sql stable security definer
+set search_path=pg_catalog,public,fieldrush_safety_private,pg_temp as $$
+  select exists(select 1 from public.notifications n
+    join public.open_queue_party_members m on m.id=n.related_entity_id
+      and m.profile_id=n.recipient_profile_id and m.status='INVITED'
+    join public.open_queue_parties p on p.id=m.party_id
+    where n.id=notification_id_to_use and n.type='OPEN_QUEUE_PARTY_INVITE'
+      and n.related_entity_type='OPEN_QUEUE_PARTY_MEMBERSHIP'
+      and (fieldrush_safety_private.pair_blocked(n.recipient_profile_id,p.owner_profile_id)
+        or fieldrush_safety_private.pair_blocked(n.recipient_profile_id,m.invited_by)));
+$$;
+create function public.my_fieldrush_party_receipt_is_visible(notification_id_to_use uuid)
+returns boolean language sql stable security definer
+set search_path=pg_catalog,public,auth,fieldrush_safety_private,pg_temp as $$
+  select exists(select 1 from public.notifications n
+    where n.id=notification_id_to_use and n.recipient_profile_id=auth.uid()
+      and not fieldrush_safety_private.party_receipt_blocked(n.id));
+$$;
+revoke all on function public.my_fieldrush_party_receipt_is_visible(uuid) from public,anon,authenticated,service_role;
+grant execute on function public.my_fieldrush_party_receipt_is_visible(uuid) to authenticated;
+create policy notifications_player_party_blocks on public.notifications
+as restrictive for select to authenticated using (
+  type<>'OPEN_QUEUE_PARTY_INVITE' or public.my_fieldrush_party_receipt_is_visible(id)
+);
+alter function fieldrush_private.player_game_notification_source_is_current(uuid)
+  rename to player_game_notification_source_before_player_blocks;
+revoke all on function fieldrush_private.player_game_notification_source_before_player_blocks(uuid)
+  from public,anon,authenticated,service_role;
+create function fieldrush_private.player_game_notification_source_is_current(notification_id_to_use uuid)
+returns boolean language sql stable security definer
+set search_path=pg_catalog,public,fieldrush_private,fieldrush_safety_private,pg_temp as $$
+  select fieldrush_private.player_game_notification_source_before_player_blocks($1)
+    and not fieldrush_safety_private.party_receipt_blocked($1);
+$$;
+revoke all on function fieldrush_private.player_game_notification_source_is_current(uuid)
+  from public,anon,authenticated,service_role;
+
 revoke all on all tables in schema fieldrush_safety_private from public,anon,authenticated,service_role;
 revoke all on all functions in schema fieldrush_safety_private from public,anon,authenticated,service_role;
 do $permissions$

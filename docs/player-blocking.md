@@ -14,6 +14,9 @@ directions are removed; new follows are rejected while either player blocks
 the other. New party invitations and acceptance of a pending invitation are also
 rejected between the blocked pair. Blocked invite candidates and unaccepted
 incoming invitations are hidden. Unblocking does not recreate previous follows.
+Pending invitation receipts are also hidden from Home Activity and cold
+notification lookup, and become ineligible for push delivery. Stored receipts
+and nonparty operational notices remain intact.
 
 Blocking does not change a booking, payment, refund, official score, rating,
 roster count, attendance record, accepted party membership, or staff moderation

@@ -137,7 +137,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
         widget.moderationRepository ?? SupabaseModerationRepository();
     _supportRepository =
         widget.supportRepository ?? SupabaseSupportRepository();
-    _profileFuture = _loadProfile();
+    _profileFuture = _observeProfileRequest(_loadProfile());
+  }
+
+  Future<PlayerProfile> _observeProfileRequest(Future<PlayerProfile> request) {
+    // A reload can fail before the next frame attaches FutureBuilder. Observe
+    // that error immediately, while keeping the original Future so the builder
+    // still receives the error and renders the unavailable/retry state.
+    unawaited(
+      request.then<void>((_) {}, onError: (Object _, StackTrace __) {}),
+    );
+    return request;
   }
 
   Future<PlayerProfile> _loadProfile() async {
@@ -294,7 +304,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _viewedTrackSelected = false;
       _ratingTrack = RatingTrack.outfield;
       _isUpdatingFollow = false;
-      _profileFuture = _loadProfile();
+      _profileFuture = _observeProfileRequest(_loadProfile());
     }
   }
 
@@ -312,7 +322,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (error, stackTrace) {
       if (!mounted || version != _profileLoadVersion) return;
       setState(() {
-        _profileFuture = Future.error(error, stackTrace);
+        _profileFuture = _observeProfileRequest(
+          Future.error(error, stackTrace),
+        );
       });
     }
   }
@@ -421,7 +433,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         _latestProfile = null;
         _ratings = null;
         _viewedDetailsReady = false;
-        _profileFuture = _loadProfile();
+        _profileFuture = _observeProfileRequest(_loadProfile());
       });
       showFieldrushToast(
         context,
@@ -436,7 +448,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _playerSafety = null;
           _ratings = null;
           _viewedDetailsReady = false;
-          _profileFuture = _loadProfile();
+          _profileFuture = _observeProfileRequest(_loadProfile());
         });
         showFieldrushToast(
           context,
@@ -742,7 +754,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     final next = _loadProfile();
     setState(() {
-      _profileFuture = next;
+      _profileFuture = _observeProfileRequest(next);
     });
   }
 
@@ -773,7 +785,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await openAccount();
       if (mounted) {
         final next = _loadProfile();
-        setState(() => _profileFuture = next);
+        setState(() => _profileFuture = _observeProfileRequest(next));
       }
       return;
     }
@@ -791,7 +803,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (changed == true && mounted) {
       final next = _loadProfile();
       setState(() {
-        _profileFuture = next;
+        _profileFuture = _observeProfileRequest(next);
       });
     }
   }
@@ -927,7 +939,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
               onRetry: () {
                 final next = _loadProfile();
                 setState(() {
-                  _profileFuture = next;
+                  _profileFuture = _observeProfileRequest(next);
                 });
               },
             );
@@ -1074,7 +1086,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       onPressed: () {
                         final next = _loadProfile();
                         setState(() {
-                          _profileFuture = next;
+                          _profileFuture = _observeProfileRequest(next);
                         });
                       },
                       child: const Text('Try again'),
