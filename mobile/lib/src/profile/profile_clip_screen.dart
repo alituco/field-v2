@@ -113,6 +113,11 @@ class _ProfileClipScreenState extends State<ProfileClipScreen> {
       _sourceFixture = null;
     });
     try {
+      await controller?.pause();
+    } catch (_) {
+      // Always attempt disposal even when the native player cannot pause.
+    }
+    try {
       await controller?.dispose();
     } catch (_) {
       // The player is already detached; a failed native disposal must not
