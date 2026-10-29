@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/viewer_safe_identities.dart';
 
 import 'open_queue.dart';
 import 'featured_field.dart';
@@ -271,7 +272,9 @@ class SupabaseOpenQueueRepository
         ...metadata,
       };
     }
-    return OpenQueueMatchDetail.fromJson(row);
+    return OpenQueueMatchDetail.fromJson(
+      await viewerSafeIdentityPayload(_client, row),
+    );
   }
 
   @override

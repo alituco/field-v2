@@ -24,6 +24,7 @@ class PlayerProfile {
     this.position,
     this.showUpPercent,
     this.isFollowedByMe = false,
+    this.contentHidden = false,
   });
 
   final String id;
@@ -32,6 +33,9 @@ class PlayerProfile {
   final String bio;
   final String? phone;
   final String? avatarUrl;
+
+  /// Viewer-safe identity has hidden this player's authored profile content.
+  final bool contentHidden;
   final ProfileClan? clan;
   final int followingCount;
   final int fansCount;
@@ -124,6 +128,7 @@ class PlayerProfile {
       bio: bio,
       phone: phone,
       avatarUrl: avatarUrl,
+      contentHidden: contentHidden,
       clan: clan,
       followingCount: followingCount ?? this.followingCount,
       fansCount: fansCount ?? this.fansCount,

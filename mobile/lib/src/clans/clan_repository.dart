@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/viewer_safe_identities.dart';
 
 import '../fixtures/fixture.dart';
 import 'clan.dart';
@@ -140,7 +141,10 @@ class SupabaseClanRepository
   @override
   Future<List<Clan>> listClans() async {
     final response = await _client.rpc('list_fieldrush_clans');
-    final rows = response as List<dynamic>;
+    final rows = await viewerSafeIdentityRows(
+      _client,
+      response as List<dynamic>,
+    );
 
     return [
       for (final row in rows) Clan.fromJson(Map<String, dynamic>.from(row)),
@@ -186,7 +190,10 @@ class SupabaseClanRepository
       'list_fieldrush_clan_members',
       params: {'clan_id_to_use': clanId},
     );
-    final rows = response as List<dynamic>;
+    final rows = await viewerSafeIdentityRows(
+      _client,
+      response as List<dynamic>,
+    );
 
     return [
       for (final row in rows)
@@ -217,7 +224,10 @@ class SupabaseClanRepository
         .eq('clan_id', clanId)
         .eq('status', 'PENDING')
         .order('requested_at');
-    final rows = response as List<dynamic>;
+    final rows = await viewerSafeIdentityRows(
+      _client,
+      response as List<dynamic>,
+    );
 
     return [
       for (final row in rows)
@@ -254,7 +264,12 @@ class SupabaseClanRepository
         .maybeSingle();
 
     if (response == null) return null;
-    return ClanJoinRequest.fromJson(Map<String, dynamic>.from(response));
+    return ClanJoinRequest.fromJson(
+      await viewerSafeIdentityPayload(
+        _client,
+        Map<String, dynamic>.from(response),
+      ),
+    );
   }
 
   @override
@@ -267,7 +282,10 @@ class SupabaseClanRepository
         .or('home_clan_id.eq.$clanId,away_clan_id.eq.$clanId')
         .order('match_date', ascending: false)
         .order('time_slot', ascending: false);
-    final rows = response as List<dynamic>;
+    final rows = await viewerSafeIdentityRows(
+      _client,
+      response as List<dynamic>,
+    );
 
     return [
       for (final row in rows)

@@ -30,6 +30,7 @@ build fails closed.
   wallet refund, and `FULL` to `OPEN`
 - fake-data seeding from an empty local database
 - rollback-only reliability, moderation, support, and clan-forfeit contracts
+- rollback-only player blocking, visibility, follow, and party-invitation contracts
 - a protected hosted-staging Android journey covering onboarding, solo booking,
   party invitations, cancellation, reports, and support
 - a protected hosted-staging referee/admin browser journey covering attendance

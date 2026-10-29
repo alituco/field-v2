@@ -664,6 +664,15 @@ jobs:
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_independent_staff_accounts.sql
 
+      - name: Verify player blocking privacy and content visibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_player_blocking.sql
+
       - name: Verify once-only assessment initialization on the full schema
         shell: bash
         run: |

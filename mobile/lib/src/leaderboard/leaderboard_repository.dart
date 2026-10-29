@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../profile/viewer_safe_identities.dart';
 
 import 'leaderboard.dart';
 import 'fieldrush_rating_tracks.dart';
@@ -92,7 +93,10 @@ class SupabaseLeaderboardRepository
       },
     );
     return FieldrushPlacementPage.fromJson(
-      Map<String, dynamic>.from(response as Map),
+      await viewerSafeIdentityPayload(
+        _client,
+        Map<String, dynamic>.from(response as Map),
+      ),
     );
   }
 
@@ -137,7 +141,10 @@ class SupabaseLeaderboardRepository
       },
     );
     return PlayerRatingLeaderboardPage.fromJson(
-      Map<String, dynamic>.from(response as Map),
+      await viewerSafeIdentityPayload(
+        _client,
+        Map<String, dynamic>.from(response as Map),
+      ),
     );
   }
 
@@ -236,11 +243,15 @@ class SupabaseLeaderboardRepository
       );
     }
 
-    final profilesResponse = await _client
-        .from('profiles')
-        .select('id, display_name, username, avatar_url')
-        .inFilter('id', profileIds.toList());
-    final profileRows = profilesResponse as List<dynamic>;
+    final profileRows = await viewerSafeIdentityRows(_client, <dynamic>[
+      for (final id in profileIds)
+        {
+          'id': id,
+          'display_name': 'Player',
+          'username': '',
+          'avatar_url': null,
+        },
+    ]);
     final profilesById = <String, Map<String, dynamic>>{};
     for (final row in profileRows) {
       final profile = Map<String, dynamic>.from(row as Map);

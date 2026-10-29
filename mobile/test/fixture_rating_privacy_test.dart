@@ -119,6 +119,19 @@ void main() {
           final Object? payload;
           if (path.endsWith('/cancel_underfilled_fixtures')) {
             payload = null;
+          } else if (path.endsWith('/list_fieldrush_profile_identities')) {
+            payload = [
+              {'id': 'home', 'display_name': 'home', 'content_hidden': false},
+            ];
+          } else if (path.endsWith('/list_fieldrush_clan_identities')) {
+            payload = [
+              for (final id in ['home', 'away'])
+                {
+                  'id': id,
+                  'name': id == 'home' ? 'Home' : 'Away',
+                  'content_hidden': false,
+                },
+            ];
           } else if (path.endsWith('/clans')) {
             payload = [];
           } else if (path.endsWith('/fixtures')) {
