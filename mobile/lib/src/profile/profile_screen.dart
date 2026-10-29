@@ -406,7 +406,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         identical(_safetyRepository, repository) &&
         repository.currentUserId == viewerId;
     final confirmed = await confirmPlayerBlock(context, blocked: nextBlocked);
-    if (!confirmed || !current()) {
+    if (!confirmed || !mounted || !current()) {
       return;
     }
     setState(() => _isUpdatingBlock = true);
@@ -414,7 +414,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       await repository
           .setBlocked(profileId, blocked: nextBlocked)
           .timeout(fieldReadTimeout);
-      if (!current()) {
+      if (!mounted || !current()) {
         return;
       }
       setState(() {
@@ -428,7 +428,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
         nextBlocked ? 'Player blocked' : 'Player unblocked',
       );
     } catch (error) {
-      if (current()) {
+      if (mounted && current()) {
         // A timeout can follow a committed server write. Never keep an old
         // authored identity visible while the confirmed safety state is unknown.
         setState(() {
@@ -1027,8 +1027,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
             future: _profileFuture,
             builder: (context, snapshot) {
               void back() {
-                if (!_isUpdatingFollow && !_isUpdatingBlock)
+                if (!_isUpdatingFollow && !_isUpdatingBlock) {
                   Navigator.of(context).pop();
+                }
               }
 
               if (_latestProfile == null &&

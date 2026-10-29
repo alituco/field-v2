@@ -151,8 +151,9 @@ Future<Object?> _safePayload(SupabaseClient client, Object? payload) async {
           };
     for (final entry in fields.entries) {
       final key = ref.aliases[entry.key] ?? entry.key;
-      if (ref.row.containsKey(key))
+      if (ref.row.containsKey(key)) {
         ref.row[key] = identity?[entry.key] ?? entry.value;
+      }
     }
     ref.row['content_hidden'] =
         identity == null || identity['content_hidden'] == true;

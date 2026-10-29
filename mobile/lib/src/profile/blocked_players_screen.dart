@@ -120,7 +120,7 @@ class _BlockedPlayersScreenState extends State<BlockedPlayersScreen> {
         mounted &&
         identical(repository, widget.repository) &&
         repository.currentUserId == userId;
-    if (!confirmed || !current()) {
+    if (!confirmed || !mounted || !current()) {
       return;
     }
     setState(() => _busy.add(player.profileId));
@@ -130,7 +130,7 @@ class _BlockedPlayersScreenState extends State<BlockedPlayersScreen> {
       await repository
           .setBlocked(player.profileId, blocked: false)
           .timeout(fieldReadTimeout);
-      if (!current()) {
+      if (!mounted || !current()) {
         return;
       }
       setState(() {
@@ -140,7 +140,7 @@ class _BlockedPlayersScreenState extends State<BlockedPlayersScreen> {
       });
       showFieldrushToast(context, 'Player unblocked');
     } catch (error) {
-      if (current()) {
+      if (mounted && current()) {
         showFieldrushToast(
           context,
           userFacingError(
