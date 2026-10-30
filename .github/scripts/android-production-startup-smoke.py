@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 import urllib.request
 import xml.etree.ElementTree as ET
 import zipfile
@@ -154,6 +155,28 @@ def run(args, timeout=120, env=None, check=True):
     return result
 
 
+def resolve_emulator_serial(selected=""):
+    listing = run(["adb", "devices"], timeout=15).stdout.decode(errors="replace")
+    online = re.findall(r"^(emulator-[0-9]+)\s+device(?:\s|$)", listing, re.M)
+    if selected:
+        if not re.fullmatch(r"emulator-[0-9]+", selected) or selected not in online:
+            raise ValueError("Requested emulator is not online; refusing another device.")
+        return selected
+    if len(online) != 1:
+        raise ValueError("Exactly one online emulator is required when ANDROID_SERIAL is unset.")
+    return online[0]
+
+
+def classify_observation(result):
+    if result.get("ok"):
+        return "SIGNED_OUT_WELCOME_CONFIRMED"
+    if not result.get("app_process_alive", False):
+        return "APP_START_OR_EARLY_PROCESS_FAILURE"
+    if result.get("screenshots") and result["screenshots"][-1].get("appears_blank"):
+        return "APP_SURFACE_APPEARS_BLANK"
+    return "EXPECTED_WELCOME_NOT_CONFIRMED"
+
+
 def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
     path.chmod(0o600)
@@ -247,8 +270,8 @@ def capture():
         return run(["adb", "-s", serial, *args], timeout=timeout, check=check)
 
     try:
-        if not re.fullmatch(r"emulator-[0-9]+", serial):
-            raise ValueError("A disposable emulator serial is required.")
+        serial = resolve_emulator_serial(serial)
+        result["emulator_serial"] = serial
         if variant not in ("default-vulkan", "opengl-fallback-control"):
             raise ValueError("Unexpected renderer diagnostic variant.")
         if adb("shell", "getprop", "ro.kernel.qemu").stdout.strip() != b"1":
@@ -299,7 +322,14 @@ def capture():
             result["error"] = "Expected signed-out welcome/first frame was not confirmed; inspect native frames and scoped logs."
     except Exception as error:
         result["error"] = sanitize(error)
+        result["launch_or_capture_timed_out"] = isinstance(error, subprocess.TimeoutExpired)
     finally:
+        if emulator_confirmed and uid is not None:
+            try:
+                pid = adb("shell", "pidof", PACKAGE, timeout=10, check=False).stdout.decode().strip()
+                result["app_process_alive"] = bool(re.fullmatch(r"[0-9 ]+", pid))
+            except Exception as error:
+                result["process_observation_error"] = sanitize(error)
         if not result["screenshots"] and emulator_confirmed:
             try:
                 png = adb("exec-out", "screencap", "-p", timeout=10).stdout
@@ -325,14 +355,7 @@ def capture():
                     safe_logs))
             except Exception as error:
                 result["scoped_log_error"] = sanitize(error)
-        if result["ok"]:
-            result["classification"] = "SIGNED_OUT_WELCOME_CONFIRMED"
-        elif not result.get("app_process_alive", False):
-            result["classification"] = "APP_START_OR_EARLY_PROCESS_FAILURE"
-        elif result["screenshots"] and result["screenshots"][-1].get("appears_blank"):
-            result["classification"] = "APP_SURFACE_APPEARS_BLANK"
-        else:
-            result["classification"] = "EXPECTED_WELCOME_NOT_CONFIRMED"
+        result["classification"] = classify_observation(result)
         write_json(output / "result.json", result)
         print(json.dumps({"phase": "cold-start", "ok": result["ok"],
                           "variant": variant, "details": "Sanitized diagnostic artifacts only."}))
@@ -370,6 +393,24 @@ class GuardTests(unittest.TestCase):
                 verify_release(record, AAB_SHA)
         with self.assertRaises(ValueError):
             verify_release(self.record(), "0" * 64)
+
+    def test_unset_serial_discovers_one_online_emulator_only(self):
+        listing = subprocess.CompletedProcess([], 0, stdout=b"List of devices attached\nemulator-5554\tdevice\nphysical123\tdevice\n")
+        with mock.patch(__name__ + ".run", return_value=listing):
+            self.assertEqual(resolve_emulator_serial(""), "emulator-5554")
+            with self.assertRaises(ValueError):
+                resolve_emulator_serial("physical123")
+        for body in (b"emulator-5554\toffline\n", b"emulator-5554\tdevice\nemulator-5556\tdevice\n"):
+            with mock.patch(__name__ + ".run", return_value=subprocess.CompletedProcess([], 0, stdout=body)):
+                with self.assertRaises(ValueError):
+                    resolve_emulator_serial("")
+
+    def test_live_white_frame_after_launch_timeout_is_not_process_failure(self):
+        observed = {"ok": False, "launch_or_capture_timed_out": True,
+                    "app_process_alive": True, "screenshots": [{"appears_blank": True}]}
+        self.assertEqual(classify_observation(observed), "APP_SURFACE_APPEARS_BLANK")
+        observed["app_process_alive"] = False
+        self.assertEqual(classify_observation(observed), "APP_START_OR_EARLY_PROCESS_FAILURE")
 
     def test_redaction_and_workflow_command_neutralization(self):
         source = "Bearer private-value eyJabc.def.signature sk_live_secret GOCSPX-secret-value ?refresh_token=private ::error::unsafe"
