@@ -89,6 +89,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: '40976018620'
           artifact-ids: '12942937731'
+          merge-multiple: true
           path: ${{ runner.temp }}/fieldrush-production-201
 
       - name: Verify immutable AAB and derive an ephemeral runtime-only APK
