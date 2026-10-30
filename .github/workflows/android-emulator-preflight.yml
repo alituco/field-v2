@@ -10,6 +10,12 @@ on:
       - .github/workflows/android-emulator-preflight.yml
       - mobile/test_driver/**
   workflow_dispatch:
+    inputs:
+      diagnose_production_201:
+        description: Cold-start immutable production201 on disposable emulators; no login or publication
+        type: boolean
+        default: false
+        required: true
 
 permissions:
   contents: read
@@ -45,3 +51,113 @@ jobs:
           # The upstream action runs each input line as a separate sh command.
           # Keep loops and Bash options together in an explicit Bash script.
           script: bash "$GITHUB_WORKSPACE/.github/scripts/check-android-emulator.sh"
+
+  production-startup:
+    name: Production201 cold-start (${{ matrix.renderer }})
+    if: github.event_name == 'workflow_dispatch' && inputs.diagnose_production_201 == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    strategy:
+      fail-fast: false
+      matrix:
+        renderer: [default-vulkan, opengl-fallback-control]
+    env:
+      FIELDRUSH_RENDERER_DIAGNOSTIC: ${{ matrix.renderer }}
+    steps:
+      - name: Check out diagnostic code only
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Test immutable artifact, redaction, manifest and blank-frame guards
+        run: python3 .github/scripts/android-production-startup-smoke.py self-test
+
+      - name: Reserve disk on the disposable hosted runner
+        run: bash .github/scripts/prepare-android-runner.sh
+
+      - name: Set up Java for official bundletool
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Download exact signed production201 artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: '40976018620'
+          artifact-ids: '12942937731'
+          path: ${{ runner.temp }}/fieldrush-production-201
+
+      - name: Verify immutable AAB and derive an ephemeral runtime-only APK
+        run: python3 .github/scripts/android-production-startup-smoke.py prepare
+
+      - name: Enable KVM only on this disposable runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          sudo udevadm settle
+          sudo chmod 666 /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
+      # Unlike the existing staging composite, the primary variant requests
+      # Vulkan and does not override the production manifest's Flutter renderer.
+      # The separate control disables emulator Vulkan, allowing the unchanged
+      # production app to use its normal OpenGL fallback. Neither is BlueStacks.
+      - name: Observe exact production code on a fresh signed-out emulator
+        id: production-emulator
+        uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          cores: 2
+          ram-size: 2048M
+          heap-size: 512M
+          disk-size: 2048M
+          disable-animations: true
+          emulator-boot-timeout: 300
+          pre-emulator-launch-script: bash "$GITHUB_WORKSPACE/.github/scripts/prepare-android-emulator.sh"
+          emulator-options: >-
+            -no-window
+            -gpu swiftshader_indirect
+            -feature ${{ matrix.renderer == 'default-vulkan' && 'Vulkan' || '-Vulkan' }}
+            -wipe-data
+            -no-snapshot
+            -noaudio
+            -no-boot-anim
+            -no-metrics
+            -camera-back none
+            -camera-front none
+          script: timeout --signal=TERM --kill-after=10s 240s python3 "$GITHUB_WORKSPACE/.github/scripts/android-production-startup-smoke.py" capture
+
+      - name: Distinguish missing emulator observation from app startup failure
+        if: always()
+        env:
+          FIELDRUSH_EMULATOR_STEP_OUTCOME: ${{ steps.production-emulator.outcome }}
+        run: python3 .github/scripts/android-production-startup-smoke.py finalize
+
+      # Never upload input AAB, derived APK/APKS, bundletool, temporary signer,
+      # password file, raw device logs, environment dumps or UI hierarchy XML.
+      - name: Retain only public metadata, native frames and redacted app logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: production201-startup-${{ matrix.renderer }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/fieldrush-startup-results/preparation.json
+            ${{ runner.temp }}/fieldrush-startup-results/result.json
+            ${{ runner.temp }}/fieldrush-startup-results/frame-*.png
+            ${{ runner.temp }}/fieldrush-startup-results/failure-frame.png
+            ${{ runner.temp }}/fieldrush-startup-results/app-startup.redacted.log
