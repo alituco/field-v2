@@ -32,6 +32,8 @@ Future<void> showProfilePhoto(
             maxScale: 4,
             child: Image.network(
               url,
+              width: double.infinity,
+              height: double.infinity,
               fit: BoxFit.contain,
               semanticLabel: '$name’s profile photo',
               loadingBuilder: (context, child, progress) => progress == null

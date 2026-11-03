@@ -162,6 +162,15 @@ void main() {
         findsOneWidget,
       );
       expect(find.byType(InteractiveViewer), findsOneWidget);
+      final photo = tester.widget<Image>(
+        find.descendant(
+          of: find.byKey(const ValueKey('profile-photo-viewer')),
+          matching: find.byType(Image),
+        ),
+      );
+      expect(photo.fit, BoxFit.contain);
+      expect(photo.width, double.infinity);
+      expect(photo.height, double.infinity);
       expect(find.text('Photo unavailable'), findsOneWidget);
       await tester.tap(find.byTooltip('Close photo'));
       await tester.pumpAndSettle();
