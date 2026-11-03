@@ -127,7 +127,17 @@ class _AvatarCropScreenState extends State<AvatarCropScreen> {
         canPop: !_saving,
         child: Scaffold(
           backgroundColor: FieldrushAuthTheme.cream,
-          appBar: AppBar(title: const Text('Crop photo')),
+          appBar: AppBar(
+            title: const Text(
+              'Crop photo',
+              style: TextStyle(
+                fontFamily: 'Outfit',
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -.44,
+              ),
+            ),
+          ),
           body: SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(24),
