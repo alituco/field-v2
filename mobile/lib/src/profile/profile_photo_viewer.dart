@@ -23,7 +23,18 @@ Future<void> showProfilePhoto(
           onPressed: () => Navigator.of(context).pop(),
           icon: const Icon(Icons.close),
         ),
-        title: Text(name),
+        title: Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: 'Outfit',
+            fontSize: 22,
+            fontWeight: FontWeight.w800,
+            letterSpacing: -.44,
+            color: Colors.white,
+          ),
+        ),
       ),
       body: SafeArea(
         child: Center(
@@ -47,7 +58,12 @@ Future<void> showProfilePhoto(
               errorBuilder: (context, error, stack) => const Center(
                 child: Text(
                   'Photo unavailable',
-                  style: TextStyle(color: Colors.white),
+                  style: TextStyle(
+                    fontFamily: 'PlusJakartaSans',
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
                 ),
               ),
             ),
