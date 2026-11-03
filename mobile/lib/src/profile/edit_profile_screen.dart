@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import '../clans/clan_widgets.dart';
 import '../core/user_facing_error.dart';
 import '../ui/fieldrush_avatar_image.dart';
+import 'avatar_crop_screen.dart';
 import 'profile.dart';
 import 'profile_repository.dart';
 import '../ui/fieldrush_toast.dart';
@@ -30,8 +31,6 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   late final TextEditingController _avatarUrlController;
   final _imagePicker = ImagePicker();
   Uint8List? _selectedAvatarBytes;
-  String _selectedAvatarExtension = 'jpg';
-  String _selectedAvatarContentType = 'image/jpeg';
   bool _isSaving = false;
   bool _isPickingImage = false;
 
@@ -75,8 +74,8 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       if (selectedAvatarBytes != null) {
         avatarUrl = await widget.profileRepository.uploadCurrentUserAvatar(
           bytes: selectedAvatarBytes,
-          fileExtension: _selectedAvatarExtension,
-          contentType: _selectedAvatarContentType,
+          fileExtension: 'png',
+          contentType: 'image/png',
         );
         _avatarUrlController.text = avatarUrl;
       }
@@ -120,14 +119,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       final bytes = await pickedImage.readAsBytes();
       if (!mounted) return;
 
-      setState(() {
-        _selectedAvatarBytes = bytes;
-        _selectedAvatarExtension = _fileExtensionFromName(pickedImage.name);
-        _selectedAvatarContentType = _contentTypeForAvatar(
-          extension: _selectedAvatarExtension,
-          mimeType: pickedImage.mimeType,
-        );
-      });
+      final cropped = await Navigator.of(context).push<Uint8List>(
+        MaterialPageRoute(
+          builder: (_) => AvatarCropScreen(bytes: bytes),
+          fullscreenDialog: true,
+        ),
+      );
+      if (!mounted || cropped == null) return;
+      setState(() => _selectedAvatarBytes = cropped);
     } catch (error) {
       if (!mounted) return;
       showFieldrushToast(
@@ -297,7 +296,7 @@ class _EditAvatarPreview extends StatelessWidget {
           width: 92,
           height: 92,
           decoration: BoxDecoration(
-            shape: BoxShape.circle,
+            borderRadius: BorderRadius.circular(92 * 19 / 58),
             gradient: const LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
@@ -311,7 +310,8 @@ class _EditAvatarPreview extends StatelessWidget {
               ),
             ],
           ),
-          child: ClipOval(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(92 * 19 / 58),
             child: FieldrushAvatarImage(
               size: 92,
               url: selectedBytes == null ? avatarUrl : null,
@@ -395,26 +395,6 @@ String? _validate({required String bio, required String avatarUrl}) {
     return 'Avatar URL is not valid.';
   }
   return null;
-}
-
-String _fileExtensionFromName(String name) {
-  final parts = name.split('.');
-  if (parts.length < 2) return 'jpg';
-  return parts.last.toLowerCase();
-}
-
-String _contentTypeForAvatar({required String extension, String? mimeType}) {
-  if (mimeType == 'image/jpeg' ||
-      mimeType == 'image/png' ||
-      mimeType == 'image/webp') {
-    return mimeType!;
-  }
-
-  return switch (extension.toLowerCase()) {
-    'png' => 'image/png',
-    'webp' => 'image/webp',
-    _ => 'image/jpeg',
-  };
 }
 
 String _initials(String name) {

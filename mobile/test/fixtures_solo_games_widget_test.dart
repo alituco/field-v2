@@ -441,7 +441,7 @@ void main() {
     expect(find.byType(FieldrushGameDetailScreen), findsOneWidget);
     expect(find.text('CHECK IN'), findsOneWidget);
     expect(find.text('8:00 PM', findRichText: true), findsOneWidget);
-    expect(find.textContaining('8:30 PM', findRichText: true), findsNothing);
+    expect(find.textContaining('8:30 PM', findRichText: true), findsOneWidget);
     final roster = find.text('See all ›');
     await tester.scrollUntilVisible(
       roster,
@@ -452,7 +452,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('White Player'), findsOneWidget);
     expect(find.text('Black Player'), findsOneWidget);
-    expect(find.textContaining('8:30 PM', findRichText: true), findsNothing);
+    expect(find.textContaining('8:30 PM', findRichText: true), findsOneWidget);
     expect(find.text('AVAILABLE SPOTS'), findsNothing);
     expect(find.text('OPEN QUEUE BOOKING'), findsNothing);
   });

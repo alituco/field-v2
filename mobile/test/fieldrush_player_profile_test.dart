@@ -143,6 +143,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'profile photo opens an enlarged view and closes back to profile',
+    (tester) async {
+      await _pump(
+        tester,
+        FieldrushPlayerProfileContent(
+          profile: _profile(avatarUrl: 'https://invalid.example/avatar.png'),
+          isFollowing: false,
+          followBusy: false,
+          onBack: () {},
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('player-profile-photo')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('profile-photo-viewer')),
+        findsOneWidget,
+      );
+      expect(find.byType(InteractiveViewer), findsOneWidget);
+      expect(find.text('Photo unavailable'), findsOneWidget);
+      await tester.tap(find.byTooltip('Close photo'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('profile-photo-viewer')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('player-profile-photo')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('following and busy state prevent duplicate actions accessibly', (
     tester,
   ) async {

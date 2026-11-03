@@ -24,7 +24,6 @@ import '../ui/fieldrush_toast.dart';
 import '../ui/fieldrush_video_player.dart';
 import 'fieldrush_game_detail_party.dart';
 import 'fieldrush_game_loading.dart';
-import 'fieldrush_check_in_notice.dart';
 import 'open_queue.dart';
 import 'open_queue_repository.dart';
 import 'team_assignment_notice.dart';
@@ -732,10 +731,6 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                   ),
                 ],
                 const SizedBox(height: 18),
-                if (upcoming && !game.hasPendingOperationalResolution) ...[
-                  FieldrushCheckInNotice(game: game),
-                  const SizedBox(height: 18),
-                ],
                 Container(
                   padding: const EdgeInsets.all(15),
                   decoration: BoxDecoration(
@@ -1234,34 +1229,15 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
                 'Format',
                 '${game.hasConfigurableMinimum ? 'Up to ' : ''}${game.capacity ~/ 2}-a-side · ${game.endsAt.difference(game.startsAt).inMinutes} min slot',
               ),
+              _Fact('Kickoff', game.startTimeLabel),
               _Fact('Ends at', game.plannedEndTimeLabel),
               if (game.hasConfigurableMinimum)
                 _Fact('Players needed', game.minimumPlayersLabel),
-              _Fact(
-                'Rated',
-                publicRatingStatusLabel(_ratingStatus) ??
-                    (_countedAsPlayed == false
-                        ? 'Appearance not counted'
-                        : _countedAsPlayed == true
-                        ? 'Yes · counted appearance'
-                        : _ratingStatus != null &&
-                              permitsPublicRatingResult(_ratingStatus)
-                        ? 'Match rated · individual eligibility applies'
-                        : permitsPublicRatingResult(_ratingStatus)
-                        ? 'Yes · counts to skill rating'
-                        : 'Rating under review'),
-              ),
               _Fact(
                 'Teams',
                 game.teamAssignmentAt == null
                     ? 'Timing to be confirmed'
                     : 'Drawn ${_localClock(game.localDateTime(game.teamAssignmentAt!))}',
-              ),
-              _Fact(
-                'Cancellation',
-                _isBooked
-                    ? 'Preview exact terms before leaving'
-                    : 'Shown before payment',
                 last: true,
               ),
             ],

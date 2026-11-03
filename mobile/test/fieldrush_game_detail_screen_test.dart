@@ -189,7 +189,7 @@ void main() {
                 ? 'Yes · counted appearance'
                 : 'Appearance not counted',
           ),
-          findsOneWidget,
+          findsNothing,
         );
         expect(find.text('Yes · counts to skill rating'), findsNothing);
         expect(tester.takeException(), isNull);
@@ -329,7 +329,8 @@ void main() {
         250,
         scrollable: find.byType(Scrollable).first,
       );
-      expect(find.text('Appearance not counted'), findsOneWidget);
+      expect(find.text('Appearance not counted'), findsNothing);
+      expect(find.text('Rated'), findsNothing);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     },
@@ -377,17 +378,21 @@ void main() {
       find.byKey(const ValueKey('fieldrush-game-facts')),
       200,
     );
+    expect(
+      find.byKey(const ValueKey('fieldrush-check-in-notice')),
+      findsNothing,
+    );
     final facts = find.byKey(const ValueKey('fieldrush-game-facts'));
-    for (final label in ['Format', 'Rated', 'Teams', 'Cancellation']) {
+    for (final label in ['Format', 'Kickoff', 'Ends at', 'Teams']) {
       expect(
         find.descendant(of: facts, matching: find.text(label)),
         findsOneWidget,
       );
     }
     expect(find.text('7-a-side · 60 min slot'), findsOneWidget);
-    expect(find.text('Yes · counts to skill rating'), findsOneWidget);
+    expect(find.text('Rated'), findsNothing);
     expect(find.text('Drawn 4:00 PM'), findsOneWidget);
-    expect(find.text('Shown before payment'), findsOneWidget);
+    expect(find.text('Cancellation'), findsNothing);
     expect(find.text('Eligibility'), findsNothing);
     expect(find.text('18+'), findsNothing);
     expect(find.text('Divisions'), findsNothing);
@@ -446,7 +451,7 @@ void main() {
     expect(find.textContaining('SAT, 12 JAN'), findsOneWidget);
     expect(find.text('CHECK IN'), findsOneWidget);
     expect(find.text('5:45 PM', findRichText: true), findsOneWidget);
-    expect(find.text('6:15 PM', findRichText: true), findsNothing);
+    expect(find.text('6:15 PM', findRichText: true), findsOneWidget);
     final format = find.text('7-a-side · 90 min slot');
     await tester.scrollUntilVisible(format, 250);
     expect(format, findsOneWidget);
@@ -473,9 +478,9 @@ void main() {
 
     expect(find.text('CHECK IN'), findsOneWidget);
     expect(find.text('11:35 PM', findRichText: true), findsOneWidget);
-    expect(find.textContaining('12:03 AM', findRichText: true), findsOneWidget);
+    expect(find.textContaining('12:03 AM', findRichText: true), findsNothing);
     expect(find.textContaining('SAT, 12 JAN'), findsOneWidget);
-    expect(find.text('12:15 AM', findRichText: true), findsNothing);
+    expect(find.text('12:15 AM', findRichText: true), findsOneWidget);
     expect(find.textContaining('At kickoff and during play:'), findsNothing);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
@@ -492,7 +497,7 @@ void main() {
     );
 
     expect(find.text('CHECK IN'), findsNothing);
-    expect(find.text('6:15 PM', findRichText: true), findsOneWidget);
+    expect(find.text('6:15 PM', findRichText: true), findsNWidgets(2));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
