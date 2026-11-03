@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 /// Enlarges a public profile photo without changing profile navigation.
 Future<void> showProfilePhoto(
   BuildContext context, {
@@ -34,7 +36,12 @@ Future<void> showProfilePhoto(
               semanticLabel: '$name’s profile photo',
               loadingBuilder: (context, child, progress) => progress == null
                   ? child
-                  : const Center(child: CircularProgressIndicator()),
+                  : const Center(
+                      child: FieldLoadingIndicator(
+                        label: 'Loading photo',
+                        color: Colors.white,
+                      ),
+                    ),
               errorBuilder: (context, error, stack) => const Center(
                 child: Text(
                   'Photo unavailable',

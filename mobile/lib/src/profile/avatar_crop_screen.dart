@@ -4,6 +4,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../ui/field_loading.dart';
+
 import '../auth/fieldrush_auth_theme.dart';
 import 'avatar_image.dart';
 
@@ -119,109 +121,117 @@ class _AvatarCropScreenState extends State<AvatarCropScreen> {
   @override
   Widget build(BuildContext context) {
     final image = _image;
-    return Scaffold(
-      backgroundColor: FieldrushAuthTheme.cream,
-      appBar: AppBar(title: const Text('Crop photo')),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            children: [
-              const Text(
-                'Drag to reposition. Pinch or use the slider to zoom.',
-              ),
-              const SizedBox(height: 20),
-              Expanded(
-                child: image == null
-                    ? Center(
-                        child: _error == null
-                            ? const CircularProgressIndicator()
-                            : Text(_error!),
-                      )
-                    : LayoutBuilder(
-                        builder: (context, constraints) {
-                          final size = math.min(
-                            340.0,
-                            math.min(
-                              constraints.maxWidth,
-                              constraints.maxHeight,
-                            ),
-                          );
-                          return Center(
-                            child: Semantics(
-                              label: 'Profile photo crop preview',
-                              child: GestureDetector(
-                                key: const ValueKey('avatar-crop-preview'),
-                                onScaleStart: _saving
-                                    ? null
-                                    : (_) => _gestureZoom = _zoom,
-                                onScaleUpdate: _saving
-                                    ? null
-                                    : (details) {
-                                        setState(() {
-                                          _setZoom(
-                                            _gestureZoom * details.scale,
-                                          );
-                                          _center -=
-                                              details.focalPointDelta *
-                                              (_crop.width / size);
-                                          _center = _crop.center;
-                                        });
-                                      },
-                                child: ClipRRect(
-                                  borderRadius: BorderRadius.circular(
-                                    size * 19 / 58,
-                                  ),
-                                  child: CustomPaint(
-                                    size: Size.square(size),
-                                    painter: _CropPainter(image, _crop),
+    return Theme(
+      data: FieldrushAuthTheme.theme(context),
+      child: PopScope(
+        canPop: !_saving,
+        child: Scaffold(
+          backgroundColor: FieldrushAuthTheme.cream,
+          appBar: AppBar(title: const Text('Crop photo')),
+          body: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Text(
+                    'Drag to reposition. Pinch or use the slider to zoom.',
+                  ),
+                  const SizedBox(height: 20),
+                  Expanded(
+                    child: image == null
+                        ? Center(
+                            child: _error == null
+                                ? const FieldLoadingIndicator(
+                                    label: 'Loading photo',
+                                  )
+                                : Text(_error!),
+                          )
+                        : LayoutBuilder(
+                            builder: (context, constraints) {
+                              final size = math.min(
+                                340.0,
+                                math.min(
+                                  constraints.maxWidth,
+                                  constraints.maxHeight,
+                                ),
+                              );
+                              return Center(
+                                child: Semantics(
+                                  label: 'Profile photo crop preview',
+                                  child: GestureDetector(
+                                    key: const ValueKey('avatar-crop-preview'),
+                                    onScaleStart: _saving
+                                        ? null
+                                        : (_) => _gestureZoom = _zoom,
+                                    onScaleUpdate: _saving
+                                        ? null
+                                        : (details) {
+                                            setState(() {
+                                              _setZoom(
+                                                _gestureZoom * details.scale,
+                                              );
+                                              _center -=
+                                                  details.focalPointDelta *
+                                                  (_crop.width / size);
+                                              _center = _crop.center;
+                                            });
+                                          },
+                                    child: ClipRRect(
+                                      borderRadius: BorderRadius.circular(
+                                        size * 19 / 58,
+                                      ),
+                                      child: CustomPaint(
+                                        size: Size.square(size),
+                                        painter: _CropPainter(image, _crop),
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-              if (image != null) ...[
-                const SizedBox(height: 20),
-                Slider(
-                  key: const ValueKey('avatar-crop-zoom'),
-                  value: _zoom,
-                  min: 1,
-                  max: 4,
-                  label: '${_zoom.toStringAsFixed(1)}×',
-                  semanticFormatterCallback: (value) =>
-                      '${value.toStringAsFixed(1)} times zoom',
-                  onChanged: _saving
-                      ? null
-                      : (value) => setState(() => _setZoom(value)),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    TextButton(
-                      onPressed: _saving
-                          ? null
-                          : () => setState(() {
-                              _zoom = 1;
-                              _center = Offset(
-                                image.width / 2,
-                                image.height / 2,
                               );
-                            }),
-                      child: const Text('Reset'),
+                            },
+                          ),
+                  ),
+                  if (image != null) ...[
+                    const SizedBox(height: 20),
+                    Slider(
+                      key: const ValueKey('avatar-crop-zoom'),
+                      value: _zoom,
+                      min: 1,
+                      max: 4,
+                      label: '${_zoom.toStringAsFixed(1)}×',
+                      semanticFormatterCallback: (value) =>
+                          '${value.toStringAsFixed(1)} times zoom',
+                      onChanged: _saving
+                          ? null
+                          : (value) => setState(() => _setZoom(value)),
                     ),
-                    FilledButton(
-                      onPressed: _saving ? null : _save,
-                      child: Text(_saving ? 'Saving…' : 'Use photo'),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        TextButton(
+                          onPressed: _saving
+                              ? null
+                              : () => setState(() {
+                                  _zoom = 1;
+                                  _center = Offset(
+                                    image.width / 2,
+                                    image.height / 2,
+                                  );
+                                }),
+                          child: const Text('Reset'),
+                        ),
+                        FilledButton(
+                          onPressed: _saving ? null : _save,
+                          child: Text(_saving ? 'Saving…' : 'Use photo'),
+                        ),
+                      ],
                     ),
+                    if (_error != null) Text(_error!),
                   ],
-                ),
-                if (_error != null) Text(_error!),
-              ],
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
