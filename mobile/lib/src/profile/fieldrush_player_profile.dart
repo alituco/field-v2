@@ -10,6 +10,7 @@ import '../ui/field_loading.dart';
 import '../ui/fieldrush_avatar_image.dart';
 import 'fieldrush_you_widgets.dart';
 import 'profile.dart';
+import 'profile_photo_viewer.dart';
 
 const _ink = FieldrushAuthTheme.ink;
 const _muted = FieldrushAuthTheme.muted;
@@ -599,11 +600,22 @@ class _PlayerAvatar extends StatelessWidget {
       ),
     );
     final url = profile.avatarUrl?.trim();
-    return FieldrushAvatarImage(
+    final avatar = FieldrushAvatarImage(
       url: url,
       size: 58,
       excludeFromSemantics: true,
       fallback: initials,
+    );
+    if (url == null || url.isEmpty) return avatar;
+    return Semantics(
+      button: true,
+      label: 'View ${profile.displayName}’s profile photo',
+      child: InkWell(
+        key: const ValueKey('player-profile-photo'),
+        onTap: () =>
+            showProfilePhoto(context, url: url, name: profile.displayName),
+        child: avatar,
+      ),
     );
   }
 }

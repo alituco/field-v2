@@ -19,7 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2026, 10, 10, 17);
 
 void main() {
-  testWidgets('small games show their minimum separately from maximum places', (
+  testWidgets('small games show spots without minimum and maximum copy', (
     tester,
   ) async {
     await _pump(
@@ -37,13 +37,26 @@ void main() {
       width: 320,
       scale: 1.3,
     );
-    expect(
-      find.text('Minimum reached · 2 minimum · 14 maximum'),
-      findsOneWidget,
-    );
+    expect(find.text('Minimum reached · 2 minimum · 14 maximum'), findsNothing);
     expect(find.byKey(const ValueKey('solo-fixture-small')), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final booked in [false, true]) {
+    testWidgets('check-in reminder requires registration: $booked', (
+      tester,
+    ) async {
+      final game = _game('reminder');
+      await _pump(
+        tester,
+        _Repository(fixtures: [game], bookings: booked ? [_booking(game)] : []),
+      );
+      expect(
+        find.byKey(const ValueKey('fieldrush-check-in-notice')),
+        booked ? findsOneWidget : findsNothing,
+      );
+    });
+  }
 
   testWidgets(
     'preferred city scopes discovery and browsing never changes preference',
