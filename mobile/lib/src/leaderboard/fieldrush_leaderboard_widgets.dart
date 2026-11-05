@@ -1172,7 +1172,7 @@ class _SparsePlacementRow extends StatelessWidget {
                   ),
                   child: FieldrushAvatarImage(
                     size: 34,
-                    url: you ? null : player.avatarUrl,
+                    url: player.avatarUrl,
                     fallback: _initials(),
                   ),
                 ),

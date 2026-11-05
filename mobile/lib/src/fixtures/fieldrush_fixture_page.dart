@@ -1024,13 +1024,6 @@ class FieldrushFixtureCard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 13),
-                if (game.hasConfigurableMinimum) ...[
-                  Text(
-                    game.minimumPlayersProgressLabel,
-                    style: _jakarta(10.5, color: _green),
-                  ),
-                  const SizedBox(height: 8),
-                ],
                 Text(
                   note,
                   style: _jakarta(
@@ -1079,8 +1072,10 @@ class FieldrushFixtureCard extends StatelessWidget {
               ],
               if (upcoming) ...[
                 const SizedBox(height: 15),
-                FieldrushCheckInNotice(game: game),
-                const SizedBox(height: 12),
+                if (booked) ...[
+                  FieldrushCheckInNotice(game: game),
+                  const SizedBox(height: 12),
+                ],
                 SizedBox(
                   width: double.infinity,
                   child: FilledButton(

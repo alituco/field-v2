@@ -10,15 +10,140 @@ import 'package:field/src/payments/fieldrush_embedded_payment.dart';
 import 'package:field/src/payments/payment_service.dart';
 import 'package:field/src/support/contact_support_sheet.dart';
 import 'package:field/src/support/support.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_stripe/flutter_stripe.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 final _now = DateTime.utc(2099, 6, 1);
 const _payKey = ValueKey('open-queue-confirm-payment');
 
 void main() {
+  testWidgets(
+    'Android payment view paints before readiness on initial load and retry',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      final nativeViews = _NativePaymentViews(tester);
+      final repository = _Repository();
+      final sessions = <StripeFieldrushEmbeddedPaymentSession>[];
+      final element = find.byType(EmbeddedPaymentElement);
+      final loading = find.bySemanticsLabel('Loading secure payment options');
+      final semantics = tester.ensureSemantics();
+      try {
+        await _openCheckout(
+          tester,
+          repository,
+          _Sessions(),
+          size: const Size(390, 1800),
+          paymentSessionFactory: ({required amountFils, required currency}) {
+            final session = StripeFieldrushEmbeddedPaymentSession(
+              amountFils: amountFils,
+              currency: currency,
+              // Only native configuration/OS channels are stubbed. Use the real
+              // session, Stripe widget and Flutter Android platform-view layer.
+              configureNativePayments: () async {},
+            );
+            sessions.add(session);
+            return session;
+          },
+        );
+        await tester.ensureVisible(element);
+        await tester.pumpAndSettle();
+        final firstId = nativeViews.created.single;
+        expect(sessions.single.isReady, isFalse);
+        expect(
+          tester.layers.whereType<PlatformViewLayer>().map(
+            (layer) => layer.viewId,
+          ),
+          contains(firstId),
+        );
+        expect(loading, findsOneWidget);
+        final nativeBounds = tester.getRect(element);
+        final cover = find.descendant(
+          of: find.byType(FieldrushCheckoutSheet),
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is ColoredBox &&
+                widget.color == FieldrushAuthTheme.cream,
+          ),
+        );
+        expect(tester.getRect(cover), nativeBounds);
+        expect(nativeBounds.height, greaterThan(118));
+        expect(_nativeInteractionBlocked(tester, element), isTrue);
+        expect(
+          tester
+              .widget<ExcludeSemantics>(
+                find
+                    .ancestor(
+                      of: element,
+                      matching: find.byType(ExcludeSemantics),
+                    )
+                    .first,
+              )
+              .excluding,
+          isTrue,
+        );
+        expect(_payButton(tester).onPressed, isNull);
+
+        // A real load timeout must retire the old native view, then render the
+        // replacement before waiting for its first readiness event.
+        await tester.pump(const Duration(seconds: 21));
+        await tester.pumpAndSettle();
+        expect(find.text('Payment options unavailable'), findsOneWidget);
+        final retry = find.byKey(const ValueKey('retry-payment-options'));
+        await tester.ensureVisible(retry);
+        await tester.tap(retry);
+        await tester.pumpAndSettle();
+        expect(nativeViews.disposed, contains(firstId));
+        expect(nativeViews.created, hasLength(2));
+        await tester.ensureVisible(element);
+        await tester.pumpAndSettle();
+        final retryId = nativeViews.created.last;
+        expect(retryId, isNot(firstId));
+        expect(sessions.last.isReady, isFalse);
+        expect(
+          tester.layers.whereType<PlatformViewLayer>().map(
+            (layer) => layer.viewId,
+          ),
+          contains(retryId),
+        );
+        expect(_nativeInteractionBlocked(tester, element), isTrue);
+
+        await nativeViews.event(retryId, 'onHeightChanged', {'height': 1.0});
+        await tester.pumpAndSettle();
+        expect(sessions.last.isReady, isFalse);
+        expect(loading, findsOneWidget);
+        expect(tester.getRect(cover).height, greaterThanOrEqualTo(118));
+
+        await nativeViews.event(retryId, 'onHeightChanged', {'height': 110.0});
+        await tester.pumpAndSettle();
+        expect(sessions.last.isReady, isTrue);
+        expect(loading, findsNothing);
+        expect(cover, findsNothing);
+        expect(_nativeInteractionBlocked(tester, element), isFalse);
+        expect(_payButton(tester).onPressed, isNull);
+        await nativeViews.event(retryId, 'onPaymentOptionChanged', {
+          'paymentOption': {'label': 'Card'},
+        });
+        await tester.pump();
+        expect(_payButton(tester).onPressed, isNotNull);
+        expect(repository.embeddedBookCalls, 0);
+      } finally {
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        for (final session in sessions) {
+          await session.close();
+          session.dispose();
+        }
+        nativeViews.dispose();
+        semantics.dispose();
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
   testWidgets(
     'only a verified foreground booking acknowledges the confirmation push',
     (tester) async {
@@ -1033,11 +1158,16 @@ void main() {
         expect(element, findsOneWidget);
         expect(
           tester
-              .widget<Opacity>(
-                find.ancestor(of: element, matching: find.byType(Opacity)),
+              .widget<ExcludeSemantics>(
+                find
+                    .ancestor(
+                      of: element,
+                      matching: find.byType(ExcludeSemantics),
+                    )
+                    .first,
               )
-              .opacity,
-          1,
+              .excluding,
+          isFalse,
         );
         expect(
           tester
@@ -1414,6 +1544,7 @@ Future<_CheckoutResult> _openCheckout(
   double scale = 1,
   bool choosePosition = false,
   GlobalKey? boundaryKey,
+  FieldrushEmbeddedPaymentSessionFactory? paymentSessionFactory,
 }) async {
   final result = _CheckoutResult();
   await tester.binding.setSurfaceSize(size);
@@ -1445,7 +1576,8 @@ Future<_CheckoutResult> _openCheckout(
                   repository: repository,
                   game: repository.game,
                   role: choosePosition ? null : OpenQueueRole.attacker,
-                  embeddedPaymentSessionFactory: sessions.create,
+                  embeddedPaymentSessionFactory:
+                      paymentSessionFactory ?? sessions.create,
                 ),
               );
               result.nativeClosedAtCompletion = sessions.created.every(
@@ -1467,6 +1599,59 @@ Future<_CheckoutResult> _openCheckout(
   await tester.tap(find.text('Open checkout'));
   await tester.pumpAndSettle();
   return result;
+}
+
+bool _nativeInteractionBlocked(WidgetTester tester, Finder element) => tester
+    .widget<AbsorbPointer>(
+      find.ancestor(
+        of: element,
+        matching: find.descendant(
+          of: find.byType(FieldrushCheckoutSheet),
+          matching: find.byType(AbsorbPointer),
+        ),
+      ),
+    )
+    .absorbing;
+
+/// Mock the OS channel, not Stripe's widget or Flutter's platform-view renderer.
+class _NativePaymentViews {
+  _NativePaymentViews(this.tester) {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform_views,
+      (call) async {
+        final args = call.arguments as Map<dynamic, dynamic>;
+        if (call.method == 'create') {
+          expect(args['viewType'], 'flutter.stripe/embedded_payment_element');
+          expect(args['hybrid'], isTrue);
+          created.add(args['id'] as int);
+        } else if (call.method == 'dispose') {
+          disposed.add(args['id'] as int);
+        }
+        return null;
+      },
+    );
+  }
+
+  final WidgetTester tester;
+  final created = <int>[];
+  final disposed = <int>[];
+
+  Future<void> event(
+    int id,
+    String name,
+    Map<String, dynamic> arguments,
+  ) async {
+    final completed = Completer<void>();
+    tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      'flutter.stripe/embedded_payment_element/$id',
+      const StandardMethodCodec().encodeMethodCall(MethodCall(name, arguments)),
+      (_) => completed.complete(),
+    );
+    await completed.future;
+  }
+
+  void dispose() => tester.binding.defaultBinaryMessenger
+      .setMockMethodCallHandler(SystemChannels.platform_views, null);
 }
 
 class _CheckoutResult {
