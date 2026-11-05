@@ -1347,42 +1347,113 @@ void main() {
     expect(accounts.account.draft.username, 'alex.r');
   });
 
-  testWidgets('photo change uploads and preserves the latest profile bio', (
+  Future<void> openPhotoCrop(WidgetTester tester) async {
+    await tester.tap(find.byKey(const Key('fieldrush-change-photo')));
+    await tester.pump();
+    await tester.runAsync(() async {
+      for (
+        var i = 0;
+        i < 500 &&
+            find
+                .byKey(const ValueKey('avatar-crop-preview'))
+                .evaluate()
+                .isEmpty;
+        i++
+      ) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        await tester.pump();
+      }
+    });
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('avatar-crop-preview')), findsOneWidget);
+    expect(profiles.uploadCalls, 0);
+    expect(profiles.saved, isNull);
+  }
+
+  Future<void> confirmPhotoCrop(WidgetTester tester) async {
+    await tester.tap(find.text('Use photo'));
+    await tester.pump();
+    for (var i = 0; i < 500 && profiles.uploadCalls == 0; i++) {
+      // Let image encoding finish, then render in the test's clock zone so
+      // the resulting toast still follows virtual time.
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('cancelling the account photo crop keeps the existing photo', (
     tester,
   ) async {
-    picker.photo = XFile.fromData(
-      Uint8List.fromList([1, 2, 3]),
-      name: 'photo.png',
-      mimeType: 'image/png',
-    );
+    profiles.avatar = 'https://example.com/avatar.png';
+    picker.photo = _pickedAvatar();
     await showAccount(
       tester,
       withNavigationAvatar: true,
       bottomNavigationBar: const _NavigationAvatarProbe(),
     );
-    profiles.bio = 'New bio from another screen';
-    await tester.tap(find.byKey(const Key('fieldrush-change-photo')));
+    await openPhotoCrop(tester);
+    await tester.tap(find.byTooltip('Close'));
     await tester.pumpAndSettle();
-    expect(profiles.uploadCalls, 1);
-    expect(profiles.uploadedType, 'image/png');
-    expect(profiles.saved?.bio, 'New bio from another screen');
-    expect(profiles.saved?.avatarUrl, 'https://example.com/uploaded.png');
-    expect(find.text('Photo updated.'), findsOneWidget);
+    expect(profiles.uploadCalls, 0);
+    expect(profiles.saved, isNull);
+    expect(profiles.avatar, 'https://example.com/avatar.png');
     expect(
-      find.descendant(
-        of: find.byType(FieldrushToast),
-        matching: find.text('Photo updated.'),
-      ),
+      find.text('NAV AVATAR: https://example.com/avatar.png'),
       findsOneWidget,
     );
-    expect(find.byKey(const Key('fieldrush-reset-photo')), findsOneWidget);
-    expect(
-      find.text('NAV AVATAR: https://example.com/uploaded.png'),
-      findsOneWidget,
-    );
-    await tester.pump(const Duration(milliseconds: 2200));
     expect(find.text('Photo updated.'), findsNothing);
+    expect(find.text('Change'), findsOneWidget);
   });
+
+  testWidgets(
+    'photo change crops before uploading and preserves the latest profile bio',
+    (tester) async {
+      picker.photo = _pickedAvatar();
+      await showAccount(
+        tester,
+        withNavigationAvatar: true,
+        bottomNavigationBar: const _NavigationAvatarProbe(),
+      );
+      await openPhotoCrop(tester);
+      tester
+          .widget<Slider>(find.byKey(const ValueKey('avatar-crop-zoom')))
+          .onChanged!(2);
+      await tester.pump();
+      profiles.bio = 'New bio from another screen';
+      await confirmPhotoCrop(tester);
+      expect(profiles.uploadCalls, 1);
+      expect(profiles.uploadedExtension, 'png');
+      await tester.runAsync(() async {
+        final codec = await ui.instantiateImageCodec(profiles.uploadedBytes!);
+        final image = (await codec.getNextFrame()).image;
+        // The original oriented JPEG is 8 x 16; a 2x crop saves 4 x 4.
+        expect((image.width, image.height), (4, 4));
+        image.dispose();
+        codec.dispose();
+      });
+      expect(profiles.uploadedType, 'image/png');
+      expect(profiles.saved?.bio, 'New bio from another screen');
+      expect(profiles.saved?.avatarUrl, 'https://example.com/uploaded.png');
+      expect(find.text('Photo updated.'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(FieldrushToast),
+          matching: find.text('Photo updated.'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('fieldrush-reset-photo')), findsOneWidget);
+      expect(
+        find.text('NAV AVATAR: https://example.com/uploaded.png'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(milliseconds: 2200));
+      expect(find.text('Photo updated.'), findsNothing);
+    },
+  );
 
   testWidgets(
     'photo reset persists removal and retains other profile details',
@@ -1422,10 +1493,10 @@ void main() {
   ) async {
     profiles.avatar = 'https://example.com/avatar.png';
     profiles.uploadError = const AuthException('Photo upload failed.');
-    picker.photo = XFile.fromData(Uint8List.fromList([1]), name: 'photo.jpg');
+    picker.photo = _pickedAvatar();
     await showAccount(tester);
-    await tester.tap(find.byKey(const Key('fieldrush-change-photo')));
-    await tester.pumpAndSettle();
+    await openPhotoCrop(tester);
+    await confirmPhotoCrop(tester);
     expect(profiles.saved, isNull);
     expect(profiles.avatar, 'https://example.com/avatar.png');
     expect(find.text('Photo upload failed.'), findsOneWidget);
@@ -1634,6 +1705,8 @@ class _ProfileRepository extends Fake implements ProfileRepository {
   ProfileUpdate? saved;
   int uploadCalls = 0;
   String? uploadedType;
+  String? uploadedExtension;
+  Uint8List? uploadedBytes;
   Object? uploadError;
 
   @override
@@ -1667,6 +1740,8 @@ class _ProfileRepository extends Fake implements ProfileRepository {
   }) async {
     uploadCalls++;
     uploadedType = contentType;
+    uploadedExtension = fileExtension;
+    uploadedBytes = bytes;
     if (uploadError != null) throw uploadError!;
     return 'https://example.com/uploaded.png';
   }
@@ -1685,3 +1760,9 @@ class _ImagePicker extends Fake implements ImagePicker {
     bool requestFullMetadata = true,
   }) async => photo;
 }
+
+XFile _pickedAvatar() => XFile.fromData(
+  File('test/fixtures/avatars/oriented-gps.jpg').readAsBytesSync(),
+  name: 'photo.jpg',
+  mimeType: 'image/jpeg',
+);

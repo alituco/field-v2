@@ -783,26 +783,26 @@ class _FieldrushCheckoutSheetState extends State<FieldrushCheckoutSheet> {
               style: bookingText(12),
             );
     }
+    final showLoading = (_loading || !session.isReady) && !_paymentSubmitted;
     return AbsorbPointer(
       absorbing:
           _loading ||
+          !session.isReady ||
           _preview == null ||
           _processing ||
           _closing ||
           _paymentSubmitted,
       child: Stack(
         children: [
-          Opacity(
-            opacity:
-                !_loading &&
-                    _preview != null &&
-                    (session.isReady || _paymentSubmitted)
-                ? 1
-                : 0,
-            child: session.buildView(),
-          ),
-          if ((_loading || !session.isReady) && !_paymentSubmitted)
-            const _PaymentOptionsSkeleton(),
+          // Android's native selector starts loading only after its platform
+          // view is painted and attached. Opacity(0) until ready deadlocks it.
+          ExcludeSemantics(excluding: showLoading, child: session.buildView()),
+          if (showLoading)
+            const Positioned.fill(
+              child: ColoredBox(color: FieldrushAuthTheme.cream),
+            ),
+          // Keep a minimum loading height even if native reports a 1dp sentinel.
+          if (showLoading) const _PaymentOptionsSkeleton(),
         ],
       ),
     );

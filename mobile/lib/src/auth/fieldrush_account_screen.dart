@@ -12,6 +12,7 @@ import 'fieldrush_account.dart';
 import 'fieldrush_auth_theme.dart';
 import 'fieldrush_auth_platform.dart';
 import 'fieldrush_phone_field.dart';
+import '../profile/avatar_crop_screen.dart';
 import '../profile/profile.dart';
 import '../profile/profile_repository.dart';
 import '../home/navigation_profile_scope.dart';
@@ -235,20 +236,19 @@ class _FieldrushAccountScreenState extends State<FieldrushAccountScreen>
           imageQuality: 88,
         );
         if (photo == null) return;
-        final extension = photo.name.split('.').last.toLowerCase();
-        final contentType =
-            photo.mimeType ??
-            switch (extension) {
-              'png' => 'image/png',
-              'webp' => 'image/webp',
-              'heic' => 'image/heic',
-              'heif' => 'image/heif',
-              _ => 'image/jpeg',
-            };
+        final bytes = await photo.readAsBytes();
+        if (!mounted) return;
+        final cropped = await Navigator.of(context).push<Uint8List>(
+          MaterialPageRoute(
+            builder: (_) => AvatarCropScreen(bytes: bytes),
+            fullscreenDialog: true,
+          ),
+        );
+        if (!mounted || cropped == null) return;
         avatarUrl = await repository.uploadCurrentUserAvatar(
-          bytes: await photo.readAsBytes(),
-          fileExtension: extension,
-          contentType: contentType,
+          bytes: cropped,
+          fileExtension: 'png',
+          contentType: 'image/png',
         );
       }
       // Avatar updates must not overwrite a bio changed on another screen.

@@ -16,6 +16,7 @@ import 'package:field/src/leaderboard/fieldrush_rating_tracks.dart';
 import 'package:field/src/leaderboard/fieldrush_season_rewards.dart';
 import 'package:field/src/ranking/player_rating_visibility.dart';
 import 'package:field/src/profile/profile.dart';
+import 'package:field/src/ui/fieldrush_avatar_image.dart';
 import 'package:field/src/profile/profile_repository.dart';
 import 'package:field/src/profile/profile_screen.dart';
 import 'package:flutter/material.dart';
@@ -477,6 +478,22 @@ void main() {
     }
   });
 
+  testWidgets('own placement row displays the saved profile photo', (
+    tester,
+  ) async {
+    await _pump(tester, rankings: _PlacementPhotoRankings());
+    final row = find.byKey(const ValueKey('ranks-placement-player-me'));
+    final avatar = tester.widget<FieldrushAvatarImage>(
+      find.descendant(of: row, matching: find.byType(FieldrushAvatarImage)),
+    );
+    expect(avatar.url, 'https://invalid.example/me.png');
+    expect(
+      find.descendant(of: row, matching: find.text('You')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('sparse placement expands real bounded pages and collapses', (
     tester,
   ) async {
@@ -778,7 +795,9 @@ PlayerRatingLeaderboardEntry _player(
   int matches = 8,
   String region = 'phoenix',
   PlayerRatingVisibility? visibility,
+  String? avatarUrl,
 }) => PlayerRatingLeaderboardEntry(
+  avatarUrl: avatarUrl,
   rank: matches < 2 ? 0 : rank,
   profileId: rank == ownRank ? 'me' : 'p$rank',
   displayName: rank == ownRank ? 'Alex Current' : 'Player $rank',
@@ -981,4 +1000,14 @@ class _Discovery extends Fake implements HomeDiscoveryRepository {
       HomePlayerResult(id: 'alex', name: 'Alex Real', username: 'alex_real'),
     ];
   }
+}
+
+class _PlacementPhotoRankings extends _PlacementRankings {
+  _PlacementPhotoRankings() : super(total: 0);
+
+  @override
+  Future<PlayerRatingLeaderboardEntry> loadCurrentPlayerRating(
+    LeaderboardSeason season,
+  ) async =>
+      _player(15, matches: 0, avatarUrl: 'https://invalid.example/me.png');
 }
