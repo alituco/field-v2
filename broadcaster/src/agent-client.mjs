@@ -1,11 +1,14 @@
 import { randomBytes } from 'node:crypto';
 
+export const PRODUCTION_ORIGIN = 'https://field-ops-production.vercel.app';
+export const STAGING_ORIGIN = 'https://ops-staging.field.bh';
+
 export function serverOrigin(value, development = false) {
   const parsed = new URL(value);
-  const allowed = parsed.origin === 'https://ops-staging.field.bh' ||
+  const allowed = [PRODUCTION_ORIGIN, STAGING_ORIGIN].includes(parsed.origin) ||
     (development && ['http://127.0.0.1:3000', 'http://localhost:3000'].includes(parsed.origin));
   if (!allowed || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
-    throw new Error('Choose the Fieldrush staging server or the local development server.');
+    throw new Error('Choose Fieldrush production or staging. Local development is available only in a development build.');
   }
   return parsed.origin;
 }
@@ -19,6 +22,7 @@ export function safeMessage(error) {
 export class AgentClient {
   constructor({ store, obs, onChange = () => {}, fetcher = fetch, development = false, now = () => Date.now() }) {
     Object.assign(this, { store, obs, onChange, fetcher, development, now });
+    this.origin = serverOrigin(store.value.server, development);
     this.running = false;
     this.busy = false;
     this.session = null;
@@ -28,6 +32,9 @@ export class AgentClient {
   }
   async request(path, { method = 'GET', body, token = this.store.value.pairing?.token } = {}) {
     const origin = serverOrigin(this.store.value.server, this.development);
+    if (origin !== this.origin || (token && (this.store.value.pairing?.server !== origin || token !== this.store.value.pairing.token))) {
+      throw new Error('The match credential does not belong to this environment. Pair this laptop again.');
+    }
     const response = await this.fetcher(origin + path, {
       method, redirect: 'error', signal: AbortSignal.timeout(10_000),
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -61,12 +68,12 @@ export class AgentClient {
     if (normalized.length !== 12) throw new Error('Enter the 12-character code shown on your match page.');
     if (typeof displayName !== 'string' || displayName.trim().length < 2 || displayName.trim().length > 80) throw new Error('Give this laptop a name between 2 and 80 characters.');
     const pending = this.store.value.pendingPair;
-    const token = pending?.code === normalized ? pending.token : randomBytes(32).toString('base64url');
+    const token = pending?.code === normalized && pending.server === this.origin ? pending.token : randomBytes(32).toString('base64url');
     // Save before issuing the request: retrying a lost response uses the same credential.
-    await this.store.update({ pendingPair: { code: normalized, token } });
+    await this.store.update({ pendingPair: { code: normalized, token, server: this.origin } });
     const result = await this.request('/api/broadcast-agent/pair', { method: 'POST', token: null, body: { code: normalized, displayName: displayName.trim(), deviceToken: token } });
     this.validateSession(result);
-    await this.store.update({ pairing: { ...result, token }, pendingPair: null, pendingAck: null, lastCommand: null, lastStreamTest: null });
+    await this.store.update({ pairing: { ...result, token, server: this.origin }, pendingPair: null, pendingAck: null, lastCommand: null, lastStreamTest: null });
     this.session = result;
     this.error = null;
     return this.publicSession();
@@ -122,7 +129,7 @@ export class AgentClient {
         currentFixtureId: status.currentFixtureId ?? null,
         currentOpenQueueGameId: status.currentOpenQueueGameId ?? null,
         errorMessage: status.error ? safeMessage(status.error) : status.warnings?.length ? safeMessage(status.warnings.join(' ')) : null,
-        metadata: { agentVersion: '0.2.0', platform: 'darwin', recording: status.recording === true, configured: status.configured === true },
+        metadata: { agentVersion: '0.3.0', platform: 'darwin', recording: status.recording === true, configured: status.configured === true },
       } });
       const pending = this.store.value.pendingAck;
       if (pending) {

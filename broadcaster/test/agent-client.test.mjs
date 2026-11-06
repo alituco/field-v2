@@ -1,19 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AgentClient, serverOrigin, safeMessage } from '../src/agent-client.mjs';
+import { AgentClient, serverOrigin, safeMessage, PRODUCTION_ORIGIN, STAGING_ORIGIN } from '../src/agent-client.mjs';
 
 const matchId = '00000000-0000-4000-8000-000000000001';
 const session = { deviceKey: 'camera-1', matchKind: 'SOLO', matchId, expiresAt: '2099-01-01T00:00:00Z', displayName: 'Field Mac' };
 function harness({ failures = {}, command = null, initial = {}, status = {} } = {}) {
   const calls = [], writes = [], obsCalls = [];
-  const store = { value: { server: 'https://ops-staging.field.bh', pairing: { ...session, token: 'x'.repeat(43) }, ...initial }, async update(patch) { writes.push(structuredClone(patch)); this.value = { ...this.value, ...patch }; } };
+  const store = { value: { server: STAGING_ORIGIN, pairing: { ...session, token: 'x'.repeat(43), server: STAGING_ORIGIN }, ...initial }, async update(patch) { writes.push(structuredClone(patch)); this.value = { ...this.value, ...patch }; } };
   const obs = {
     async status() { return { connected: true, configured: true, cameraAvailable: true, microphoneAvailable: true, streaming: false, recording: false, ...status }; },
     async start(c) { obsCalls.push(['start', c]); }, async stop(c) { obsCalls.push(['stop', c]); }, async stopCurrent() { obsCalls.push(['stopCurrent']); },
   };
   const fetcher = async (url, options) => {
     const pathname = new URL(url).pathname;
-    calls.push({ pathname, ...options, body: options.body ? JSON.parse(options.body) : null });
+    calls.push({ origin: new URL(url).origin, pathname, ...options, body: options.body ? JSON.parse(options.body) : null });
     if (failures[pathname]) return new Response(JSON.stringify({ error: 'Temporarily unavailable' }), { status: failures[pathname] });
     const value = pathname.endsWith('/session') || pathname.endsWith('/pair') ? session : pathname.endsWith('/commands') && options.method === 'GET' ? { command } : { ok: true };
     return new Response(JSON.stringify(value));
@@ -22,10 +22,45 @@ function harness({ failures = {}, command = null, initial = {}, status = {} } = 
   return { client, calls, store, obsCalls, writes, failures, obs };
 }
 test('origin allowlist prevents credential exfiltration and redirect following', async () => {
-  for (const value of ['https://evil.example', 'https://ops-staging.field.bh.evil.example', 'https://ops-staging.field.bh/path', 'https://user@ops-staging.field.bh', 'http://127.0.0.1:3000']) assert.throws(() => serverOrigin(value));
+  for (const origin of [STAGING_ORIGIN, PRODUCTION_ORIGIN]) {
+    assert.equal(serverOrigin(origin), origin);
+    for (const value of [origin + '.evil.example', origin + '/path', origin + '?token=x', origin + '#x',
+      origin.replace('https://', 'https://user:password@'), origin.replace('https://', 'http://'), origin + ':8443']) {
+      assert.throws(() => serverOrigin(value));
+    }
+  }
+  for (const value of ['https://evil.example', 'https://field-ops-production-preview.vercel.app', 'http://127.0.0.1:3000', 'http://localhost:3000']) assert.throws(() => serverOrigin(value));
   assert.equal(serverOrigin('http://127.0.0.1:3000', true), 'http://127.0.0.1:3000');
+  assert.equal(serverOrigin('http://localhost:3000', true), 'http://localhost:3000');
   const h = harness(); await h.client.tick();
   assert.ok(h.calls.every(call => call.redirect === 'error' && call.signal instanceof AbortSignal));
+});
+test('production credentials are sent only to the exact production server', async () => {
+  const h = harness({ initial: { server: PRODUCTION_ORIGIN, pairing: { ...session, token: 'p'.repeat(43), server: PRODUCTION_ORIGIN } } });
+  await h.client.tick();
+  assert.ok(h.calls.length >= 3);
+  assert.ok(h.calls.every(call => call.origin === PRODUCTION_ORIGIN && call.headers.Authorization === `Bearer ${'p'.repeat(43)}`));
+});
+test('unbound and other-environment credentials never make a network request', async () => {
+  for (const server of [undefined, STAGING_ORIGIN]) {
+    const h = harness({ initial: { server: PRODUCTION_ORIGIN, pairing: { ...session, token: 'x'.repeat(43), server } } });
+    await assert.rejects(h.client.request('/api/broadcast-agent/session'), /does not belong/);
+    assert.equal(h.calls.length, 0);
+  }
+  const h = harness();
+  h.store.value.server = PRODUCTION_ORIGIN;
+  await assert.rejects(h.client.request('/api/broadcast-agent/pair', { method: 'POST', token: null }), /does not belong/);
+  assert.equal(h.calls.length, 0);
+});
+test('identical pairing codes cannot reuse another environment pending credential', async () => {
+  const previousToken = 's'.repeat(43);
+  const h = harness({ initial: { server: PRODUCTION_ORIGIN, pairing: null,
+    pendingPair: { server: STAGING_ORIGIN, code: 'ABCDEFGHJKLM', token: previousToken } } });
+  await h.client.pair('ABCD-EFGH-JKLM', 'Production Mac');
+  assert.notEqual(h.calls[0].body.deviceToken, previousToken);
+  assert.equal(h.calls[0].origin, PRODUCTION_ORIGIN);
+  assert.equal(h.store.value.pairing.server, PRODUCTION_ORIGIN);
+  assert.equal(h.calls[0].headers.Authorization, undefined);
 });
 test('missing broadcaster routes explain the selected server deployment mismatch without exposing HTML', async () => {
   const h = harness();

@@ -3,7 +3,29 @@
 The Mac app guides a referee through USB-C camera setup, a local recording test,
 a private connection test, and pairing to one solo or clan match. OBS does the
 encoding; the referee website controls live video independently of the match clock.
-This first release is staging-only and supports one camera/pitch at a time.
+The app supports production and staging, with one camera/pitch at a time.
+
+## Choose your environment
+
+Open **Fieldrush Broadcaster** on the Mac. Under **Pair your match**, choose
+**Fieldrush production** for real games or **Fieldrush staging** for rehearsals.
+The badge at the top always shows the selected environment. Existing installations
+keep their staging setup after upgrading; production requires an explicit choice.
+
+- Production referee website: <https://field-ops-production.vercel.app>
+- Staging referee website: <https://ops-staging.field.bh>
+
+Use a pairing code from the selected environment's referee website. Stop video
+and recording and forget the current pairing before changing environments. Each
+environment keeps its own OBS profile, pairing credentials, recording history,
+and unfinished recovery. Switching does not delete local recordings or recovery
+evidence. Finish any needed recovery before forgetting the original pairing or
+switching environments; a new pairing cannot resume the old pairing's upload.
+The app blocks forgetting while an upload is pending. Use **Start recovery over**
+only to deliberately abandon that pending upload, subject to its publication
+safeguards. Each environment remembers its camera/audio choices and backup folder.
+The encrypted local OBS password is shared on this Mac. Reconnect OBS explicitly
+after switching and repeat the readiness checks for that environment.
 
 ## Referee setup
 
@@ -16,7 +38,7 @@ This first release is staging-only and supports one camera/pitch at a time.
 3. Select the USB camera and field-audio input. Verify the picture and moving
    audio meter. Choosing “Muted” intentionally records without audio. The app
    does not capture the laptop screen or desktop sound.
-4. Choose a backup folder with at least **5 GB free**, then save the setup.
+4. Choose a backup folder with at least **5 GB free** for production, then save the setup.
    Fieldrush creates its own unique OBS profile and scene collection without
    editing personal profiles. It refuses to take over active non-Fieldrush
    outputs. Run the ten-second local recording test.
@@ -98,7 +120,8 @@ npm run package:mac:local
 The unsigned local app is generated at `dist/mac-arm64/Fieldrush Broadcaster.app`.
 It is for this development Mac, not a referee download. The development build
 also offers localhost:3000 for mocked testing. Packaged builds permit only the
-Fieldrush staging origin. Opening the app never connects OBS or starts outputs.
+two exact Fieldrush origins above. Local development is available only in an
+unpackaged build. Opening the app never connects OBS or starts outputs.
 
 `npm run package:mac` builds arm64 and Intel DMG/ZIP files. It requires `CSC_NAME`
 to name a **Developer ID Application** certificate plus Apple notarization
