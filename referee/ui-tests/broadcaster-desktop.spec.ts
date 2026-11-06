@@ -151,6 +151,37 @@ test("uncertain OBS output blocks changing the match or recovering over an activ
   expect(await actionNames(page)).toEqual([]);
 });
 
+test("packaged desktop selects the exact production site and keeps its environment visible", async ({ page }) => {
+  await setup(page, ["set-server"]);
+  await push(page, { development: false, pairing: null });
+  await expect(page.locator("#environment-label")).toHaveText("STAGING");
+  await expect(page.locator("#local-server")).toBeHidden();
+  await expect(page.locator("#local-server")).toBeDisabled();
+  const production = "https://field-ops-production.vercel.app";
+  await page.locator("#server").selectOption(production);
+  expect(await page.evaluate(() => (window as unknown as TestWindow).__desktopTest.actions)).toEqual([
+    { action: "set-server", value: production },
+  ]);
+  await push(page, { server: production });
+  await finish(page, "set-server", { ok: true });
+  await expect(page.locator("#server")).toHaveValue(production);
+  await expect(page.locator("#environment-label")).toHaveText("PRODUCTION");
+  await push(page, { pairing: initialState.pairing });
+  await expect(page.locator("#server")).toBeDisabled();
+  await expect(page.locator("#environment-label")).toHaveText("PRODUCTION");
+});
+
+test("a refused environment change restores the active site instead of displaying production", async ({ page }) => {
+  await setup(page, ["set-server"]);
+  await push(page, { pairing: null });
+  await page.locator("#server").selectOption("https://field-ops-production.vercel.app");
+  await finish(page, "set-server", { ok: false, error: "Finish recovery before changing environments." });
+  await expect(page.getByRole("alert")).toHaveText("Finish recovery before changing environments.");
+  await expect(page.locator("#server")).toHaveValue("https://ops-staging.field.bh");
+  await expect(page.locator("#environment-label")).toHaveText("STAGING");
+  expect(await actionNames(page)).toEqual(["set-server"]);
+});
+
 test("progress, match labels and errors are plain text rather than executable markup", async ({ page }) => {
   await setup(page);
   const unsafe = '<img src=x onerror="window.__injected=true">';
