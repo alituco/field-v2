@@ -28,7 +28,15 @@ function fillDevices(devices) {
   $('devices-section').hidden = false;
 }
 function render(next) {
-  if (next) state = next;
+  if (next) {
+    if (state.server && next.server !== state.server) {
+      $('pair-code').value = '';
+      $('camera').value = next.cameraId || '';
+      $('microphone').value = next.microphoneId || '';
+      $('preview').hidden = true; $('preview-empty').hidden = false;
+    }
+    state = next;
+  }
   const status = state.status || {}, paired = state.pairing;
   document.querySelectorAll('button').forEach(button => { button.disabled = busy || state.busy; });
   $('progress-panel').hidden = !state.progress; $('progress').textContent = state.progress || '';
@@ -44,8 +52,13 @@ function render(next) {
   if (state.hasObsPassword) $('obs-password').placeholder = 'Saved securely — leave blank to reuse';
   if (!$('device-name').value) $('device-name').value = state.displayName || '';
   $('pair-form').hidden = Boolean(paired); $('paired').hidden = !paired;
-  $('dev-server').hidden = !state.development; $('server').value = state.server || 'https://ops-staging.field.bh';
-  $('server').disabled = Boolean(paired) || busy || state.outputUncertain;
+  const production = state.server === 'https://field-ops-production.vercel.app';
+  const local = ['http://127.0.0.1:3000', 'http://localhost:3000'].includes(state.server);
+  $('environment-label').textContent = production ? 'PRODUCTION' : local ? 'LOCAL' : 'STAGING';
+  $('environment-help').textContent = `${production ? 'Production broadcasts reach real players.' : local ? 'Local development is for testing.' : 'Staging is for rehearsals.'} Stop output and forget your pairing before switching.`;
+  $('local-server').hidden = !state.development; $('local-server').disabled = !state.development;
+  $('server').value = local ? 'http://127.0.0.1:3000' : state.server || 'https://ops-staging.field.bh';
+  $('server').disabled = Boolean(paired || busy || state.busy || state.outputUncertain || state.outputHeld || status.streaming || status.recording);
   $('configure').disabled = busy || state.busy || !status.connected || status.streaming || status.recording;
   $('choose-folder').textContent = state.recordingDirectory || 'Choose a folder on this Mac ›';
   $('disk').textContent = state.freeBytes == null ? 'Local recording keeps a copy if the internet drops.' : `${(state.freeBytes / 1024 ** 3).toFixed(1)} GB free · ${state.diskPolicyLabel || 'at least 5 GB needed'}`;

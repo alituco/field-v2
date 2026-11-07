@@ -12,6 +12,7 @@ import { isDesktopDocument, recoveryPreviewUrl } from '../desktop-url.mjs';
 import { uploadRecording } from '../recording-upload.mjs';
 import { obsProcessIdentity } from '../obs-process.mjs';
 import { recordingDiskPolicy, requireRecordingSpace, SAFETY_RESERVE_BYTES } from './disk-policy.mjs';
+import { initializeEnvironment, switchEnvironment, saveEnvironmentObsState, assertRecoveryEnvironment, assertCanForgetPairing } from '../desktop-environments.mjs';
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const runFile = promisify(execFile);
@@ -88,7 +89,7 @@ async function refreshState() {
     cameraId: store.value.cameraId || '', microphoneId: store.value.microphoneId ?? null,
     hasObsPassword: Boolean(store.value.obsPassword),
     pairing: agent.publicSession(), reachable: agent.reachable,
-    status, freeBytes, diskPolicyLabel: diskPolicy.label, busy: operationBusy, progress, outputUncertain, outputHeld: Boolean(owned.target || owned.testStream || owned.localTest), canPauseUpload: Boolean(recoveryAbort), hasRecovery: Boolean(store.value.recovery),
+    status, freeBytes, diskPolicyLabel: diskPolicy.label, busy: operationBusy, progress, outputUncertain, outputHeld: Boolean(owned.target || owned.testStream || owned.localTest || owned.outputSessionId || owned.recordIntent || owned.streamIntent || owned.recordingOwned || owned.streamingOwned), canPauseUpload: Boolean(recoveryAbort), hasRecovery: Boolean(store.value.recovery),
     error: stateError || agent.error || null,
     lastLocalTest: store.value.lastLocalTest ?? null,
     lastStreamTest: store.value.lastStreamTest ?? null,
@@ -113,27 +114,34 @@ async function requireKnownIdle() {
   }
 }
 
+function createControllers() {
+  const server = store.value.server;
+  const controller = new ObsController({
+    getProcessIdentity: obsProcessIdentity,
+    workspaceId: store.value.workspaceId, savedState: store.value.obsState || {},
+    saveState: value => saveEnvironmentObsState(store, server, value),
+    allowedOverlayOrigins: [server],
+  });
+  obs = controller;
+  agent = new AgentClient({ store, obs: controller, development: !app.isPackaged, onChange: () => void refresh() });
+  agent.beforeStart = async () => {
+    if (!(await controller.status()).recording) {
+      if (!store.value.recordingDirectory) throw new Error('Choose a backup recording folder.');
+      const space = await fs.statfs(store.value.recordingDirectory);
+      requireRecordingSpace(space.bavail * space.bsize, recordingDiskPolicy(server, !app.isPackaged));
+    }
+  };
+}
+
 app.whenReady().then(async () => {
   if (process.platform !== 'darwin') { await dialog.showMessageBox({ message: 'This version of Fieldrush Broadcaster supports Mac only.' }); app.quit(); return; }
   store = new DesktopState(app.getPath('userData'), safeStorage);
   // Never overwrite an existing encrypted setup when the keychain is locked.
   await store.load();
-  // Persisted server settings are untrusted; never send credentials to arbitrary URLs.
-  try { serverOrigin(store.value.server, !app.isPackaged); } catch { store.value.server = 'https://ops-staging.field.bh'; store.value.pairing = null; }
-  obs = new ObsController({
-    getProcessIdentity: obsProcessIdentity,
-    workspaceId: store.value.workspaceId, savedState: store.value.obsState || {},
-    saveState: value => store.update({ obsState: value }),
-    allowedOverlayOrigins: [store.value.server],
-  });
-  agent = new AgentClient({ store, obs, development: !app.isPackaged, onChange: () => void refresh() });
-  agent.beforeStart = async () => {
-    if (!(await obs.status()).recording) {
-      if (!store.value.recordingDirectory) throw new Error('Choose a backup recording folder.');
-      const space = await fs.statfs(store.value.recordingDirectory);
-      requireRecordingSpace(space.bavail * space.bsize, recordingDiskPolicy(store.value.server, !app.isPackaged));
-    }
-  };
+  // Preserve legacy staging recordings and credentials within their original
+  // environment. Invalid saved origins fail closed without overwriting evidence.
+  await initializeEnvironment(store, !app.isPackaged);
+  createControllers();
 
   protocol.handle('fieldrush', async request => {
     const url = new URL(request.url);
@@ -167,15 +175,11 @@ app.whenReady().then(async () => {
   handle('open-referee', () => shell.openExternal(serverOrigin(store.value.server, !app.isPackaged) + '/'));
   handle('open-guide', () => shell.openExternal(serverOrigin(store.value.server, !app.isPackaged) + '/broadcast/setup'));
   handle('set-server', value => operation(async () => {
-    await requireKnownIdle();
-    const status = await obs.status();
-    if (store.value.pairing || status.streaming || status.recording) throw new Error('Forget the current pairing before changing servers.');
-    const server = serverOrigin(value, !app.isPackaged);
-    await store.update({ server, pendingPair: null });
-    // Each controller has a fixed exact overlay origin allowlist.
-    await obs.disconnect();
-    obs = new ObsController({ getProcessIdentity: obsProcessIdentity, workspaceId: store.value.workspaceId, savedState: store.value.obsState || {}, saveState: state => store.update({ obsState: state }), allowedOverlayOrigins: [server] });
-    agent.obs = obs;
+    if (!await switchEnvironment({ store, obs, agent, server: value, development: !app.isPackaged })) return false;
+    reconnectAllowed = false;
+    stateError = null;
+    createControllers();
+    return true;
   }));
   handle('connect-obs', value => operation(async () => {
     const password = typeof value?.password === 'string' && value.password ? value.password : store.value.obsPassword;
@@ -238,6 +242,7 @@ app.whenReady().then(async () => {
   handle('cancel-upload', async () => { recoveryAbort?.abort(new Error('Upload paused. Choose Recover a recording to resume.')); });
   handle('restart-recovery', () => operation(async () => {
     const pending = store.value.recovery;
+    if (pending) assertRecoveryEnvironment(pending, store.value.server);
     if (pending?.uploaded && store.value.pairing?.deviceKey === pending.deviceKey) {
       const current = await agent.request(`/api/broadcast-agent/recovery?uploadId=${encodeURIComponent(pending.uploadId)}`);
       if (current.publicationPending) throw new Error('This replay replacement is already reserved. Choose Recover a recording to finish it before starting over.');
@@ -252,6 +257,7 @@ app.whenReady().then(async () => {
     const status = await obs.status();
     if (status.streaming || status.recording) throw new Error('Finish the match and stop video and recording before recovery.');
     let pending = store.value.recovery;
+    if (pending) assertRecoveryEnvironment(pending, store.value.server, paired);
     if (pending && !pending.uploaded && Date.parse(pending.expiresAt) <= Date.now()) {
       await store.update({ recovery: null });
       throw new Error('The upload window expired. Your local recording is unchanged. Choose Recover a recording to start again.');
@@ -271,9 +277,10 @@ app.whenReady().then(async () => {
       const prepared = await agent.request('/api/broadcast-agent/recovery', { method: 'POST', body: { action: 'prepare', fileName: path.basename(manifest.path), size: stat.size, recordingStartedAt: manifest.recordingStartedAt } });
       if (prepared.attached === true) { progress = 'This recording is already attached.'; await refresh(); return; }
       if (typeof prepared.uploadId !== 'string' || (prepared.status !== 'ATTACHING' && (prepared.protocol !== 'tus' || typeof prepared.uploadUrl !== 'string'))) throw new Error('The recording upload was not prepared correctly.');
-      pending = { ...prepared, ...manifest, deviceKey: paired.deviceKey, size: stat.size, mtime: stat.mtimeMs, uploaded: prepared.status === 'ATTACHING' };
+      pending = { ...prepared, ...manifest, server: store.value.server, deviceKey: paired.deviceKey, size: stat.size, mtime: stat.mtimeMs, uploaded: prepared.status === 'ATTACHING' };
       await store.update({ recovery: pending });
     }
+    assertRecoveryEnvironment(pending, store.value.server, paired);
     if (!pending.uploaded) {
       recoveryAbort = new AbortController();
       try {
@@ -301,6 +308,7 @@ app.whenReady().then(async () => {
   }));
   handle('forget', () => operation(async () => {
     await requireKnownIdle();
+    assertCanForgetPairing(store.value);
     const status = await obs.status();
     if (status.streaming || status.recording) throw new Error('Stop the stream and recording before forgetting this match.');
     await store.update({ pairing: null, pendingPair: null, pendingAck: null, lastCommand: null, lastStreamTest: null });
