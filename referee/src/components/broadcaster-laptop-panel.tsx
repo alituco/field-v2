@@ -193,7 +193,7 @@ export function BroadcasterLaptopPanel({
 
       {!loading && !statusError && !device ? (
         closedMatch ? <p className={styles.hint}>Laptop pairing is closed for this match. Choose an upcoming match to set up your camera.</p> : <>
-          <p className={styles.hint}>Open Fieldrush Broadcaster on the Mac beside your pitch, then enter a pairing code for this match.</p>
+          <p className={styles.hint}>Open Fieldrush Broadcaster on the Mac beside your pitch. Select Production or Staging to match this site, then enter a pairing code for this match.</p>
           {pairing ? <div className={styles.codePanel}>
             <span className={styles.eyebrow}>Enter this on your Mac</span>
             <strong className={`${styles.code} ${secondsLeft === 0 ? styles.expired : ""}`}>{pairing.code}</strong>

@@ -1,6 +1,6 @@
 {
   "name": "field-broadcaster",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Guided Mac camera setup for Fieldrush referees",
   "author": "Fieldrush",
   "main": "src/desktop/main.mjs",
@@ -25,7 +25,7 @@
     "appId": "gg.fieldrush.broadcaster",
     "productName": "Fieldrush Broadcaster",
     "asar": true,
-    "files": ["src/desktop/**/*", "src/agent-client.mjs", "src/desktop-state.mjs", "src/obs-controller.mjs", "src/obs-process.mjs", "src/desktop-url.mjs", "src/recording-upload.mjs", "package.json"],
+    "files": ["src/desktop/**/*", "src/agent-client.mjs", "src/desktop-state.mjs", "src/desktop-environments.mjs", "src/obs-controller.mjs", "src/obs-process.mjs", "src/desktop-url.mjs", "src/recording-upload.mjs", "package.json"],
     "extraResources": [{ "from": "../mobile/assets/fonts", "to": "fonts", "filter": ["Outfit.ttf", "Outfit-LICENSE.txt", "PlusJakartaSans.ttf", "PlusJakartaSans-LICENSE.txt"] }],
     "directories": { "output": "dist" },
     "mac": {

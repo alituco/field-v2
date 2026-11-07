@@ -7,7 +7,7 @@ test('staging permits 2 GB but retains a small safety reserve', () => {
   assert.throws(() => requireRecordingSpace(SAFETY_RESERVE_BYTES - 1, policy));
 });
 test('production and lookalike hosts retain 5 GB minimum', () => {
-  for (const server of ['https://ops.field.bh', 'https://ops-staging.field.bh.evil.com', 'http://localhost:3000', '']) {
+  for (const server of ['https://field-ops-production.vercel.app', 'https://ops.field.bh', 'https://ops-staging.field.bh.evil.com', 'http://localhost:3000', '']) {
     assert.throws(() => requireRecordingSpace(2 * 1024 ** 3, recordingDiskPolicy(server)));
   }
 });

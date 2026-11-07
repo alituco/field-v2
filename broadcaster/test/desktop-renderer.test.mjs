@@ -73,3 +73,53 @@ test('legacy status without advisories still renders and a later empty notice hi
   assert.equal(ui.element('warning').hidden, true);
   assert.equal(ui.element('warning').textContent, '');
 });
+
+test('packaged production and staging stay visibly distinct and local development stays unavailable', async () => {
+  const ui = await renderer();
+  ui.render({ server: 'https://field-ops-production.vercel.app', development: false });
+  assert.equal(ui.element('environment-label').textContent, 'PRODUCTION');
+  assert.match(ui.element('environment-help').textContent, /reach real players/);
+  assert.equal(ui.element('server').value, 'https://field-ops-production.vercel.app');
+  assert.equal(ui.element('server').disabled, false);
+  assert.equal(ui.element('local-server').hidden, true);
+  assert.equal(ui.element('local-server').disabled, true);
+  ui.element('pair-code').value = 'PROD-CODE';
+  ui.render({ server: 'https://ops-staging.field.bh', development: false });
+  assert.equal(ui.element('environment-label').textContent, 'STAGING');
+  assert.match(ui.element('environment-help').textContent, /rehearsals/);
+  assert.equal(ui.element('pair-code').value, '');
+  assert.equal(ui.element('preview').hidden, true);
+});
+
+test('environment choice is blocked during pairing, output, cleanup and upload operations', async () => {
+  const ui = await renderer();
+  for (const state of [
+    { pairing: { matchKind: 'SOLO' } }, { status: { streaming: true } },
+    { status: { recording: true } }, { outputUncertain: true }, { outputHeld: true }, { busy: true },
+  ]) {
+    ui.render(state);
+    assert.equal(ui.element('server').disabled, true);
+  }
+  ui.render({});
+  assert.equal(ui.element('server').disabled, false);
+});
+
+test('unpackaged local development is labeled and selectable separately', async () => {
+  const ui = await renderer();
+  ui.render({ server: 'http://localhost:3000', development: true });
+  assert.equal(ui.element('environment-label').textContent, 'LOCAL');
+  assert.equal(ui.element('local-server').hidden, false);
+  assert.equal(ui.element('local-server').disabled, false);
+});
+
+test('switching restores camera and audio choices instead of retaining the other profile selection', async () => {
+  const ui = await renderer();
+  ui.element('camera').value = 'staging-camera';
+  ui.element('microphone').value = 'staging-mic';
+  ui.render({ server: 'https://field-ops-production.vercel.app', cameraId: 'production-camera', microphoneId: 'production-mic' });
+  assert.equal(ui.element('camera').value, 'production-camera');
+  assert.equal(ui.element('microphone').value, 'production-mic');
+  ui.render({ server: 'https://ops-staging.field.bh', cameraId: 'staging-camera', microphoneId: null });
+  assert.equal(ui.element('camera').value, 'staging-camera');
+  assert.equal(ui.element('microphone').value, '');
+});

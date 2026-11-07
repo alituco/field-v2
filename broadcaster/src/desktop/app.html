@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Fieldrush Broadcaster</title><link rel="stylesheet" href="app.css"></head>
 <body>
-  <header><div class="brand"><span class="brand-mark">F</span><div><strong>Fieldrush</strong><small>BROADCASTER</small></div></div><span class="environment">STAGING</span><button class="quiet" id="guide">Setup guide ↗</button></header>
+  <header><div class="brand"><span class="brand-mark">F</span><div><strong>Fieldrush</strong><small>BROADCASTER</small></div></div><span class="environment" id="environment-label">STAGING</span><button class="quiet" id="guide">Setup guide ↗</button></header>
   <main>
     <div class="intro"><div><p class="eyebrow">MATCH DAY, MADE SIMPLE</p><h1>Bring the game closer.</h1><p>Connect your Osmo by USB-C. We’ll take care of the scoreboard.</p></div><span id="connection" class="pill">Getting ready</span></div>
     <div id="error" role="alert" hidden></div>
@@ -19,7 +19,7 @@
           <form id="pair-form"><label for="device-name">Laptop name</label><input id="device-name" maxlength="80" placeholder="Ali’s MacBook"><label for="pair-code">Pairing code</label><div class="inline"><input id="pair-code" maxlength="14" autocomplete="off" spellcheck="false" placeholder="ABCD-EFGH-JKLM"><button class="primary">Pair laptop</button></div><small>This laptop can only broadcast the paired match.</small></form>
           <div id="paired" hidden><p class="eyebrow">CONNECTED TO</p><h3 id="match-name"></h3><p id="match-details"></p><div class="row"><span id="expires"></span><button class="text danger-text" id="forget">Forget pairing</button></div></div>
           <button class="text" id="referee">Open referee website ↗</button>
-          <div id="dev-server" hidden><label for="server">Development server</label><select id="server"><option value="https://ops-staging.field.bh">Fieldrush staging</option><option value="http://127.0.0.1:3000">Local development</option></select></div>
+          <div id="environment-settings"><label for="server">Environment</label><select id="server" aria-describedby="environment-help"><option value="https://field-ops-production.vercel.app">Fieldrush production</option><option value="https://ops-staging.field.bh" selected>Fieldrush staging</option><option id="local-server" value="http://127.0.0.1:3000" hidden disabled>Local development</option></select><small id="environment-help">Staging is for rehearsals. Stop output and forget your pairing before switching.</small></div>
         </article>
       </section>
       <aside>
