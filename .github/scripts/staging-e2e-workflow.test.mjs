@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { CI_OUTPUTS, createCiPlan } from "./ci-plan.mjs";
@@ -597,6 +598,100 @@ test("TestFlight and PWA remain behind the complete E2E gate", () => {
     assert.match(job(id), /needs\.record-staging\.result == 'success'/);
     assert.match(job(id), /github\.event_name == 'push'/);
     assert.match(job(id), /github\.ref == 'refs\/heads\/staging'/);
+  }
+});
+
+test("final release status uses the original deployment only after both staging publishes succeed", () => {
+  const record = job("record-staging");
+  assert.match(record, /deployment-id: \$\{\{ steps\.record\.outputs\.deployment-id \}\}/);
+  assert.match(record, /echo "deployment-id=\$deployment_id" >>"\$GITHUB_OUTPUT"/);
+  assert.match(record, /status-id: \$\{\{ steps\.record\.outputs\.status-id \}\}/);
+  assert.match(record, /echo "status-id=\$status_id" >>"\$GITHUB_OUTPUT"/);
+  const required = ["record-staging", "upload-testflight-staging", "deploy-referee-staging"];
+  assert.deepEqual(needs("finalize-staging-record"), required);
+  const source = job("finalize-staging-record");
+  assert.match(source, /github\.event_name == 'push'/);
+  assert.match(source, /github\.ref == 'refs\/heads\/staging'/);
+  for (const dependency of required) {
+    assert.ok(source.includes(`needs.${dependency}.result == 'success'`));
+  }
+  assert.match(source, /DEPLOYMENT_ID: \$\{\{ needs\.record-staging\.outputs\.deployment-id \}\}/);
+  assert.match(source, /VERIFIED_STATUS_ID: \$\{\{ needs\.record-staging\.outputs\.status-id \}\}/);
+  assert.match(source, /permissions:\n      contents: read\n      deployments: write\n    steps:/);
+  assert.doesNotMatch(source, /always\(\)|continue-on-error|uses:|secrets\.|^    environment:/m);
+});
+
+test("finalizer preserves the verified status, links its run, and skips an obsolete staging head", () => {
+  const source = job("finalize-staging-record");
+  const shell = source.split("        run: |\n")[1].replace(/^ {10}/gm, "");
+  const description = job("record-staging").match(/state: "success",\s*description: "([^"]+)"/)[1];
+  const original = { id: 17, state: "success", description, creator: { login: "github-actions[bot]" } };
+  const inactive = { ...original, id: 18, state: "inactive", description: "", log_url: "", environment_url: "" };
+  const restored = { ...original, id: 19, log_url: "https://github.com/alituco/field-v2/actions/runs/111/attempts/2" };
+  const script = `gh() {
+    if [[ "$1 $2" == "api repos/alituco/field-v2/git/ref/heads/staging" ]]; then
+      printf '%s\\n' "$STAGING_HEAD"
+      return "$REF_EXIT"
+    fi
+    if [[ "$1 $2" == "api repos/alituco/field-v2/deployments/42/statuses?per_page=3" ]]; then
+      printf '%s\\n' "$STATUS_HISTORY"
+      return "$HISTORY_EXIT"
+    fi
+    printf '%s\\n' "$@" >&2
+    return "$STATUS_EXIT"
+  }
+${shell}`;
+  function simulate(overrides = {}) {
+    return spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "alituco/field-v2",
+        GITHUB_RUN_ID: "111", GITHUB_RUN_ATTEMPT: "2", DEPLOYMENT_ID: "42",
+        GITHUB_SHA: "release", STAGING_HEAD: "release", VERIFIED_STATUS_ID: "17",
+        STATUS_HISTORY: JSON.stringify([inactive, original]), REF_EXIT: "0", HISTORY_EXIT: "0", STATUS_EXIT: "0",
+        ...overrides,
+      },
+    });
+  }
+
+  const completed = simulate();
+  assert.equal(completed.status, 0);
+  assert.deepEqual(completed.stderr.trim().split("\n"), [
+    "api", "--method", "POST", "repos/alituco/field-v2/deployments/42/statuses",
+    "-f", "state=success", "-f", `description=${description}`, "-f", "environment=staging",
+    "-F", "auto_inactive=false", "-f", "log_url=https://github.com/alituco/field-v2/actions/runs/111/attempts/2",
+  ]);
+  const manual = { login: "operator" };
+  for (const [overrides, expectedStatus] of [
+    [{ STAGING_HEAD: "newer" }, 0], [{ REF_EXIT: "1" }, 1], [{ DEPLOYMENT_ID: "" }, 1],
+    [{ HISTORY_EXIT: "1" }, 1], [{ VERIFIED_STATUS_ID: "99" }, 1],
+    [{ STATUS_HISTORY: JSON.stringify([original]) }, 0],
+    ...[
+      [], [inactive], [{ ...inactive, state: "failure" }, original],
+      [{ ...inactive, creator: manual }, original], [{ ...inactive, description: "withdrawn" }, original],
+      [{ ...inactive, log_url: "https://example.test/withdrawal" }, original],
+      [{ ...inactive, environment_url: "https://example.test/" }, original],
+      [inactive, { ...original, creator: manual }], [{ ...original, description: "unverified" }],
+      [restored, inactive], [restored, { ...inactive, creator: manual }, original],
+      [{ ...restored, log_url: "https://github.com/alituco/field-v2/actions/runs/222/attempts/2" }, inactive, original],
+      [{ ...restored, creator: manual }, inactive, original],
+    ].map(history => [{ STATUS_HISTORY: JSON.stringify(history) }, 1]),
+  ]) {
+    const skipped = simulate(overrides);
+    assert.equal(skipped.status, expectedStatus, JSON.stringify(overrides));
+    assert.equal(skipped.stderr, "", "no status request should be sent");
+  }
+  // The runner can lose the POST acknowledgement. Re-running the failed job in
+  // this or another attempt of this run must not append a second success.
+  const lostAcknowledgement = simulate({ STATUS_EXIT: "1" });
+  assert.equal(lostAcknowledgement.status, 1);
+  assert.equal(lostAcknowledgement.stderr, completed.stderr);
+  for (const attempt of ["2", "3"]) {
+    const retry = simulate({
+      GITHUB_RUN_ATTEMPT: attempt, STATUS_HISTORY: JSON.stringify([restored, inactive, original]),
+    });
+    assert.equal(retry.status, 0);
+    assert.equal(retry.stderr, "");
   }
 });
 

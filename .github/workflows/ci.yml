@@ -1449,9 +1449,13 @@ jobs:
     permissions:
       contents: read
       deployments: write
+    outputs:
+      deployment-id: ${{ steps.record.outputs.deployment-id }}
+      status-id: ${{ steps.record.outputs.status-id }}
     steps:
       # Never check out PR-controlled code in a job with a deployment-write token.
       - name: Record successful staging deployment
+        id: record
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1479,17 +1483,23 @@ jobs:
           )"
           status_payload="$(
             jq -n \
+              --arg log_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}" \
               '{
                 state: "success",
                 description: "Migrations, smoke, Android, referee, and admin E2E passed",
                 environment: "staging",
+                log_url: $log_url,
                 auto_inactive: false
               }'
           )"
-          gh api \
-            --method POST \
-            "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
-            --input - <<<"$status_payload" >/dev/null
+          status_id="$(
+            gh api \
+              --method POST \
+              "repos/${GITHUB_REPOSITORY}/deployments/${deployment_id}/statuses" \
+              --input - --jq '.id' <<<"$status_payload"
+          )"
+          echo "deployment-id=$deployment_id" >>"$GITHUB_OUTPUT"
+          echo "status-id=$status_id" >>"$GITHUB_OUTPUT"
 
   upload-testflight-staging:
     name: Upload staging build to TestFlight
@@ -1588,3 +1598,74 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
         run: .github/scripts/deploy-referee-staging.sh
+
+  finalize-staging-record:
+    name: Finalize verified staging release after publishing
+    needs: [record-staging, upload-testflight-staging, deploy-referee-staging]
+    if: >-
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/staging' &&
+      needs.record-staging.result == 'success' &&
+      needs.upload-testflight-staging.result == 'success' &&
+      needs.deploy-referee-staging.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      # Successful environment jobs can automatically mark the earlier release
+      # record inactive. Restore the status on that same record after both finish.
+      - name: Confirm the published staging release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_ID: ${{ needs.record-staging.outputs.deployment-id }}
+          VERIFIED_STATUS_ID: ${{ needs.record-staging.outputs.status-id }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$DEPLOYMENT_ID" =~ ^[1-9][0-9]*$ || ! "$VERIFIED_STATUS_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::Missing original staging release identifiers."
+            exit 1
+          fi
+          staging_head="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/staging" --jq '.object.sha')"
+          if [[ "$staging_head" != "$GITHUB_SHA" ]]; then
+            echo "Staging has advanced. Leaving the previous release record as it stands."
+            exit 0
+          fi
+
+          statuses="repos/${GITHUB_REPOSITORY}/deployments/${DEPLOYMENT_ID}/statuses"
+          description="Migrations, smoke, Android, referee, and admin E2E passed"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          # Only repair an automatic inactive status immediately over our original
+          # success. A retry may find its own successful POST already recorded.
+          action="$(
+            gh api "${statuses}?per_page=3" | jq -r \
+              --arg original "$VERIFIED_STATUS_ID" --arg description "$description" \
+              --arg run "$run_url" --argjson attempt "$GITHUB_RUN_ATTEMPT" '
+                def bot: .creator.login == "github-actions[bot]";
+                def verified: bot and .state == "success" and .description == $description;
+                def original: verified and (.id | tostring) == $original;
+                def automatic: bot and .state == "inactive" and .description == ""
+                  and .log_url == "" and .environment_url == "";
+                def same_run: .log_url as $url |
+                  any(range(1; $attempt + 1); $url == ($run + "/attempts/" + tostring));
+                if (.[0] | original) then "done"
+                elif (.[0] | automatic) and (.[1] | original) then "restore"
+                elif (.[0] | verified and same_run) and (.[1] | automatic) and (.[2] | original)
+                  then "done"
+                else "unexpected" end
+              '
+          )"
+          case "$action" in
+            done) exit 0 ;;
+            restore) ;;
+            *) echo "::error::Unexpected staging release status. Inspect its history."; exit 1 ;;
+          esac
+
+          gh api --method POST "$statuses" \
+            -f state=success \
+            -f description="$description" \
+            -f environment=staging \
+            -F auto_inactive=false \
+            -f log_url="${run_url}/attempts/${GITHUB_RUN_ATTEMPT}" >/dev/null
