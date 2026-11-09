@@ -673,6 +673,13 @@ jobs:
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_player_blocking.sql
 
+      - name: Verify checkout load tracking and access controls
+        run: |
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_checkout_load_tracking.sql
+
       - name: Verify once-only assessment initialization on the full schema
         shell: bash
         run: |

@@ -160,6 +160,7 @@ export GRADLE_OPTS="${GRADLE_OPTS:-} -Dorg.gradle.daemon=false -Dorg.gradle.conf
 private_command 'Flutter dependency resolution' flutter pub get
 private_command 'Production Android bundle build' flutter build appbundle --release --flavor production \
   --build-name "$build_name" --build-number "$build_number" \
+  --dart-define=APP_RELEASE_VERSION="$build_name+$build_number" \
   --dart-define=APP_ENV=production \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \

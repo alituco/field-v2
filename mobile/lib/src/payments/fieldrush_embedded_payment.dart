@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_stripe/flutter_stripe.dart';
 
+import 'checkout_load_tracking.dart';
 import 'payment_service.dart';
 
 typedef FieldrushEmbeddedPaymentSessionFactory =
@@ -32,13 +33,15 @@ class StripeFieldrushEmbeddedPaymentSession
     @visibleForTesting
     Future<void> Function(IntentCreationCallbackParams)? intentCreationCallback,
     @visibleForTesting Duration loadTimeout = const Duration(seconds: 20),
+    @visibleForTesting CheckoutLoadEventWriter? loadEventWriter,
   }) : currency = currency.trim().toUpperCase(),
        _controller = controller ?? EmbeddedPaymentElementController(),
        _configureNativePayments =
            configureNativePayments ?? PaymentService.configureNativePayments,
        _intentCreationCallback =
            intentCreationCallback ?? Stripe.instance.intentCreationCallback,
-       _loadTimeout = loadTimeout;
+       _loadTimeout = loadTimeout,
+       _loadAttempt = CheckoutLoadAttempt(writer: loadEventWriter);
 
   // Flutter Stripe routes handlers and native embedded events globally. A second
   // view must not replace those handlers while the first one is still mounted.
@@ -51,6 +54,7 @@ class StripeFieldrushEmbeddedPaymentSession
   final Future<void> Function(IntentCreationCallbackParams)
   _intentCreationCallback;
   final Duration _loadTimeout;
+  final CheckoutLoadAttempt _loadAttempt;
 
   Future<void>? _initialization;
   Future<void>? _closing;
@@ -88,16 +92,23 @@ class StripeFieldrushEmbeddedPaymentSession
   Future<void> initialize() => _initialization ??= _initialize();
 
   Future<void> _initialize() async {
-    if (_closed || _disposed) return;
+    if (_closed || _disposed || _isClosing) return;
+    _loadAttempt.start();
     if (currency != 'USD' ||
         amountFils <= 0 ||
         amountFils % 10 != 0 ||
         amountFils ~/ 10 > 99999999) {
-      _failLoading('Checkout returned an invalid total.');
+      _failLoading(
+        'invalid_total',
+        message: 'Checkout returned an invalid total.',
+      );
       return;
     }
     if (_owner != null && !identical(_owner, this)) {
-      _failLoading('Another checkout is open. Close it and try again.');
+      _failLoading(
+        'checkout_busy',
+        message: 'Another checkout is open. Close it and try again.',
+      );
       return;
     }
     _owner = this;
@@ -123,14 +134,25 @@ class StripeFieldrushEmbeddedPaymentSession
         ),
         onPaymentOptionChanged: _onPaymentOptionChanged,
         onHeightChanged: _onHeightChanged,
-        onLoadingFailed: (_) => _failLoading(_loadFailureMessage),
+        onLoadingFailed: (_) => _failLoading('selector_failed'),
         // Normal controller.confirm() also emits onFormSheetConfirmComplete.
         // Handle only its Future so a successful charge is never processed twice.
       );
-      _loadTimer = Timer(_loadTimeout, () => _failLoading(_loadFailureMessage));
+      _loadTimer = Timer(
+        _loadTimeout,
+        () => _failLoading(
+          'selector_timeout',
+          outcome: CheckoutLoadOutcome.timedOut,
+        ),
+      );
       _notify();
+    } on TimeoutException {
+      _failLoading(
+        'configuration_timeout',
+        outcome: CheckoutLoadOutcome.timedOut,
+      );
     } catch (_) {
-      _failLoading(_loadFailureMessage);
+      _failLoading('configuration_failed');
     }
   }
 
@@ -160,13 +182,19 @@ class StripeFieldrushEmbeddedPaymentSession
       !_closed && !_disposed && !_isClosing && _loadingError == null;
 
   void _markLoaded() {
+    _loadAttempt.finish(CheckoutLoadOutcome.ready);
     _loaded = true;
     _loadTimer?.cancel();
     _loadTimer = null;
   }
 
-  void _failLoading(String message) {
+  void _failLoading(
+    String reason, {
+    String message = _loadFailureMessage,
+    CheckoutLoadOutcome outcome = CheckoutLoadOutcome.failed,
+  }) {
     if (_closed || _disposed || _isClosing) return;
+    _loadAttempt.finish(outcome, reason: reason);
     _loadTimer?.cancel();
     _loadTimer = null;
     _loadingError = message;
@@ -277,6 +305,7 @@ class StripeFieldrushEmbeddedPaymentSession
   @override
   Future<void> close() {
     _isClosing = true;
+    _loadAttempt.finish(CheckoutLoadOutcome.closed);
     return _closing ??= _close();
   }
 
