@@ -9,6 +9,7 @@ import 'src/auth/fieldrush_account.dart';
 import 'src/auth/staging_account_switch.dart';
 import 'src/config/app_config.dart';
 import 'src/notifications/fieldrush_push.dart';
+import 'src/payments/checkout_load_delivery.dart';
 
 Future<void> main() => runFieldApp();
 
@@ -30,6 +31,10 @@ Future<void> runFieldApp({
             ? StagingSessionStorage()
             : null,
       ),
+    );
+    CheckoutLoadDelivery.instance.initialize(
+      Supabase.instance.client,
+      config.supabaseUrl,
     );
     Supabase.instance.client.auth.onAuthStateChange.listen((event) {
       if (event.event == AuthChangeEvent.signedOut) {

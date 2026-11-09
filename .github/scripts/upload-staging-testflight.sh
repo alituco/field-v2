@@ -208,6 +208,7 @@ flutter build ios \
   --flavor staging \
   --build-name "$build_name" \
   --build-number "$build_number" \
+  --dart-define=APP_RELEASE_VERSION="$build_name+$build_number" \
   --dart-define=APP_ENV=staging \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
