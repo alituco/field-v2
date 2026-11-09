@@ -50,6 +50,32 @@ stores the worker authorization in Supabase Vault, schedules it every five
 minutes, and enables the webhook. The endpoint can stay disabled while this
 branch is under review; it must not deliver events to an undeployed handler.
 
+## Checking payment-option loads
+
+In the target Supabase project's SQL Editor, run this query to see how often
+the native card selector loaded, how long it took, and why an attempt ended.
+
+```sql
+select *
+from fieldrush_private.checkout_load_health_daily
+order by utc_day desc, platform, app_version, load_status, reason;
+```
+
+Each retry counts as a new attempt. `ready` means the selector showed content
+or supplied a payment option. `failed` and `timed_out` include a reason that
+identifies the failing step. `closed` means the app closed or replaced the
+selector during loading. A start with no reported outcome appears as `loading`,
+then `unconfirmed` after five minutes. A late outcome updates the same attempt.
+
+Counts cover signed-in players running a build that includes this tracking.
+When delivery fails, the app can retry up to 64 recent events for up to an
+hour in the original account. A device that stays offline can leave a gap.
+The database keeps 30 days of attempts, grouped by the UTC date of first
+receipt. Release builds report their version and build number. Local builds
+can set `--dart-define=APP_RELEASE_VERSION=1.0.0+1` to label the report.
+The selector runs after a paid quote and before payment confirmation. For
+declines, charges and refunds, use the payment records described below.
+
 ## Booking and refund guarantees
 
 The authorization/capture contract follows Stripe's

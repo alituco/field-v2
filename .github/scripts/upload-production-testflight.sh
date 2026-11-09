@@ -194,6 +194,7 @@ cd "$GITHUB_WORKSPACE/mobile"
 flutter pub get
 flutter build ios --release --no-codesign --config-only --flavor production \
   --build-name "$build_name" --build-number "$build_number" \
+  --dart-define=APP_RELEASE_VERSION="$build_name+$build_number" \
   --dart-define=APP_ENV=production \
   --dart-define=SUPABASE_URL="$SUPABASE_URL" \
   --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \

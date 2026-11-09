@@ -6,6 +6,7 @@ import 'package:field/src/auth/fieldrush_auth_theme.dart';
 import 'package:field/src/open_queue/fieldrush_checkout_sheet.dart';
 import 'package:field/src/open_queue/open_queue.dart';
 import 'package:field/src/open_queue/open_queue_repository.dart';
+import 'package:field/src/payments/checkout_load_tracking.dart';
 import 'package:field/src/payments/fieldrush_embedded_payment.dart';
 import 'package:field/src/payments/payment_service.dart';
 import 'package:field/src/support/contact_support_sheet.dart';
@@ -28,6 +29,7 @@ void main() {
       final nativeViews = _NativePaymentViews(tester);
       final repository = _Repository();
       final sessions = <StripeFieldrushEmbeddedPaymentSession>[];
+      final loadEvents = <(String, CheckoutLoadOutcome, String?)>[];
       final element = find.byType(EmbeddedPaymentElement);
       final loading = find.bySemanticsLabel('Loading secure payment options');
       final semantics = tester.ensureSemantics();
@@ -44,6 +46,15 @@ void main() {
               // Only native configuration/OS channels are stubbed. Use the real
               // session, Stripe widget and Flutter Android platform-view layer.
               configureNativePayments: () async {},
+              loadEventWriter:
+                  ({
+                    required attemptId,
+                    required outcome,
+                    required elapsedMs,
+                    reason,
+                  }) async {
+                    loadEvents.add((attemptId, outcome, reason));
+                  },
             );
             sessions.add(session);
             return session;
@@ -130,6 +141,15 @@ void main() {
         await tester.pump();
         expect(_payButton(tester).onPressed, isNotNull);
         expect(repository.embeddedBookCalls, 0);
+        final firstAttempt = loadEvents.first.$1;
+        final retryAttempt = loadEvents.last.$1;
+        expect(firstAttempt, isNot(retryAttempt));
+        expect(loadEvents, [
+          (firstAttempt, CheckoutLoadOutcome.started, null),
+          (firstAttempt, CheckoutLoadOutcome.timedOut, 'selector_timeout'),
+          (retryAttempt, CheckoutLoadOutcome.started, null),
+          (retryAttempt, CheckoutLoadOutcome.ready, null),
+        ]);
       } finally {
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:field/src/payments/checkout_load_tracking.dart';
 import 'package:field/src/payments/fieldrush_embedded_payment.dart';
 import 'package:field/src/payments/payment_service.dart';
 import 'package:flutter/foundation.dart';
@@ -13,16 +14,28 @@ void main() {
   late _FakeController controller;
   late StripeFieldrushEmbeddedPaymentSession session;
   late List<IntentCreationCallbackParams> responses;
+  final loadEvents = <(CheckoutLoadOutcome, String?)>[];
+
+  Future<void> recordLoad({
+    required String attemptId,
+    required CheckoutLoadOutcome outcome,
+    required int elapsedMs,
+    String? reason,
+  }) async {
+    loadEvents.add((outcome, reason));
+  }
 
   setUp(() {
     controller = _FakeController();
     responses = [];
+    loadEvents.clear();
     session = StripeFieldrushEmbeddedPaymentSession(
       amountFils: 13000,
       currency: 'usd',
       controller: controller,
       configureNativePayments: () async {},
       intentCreationCallback: (response) async => responses.add(response),
+      loadEventWriter: recordLoad,
     );
   });
 
@@ -128,11 +141,73 @@ void main() {
       amountFils: 13001,
       currency: 'USD',
       configureNativePayments: () async => fail('Must not configure Stripe'),
+      loadEventWriter: recordLoad,
     );
     await session.initialize();
     expect(session.loadingError, 'Checkout returned an invalid total.');
     expect(session.isReady, isFalse);
+    expect(loadEvents, [
+      (CheckoutLoadOutcome.started, null),
+      (CheckoutLoadOutcome.failed, 'invalid_total'),
+    ]);
   });
+
+  test('SDK load failures are recorded once without native details', () async {
+    await session.initialize();
+    final view = session.buildView() as EmbeddedPaymentElement;
+    view.onLoadingFailed!(
+      const EmbeddedPaymentElementLoadingException(
+        message: 'sensitive SDK details',
+      ),
+    );
+    view.onHeightChanged!(110);
+    await session.close();
+    expect(loadEvents, [
+      (CheckoutLoadOutcome.started, null),
+      (CheckoutLoadOutcome.failed, 'selector_failed'),
+    ]);
+  });
+
+  test(
+    'closing a selector before its first content records a dismissal',
+    () async {
+      await session.initialize();
+      final view = session.buildView() as EmbeddedPaymentElement;
+      view.onHeightChanged!(1);
+      view.onPaymentOptionChanged!(null);
+      session.dispose();
+      await session.close();
+      view.onHeightChanged!(110);
+      expect(loadEvents, [
+        (CheckoutLoadOutcome.started, null),
+        (CheckoutLoadOutcome.closed, null),
+      ]);
+    },
+  );
+
+  for (final timesOut in [false, true]) {
+    test('native configuration reports failure (timeout: $timesOut)', () async {
+      await session.close();
+      session.dispose();
+      session = StripeFieldrushEmbeddedPaymentSession(
+        amountFils: 13000,
+        currency: 'USD',
+        configureNativePayments: () async {
+          if (timesOut) return Completer<void>().future;
+          throw StateError('sensitive configuration details');
+        },
+        loadTimeout: const Duration(milliseconds: 5),
+        loadEventWriter: recordLoad,
+      );
+      await session.initialize();
+      expect(loadEvents, [
+        (CheckoutLoadOutcome.started, null),
+        timesOut
+            ? (CheckoutLoadOutcome.timedOut, 'configuration_timeout')
+            : (CheckoutLoadOutcome.failed, 'configuration_failed'),
+      ]);
+    });
+  }
 
   test('confirmation supplies the active secret once', () async {
     final view = await ready();
@@ -402,6 +477,7 @@ void main() {
         currency: 'USD',
         controller: controller,
         configureNativePayments: () => configuring.future,
+        loadEventWriter: recordLoad,
       );
       final initializing = session.initialize();
       final closing = session.close();
@@ -419,6 +495,10 @@ void main() {
       await initializing;
       await closing;
       expect(session.isReady, isFalse);
+      expect(loadEvents, [
+        (CheckoutLoadOutcome.started, null),
+        (CheckoutLoadOutcome.closed, null),
+      ]);
       expect(controller.closeCount, 1);
       final replacement = StripeFieldrushEmbeddedPaymentSession(
         amountFils: 13000,
