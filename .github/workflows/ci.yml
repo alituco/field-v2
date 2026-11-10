@@ -1646,14 +1646,15 @@ jobs:
                 def bot: .creator.login == "github-actions[bot]";
                 def verified: bot and .state == "success" and .description == $description;
                 def original: verified and (.id | tostring) == $original;
-                def automatic: bot and .state == "inactive" and .description == ""
-                  and .log_url == "" and .environment_url == "";
                 def same_run: .log_url as $url |
                   any(range(1; $attempt + 1); $url == ($run + "/attempts/" + tostring));
+                def automatic_over_original:
+                  .[1] as $prior | ($prior | original) and
+                  (.[0] | bot and .state == "inactive" and .description == "" and .environment_url == ""
+                    and (.log_url == "" or (.log_url == $prior.log_url and same_run)));
                 if (.[0] | original) then "done"
-                elif (.[0] | automatic) and (.[1] | original) then "restore"
-                elif (.[0] | verified and same_run) and (.[1] | automatic) and (.[2] | original)
-                  then "done"
+                elif automatic_over_original then "restore"
+                elif (.[0] | verified and same_run) and (.[1:] | automatic_over_original) then "done"
                 else "unexpected" end
               '
           )"
