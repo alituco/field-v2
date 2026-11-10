@@ -625,9 +625,17 @@ test("finalizer preserves the verified status, links its run, and skips an obsol
   const source = job("finalize-staging-record");
   const shell = source.split("        run: |\n")[1].replace(/^ {10}/gm, "");
   const description = job("record-staging").match(/state: "success",\s*description: "([^"]+)"/)[1];
-  const original = { id: 17, state: "success", description, creator: { login: "github-actions[bot]" } };
-  const inactive = { ...original, id: 18, state: "inactive", description: "", log_url: "", environment_url: "" };
-  const restored = { ...original, id: 19, log_url: "https://github.com/alituco/field-v2/actions/runs/111/attempts/2" };
+  // The automatically inactivated record in staging run 42718634535 inherited
+  // the preceding success's log URL. GitHub also returns a blank URL on older records.
+  const runId = "42718634535";
+  const runUrl = `https://github.com/alituco/field-v2/actions/runs/${runId}`;
+  const original = {
+    id: 21810903887, state: "success", description, creator: { id: 41898282, login: "github-actions[bot]" },
+    environment: "staging", environment_url: "", log_url: `${runUrl}/attempts/1`,
+  };
+  const inherited = { ...original, id: 21811001219, state: "inactive", description: "" };
+  const inactive = { ...inherited, log_url: "" };
+  const restored = { ...original, id: 21811001220, log_url: `${runUrl}/attempts/2` };
   const script = `gh() {
     if [[ "$1 $2" == "api repos/alituco/field-v2/git/ref/heads/staging" ]]; then
       printf '%s\\n' "$STAGING_HEAD"
@@ -646,8 +654,8 @@ ${shell}`;
       encoding: "utf8",
       env: {
         GITHUB_SERVER_URL: "https://github.com", GITHUB_REPOSITORY: "alituco/field-v2",
-        GITHUB_RUN_ID: "111", GITHUB_RUN_ATTEMPT: "2", DEPLOYMENT_ID: "42",
-        GITHUB_SHA: "release", STAGING_HEAD: "release", VERIFIED_STATUS_ID: "17",
+        GITHUB_RUN_ID: runId, GITHUB_RUN_ATTEMPT: "2", DEPLOYMENT_ID: "42",
+        GITHUB_SHA: "release", STAGING_HEAD: "release", VERIFIED_STATUS_ID: String(original.id),
         STATUS_HISTORY: JSON.stringify([inactive, original]), REF_EXIT: "0", HISTORY_EXIT: "0", STATUS_EXIT: "0",
         ...overrides,
       },
@@ -659,8 +667,13 @@ ${shell}`;
   assert.deepEqual(completed.stderr.trim().split("\n"), [
     "api", "--method", "POST", "repos/alituco/field-v2/deployments/42/statuses",
     "-f", "state=success", "-f", `description=${description}`, "-f", "environment=staging",
-    "-F", "auto_inactive=false", "-f", "log_url=https://github.com/alituco/field-v2/actions/runs/111/attempts/2",
+    "-F", "auto_inactive=false", "-f", `log_url=${runUrl}/attempts/2`,
   ]);
+  for (const attempt of ["1", "2"]) {
+    const result = simulate({ GITHUB_RUN_ATTEMPT: attempt, STATUS_HISTORY: JSON.stringify([inherited, original]) });
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, completed.stderr.replace(`${runUrl}/attempts/2`, `${runUrl}/attempts/${attempt}`));
+  }
   const manual = { login: "operator" };
   for (const [overrides, expectedStatus] of [
     [{ STAGING_HEAD: "newer" }, 0], [{ REF_EXIT: "1" }, 1], [{ DEPLOYMENT_ID: "" }, 1],
@@ -670,6 +683,13 @@ ${shell}`;
       [], [inactive], [{ ...inactive, state: "failure" }, original],
       [{ ...inactive, creator: manual }, original], [{ ...inactive, description: "withdrawn" }, original],
       [{ ...inactive, log_url: "https://example.test/withdrawal" }, original],
+      [{ ...inherited, log_url: restored.log_url }, original],
+      ...[
+        "https://example.test/withdrawal",
+        "https://github.com/alituco/field-v2/actions/runs/222/attempts/1",
+        `${runUrl}/attempts/3`,
+      ].map(log_url => [{ ...inherited, log_url }, { ...original, log_url }]),
+      [inherited, { ...original, id: original.id - 1 }, original],
       [{ ...inactive, environment_url: "https://example.test/" }, original],
       [inactive, { ...original, creator: manual }], [{ ...original, description: "unverified" }],
       [restored, inactive], [restored, { ...inactive, creator: manual }, original],
@@ -687,11 +707,13 @@ ${shell}`;
   assert.equal(lostAcknowledgement.status, 1);
   assert.equal(lostAcknowledgement.stderr, completed.stderr);
   for (const attempt of ["2", "3"]) {
-    const retry = simulate({
-      GITHUB_RUN_ATTEMPT: attempt, STATUS_HISTORY: JSON.stringify([restored, inactive, original]),
-    });
-    assert.equal(retry.status, 0);
-    assert.equal(retry.stderr, "");
+    for (const superseded of [inactive, inherited]) {
+      const retry = simulate({
+        GITHUB_RUN_ATTEMPT: attempt, STATUS_HISTORY: JSON.stringify([restored, superseded, original]),
+      });
+      assert.equal(retry.status, 0);
+      assert.equal(retry.stderr, "");
+    }
   }
 });
 
