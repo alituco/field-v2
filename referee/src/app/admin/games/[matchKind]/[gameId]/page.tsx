@@ -62,6 +62,7 @@ export default function AdminGameDetailPage() {
   const [assignReferee, setAssignReferee] = useState(false);
   const [cancelGame, setCancelGame] = useState(false);
   const [editingPrice, setEditingPrice] = useState(false);
+  const [savingVisibility, setSavingVisibility] = useState(false);
   const [confirmLockTeams, setConfirmLockTeams] = useState(false);
   const [lockingTeams, setLockingTeams] = useState(false);
   const [confirmFillBots, setConfirmFillBots] = useState(false);
@@ -88,6 +89,7 @@ export default function AdminGameDetailPage() {
   useEffect(() => {
     setConfirmFillBots(false);
     setFillingBots(false);
+    setSavingVisibility(false);
     if (botFillRequest.current?.pageKey !== pageKey) botFillRequest.current = null;
   }, [pageKey, accessToken]);
 
@@ -142,6 +144,34 @@ export default function AdminGameDetailPage() {
       }));
     } catch (recordingError) {
       setError(message(recordingError, "Could not load the match recording."));
+    }
+  }
+
+  async function updateFixtureVisibility() {
+    if (!accessToken || !detail || savingVisibility || detail.fixture.id !== gameId ||
+        matchKind !== "SOLO" || detail.fixture.matchKind !== "SOLO") return;
+    const expectedPage = currentPageIdentity.current;
+    const canApply = () => mounted.current && currentPageIdentity.current === expectedPage;
+    setSavingVisibility(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await fetchJson<{ fixturesHiddenAt: string | null }>(
+        `/api/referee/admin/games/solo/${gameId}/fixture-visibility`,
+        {
+          method: "PATCH",
+          headers: { ...auth(accessToken), "Content-Type": "application/json" },
+          body: JSON.stringify({ hidden: !detail.fixturesHiddenAt }),
+        },
+      );
+      if (!canApply()) return;
+      setDetail(current => current && { ...current, fixturesHiddenAt: result.fixturesHiddenAt });
+      setNotice(result.fixturesHiddenAt ? "Game hidden from Fixtures." : "Game restored to Fixtures.");
+      await load(true, expectedPage);
+    } catch (error) {
+      if (canApply()) setError(message(error, "Could not update fixture visibility."));
+    } finally {
+      if (canApply()) setSavingVisibility(false);
     }
   }
 
@@ -209,6 +239,10 @@ export default function AdminGameDetailPage() {
   }
 
   const fixture = detail.fixture;
+  const canChangeVisibility = fixture.matchKind === "SOLO" && (
+    Boolean(detail.fixturesHiddenAt) ||
+    (fixture.status !== "LIVE" && fixture.endsAt && Date.parse(fixture.endsAt) <= Date.now())
+  );
   const seasonZero = fixture.matchKind === "SOLO" && fixture.ratingPolicyId === "field-sr-season0-v2";
   const activeReserve = detail.reserves.active[0];
   const resolutionCase = detail.resolutionCase;
@@ -384,7 +418,15 @@ export default function AdminGameDetailPage() {
                 </>
               )}
               <div><dt>Referee phone</dt><dd>{detail.assignedReferee?.phone ?? "—"}</dd></div>
+              {canChangeVisibility ? (
+                <div><dt>Player Fixtures page</dt><dd>{detail.fixturesHiddenAt ? "Hidden" : "Visible"}</dd></div>
+              ) : null}
             </dl>
+            {canChangeVisibility ? (
+              <button className={styles.secondaryButton} disabled={savingVisibility} onClick={() => void updateFixtureVisibility()} type="button">
+                {savingVisibility ? "Saving…" : detail.fixturesHiddenAt ? "Show on Fixtures" : "Hide from Fixtures"}
+              </button>
+            ) : null}
             {fixture.cancellationReason ? (
               <div className={styles.cancellation}><strong>{fixture.cancellationCode ?? "Cancelled"}</strong><p>{fixture.cancellationReason}</p></div>
             ) : null}

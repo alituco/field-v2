@@ -127,6 +127,7 @@ class SupabaseOpenQueueRepository
     minimum_players,
     participation_rules_version,
     actual_started_at,
+    solo_fixture_visibility(hidden_at),
     goalkeeper_capacity,
     defender_capacity,
     midfielder_capacity,

@@ -188,10 +188,21 @@ class _FieldrushFixturePageState extends State<FieldrushFixturePage> {
               ? freshness
               : priority.indexOf(a.key).compareTo(priority.indexOf(b.key));
         });
-      final byId = <String, OpenQueueGame>{
-        for (final source in orderedSources)
-          for (final game in source.value) game.id: game,
-      };
+      final byId = <String, OpenQueueGame>{};
+      final hiddenAtVersion = <String, int>{};
+      for (final source in orderedSources) {
+        final version = _sourceVersions[source.key] ?? 0;
+        for (final game in source.value) {
+          // Concurrent reads can straddle a visibility change. Honor a hide
+          // from any source until a later refresh sees the game restored.
+          if (game.hiddenFromFixtures) {
+            hiddenAtVersion[game.id] = version;
+            byId.remove(game.id);
+          } else if (hiddenAtVersion[game.id] != version) {
+            byId[game.id] = game;
+          }
+        }
+      }
       final games =
           byId.values
               .where(

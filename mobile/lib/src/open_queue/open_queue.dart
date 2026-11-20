@@ -196,6 +196,7 @@ class OpenQueueGame {
     this.lowestDivision = 5,
     this.fieldId,
     this.marketCityId,
+    this.hiddenFromFixtures = false,
     this.locationAddress,
     this.locationCity,
     this.locationState,
@@ -276,6 +277,7 @@ class OpenQueueGame {
 
   final String? fieldId;
   final String? marketCityId;
+  final bool hiddenFromFixtures;
 
   bool belongsToCity(String cityId, String cityTimezone) => marketCityId != null
       ? marketCityId == cityId
@@ -635,6 +637,7 @@ class OpenQueueGame {
       lowestDivision: _asInt(json['lowest_division'], fallback: 5),
       fieldId: _nonEmptyString(json['field_id']),
       marketCityId: _nonEmptyString(json['market_city_id']),
+      hiddenFromFixtures: json['solo_fixture_visibility']?['hidden_at'] != null,
       locationAddress: _nonEmptyString(json['location_address']),
       locationCity: _nonEmptyString(json['location_city']),
       locationState: _nonEmptyString(json['location_state']),
@@ -708,6 +711,7 @@ class OpenQueueGame {
       lowestDivision: _asInt(json['lowest_division'], fallback: 5),
       fieldId: _nonEmptyString(json['field_id']),
       marketCityId: _nonEmptyString(json['market_city_id']),
+      hiddenFromFixtures: json['solo_fixture_visibility']?['hidden_at'] != null,
       locationAddress: _nonEmptyString(json['location_address']),
       locationCity: _nonEmptyString(json['location_city']),
       locationState: _nonEmptyString(json['location_state']),

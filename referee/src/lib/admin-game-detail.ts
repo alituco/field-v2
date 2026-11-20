@@ -107,6 +107,7 @@ export type AdminGameResolutionCase = {
 
 export type AdminGameDetail = {
   fixture: RefereeFixture;
+  fixturesHiddenAt: string | null;
   currency: AdminGameCurrency;
   pricing: AdminGamePricing | null;
   formation: AdminGameFormation | null;
@@ -168,7 +169,7 @@ export async function loadAdminGameDetail(
     stoppageResult,
     ratingSummary,
     resolutionCase,
-    currencyResult,
+    gameSettings,
     pricing,
     formation,
   ] = await Promise.all([
@@ -204,8 +205,9 @@ export async function loadAdminGameDetail(
       ? loadClanRatingSummary(db, matchId)
       : loadSoloRatingSummary(db, matchId),
     loadAdminGameResolution(db, matchKind, matchId),
-    db.from(matchKind === "SOLO" ? "open_queue_games" : "fixtures")
-      .select("currency").eq("id", matchId).single(),
+    matchKind === "SOLO"
+      ? db.from("open_queue_games").select("currency,solo_fixture_visibility(hidden_at)").eq("id", matchId).single()
+      : db.from("fixtures").select("currency").eq("id", matchId).single(),
     matchKind === "SOLO" ? loadAdminGamePricing(db, matchId) : Promise.resolve(null),
     matchKind === "SOLO" ? loadAdminGameFormation(db, matchId) : Promise.resolve(null),
   ]);
@@ -215,13 +217,14 @@ export async function loadAdminGameDetail(
   if (auditResult.error) throw new Error(`Could not load game audit: ${auditResult.error.message}`);
   if (reportResult.error) throw new Error(`Could not load game reports: ${reportResult.error.message}`);
   if (stoppageResult.error) throw new Error(`Could not load stoppages: ${stoppageResult.error.message}`);
-  if (currencyResult.error) throw new Error(`Could not load game currency: ${currencyResult.error.message}`);
+  if (gameSettings.error) throw new Error(`Could not load game settings: ${gameSettings.error.message}`);
 
   const assignment = assignmentResult.data as Row | null;
   const referee = relation(assignment?.referee);
   return {
     fixture,
-    currency: adminGameCurrency(matchKind, currencyResult.data?.currency),
+    currency: adminGameCurrency(matchKind, gameSettings.data?.currency),
+    fixturesHiddenAt: nullableText(relation(record(gameSettings.data).solo_fixture_visibility).hidden_at),
     pricing,
     formation,
     participants,
