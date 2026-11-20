@@ -21,6 +21,11 @@ runs:
         sudo chmod 666 /dev/kvm
         test -r /dev/kvm && test -w /dev/kvm
 
+    # The runner action installs its system image before the pre-launch hook.
+    - name: Reserve disk space before installing the emulator system image
+      shell: bash
+      run: bash "$GITHUB_WORKSPACE/.github/scripts/prepare-android-runner.sh"
+
     - name: Boot Android and run the supplied check
       uses: ReactiveCircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
       with:
