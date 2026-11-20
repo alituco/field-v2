@@ -107,7 +107,7 @@ export type AdminGameResolutionCase = {
 
 export type AdminGameDetail = {
   fixture: RefereeFixture;
-  fixturesHiddenAt: string | null;
+  fixturesHiddenAt?: string | null;
   currency: AdminGameCurrency;
   pricing: AdminGamePricing | null;
   formation: AdminGameFormation | null;
@@ -205,9 +205,7 @@ export async function loadAdminGameDetail(
       ? loadClanRatingSummary(db, matchId)
       : loadSoloRatingSummary(db, matchId),
     loadAdminGameResolution(db, matchKind, matchId),
-    matchKind === "SOLO"
-      ? db.from("open_queue_games").select("currency,solo_fixture_visibility(hidden_at)").eq("id", matchId).single()
-      : db.from("fixtures").select("currency").eq("id", matchId).single(),
+    loadAdminGameSettings(db, matchKind, matchId),
     matchKind === "SOLO" ? loadAdminGamePricing(db, matchId) : Promise.resolve(null),
     matchKind === "SOLO" ? loadAdminGameFormation(db, matchId) : Promise.resolve(null),
   ]);
@@ -217,14 +215,12 @@ export async function loadAdminGameDetail(
   if (auditResult.error) throw new Error(`Could not load game audit: ${auditResult.error.message}`);
   if (reportResult.error) throw new Error(`Could not load game reports: ${reportResult.error.message}`);
   if (stoppageResult.error) throw new Error(`Could not load stoppages: ${stoppageResult.error.message}`);
-  if (gameSettings.error) throw new Error(`Could not load game settings: ${gameSettings.error.message}`);
 
   const assignment = assignmentResult.data as Row | null;
   const referee = relation(assignment?.referee);
   return {
     fixture,
-    currency: adminGameCurrency(matchKind, gameSettings.data?.currency),
-    fixturesHiddenAt: nullableText(relation(record(gameSettings.data).solo_fixture_visibility).hidden_at),
+    ...gameSettings,
     pricing,
     formation,
     participants,
@@ -261,6 +257,27 @@ export async function loadAdminGameDetail(
     })),
     resolutionCase,
   };
+}
+
+export async function loadAdminGameSettings(db: SupabaseClient, matchKind: "SOLO" | "CLAN", matchId: string) {
+  if (matchKind === "SOLO") {
+    const { data, error } = await db.from("open_queue_games")
+      .select("currency,solo_fixture_visibility(hidden_at)").eq("id", matchId).single();
+    if (!error) {
+      return {
+        currency: adminGameCurrency(matchKind, data?.currency),
+        fixturesHiddenAt: nullableText(relation(data?.solo_fixture_visibility).hidden_at),
+      };
+    }
+    // The dashboard can deploy before the visibility migration reaches the API.
+    if (error.code !== "PGRST200" || !error.message.includes("'solo_fixture_visibility'")) {
+      throw new Error(`Could not load game settings: ${error.message}`);
+    }
+  }
+  const table = matchKind === "SOLO" ? "open_queue_games" : "fixtures";
+  const { data, error } = await db.from(table).select("currency").eq("id", matchId).single();
+  if (error) throw new Error(`Could not load game settings: ${error.message}`);
+  return { currency: adminGameCurrency(matchKind, data?.currency) };
 }
 
 async function loadAdminGameResolution(

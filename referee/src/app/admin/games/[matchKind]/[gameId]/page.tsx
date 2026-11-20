@@ -148,7 +148,7 @@ export default function AdminGameDetailPage() {
   }
 
   async function updateFixtureVisibility() {
-    if (!accessToken || !detail || savingVisibility || detail.fixture.id !== gameId ||
+    if (!accessToken || !detail || detail.fixturesHiddenAt === undefined || savingVisibility || detail.fixture.id !== gameId ||
         matchKind !== "SOLO" || detail.fixture.matchKind !== "SOLO") return;
     const expectedPage = currentPageIdentity.current;
     const canApply = () => mounted.current && currentPageIdentity.current === expectedPage;
@@ -239,7 +239,7 @@ export default function AdminGameDetailPage() {
   }
 
   const fixture = detail.fixture;
-  const canChangeVisibility = fixture.matchKind === "SOLO" && (
+  const canChangeVisibility = fixture.matchKind === "SOLO" && detail.fixturesHiddenAt !== undefined && (
     Boolean(detail.fixturesHiddenAt) ||
     (fixture.status !== "LIVE" && fixture.endsAt && Date.parse(fixture.endsAt) <= Date.now())
   );
