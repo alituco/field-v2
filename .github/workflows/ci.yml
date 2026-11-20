@@ -282,7 +282,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Check admin inbox navigation before hosted journeys
-        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-overview-timezone.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts referee-assigned-games.spec.ts season-zero-operations.spec.ts broadcaster-pairing.spec.ts broadcaster-desktop.spec.ts admin-game-bots.spec.ts broadcast-scoreboard.spec.ts --project=chromium
+        run: npm run test:ui -- admin-inbox-navigation.spec.ts admin-overview-timezone.spec.ts admin-fixture-visibility.spec.ts admin-cities.spec.ts admin-seasons.spec.ts referee-finalization-diagnostics.spec.ts referee-assigned-games.spec.ts season-zero-operations.spec.ts broadcaster-pairing.spec.ts broadcaster-desktop.spec.ts admin-game-bots.spec.ts broadcast-scoreboard.spec.ts --project=chromium
 
       - name: Build referee app
         run: npm run build
@@ -679,6 +679,13 @@ jobs:
             psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
             -c BEGIN -f /dev/stdin -c ROLLBACK \
             <supabase/scripts/verify_checkout_load_tracking.sql
+
+      - name: Verify admin fixture visibility and preserved game history
+        run: |
+          docker exec -i supabase_db_field_v2 \
+            psql -X -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c BEGIN -f /dev/stdin -c ROLLBACK \
+            <supabase/scripts/verify_admin_fixture_visibility.sql
 
       - name: Verify once-only assessment initialization on the full schema
         shell: bash

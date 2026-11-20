@@ -19,6 +19,54 @@ import 'package:flutter_test/flutter_test.dart';
 final _now = DateTime.utc(2026, 10, 10, 17);
 
 void main() {
+  testWidgets('hiding and restoring a past booked game updates Fixtures', (
+    tester,
+  ) async {
+    final row = {
+      'id': 'past-game',
+      'starts_at': '2026-10-01T19:00:00Z',
+      'ends_at': '2026-10-01T20:00:00Z',
+      'timezone': 'America/Phoenix',
+      'currency': 'USD',
+    };
+    final visible = OpenQueueGame.fromJson(row);
+    final hidden = {
+      ...row,
+      'solo_fixture_visibility': {'hidden_at': _now.toIso8601String()},
+    };
+    final repository = _Repository(
+      fixtures: [visible],
+      bookings: [_booking(visible)],
+    );
+    final card = find.byKey(const ValueKey('solo-fixture-past-game'));
+    await _pump(tester, repository);
+    expect(card, findsOneWidget);
+
+    // A confirmed booking can still return this overdue game even though the
+    // fixtures feed no longer lists it.
+    final pendingFixtures = Completer<List<OpenQueueGame>>();
+    repository.fixtureResponse = pendingFixtures;
+    repository.bookings = [_booking(OpenQueueGame.fromBookingJson(hidden))];
+    await _pump(tester, repository, activation: 1);
+    expect(card, findsNothing);
+    pendingFixtures.complete([visible]);
+    await tester.pumpAndSettle();
+    expect(card, findsNothing);
+    expect(find.text('No games yet'), findsOneWidget);
+
+    // A feed response racing the admin change may contain the game's ID but
+    // return its newer, hidden metadata during hydration.
+    repository.fixtureResponse = null;
+    repository.fixtures = [OpenQueueGame.fromJson(hidden)];
+    await _pump(tester, repository, activation: 2);
+    expect(card, findsNothing);
+
+    repository.fixtures = [visible];
+    repository.bookings = [_booking(visible)];
+    await _pump(tester, repository, activation: 3);
+    expect(card, findsOneWidget);
+  });
+
   testWidgets('small games show spots without minimum and maximum copy', (
     tester,
   ) async {
