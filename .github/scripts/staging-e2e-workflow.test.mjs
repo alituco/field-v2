@@ -501,11 +501,14 @@ test("fresh Android job only executes the encrypted prebuilt binary", () => {
   assert.doesNotMatch(android, /flutter build|build-only|npm ci|playwright install|deploy-supabase\.sh/);
 });
 
-test("preflight and protected Android job share late-guarded 2 GiB emulator", () => {
+test("preflight and protected Android job reserve disk before SDK install and again before emulator launch", () => {
   assert.match(job("android-staging-e2e"), /uses: \.\/\.github\/actions\/staging-android-emulator/);
   assert.match(preflight, /uses: \.\/\.github\/actions\/staging-android-emulator/);
   assert.match(preflight, /script: bash .*check-android-emulator\.sh/);
   assert.doesNotMatch(preflight, /script: \|/);
+  const reserveDisk = emulator.indexOf('run: bash "$GITHUB_WORKSPACE/.github/scripts/prepare-android-runner.sh"');
+  const installEmulator = emulator.indexOf("uses: ReactiveCircus/android-emulator-runner@");
+  assert.ok(reserveDisk >= 0 && reserveDisk < installEmulator);
   assert.match(emulator, /disk-size: 2048M/);
   assert.match(emulator, /pre-emulator-launch-script: .*prepare-android-emulator\.sh/);
   assert.ok(emulator.indexOf("sudo udevadm settle") < emulator.indexOf("test -r /dev/kvm"));

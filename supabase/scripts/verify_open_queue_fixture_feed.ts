@@ -88,8 +88,8 @@ async function verifyFeed(verifierUserId: string) {
       .all([
         authenticated.rpc("list_open_queue_fixture_games"),
         admin.from("open_queue_games").select(
-          "id,status,starts_at,white_score,black_score,goalkeeper_capacity,defender_capacity,midfielder_capacity,attacker_capacity",
-        ).order("starts_at"),
+          "id,status,starts_at,white_score,black_score,goalkeeper_capacity,defender_capacity,midfielder_capacity,attacker_capacity,solo_fixture_visibility()",
+        ).is("solo_fixture_visibility", null).order("starts_at"),
         admin.from("open_queue_bookings").select(
           "id,game_id,profile_id,role,team,status",
         ).eq("status", "CONFIRMED"),
@@ -117,12 +117,14 @@ async function verifyFeed(verifierUserId: string) {
 
   assert(
     feed.length === games.length,
-    "The feed omitted a game.",
+    "The feed does not match the number of visible solo games.",
   );
   assert(feed.length > 0, "The solo Fixtures feed is empty.");
   assert(
-    feed.some((row) => row.status === "FINAL"),
-    "The feed does not include completed solo games.",
+    games.filter((game) => game.status === "FINAL").every((game) =>
+      feed.some((row) => row.id === game.id && row.status === "FINAL")
+    ),
+    "The feed omitted a visible completed solo game.",
   );
   assert(
     feed.some((row) => row.status === "OPEN" || row.status === "FULL"),
@@ -146,7 +148,7 @@ async function verifyFeed(verifierUserId: string) {
 
   for (const row of feed) {
     const game = gameById.get(row.id);
-    assert(game != null, `Feed game ${row.id} does not exist.`);
+    assert(game != null, `Feed game ${row.id} is missing or hidden.`);
     const confirmed = bookingsByGame.get(row.id) ?? [];
     const countRole = (role: string) =>
       confirmed.filter((booking) => booking.role === role).length;
