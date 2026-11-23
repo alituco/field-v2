@@ -217,6 +217,8 @@ if [[ "$target" == "staging" ]]; then
   # endpoint cannot require a Supabase user JWT.
   deploy_function cloudflare-stream-webhook --no-verify-jwt
   deploy_function profile-goal-clip
+  deploy_function replay-scan-worker --no-verify-jwt
+  supabase db query --linked "select fieldrush_private.set_replay_scanning_enabled(true)"
 
   # These functions deliberately never deploy to production.
   # This endpoint creates the staging-only bootstrap session, so no user JWT
@@ -230,7 +232,10 @@ elif [[ "${DEPLOY_RECORDING_FUNCTIONS:-false}" == "true" ]]; then
   # and webhook routing have been configured.
   deploy_function cloudflare-stream-webhook --no-verify-jwt
   deploy_function profile-goal-clip
+  deploy_function replay-scan-worker --no-verify-jwt
+  supabase db query --linked "select fieldrush_private.set_replay_scanning_enabled(true)"
 else
+  supabase db query --linked "select fieldrush_private.set_replay_scanning_enabled(false)"
   echo "Skipping production recording functions until DEPLOY_RECORDING_FUNCTIONS=true."
 fi
 

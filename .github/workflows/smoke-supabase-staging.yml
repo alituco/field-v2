@@ -3,8 +3,13 @@ name: Staging smoke
 on:
   schedule:
     - cron: "15 5 * * *"
+    - cron: "17,47 * * * *"
   workflow_dispatch:
     inputs:
+      scan_replays:
+        description: Process queued staging replay highlights
+        type: boolean
+        default: false
       deploy_admin:
         description: Deploy the current staging admin PWA after smoke checks (no TestFlight upload)
         required: false
@@ -15,11 +20,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: supabase-staging-${{ inputs.deploy_admin && 'admin-deploy' || 'smoke' }}
-  cancel-in-progress: ${{ !inputs.deploy_admin }}
+  group: supabase-staging-${{ (inputs.scan_replays || github.event.schedule == '17,47 * * * *') && 'replay-scans' || inputs.deploy_admin && 'admin-deploy' || 'smoke' }}
+  cancel-in-progress: ${{ !inputs.deploy_admin && !inputs.scan_replays && github.event.schedule != '17,47 * * * *' }}
 
 jobs:
+  replay-scans:
+    if: github.event.schedule == '17,47 * * * *' || (inputs.scan_replays && github.ref == 'refs/heads/staging')
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/replay-scan-worker.yml
+    with:
+      include_production: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/prod' }}
+
   smoke:
+    if: github.event.schedule != '17,47 * * * *'
     name: Hosted staging API
     runs-on: ubuntu-24.04
     timeout-minutes: 5

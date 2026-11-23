@@ -292,6 +292,7 @@ class FixtureBroadcast {
     this.activeVideoId,
     this.hlsUrl,
     this.replayHlsUrl,
+    this.replayGoalPositions,
     this.streamStartedAt,
     this.streamStoppedAt,
     this.recordingReadyAt,
@@ -303,10 +304,26 @@ class FixtureBroadcast {
   final String? activeVideoId;
   final String? hlsUrl;
   final String? replayHlsUrl;
+
+  /// Banner positions on this exact replay. Null identifies legacy recordings
+  /// using wall-clock estimates. An empty map offers no seekable goal clips.
+  final Map<String, Duration>? replayGoalPositions;
   final DateTime? streamStartedAt;
   final DateTime? streamStoppedAt;
   final DateTime? recordingReadyAt;
   final String? errorMessage;
+
+  Duration? replayGoalPosition(String eventId, Duration? duration) {
+    final position = replayGoalPositions?[eventId];
+    if (position == null ||
+        position.isNegative ||
+        (duration != null &&
+            duration > Duration.zero &&
+            position >= duration)) {
+      return null;
+    }
+    return position;
+  }
 
   bool get isLive => status.toUpperCase() == 'LIVE';
 
@@ -328,12 +345,21 @@ class FixtureBroadcast {
   }
 
   factory FixtureBroadcast.fromJson(Map<String, dynamic> json) {
+    final positions = json['replay_goal_positions'];
     return FixtureBroadcast(
       status: json['status'] as String? ?? 'NOT_CONFIGURED',
       liveInputId: json['live_input_id'] as String?,
       activeVideoId: json['active_video_id'] as String?,
       hlsUrl: json['hls_url'] as String?,
       replayHlsUrl: json['replay_hls_url'] as String?,
+      replayGoalPositions: positions is Map<String, dynamic>
+          ? {
+              for (final entry in positions.entries)
+                if (entry.value case final num seconds
+                    when seconds.isFinite && seconds >= 0)
+                  entry.key: Duration(milliseconds: (seconds * 1000).round()),
+            }
+          : null,
       streamStartedAt: _asDate(json['stream_started_at']),
       streamStoppedAt: _asDate(json['stream_stopped_at']),
       recordingReadyAt: _asDate(json['recording_ready_at']),
@@ -553,6 +579,11 @@ class FixtureHighlightMoment {
   final FixtureTimelineEvent event;
   final Duration start;
   final Duration end;
+
+  static Duration scannedStart(Duration banner) {
+    final start = banner - const Duration(seconds: 30);
+    return start.isNegative ? Duration.zero : start;
+  }
 }
 
 class Fixture {
@@ -711,46 +742,67 @@ class Fixture {
     return _nonEmptyUrl(broadcast?.replayHlsUrl) ?? _nonEmptyUrl(videoUrl);
   }
 
-  /// Goal windows aligned to the recording's wall clock for post-game playback.
-  List<FixtureHighlightMoment> get highlightMoments {
-    return _highlightMomentsFromOrigin(broadcast?.streamStartedAt);
+  List<FixtureHighlightMoment> get highlightMoments =>
+      highlightMomentsForReplay(Duration.zero);
+
+  List<FixtureHighlightMoment> highlightMomentsForReplay(Duration duration) {
+    final positions = broadcast?.replayGoalPositions;
+    if (positions == null) {
+      return _highlightMomentsFromOrigin(replayWallClockOrigin(duration));
+    }
+    if (!isFinal) return const [];
+
+    final moments = <FixtureHighlightMoment>[];
+    for (final event in _creditedGoals) {
+      final banner = broadcast!.replayGoalPosition(event.id, duration);
+      if (banner == null) {
+        continue;
+      }
+      final end = banner + const Duration(seconds: 5);
+      moments.add(
+        FixtureHighlightMoment(
+          event: event,
+          start: FixtureHighlightMoment.scannedStart(banner),
+          end: duration > Duration.zero && end > duration ? duration : end,
+        ),
+      );
+    }
+    moments.sort(
+      (a, b) => positions[a.event.id]!.compareTo(positions[b.event.id]!),
+    );
+    return moments;
   }
 
-  /// Goal windows aligned from the finalized replay rather than its delayed
-  /// live-status timestamp. Both known recording boundaries are considered
-  /// because either boundary can be stale: startup reporting can be delayed,
-  /// while a repeated stop request can move the recorded stop time forward.
-  List<FixtureHighlightMoment> highlightMomentsForReplay(
-    Duration replayDuration,
-  ) {
-    final startedAtMoments = _highlightMomentsFromOrigin(
-      broadcast?.streamStartedAt,
-    );
-    final streamStoppedAt = broadcast?.streamStoppedAt;
-    if (streamStoppedAt == null || replayDuration <= Duration.zero) {
-      return startedAtMoments;
+  /// Used for timestamped events with no position measured in the replay.
+  DateTime? replayWallClockOrigin(Duration? duration) {
+    final started = broadcast?.streamStartedAt;
+    final stopped = broadcast?.streamStoppedAt;
+    if (stopped == null || duration == null || duration <= Duration.zero) {
+      return started;
     }
 
-    final stoppedAtMoments = _highlightMomentsFromOrigin(
-      streamStoppedAt.subtract(replayDuration),
+    final stoppedOrigin = stopped.subtract(duration);
+    final startedCount = _usableHighlightCount(
+      _highlightMomentsFromOrigin(started),
+      duration,
     );
-    final stoppedAtUsableGoals = _usableHighlightCount(
-      stoppedAtMoments,
-      replayDuration,
+    final stoppedCount = _usableHighlightCount(
+      _highlightMomentsFromOrigin(stoppedOrigin),
+      duration,
     );
-    final startedAtUsableGoals = _usableHighlightCount(
-      startedAtMoments,
-      replayDuration,
-    );
-
-    // Prefer the stop-derived boundary on a tie. It is the more accurate
-    // correction when the live-start notification arrived late, and preserves
-    // the existing replay alignment in that case. The start boundary only
-    // takes over when it demonstrably recovers more playable goal windows.
-    return startedAtUsableGoals > stoppedAtUsableGoals
-        ? startedAtMoments
-        : stoppedAtMoments;
+    return startedCount > stoppedCount ? started : stoppedOrigin;
   }
+
+  Iterable<FixtureTimelineEvent> get _creditedGoals => timeline.where(
+    (event) =>
+        event.isCreditedGoal &&
+        !timeline.any(
+          (correction) =>
+              event.goalId != null &&
+              correction.eventType.toUpperCase() == 'CORRECTION' &&
+              correction.goalId == event.goalId,
+        ),
+  );
 
   int _usableHighlightCount(
     List<FixtureHighlightMoment> moments,
@@ -773,18 +825,14 @@ class Fixture {
     const followThrough = Duration(seconds: 20);
     final moments = <FixtureHighlightMoment>[];
     final goals =
-        timeline.where((event) {
-          return event.isCreditedGoal &&
-              event.highlightTimestamp != null &&
-              !timeline.any(
-                (correction) =>
-                    event.goalId != null &&
-                    correction.eventType.toUpperCase() == 'CORRECTION' &&
-                    correction.goalId == event.goalId,
-              );
-        }).toList()..sort((left, right) {
-          return left.highlightTimestamp!.compareTo(right.highlightTimestamp!);
-        });
+        _creditedGoals
+            .where((event) => event.highlightTimestamp != null)
+            .toList()
+          ..sort((left, right) {
+            return left.highlightTimestamp!.compareTo(
+              right.highlightTimestamp!,
+            );
+          });
 
     for (final goal in goals) {
       final offset = goal.highlightTimestamp!.difference(replayOrigin);

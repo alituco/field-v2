@@ -5,6 +5,7 @@ class MatchReplayMoment {
   const MatchReplayMoment({
     required this.event,
     required this.position,
+    this.highlightStart,
     required this.matchSeconds,
     required this.homeScore,
     required this.awayScore,
@@ -21,6 +22,8 @@ class MatchReplayMoment {
 
   /// Null when the recording cannot be aligned or does not contain this event.
   final Duration? position;
+  final Duration? highlightStart;
+  Duration? get seekPosition => highlightStart ?? position;
   final int matchSeconds;
   final int homeScore;
   final int awayScore;
@@ -64,7 +67,8 @@ class MatchReplayTimeline {
   }) {
     final matchDuration = fixture.clock?.durationSeconds ?? 3600;
     final halftime = (matchDuration > 0 ? matchDuration : 3600) ~/ 2;
-    final origin = _recordingOrigin(fixture, videoDuration);
+    final origin = fixture.replayWallClockOrigin(videoDuration);
+    final scanned = fixture.broadcast?.replayGoalPositions != null;
     final source = <_RecordedEvent>[
       for (var index = 0; index < fixture.timeline.length; index++)
         _RecordedEvent(fixture.timeline[index], index, origin),
@@ -119,9 +123,9 @@ class MatchReplayTimeline {
           event.isGoalValid == false ||
           type == 'DISALLOWED_GOAL' ||
           (event.goalId != null && removedGoalIds.contains(event.goalId));
-      final recordedGoal =
-          (type == 'GOAL' || type == 'OWN_GOAL' || type == 'DISALLOWED_GOAL') &&
-          !correction;
+      final goalEvent =
+          type == 'GOAL' || type == 'OWN_GOAL' || type == 'DISALLOWED_GOAL';
+      final recordedGoal = goalEvent && !correction;
       final isGoal = recordedGoal && !removed;
       final side = _homeSide(fixture, event.clanId);
       // An own-goal event belongs to the offending player's side; its score
@@ -153,10 +157,17 @@ class MatchReplayTimeline {
       if (halftimePosition == null && _isHalftime(entry, halftime)) {
         halftimePosition = entry.position;
       }
+      final measuredGoal = scanned && goalEvent;
+      final banner = isGoal
+          ? fixture.broadcast?.replayGoalPosition(event.id, videoDuration)
+          : null;
       moments.add(
         MatchReplayMoment(
           event: event,
-          position: entry.position,
+          position: measuredGoal ? banner : entry.position,
+          highlightStart: banner == null
+              ? null
+              : FixtureHighlightMoment.scannedStart(banner),
           matchSeconds: entry.matchSeconds,
           homeScore: homeScore,
           awayScore: awayScore,
@@ -230,27 +241,6 @@ class _RecordedEvent {
     'RESUME' => true,
     _ => false,
   };
-}
-
-DateTime? _recordingOrigin(Fixture fixture, Duration? videoDuration) {
-  final highlights = videoDuration != null && videoDuration > Duration.zero
-      ? fixture.highlightMomentsForReplay(videoDuration)
-      : fixture.highlightMoments;
-  // Existing highlight alignment chooses between delayed live-start and stale
-  // stop metadata. The end is never clamped, so it preserves the exact offset.
-  if (highlights.isNotEmpty) {
-    final selected = highlights.first;
-    return selected.event.highlightTimestamp!.subtract(
-      selected.end - const Duration(seconds: 20),
-    );
-  }
-  final stopped = fixture.broadcast?.streamStoppedAt;
-  if (stopped != null &&
-      videoDuration != null &&
-      videoDuration > Duration.zero) {
-    return stopped.subtract(videoDuration);
-  }
-  return fixture.broadcast?.streamStartedAt;
 }
 
 Duration _clockPosition(int seconds, List<_RecordedEvent> anchors) {

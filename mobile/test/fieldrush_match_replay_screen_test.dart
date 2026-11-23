@@ -128,6 +128,18 @@ void main() {
     },
   );
 
+  testWidgets('tapping a scanned goal opens its lead-in', (tester) async {
+    await _pumpReplay(
+      tester,
+      _fixture(replayGoalPositions: {'my-goal': const Duration(seconds: 129)}),
+    );
+    expect(find.byKey(const ValueKey('replay-marker-my-assist')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('replay-moment-my-goal')));
+    await tester.pumpAndSettle();
+    expect(platform.seeks.last, const Duration(seconds: 99));
+    await _closeReplay(tester);
+  });
+
   testWidgets(
     'personal goals and assists are clear and half-time appears once',
     (tester) async {
@@ -408,6 +420,7 @@ Future<void> _closeReplay(WidgetTester tester) async {
 
 Fixture _fixture({
   bool empty = false,
+  Map<String, Duration>? replayGoalPositions,
   bool underReview = false,
   String id = 'match',
   String? replayUrl = 'https://example.com/full-match.m3u8',
@@ -481,6 +494,7 @@ Fixture _fixture({
       durationSeconds: 3600,
     ),
     broadcast: FixtureBroadcast(
+      replayGoalPositions: replayGoalPositions,
       status: 'REPLAY_READY',
       streamStartedAt: start,
       replayHlsUrl: replayUrl,
