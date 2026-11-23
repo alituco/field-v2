@@ -5,6 +5,83 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   final start = DateTime.utc(2026, 10, 19, 18);
 
+  test('measured banner positions drive highlights and goal seeks', () {
+    final fixture = _fixture(
+      broadcast: FixtureBroadcast.fromJson({
+        'status': 'REPLAY_READY',
+        'stream_started_at': start.toIso8601String(),
+        'replay_goal_positions': {
+          'early': 2.5,
+          'late': 93,
+          'reversed': 65,
+          'off-end': 96,
+          'invalid': -10,
+        },
+      }),
+      events: [
+        _event('late', 'GOAL', side: 'home', seconds: 1000),
+        _event('early', 'GOAL', side: 'away', seconds: 5),
+        _event('reversed', 'GOAL', goalId: 'old', side: 'away', seconds: 15),
+        _event('reversal', 'CORRECTION', goalId: 'old', seconds: 20),
+        _event('off-end', 'GOAL', seconds: 30),
+        _event('invalid', 'GOAL', seconds: 40),
+        _event(
+          'unmatched',
+          'GOAL',
+          occurred: start.add(const Duration(seconds: 45)),
+        ),
+        _event(
+          'card',
+          'BLUE_CARD',
+          occurred: start.add(const Duration(seconds: 15)),
+        ),
+      ],
+    );
+    const duration = Duration(seconds: 96);
+    final goals = fixture.highlightMomentsForReplay(duration);
+    expect(goals.map((goal) => goal.event.id), ['early', 'late']);
+    expect(goals.first.start, Duration.zero);
+    expect(goals.first.end, const Duration(milliseconds: 7500));
+    expect(goals.last.start, const Duration(seconds: 63));
+    expect(goals.last.end, duration);
+    expect(fixture.highlightMoments.first.event.id, 'early');
+    final timeline = MatchReplayTimeline.fromFixture(
+      fixture,
+      videoDuration: duration,
+    );
+    final byId = {for (final m in timeline.moments) m.event.id: m};
+    expect(byId['early']!.position, const Duration(milliseconds: 2500));
+    expect(byId['early']!.seekPosition, Duration.zero);
+    expect(byId['late']!.position, const Duration(seconds: 93));
+    expect(byId['late']!.seekPosition, goals.last.start);
+    for (final id in ['reversed', 'unmatched', 'off-end', 'invalid']) {
+      expect(byId[id]!.canSeek, isFalse);
+    }
+    expect(byId['card']!.seekPosition, const Duration(seconds: 15));
+  });
+
+  test('a pending or empty scan offers no guessed goal positions', () {
+    final fixture = _fixture(
+      broadcast: FixtureBroadcast.fromJson({
+        'status': 'REPLAY_READY',
+        'stream_started_at': start.toIso8601String(),
+        'replay_goal_positions': <String, dynamic>{},
+      }),
+      events: [
+        _event(
+          'goal',
+          'GOAL',
+          occurred: start.add(const Duration(seconds: 90)),
+        ),
+      ],
+    );
+    expect(fixture.highlightMoments, isEmpty);
+    expect(
+      MatchReplayTimeline.fromFixture(fixture).moments.single.canSeek,
+      isFalse,
+    );
+  });
+
   test(
     'removed goal retains audit score then reverses only its linked goal',
     () {

@@ -1,4 +1,5 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.86.0";
+import { scannedWindow } from "./scanned-window.ts";
 import { creditedGoal } from "./credited-goals.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -311,13 +312,20 @@ async function createGoalClip(
       throw new HttpError("The match recording is still processing.", 409);
     }
 
-    const bounds = replayClipBounds({
-      sourceDuration,
-      goalOccurredAt: clipRequest.goal_occurred_at,
-      goalTimestamps: timestampList(clipRequest.goal_timestamps),
-      streamStartedAt: clipRequest.stream_started_at,
-      streamStoppedAt: clipRequest.stream_stopped_at,
-    });
+    const bounds = await goalClipBounds(
+      context,
+      sourceType,
+      matchId,
+      eventId,
+      clipRequest.source_video_id,
+      {
+        sourceDuration,
+        goalOccurredAt: clipRequest.goal_occurred_at,
+        goalTimestamps: timestampList(clipRequest.goal_timestamps),
+        streamStartedAt: clipRequest.stream_started_at,
+        streamStoppedAt: clipRequest.stream_stopped_at,
+      },
+    );
     const clipDuration = bounds.end - bounds.start;
     const urls = liveInstantClipUrls(
       context.customerCode,
@@ -490,13 +498,20 @@ async function downloadGoalClip(
     eventId,
   );
   const source = await readyMatchSource(context, goalSource);
-  const bounds = replayClipBounds({
-    sourceDuration: source.durationSeconds,
-    goalOccurredAt: goalSource.goalOccurredAt,
-    goalTimestamps: goalSource.goalTimestamps,
-    streamStartedAt: goalSource.streamStartedAt,
-    streamStoppedAt: goalSource.streamStoppedAt,
-  });
+  const bounds = await goalClipBounds(
+    context,
+    sourceType,
+    matchId,
+    eventId,
+    source.sourceVideoId,
+    {
+      sourceDuration: source.durationSeconds,
+      goalOccurredAt: goalSource.goalOccurredAt,
+      goalTimestamps: goalSource.goalTimestamps,
+      streamStartedAt: goalSource.streamStartedAt,
+      streamStoppedAt: goalSource.streamStoppedAt,
+    },
+  );
   return json({
     media: instantMedia(
       context.customerCode,
@@ -735,6 +750,38 @@ async function readyMatchSource(
     throw new HttpError("The match recording is still processing.", 409);
   }
   return { ...source, durationSeconds };
+}
+
+async function goalClipBounds(
+  context: FunctionContext,
+  sourceType: string,
+  matchId: string,
+  eventId: string,
+  videoId: string,
+  legacy: Parameters<typeof replayClipBounds>[0],
+) {
+  const { data, error } = await context.admin.from("replay_goal_scans")
+    .select("status,goal_positions").match({
+      source_type: sourceType,
+      match_id: matchId,
+      video_id: videoId,
+    }).maybeSingle();
+  if (error) throw error;
+  if (!data) return replayClipBounds(legacy);
+  if (data.status === "pending") {
+    throw new HttpError("Goal highlights are still processing.", 409);
+  }
+  const offset = data.goal_positions?.[eventId];
+  const bounds = typeof offset === "number"
+    ? scannedWindow(offset, legacy.sourceDuration)
+    : null;
+  if (!bounds) {
+    throw new HttpError(
+      "That goal could not be located in the recording.",
+      409,
+    );
+  }
+  return bounds;
 }
 
 function replayClipBounds({

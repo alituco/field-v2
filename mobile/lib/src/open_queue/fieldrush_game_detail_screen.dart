@@ -454,6 +454,11 @@ class _FieldrushGameDetailScreenState extends State<FieldrushGameDetailScreen> {
     final goals = highlights
         ? detail.toFixture().highlightMoments
         : const <FixtureHighlightMoment>[];
+    if (highlights &&
+        detail.broadcast?.replayGoalPositions != null &&
+        goals.isEmpty) {
+      return;
+    }
     await _openReplay(
       goals.isEmpty ? position : goals.first.start,
       openClipEditor: !highlights,
@@ -2001,6 +2006,9 @@ class _GameWatchState extends State<_GameWatch> {
   Widget build(BuildContext context) {
     final hasUrl = _url != null;
     final canClip = hasUrl && widget.detail.game.status == 'FINAL';
+    final canShowHighlights =
+        widget.detail.broadcast?.replayGoalPositions == null ||
+        widget.detail.toFixture().highlightMoments.isNotEmpty;
     final status = widget.detail.broadcast;
     final title = _live
         ? 'Live from the pitch'
@@ -2096,7 +2104,8 @@ class _GameWatchState extends State<_GameWatch> {
                     children: [
                       FilledButton.icon(
                         key: const ValueKey('solo-watch-highlights'),
-                        onPressed: _loading || _openingClips
+                        onPressed:
+                            _loading || _openingClips || !canShowHighlights
                             ? null
                             : () => _openClips(highlights: true),
                         icon: const Icon(

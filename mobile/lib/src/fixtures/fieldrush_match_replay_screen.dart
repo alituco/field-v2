@@ -494,7 +494,7 @@ class _FieldrushMatchReplayScreenState extends State<FieldrushMatchReplayScreen>
             future: moment.position == null || moment.position! > position,
             onTap: moment.position == null || _controller == null || _seeking
                 ? null
-                : () => unawaited(_seek(moment.position!)),
+                : () => unawaited(_seek(moment.seekPosition!)),
           ),
         ),
       );
@@ -540,7 +540,7 @@ class _FieldrushMatchReplayScreenState extends State<FieldrushMatchReplayScreen>
                               tooltip: moment.description,
                               onPressed: _seeking
                                   ? null
-                                  : () => unawaited(_seek(moment.position!)),
+                                  : () => unawaited(_seek(moment.seekPosition!)),
                               icon: _ReplayEventIcon(
                                 moment: moment,
                                 future:

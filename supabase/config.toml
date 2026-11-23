@@ -436,3 +436,7 @@ verify_jwt = false
 verify_jwt = false
 [functions.staging-admin-session]
 verify_jwt = false
+
+# The worker authenticates a repository- and workflow-bound GitHub OIDC token.
+[functions.replay-scan-worker]
+verify_jwt = false

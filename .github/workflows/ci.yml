@@ -386,12 +386,20 @@ jobs:
             supabase/functions/_shared/staging_admin_session_test.ts \
             supabase/functions/fieldrush-push-dispatch/handler_test.ts \
             supabase/functions/cloudflare-stream-webhook/replay_test.ts \
+            supabase/functions/replay-scan-worker/auth_test.ts \
+            supabase/functions/profile-goal-clip/scanned-window_test.ts \
             supabase/functions/profile-goal-clip/credited-goals_test.ts \
             supabase/scripts/_shared/environment_guard_test.ts \
             supabase/scripts/e2e/_shared_test.ts \
             supabase/scripts/e2e/rating_tracks_test.ts \
             supabase/scripts/e2e/checkouts_test.ts
           deno test supabase/scripts/e2e/game_slots_test.ts supabase/scripts/e2e/completion_evidence_test.ts
+
+      - name: Test replay scoreboard scanning
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng python3-pil python3-numpy
+          /usr/bin/python3 -m unittest discover -s scripts/replay-highlights
 
       - name: Check Phoenix rules, wallets, leaderboards, fields, schedules, and price changes
         shell: bash
@@ -451,6 +459,7 @@ jobs:
         run: |
           set -euo pipefail
           export PGLITE_MODULE="$RUNNER_TEMP/fieldrush-market-sql-tools/node_modules/@electric-sql/pglite"
+          node supabase/scripts/test_replay_goal_scans.mjs
           node supabase/scripts/test_featured_city_fields.mjs
           node supabase/scripts/test_season_zero_rebalance.mjs
           for verifier in \
