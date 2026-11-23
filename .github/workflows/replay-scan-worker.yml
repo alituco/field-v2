@@ -1,0 +1,36 @@
+name: Scan replay scoreboards
+on:
+  workflow_call:
+    inputs:
+      include_production:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    concurrency:
+      group: replay-scoreboard-worker
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check for queued recordings
+        env:
+          SCAN_PRODUCTION: ${{ inputs.include_production }}
+        run: python3 scripts/replay-highlights/worker.py claim
+        id: queue
+      - name: Install video and OCR tools
+        if: steps.queue.outputs.pending == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends ffmpeg tesseract-ocr tesseract-ocr-eng python3-numpy python3-pil
+      - name: Scan and publish goal positions
+        if: steps.queue.outputs.pending == 'true'
+        run: /usr/bin/python3 scripts/replay-highlights/worker.py process

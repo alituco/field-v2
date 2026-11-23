@@ -1348,6 +1348,7 @@ Map<String, dynamic>? _flatBroadcastJson(Map<String, dynamic> json) {
     'active_video_id': json['active_video_id'],
     'hls_url': json['hls_url'],
     'replay_hls_url': json['replay_hls_url'],
+    'replay_goal_positions': json['replay_goal_positions'],
     'stream_started_at': json['stream_started_at'],
     'stream_stopped_at': json['stream_stopped_at'],
     'recording_ready_at': json['recording_ready_at'],

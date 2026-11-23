@@ -94,8 +94,16 @@ if (command === 'node') {
   expect(['db', 'push', '--linked', '--include-all', ...(args.includes('--dry-run') ? ['--dry-run'] : []), '--yes']);
   fail(args.includes('--dry-run') ? 'migration-preview' : 'migration-apply');
 } else if (args[0] === 'db' && args[1] === 'query') {
-  expect(['db', 'query', '--linked', '--file', '.github/scripts/verify-hosted-schema.sql']);
-  fail('schema-check');
+  if (args.includes('--file')) {
+    expect(['db', 'query', '--linked', '--file', '.github/scripts/verify-hosted-schema.sql']);
+    fail('schema-check');
+  } else {
+    const enabled = target === 'staging' || process.env.DEPLOY_RECORDING_FUNCTIONS === 'true';
+    expect(['db', 'query', '--linked', 'select fieldrush_private.set_replay_scanning_enabled(' + enabled + ')']);
+    if (enabled && !state.functions.includes('replay-scan-worker')) reject('Scan worker must be deployed before enabling');
+    state.scanEnabled = enabled;
+    save();
+  }
 } else if (args[0] === 'secrets' && args[1] === 'set') {
   expect(['secrets', 'set', '--project-ref', ref, '--env-file', args[5]]);
   if (!args[5] || (statSync(args[5]).mode & 0o777) !== 0o600) reject('Secrets file is not private');
@@ -110,7 +118,7 @@ if (command === 'node') {
 } else if (args[0] === 'functions' && args[1] === 'deploy') {
   const name = args[2];
   const names = ['stripe-payment', 'stripe-payment-webhook', 'stripe-payment-reconcile', 'fieldrush-delete-account',
-    'fieldrush-push-dispatch', 'cloudflare-stream-webhook', 'profile-goal-clip', 'dev-phone-login', 'dev-switch-user', 'staging-admin-session'];
+    'fieldrush-push-dispatch', 'cloudflare-stream-webhook', 'profile-goal-clip', 'replay-scan-worker', 'dev-phone-login', 'dev-switch-user', 'staging-admin-session'];
   if (!names.includes(name)) reject('Unexpected function deployment');
   expect(['functions', 'deploy', name, '--project-ref', ref, '--use-api', ...(name === 'profile-goal-clip' ? [] : ['--no-verify-jwt']), '--yes']);
   fail('deploy:' + name);
@@ -321,6 +329,7 @@ test('confirmed production deploys payment/deletion/inert push without developer
     assert.deepEqual(deployments.map(({ args }) => args[2]), ['stripe-payment', 'stripe-payment-webhook',
       'stripe-payment-reconcile', 'fieldrush-delete-account', 'fieldrush-push-dispatch']);
     const state = harness.state();
+    assert.equal(state.scanEnabled, false);
     assert.ok(forbidden.every(name => !state.functions.includes(name)));
     assert.ok(state.functions.includes('keep-function'));
     assert.ok(!state.functions.includes('tap-payment'));
@@ -385,7 +394,8 @@ for (const [label, present] of [
       assert.match(result.output, /Supabase staging deployment completed/);
       const functionDeployments = result.calls.filter(({ command, args }) =>
         command === 'supabase' && args[0] === 'functions' && args[1] === 'deploy');
-      assert.equal(functionDeployments.length, 10);
+      assert.equal(functionDeployments.length, 11);
+      assert.equal(harness.state().scanEnabled, true);
       for (const { args } of functionDeployments) {
         assert.ok(args.includes('--use-api'), `${args[2]} must deploy without a local Docker bundler`);
         assert.equal(args.includes('--no-verify-jwt'), args[2] !== 'profile-goal-clip');

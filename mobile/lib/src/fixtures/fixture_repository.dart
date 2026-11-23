@@ -185,6 +185,7 @@ class SupabaseFixtureRepository
       active_video_id,
       hls_url,
       replay_hls_url,
+      replay_goal_positions,
       stream_started_at,
       stream_stopped_at,
       recording_ready_at,
@@ -211,6 +212,7 @@ class SupabaseFixtureRepository
     ),
     fixture_events(
       id,
+      goal_id,
       fixture_id,
       event_type,
       clan_id,

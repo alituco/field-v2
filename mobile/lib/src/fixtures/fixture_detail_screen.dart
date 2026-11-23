@@ -3799,7 +3799,8 @@ class _BroadcastPanelState extends State<_BroadcastPanel> {
       if (_openingReplay) return;
       _openingReplay = true;
       try {
-        final position = _showHighlights
+        final position =
+            _showHighlights && fixture.broadcast?.replayGoalPositions == null
             ? _fullGamePosition
             : controller.value.position;
         await controller.pause();
